@@ -36,6 +36,7 @@ const RETRY_DELAY_MS = 30_000
 const FULL_CYCLE_POLL_MS = 1_000
 const FULL_IDLE_CONFIRMATIONS = 2
 const CHILDREN: RobotOperatorStimulusAgent[] = [
+  'robot-status',
   'boredom-observer',
   'boredom-movement',
   'boredom-reflection',
@@ -112,6 +113,12 @@ function clearTimers(): void {
 
 function randomizedChildIdleMs(child: RobotOperatorStimulusAgent): number {
   const config = loadRobotOperatorConfig()
+  if (child === 'robot-status') {
+    return randomizedRobotOperatorIdleMs({
+      inactivityThresholdSeconds: config.robotStatusInactivityThresholdSeconds,
+      jitterMs: config.robotStatusJitterMs,
+    })
+  }
   if (child === 'boredom-observer') {
     return randomizedRobotOperatorIdleMs({
       inactivityThresholdSeconds: config.boredomObserverInactivityThresholdSeconds,
@@ -348,7 +355,7 @@ function watchFile(file: string, onChange: () => void): fs.FSWatcher | null {
 export async function run(): Promise<void> {
   const lock = acquireLock('agent-robot-operator', { exitOnSignal: false })
   initGlobalLogger(SERVICE_ID)
-  console.log(`[${SERVICE_ID}] Started; Boredom Observer, Movement, and Reflection schedules are owned here`)
+  console.log(`[${SERVICE_ID}] Started; Robot Status and boredom schedules are owned here`)
 
   const watchers = [
     watchFile(ACTIVITY_STATE_FILE, () => armForMode('system-activity')),

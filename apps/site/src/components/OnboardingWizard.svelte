@@ -236,17 +236,6 @@
             </div>
 
             <div class="utility-item">
-              <div class="text-2xl flex-shrink-0">🎤</div>
-              <div class="flex-1">
-                <strong class="block text-white/90 dark:text-white/90 mb-2">Audio Upload</strong>
-                <ul class="list-none p-0 m-0">
-                  <li class="text-sm text-white/70 dark:text-white/70 mb-1">Audio view → Upload tab</li>
-                  <li class="text-sm text-white/70 dark:text-white/70 mb-1">CLI: <code class="px-1.5 py-0.5 rounded text-sm text-blue-400 bg-white/10">./bin/mh audio ingest &lt;file&gt;</code></li>
-                </ul>
-              </div>
-            </div>
-
-            <div class="utility-item">
               <div class="text-2xl flex-shrink-0">✏️</div>
               <div class="flex-1">
                 <strong class="block text-white/90 dark:text-white/90 mb-2">Manual Persona Editing</strong>

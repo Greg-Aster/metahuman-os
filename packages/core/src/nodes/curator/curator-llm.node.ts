@@ -18,6 +18,10 @@ MEMORY TYPE: {{memoryType}}
 
 Convert this memory into a conversational exchange suitable for training.
 
+When both a user message and assistant response are supplied, evaluate that
+exact exchange. Copy both messages without rewriting or synthesizing content.
+Only standalone non-conversation memories may require a synthesized prompt.
+
 === QUALITY CRITERIA ===
 
 REJECT (suitableForTraining=false) if ANY of these apply:
@@ -101,7 +105,7 @@ function stringArray(record: Record<string, unknown>, key: string): string[] {
 
 function cognitiveMode(memory: EpisodicMemory): Pick<CuratedMemory, 'cognitiveMode' | 'cognitiveModeSource'> {
   const value = memory.metadata?.cognitiveMode;
-  if (value === 'dual' || value === 'agent' || value === 'emulation') {
+  if (value === 'dual' || value === 'agent' || value === 'emulation' || value === 'environment') {
     return { cognitiveMode: value, cognitiveModeSource: 'metadata' };
   }
   if (value === undefined || value === null || value === '') {
@@ -142,14 +146,19 @@ export function parseCuratorResponse(
   }
 
   const mode = cognitiveMode(memory);
+  const sourceUserMessage = memory.content.trim();
+  const sourceAssistantResponse = memory.response?.trim();
+  const hasSourceExchange = Boolean(sourceUserMessage && sourceAssistantResponse);
   return {
     id: memory.id,
     originalTimestamp: memory.timestamp,
     conversationalEssence: requiredString(result, 'conversationalEssence'),
     context: optionalString(result, 'context') ?? '',
-    userMessage: suitableForTraining ? requiredString(result, 'userMessage') : optionalString(result, 'userMessage'),
+    userMessage: suitableForTraining
+      ? hasSourceExchange ? sourceUserMessage : requiredString(result, 'userMessage')
+      : optionalString(result, 'userMessage'),
     assistantResponse: suitableForTraining
-      ? requiredString(result, 'assistantResponse')
+      ? hasSourceExchange ? sourceAssistantResponse : requiredString(result, 'assistantResponse')
       : optionalString(result, 'assistantResponse'),
     curatedAt,
     flags: stringArray(result, 'flags'),
@@ -157,7 +166,12 @@ export function parseCuratorResponse(
     rejectionReason,
     ...mode,
     memoryType: typeof memory.type === 'string' && memory.type.trim() ? memory.type.trim() : 'conversation',
+    sourceMemoryIds: memory.sourceMemoryIds?.length ? [...memory.sourceMemoryIds] : [memory.id],
   };
+}
+
+function memoryPaths(memory: EpisodicMemory & { path: string }): string[] {
+  return memory.sourcePaths?.length ? [...new Set(memory.sourcePaths)] : [memory.path];
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
@@ -182,6 +196,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       success: true,
       curatedMemories: [],
       count: 0,
+      sourceCount: 0,
       acceptedCount: 0,
       rejectedCount: 0,
       failedCount: 0,
@@ -189,12 +204,15 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   }
 
   const curatedResults: CuratorItemResult[] = [];
+  const sourceCount = memories.reduce((count, memory) => count + memoryPaths(memory).length, 0);
 
   for (const memory of memories) {
     if (!memory || typeof memory.content !== 'string' || !memory.content.trim()) {
+      const originalMemoryPaths = memory ? memoryPaths(memory) : [];
       curatedResults.push({
         success: false,
-        originalMemoryPath: memory?.path || '',
+        originalMemoryPath: originalMemoryPaths[0] || '',
+        originalMemoryPaths,
         memoryId: memory?.id || 'unknown',
         error: 'Curator received a memory without content',
       });
@@ -209,9 +227,11 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     try {
       sourceCognitiveMode = cognitiveMode(memory).cognitiveMode;
     } catch (error) {
+      const originalMemoryPaths = memoryPaths(memory);
       curatedResults.push({
         success: false,
-        originalMemoryPath: memory.path,
+        originalMemoryPath: originalMemoryPaths[0] || memory.path,
+        originalMemoryPaths,
         memoryId: memory.id,
         error: (error as Error).message,
       });
@@ -227,7 +247,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     const userPrompt = renderPromptTemplate(userPromptTemplate, {
       content: memory.content,
       response: memory.response || '',
-      responseSection: memory.response ? `Response: ${memory.response}` : '',
+      responseSection: memory.response
+        ? `Assistant response:\n${memory.response}\n\nPreserve the supplied user and assistant messages exactly.`
+        : '',
       memory,
     });
 
@@ -247,6 +269,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       });
 
       const curated = parseCuratorResponse(response.content, memory);
+      const originalMemoryPaths = memoryPaths(memory);
 
       // Log rejections for debugging
       if (!curated.suitableForTraining) {
@@ -257,13 +280,16 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         success: true,
         disposition: curated.suitableForTraining ? 'accepted' : 'rejected',
         curated,
-        originalMemoryPath: memory.path,
+        originalMemoryPath: originalMemoryPaths[0] || memory.path,
+        originalMemoryPaths,
         memoryId: memory.id,
       });
     } catch (error) {
+      const originalMemoryPaths = memoryPaths(memory);
       curatedResults.push({
         success: false,
-        originalMemoryPath: memory.path,
+        originalMemoryPath: originalMemoryPaths[0] || memory.path,
+        originalMemoryPaths,
         memoryId: memory.id,
         error: (error as Error).message,
       });
@@ -278,6 +304,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     success: failedCount === 0,
     curatedMemories: curatedResults,
     count: curatedResults.length,
+    sourceCount,
     acceptedCount,
     rejectedCount,
     failedCount,
@@ -295,12 +322,14 @@ export const CuratorLLMNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'curatedMemories', type: 'array' },
     { name: 'count', type: 'number' },
+    { name: 'sourceCount', type: 'number' },
     { name: 'acceptedCount', type: 'number' },
     { name: 'rejectedCount', type: 'number' },
     { name: 'failedCount', type: 'number' },
   ],
   properties: {
     temperature: 0.3,
+    timeout: 300000,
     role: 'curator',
     systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
@@ -313,6 +342,14 @@ export const CuratorLLMNode: NodeDefinition = defineNode({
       min: 0,
       max: 1,
       step: 0.1,
+    },
+    timeout: {
+      type: 'number',
+      default: 300000,
+      label: 'Execution Timeout (ms)',
+      min: 1000,
+      max: 900000,
+      step: 1000,
     },
     role: {
       type: 'string',

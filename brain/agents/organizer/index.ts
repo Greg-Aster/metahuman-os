@@ -2,7 +2,7 @@
  * Organizer Agent — Module Definition
  *
  * Exports the AgentModule for registration with agent-runtime.
- * This is the entry point for in-process execution on mobile.
+ * This is the entry point for in-process execution.
  */
 
 import type { AgentModule, AgentMeta } from '@metahuman/agent-runtime';
@@ -14,11 +14,10 @@ import { run } from './core.js';
 export const meta: AgentMeta = {
   id: 'organizer',
   name: 'Memory Organizer',
-  description: 'Enriches memories with LLM-extracted tags and entities',
+  description: 'Runs the editable Organizer graph over selected episodic memories',
   usesLLM: true,
   priority: 'normal',
-  defaultInterval: 300, // 5 minutes
-  tags: ['memory', 'llm', 'background'],
+  tags: ['memory', 'llm', 'maintenance'],
 };
 
 /**
@@ -31,14 +30,13 @@ const agent: AgentModule = {
 
 export default agent;
 
-// Re-export core functions for direct usage
+// Re-export the one canonical execution contract and its adapters.
 export {
-  runCycle,
-  processUserMemories,
-  processMemory,
-  findUnprocessedMemories,
-  analyzeMemoryContent,
+  runOrganizer,
+  parseOrganizerArgs,
+  normalizeOrganizerOptions,
   type OrganizerOptions,
+  type ParsedOrganizerOptions,
   type OrganizerResult,
-  type AnalysisResult,
+  type OrganizerMemoryOutcome,
 } from './core.js';

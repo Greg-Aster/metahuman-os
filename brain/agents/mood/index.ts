@@ -12,4 +12,4 @@ export const meta: AgentMeta = {
 
 const agent: AgentModule = { meta, run };
 export default agent;
-export { run, runCycle, reviewMoodForUser, type MoodOptions, type MoodReviewResult } from './core.js';
+export { run, runCycle, type MoodOptions, type MoodReviewResult } from './core.js';

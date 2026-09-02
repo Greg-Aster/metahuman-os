@@ -167,7 +167,6 @@
       "adapters": [],
       "roles": [
         "summarizer",
-        "digest",
         "condensation"
       ],
       "description": "Document and conversation summarization specialist",

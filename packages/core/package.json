@@ -101,14 +101,14 @@
     "diff": "^8.0.2",
     "exif-reader": "^2.0.3",
     "fast-glob": "^3.3.2",
-    "fs-extra": "^11.3.2",
+    "fs-extra": "^11.4.0",
     "gray-matter": "^4.0.3",
     "mammoth": "^1.11.0",
     "node-ical": "^0.22.1",
     "pdf-parse": "^2.4.5",
-    "tsx": "^4.20.6",
+    "tsx": "^4.23.13",
     "uuid": "^13.0.0",
-    "ws": "^8.19.0"
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",

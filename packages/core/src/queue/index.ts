@@ -65,12 +65,14 @@ export {
   authorizeWorkSubmission,
   claimWorkCoordinatorOwnership,
   isWorkCoordinatorOwner,
+  submitAgentFollowOn,
   submitCoordinatorWork,
   submitDesireExecution,
   submitDesireOutcomeReview,
   submitMemoryIndexRefresh,
 } from './work-submission.js';
 export type {
+  AgentFollowOnSubmission,
   DesireExecutionSubmission,
   DesireOutcomeReviewSubmission,
   MemoryIndexRefreshSubmission,

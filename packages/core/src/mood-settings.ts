@@ -89,9 +89,12 @@ export function loadMoodSettings(username?: string): MoodSettings {
   return normalize({ ...DEFAULTS, ...global, ...user });
 }
 
+export function validateMoodSettingsUpdate(username: string, updates: Partial<MoodSettings>): MoodSettings {
+  return normalize({ ...loadMoodSettings(username), ...updates });
+}
+
 export function saveMoodSettings(username: string, updates: Partial<MoodSettings>, actor: string): MoodSettings {
-  const current = loadMoodSettings(username);
-  const next = normalize({ ...current, ...updates });
+  const next = validateMoodSettingsUpdate(username, updates);
   const filePath = path.join(getProfilePaths(username).etc, 'mood.json');
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporary = `${filePath}.tmp-${process.pid}-${Date.now()}`;
@@ -114,12 +117,11 @@ export function saveMoodSettings(username: string, updates: Partial<MoodSettings
 export function loadMoodState(username: string): MoodState {
   const filePath = path.join(getProfilePaths(username).state, 'mood-state.json');
   if (!fs.existsSync(filePath)) return {};
-  try {
-    const value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  } catch {
-    return {};
+  const value = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Mood state must contain a JSON object: ${filePath}`);
   }
+  return value as MoodState;
 }
 
 export function saveMoodState(username: string, patch: MoodState): MoodState {
@@ -134,10 +136,18 @@ export function saveMoodState(username: string, patch: MoodState): MoodState {
 }
 
 export function isPersonaSummaryGloballyEnabled(): boolean {
-  try {
-    const models = JSON.parse(fs.readFileSync(path.join(systemPaths.etc, 'models.json'), 'utf8'));
-    return models?.globalSettings?.includePersonaSummary !== false;
-  } catch {
-    return true;
+  const filePath = path.join(systemPaths.etc, 'models.json');
+  const models = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+  if (!models || typeof models !== 'object' || Array.isArray(models)) {
+    throw new Error(`Model configuration must contain a JSON object: ${filePath}`);
   }
+  const globalSettings = (models as Record<string, unknown>).globalSettings;
+  if (globalSettings === undefined) return true;
+  if (!globalSettings || typeof globalSettings !== 'object' || Array.isArray(globalSettings)) {
+    throw new Error(`Model globalSettings must contain a JSON object: ${filePath}`);
+  }
+  const enabled = (globalSettings as Record<string, unknown>).includePersonaSummary;
+  if (enabled === undefined) return true;
+  if (typeof enabled !== 'boolean') throw new Error(`includePersonaSummary must be boolean: ${filePath}`);
+  return enabled;
 }

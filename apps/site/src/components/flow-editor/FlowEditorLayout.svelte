@@ -33,6 +33,9 @@
   let graphsLoading = $state(false);
   let schemas = $state<any[]>([]);
   let selectedNode = $state<Node | null>(null);
+  let currentGraph = $state<SvelteFlowGraph | null>(null);
+  let lastNodeOutputs = $state<Record<string, unknown>>({});
+  let lastRunDurationMs = $state<number | null>(null);
   let showPropertyInspector = $state(true);
 
   // Load saved graphs list (including backups)
@@ -100,6 +103,10 @@
     flowEditorRef?.clearGraph();
     graphName = 'Untitled Graph';
     graphFileName = '';
+    currentGraph = null;
+    selectedNode = null;
+    lastNodeOutputs = {};
+    lastRunDurationMs = null;
   }
 
   // Convert display name to valid filename (slug)
@@ -180,6 +187,10 @@
           flowEditorRef.loadGraph(sfGraph);
           graphName = sfGraph.name || name;
           graphFileName = scope === 'backup' ? '' : name; // Don't keep backup filename
+          currentGraph = sfGraph;
+          selectedNode = null;
+          lastNodeOutputs = {};
+          lastRunDurationMs = null;
         }
       }
     } catch (e) {
@@ -201,6 +212,8 @@
 
     isExecuting = true;
     executionError = '';
+    lastNodeOutputs = {};
+    lastRunDurationMs = null;
 
     // Reset previous states - nodes will light up individually as they execute
     flowEditorRef.resetExecutionStates();
@@ -259,7 +272,9 @@
                 }
                 if (data.nodeOutputs) {
                   nodeOutputs = data.nodeOutputs;
+                  lastNodeOutputs = data.nodeOutputs;
                 }
+                lastRunDurationMs = typeof data.durationMs === 'number' ? data.durationMs : null;
               }
             } catch {
               // Ignore parse errors
@@ -296,16 +311,25 @@
       case 'node_start':
         // Mark this node as running
         flowEditorRef.setNodeExecutionState(data.nodeId, 'running');
+        if (selectedNode?.id === data.nodeId) {
+          selectedNode = { ...selectedNode, data: { ...selectedNode.data, executionState: 'running' } };
+        }
         break;
 
       case 'node_complete':
         // Mark this node as completed
         flowEditorRef.setNodeExecutionState(data.nodeId, 'completed');
+        if (selectedNode?.id === data.nodeId) {
+          selectedNode = { ...selectedNode, data: { ...selectedNode.data, executionState: 'completed' } };
+        }
         break;
 
       case 'node_error':
         // Mark this node as failed
         flowEditorRef.setNodeExecutionState(data.nodeId, 'failed');
+        if (selectedNode?.id === data.nodeId) {
+          selectedNode = { ...selectedNode, data: { ...selectedNode.data, executionState: 'failed' } };
+        }
         break;
 
       case 'graph_error':
@@ -321,6 +345,10 @@
   }
 
   function handleGraphChange(graph: SvelteFlowGraph) {
+    currentGraph = graph;
+    if (selectedNode) {
+      selectedNode = graph.nodes.find((node) => node.id === selectedNode?.id) || null;
+    }
     // Update graph name when template loads or graph changes
     if (graph.name && graph.name !== 'Untitled Graph') {
       graphName = graph.name;
@@ -365,6 +393,10 @@
     if (flowEditorRef) {
       flowEditorRef.updateNodeData(nodeId, data);
     }
+  }
+
+  function handleSelectNode(nodeId: string) {
+    flowEditorRef?.selectNode(nodeId);
   }
 
   function togglePropertyInspector() {
@@ -519,10 +551,15 @@
     </div>
 
     {#if showPropertyInspector}
-      <div class="w-[280px] flex-shrink-0 overflow-hidden">
+      <div class="w-[360px] flex-shrink-0 overflow-hidden">
         <PropertyInspector
           {selectedNode}
+          graphNodes={currentGraph?.nodes || []}
+          graphEdges={currentGraph?.edges || []}
+          lastOutput={selectedNode ? lastNodeOutputs[selectedNode.id] : undefined}
+          {lastRunDurationMs}
           onUpdateNodeData={handleUpdateNodeData}
+          onSelectNode={handleSelectNode}
         />
       </div>
     {/if}

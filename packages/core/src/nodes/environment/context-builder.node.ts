@@ -100,6 +100,8 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona supplied once to the selector' },
     { name: 'routingAnalysis', type: 'object', optional: true, description: 'LLM-selected context policy for the current instruction' },
     { name: 'taskState', type: 'object', optional: true, description: 'Single typed Environment objective lifecycle state' },
+    { name: 'preparedMovementRequest', type: 'object', optional: true, description: 'Already-authorized off-script request ready for Movement Generator' },
+    { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
   ],
   outputs: [
     { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
@@ -178,15 +180,20 @@ export const environmentContextBuilderNode = defineNode({
     const taskState = isRecord(inputs.taskState)
       ? inputs.taskState as unknown as EnvironmentTaskState
       : null;
+    const resumePreparedMovement = isRecord(inputs.preparedMovementRequest);
     const personaText = typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 2_000)
       : '';
+    const robotStatus = isRecord(inputs.robotStatus) ? inputs.robotStatus : null;
     const inputSource = environmentInputSource(context, effectiveObservation);
     const autonomous = inputSource === 'autonomy';
     const directUserTurn = inputSource === 'user'
       && context.environmentActionSource === undefined
       && typeof context.userMessage === 'string'
       && Boolean(context.userMessage.trim());
+    const replyToContent = directUserTurn && typeof context.replyToContent === 'string'
+      ? context.replyToContent.trim().slice(0, 500)
+      : '';
     const validatorCommand = !directUserTurn && isRecord(observation.metadata?.taskValidatorCommand)
       ? observation.metadata.taskValidatorCommand
       : null;
@@ -270,7 +277,12 @@ export const environmentContextBuilderNode = defineNode({
       mustAdvanceTask: boundedContinuation,
     });
     const renderedContent = (content: string) => selectedImages.length
-      ? [{ type: 'text' as const, text: content }, ...selectedImages]
+      ? [{
+          type: 'text' as const,
+          text: selectedImages.length === 1
+            ? `The attached image is what you currently see.\n${content}`
+            : `The attached images are what you saw at the corresponding visualFrames times.\n${content}`,
+        }, ...selectedImages]
       : content;
     const message = buildEnvironmentSelectorEnvelope({
       instruction: rawInstruction,
@@ -279,28 +291,34 @@ export const environmentContextBuilderNode = defineNode({
       recentConversation: history,
       memories: memoryItems,
       personaText,
+      robotStatus,
+      replyToContent,
       mustSelectAction: routingAnalysis.needsAction === true,
       mustAdvanceTask: boundedContinuation,
       inputSource,
     });
-    const jsonSchema = buildEnvironmentSelectorJsonSchema({
-      actions: promptObservation.capabilities.actions,
-      robotCommands: promptObservation.capabilities.robotCommands,
-      requireAction: routingAnalysis.needsAction === true,
-      requireObjective: autonomous,
-      requireProgress: boundedContinuation,
-    });
+    const jsonSchema = resumePreparedMovement
+      ? null
+      : buildEnvironmentSelectorJsonSchema({
+          actions: promptObservation.capabilities.actions,
+          robotCommands: promptObservation.capabilities.robotCommands,
+          requireAction: routingAnalysis.needsAction === true,
+          requireObjective: autonomous,
+          requireProgress: boundedContinuation,
+        });
 
     return {
       message,
       jsonSchema,
-      messages: [
-        { role: 'system', content: selectorContext },
-        {
-          role: 'user',
-          content: renderedContent(message),
-        },
-      ],
+      messages: resumePreparedMovement
+        ? []
+        : [
+            { role: 'system', content: selectorContext },
+            {
+              role: 'user',
+              content: renderedContent(message),
+            },
+          ],
       context: {
         kind: 'environment',
         observation: effectiveObservation,
@@ -318,6 +336,7 @@ export const environmentContextBuilderNode = defineNode({
             ? routedMemories.memories
             : [],
         personaIncluded: Boolean(personaText),
+        robotStatusIncluded: Boolean(robotStatus),
         routingAnalysis,
         contextSelection: {
           recentHistory: includeRecentHistory,
@@ -329,6 +348,7 @@ export const environmentContextBuilderNode = defineNode({
           environment: includeEnvironmentContext,
           vision: useImages,
           actionContracts: includeActionContracts,
+          selector: !resumePreparedMovement,
         },
         imageSelection: {
           requested: routingAnalysis.needsVision === true || visualRequiredByTask || observerVisualEvidence,

@@ -1,15 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy, createEventDispatcher } from 'svelte';
-  import { get } from 'svelte/store';
-  import { formatFileSize, updateState, checkForUpdates, downloadAndInstall } from '../lib/client/app-updater';
   import {
     configureRemoteSyncServer,
     testRemoteServerConnection,
     getRemoteSyncConfig,
     clearRemoteSyncConfig,
-    checkRemoteSyncStatus,
+    runProfileSyncAgent,
     type RemoteSyncProgress,
-    type SyncComparison,
     type RemoteSyncResult,
   } from '../lib/client/profile-sync';
   import {
@@ -17,63 +14,6 @@
     updateSyncSettings,
     type SyncSettings,
   } from '../lib/client/sync-settings';
-  import { apiFetch } from '../lib/client/api-config';
-  import { runTriggerNow } from '../lib/stores/trigger-manager';
-
-  async function triggerAgent(agentName: string, args: string[] = []): Promise<{ success: boolean; taskId?: string; error?: string }> {
-    try {
-      const taskId = await runTriggerNow(agentName, args);
-      return { success: true, taskId };
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : 'Network error' };
-    }
-  }
-
-  async function readProfileSyncState(): Promise<any | null> {
-    try {
-      const res = await apiFetch('/api/profile-sync-state');
-      if (res.ok) {
-        return await res.json();
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  async function waitForProfileSync(maxWaitMs: number = 120000): Promise<any> {
-    const startTime = Date.now();
-    const pollInterval = 1000;
-
-    while (Date.now() - startTime < maxWaitMs) {
-      const state = await readProfileSyncState();
-
-      if (state) {
-        if (state.phase && state.message) {
-          remoteSyncPhase = state.phase === 'complete' ? 'complete'
-            : state.phase === 'error' ? 'error'
-            : 'downloading';
-          remoteSyncMessage = state.message;
-
-          if (state.current !== undefined && state.total !== undefined) {
-            syncProgress = {
-              current: state.current,
-              total: state.total,
-              category: state.message,
-            };
-          }
-        }
-
-        if (state.phase === 'complete' || state.phase === 'error') {
-          return state;
-        }
-      }
-
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-    }
-
-    return { phase: 'error', message: 'Sync timed out' };
-  }
 
   const dispatch = createEventDispatcher();
 
@@ -98,43 +38,9 @@
   let showSyncSettings = false;
   let isSavingSettings = false;
 
-  let isCheckingStatus = false;
-  let syncComparison: SyncComparison | null = null;
-  let statusCheckError: string | null = null;
 
   let showSyncComplete = false;
   let syncResult: RemoteSyncResult | null = null;
-
-  interface UpdateResult {
-    checked: boolean;
-    available: boolean;
-    version: string | null;
-    downloadStarted: boolean;
-    error: string | null;
-  }
-  let updateResult: UpdateResult = {
-    checked: false,
-    available: false,
-    version: null,
-    downloadStarted: false,
-    error: null,
-  };
-
-  function getLatestUpdateVersion(): string | null {
-    const state = get(updateState);
-    if (state.platform === 'mobile') {
-      return state.latestMobileVersion?.version || null;
-    }
-    if (state.platform === 'server') {
-      return state.serverUpdateInfo?.latestVersion || null;
-    }
-    return null;
-  }
-
-  function getCurrentUpdateVersion(): string | null {
-    const state = get(updateState);
-    return state.currentVersion || null;
-  }
 
   interface DateRangeOption {
     value: number;
@@ -165,9 +71,6 @@
     { id: 'persona', label: 'Persona Files', description: 'Core identity, personality traits, relationships, and decision rules', enabled: false, estimatedSize: '~50 KB' },
     { id: 'config', label: 'Configuration', description: 'Settings, preferences, model registry, and runtime config', enabled: false, estimatedSize: '~25 KB' },
     { id: 'memories', label: 'Memories', description: 'Episodic memories, conversations, and inner dialogue', enabled: true, estimatedSize: 'Variable' },
-    { id: 'logs', label: 'Audit Logs', description: 'System logs and audit trail (for debugging)', enabled: false, estimatedSize: 'Large' },
-    { id: 'models', label: 'LoRA Adapters', description: 'Custom fine-tuned model weights', enabled: false, warning: 'Not recommended - files can be 500MB+ each', estimatedSize: '500MB+' },
-    { id: 'update', label: 'Program Update', description: 'Check for and download app updates', enabled: true, estimatedSize: '~10 MB' },
   ];
 
   const scifiMessages = [
@@ -315,131 +218,53 @@
     }
   }
 
-  async function handleCheckStatus() {
-    if (!isServerConfigured) return;
-    isCheckingStatus = true;
-    statusCheckError = null;
-    syncComparison = null;
-    try {
-      syncComparison = await checkRemoteSyncStatus();
-      if (syncComparison.error) {
-        statusCheckError = syncComparison.error;
-      }
-    } catch (err) {
-      statusCheckError = err instanceof Error ? err.message : 'Failed to check status';
-    } finally {
-      isCheckingStatus = false;
-    }
-  }
-
   async function handleRemoteSync() {
     isSyncing = true;
     remoteSyncPhase = 'authenticating';
     remoteSyncMessage = 'Starting sync via profile-sync agent...';
     syncResult = null;
-    updateResult = { checked: false, available: false, version: null, downloadStarted: false, error: null };
 
     const wantPersona = syncOptions.find(o => o.id === 'persona')?.enabled ?? false;
     const wantConfig = syncOptions.find(o => o.id === 'config')?.enabled ?? false;
     const wantMemories = syncOptions.find(o => o.id === 'memories')?.enabled ?? false;
-    const wantUpdate = syncOptions.find(o => o.id === 'update')?.enabled ?? false;
-    const onlyUpdateSelected = wantUpdate && !wantPersona && !wantConfig && !wantMemories;
-
-    const errors: string[] = [];
 
     try {
-      if (onlyUpdateSelected) {
-        remoteSyncMessage = 'Checking for app updates...';
-        remoteSyncPhase = 'downloading';
-        try {
-          const updateAvailable = await checkForUpdates();
-          updateResult.checked = true;
-          if (updateAvailable) {
-            updateResult.available = true;
-            updateResult.version = getLatestUpdateVersion();
-            remoteSyncMessage = `Update ${updateResult.version || ''} found! Starting update...`;
-            await downloadAndInstall();
-            updateResult.downloadStarted = true;
-            remoteSyncMessage = 'Update started - check your device for progress';
-          } else {
-            updateResult.available = false;
-            updateResult.version = getCurrentUpdateVersion() || 'unknown';
-            remoteSyncMessage = `Already up to date (v${updateResult.version})`;
-          }
-        } catch (err) {
-          updateResult.error = err instanceof Error ? err.message : 'Update failed';
-          remoteSyncMessage = updateResult.error;
-          errors.push(updateResult.error);
-        }
-        syncResult = { success: errors.length === 0, error: errors.join('; ') || undefined };
-        remoteSyncPhase = errors.length === 0 ? 'complete' : 'error';
-        showSyncComplete = true;
-      } else {
-        const agentArgs: string[] = ['--pull-only'];
-        if (wantMemories && !wantPersona && !wantConfig) {
-          agentArgs.push('--memories-only');
-        } else if ((wantPersona || wantConfig) && !wantMemories) {
-          agentArgs.push('--profile-only');
-        }
-        if (memoryDays > 0) {
-          agentArgs.push(`--days=${memoryDays}`);
-        }
-
-        remoteSyncMessage = 'Triggering profile-sync agent...';
-        remoteSyncPhase = 'downloading';
-
-        const agentResult = await triggerAgent('profile-sync', agentArgs);
-
-        if (agentResult.success) {
-          remoteSyncMessage = `Profile sync queued as ${agentResult.taskId}. Syncing...`;
-          const finalState = await waitForProfileSync(120000);
-
-          if (finalState.phase === 'complete') {
-            if (wantUpdate) {
-              remoteSyncMessage = 'Checking for app updates...';
-              try {
-                const updateAvailable = await checkForUpdates();
-                updateResult.checked = true;
-                if (updateAvailable) {
-                  updateResult.available = true;
-                  updateResult.version = getLatestUpdateVersion();
-                  remoteSyncMessage = `Update ${updateResult.version || ''} found! Starting update...`;
-                  await downloadAndInstall();
-                  updateResult.downloadStarted = true;
-                } else {
-                  updateResult.available = false;
-                  updateResult.version = getCurrentUpdateVersion();
-                }
-              } catch (err) {
-                updateResult.error = err instanceof Error ? err.message : 'Update failed';
-              }
-            }
-
-            const successParts: string[] = [];
-            if (finalState.profileFiles > 0) successParts.push(`${finalState.profileFiles} profile files`);
-            if (finalState.memoriesImported > 0) successParts.push(`${finalState.memoriesImported} memories`);
-            if (finalState.credentialsSynced) successParts.push('credentials');
-            if (updateResult.checked) successParts.push('update checked');
-
-            remoteSyncPhase = 'complete';
-            remoteSyncMessage = `Sync complete! ${successParts.join(', ')}.`;
-            syncResult = { success: true, profileFiles: finalState.profileFiles || 0, memoriesImported: finalState.memoriesImported || 0, credentialsSynced: finalState.credentialsSynced || false };
-          } else {
-            errors.push(finalState.message || 'Sync failed');
-            remoteSyncPhase = 'error';
-            remoteSyncMessage = finalState.message || 'Sync failed';
-            syncResult = { success: false, error: finalState.message || finalState.error || 'Sync failed' };
-          }
-        } else {
-          errors.push(agentResult.error || 'Failed to start profile-sync agent');
-          remoteSyncPhase = 'error';
-          remoteSyncMessage = agentResult.error || 'Failed to start profile-sync agent';
-          syncResult = { success: false, error: agentResult.error || 'Failed to start profile-sync agent' };
-        }
-
-        await loadServerConfig();
-        showSyncComplete = true;
+      if (!wantPersona && !wantConfig && !wantMemories) {
+        throw new Error('Select at least one sync option');
       }
+
+      const agentArgs: string[] = [];
+      if (wantMemories && !wantPersona && !wantConfig) {
+        agentArgs.push('--memories-only');
+      } else if ((wantPersona || wantConfig) && !wantMemories) {
+        agentArgs.push('--profile-only');
+      }
+      if (!wantPersona) agentArgs.push('--skip-persona');
+      if (!wantConfig) agentArgs.push('--skip-config');
+      if (memoryDays > 0) agentArgs.push(`--days=${memoryDays}`);
+
+      remoteSyncMessage = 'Triggering profile-sync agent...';
+      remoteSyncPhase = 'downloading';
+
+      const agentResult = await runProfileSyncAgent(agentArgs, progress => {
+        remoteSyncPhase = progress.phase === 'complete' ? 'complete'
+          : progress.phase === 'error' ? 'error'
+          : 'downloading';
+        remoteSyncMessage = progress.message;
+      });
+
+      if (agentResult.success) {
+        remoteSyncPhase = 'complete';
+        remoteSyncMessage = `Profile Sync completed as ${agentResult.taskId}.`;
+        syncResult = agentResult;
+      } else {
+        remoteSyncPhase = 'error';
+        remoteSyncMessage = agentResult.error || 'Profile Sync failed';
+        syncResult = agentResult;
+      }
+
+      await loadServerConfig();
+      showSyncComplete = true;
     } catch (err) {
       remoteSyncPhase = 'error';
       remoteSyncMessage = `Error: ${err instanceof Error ? err.message : 'Unknown error'}`;
@@ -447,7 +272,6 @@
     } finally {
       isSyncing = false;
       syncProgress = null;
-      syncComparison = null;
     }
   }
 
@@ -455,7 +279,6 @@
     showSyncComplete = false;
     syncResult = null;
     remoteSyncPhase = null;
-    updateResult = { checked: false, available: false, version: null, downloadStarted: false, error: null };
   }
 
   function toggleOption(id: string) {
@@ -636,34 +459,6 @@
                   </label>
                 </div>
 
-                <div class="flex flex-col gap-2">
-                  <h4 class="text-xs font-semibold text-emerald-400 uppercase tracking-wide m-0 pb-1.5 border-b border-emerald-500/20">Default Sync Content</h4>
-
-                  <label class="flex items-start gap-3 py-2 cursor-pointer">
-                    <input type="checkbox" class="mt-1 accent-emerald-500 w-4 h-4 cursor-pointer" bind:checked={syncSettingsData.syncPersona} disabled={isSavingSettings} />
-                    <span class="flex flex-col gap-0.5">
-                      <strong class="text-[13px] font-medium text-white/90">Sync persona</strong>
-                      <small class="text-[11px] text-white/50">Identity, personality, relationships</small>
-                    </span>
-                  </label>
-
-                  <label class="flex items-start gap-3 py-2 cursor-pointer">
-                    <input type="checkbox" class="mt-1 accent-emerald-500 w-4 h-4 cursor-pointer" bind:checked={syncSettingsData.syncSettings} disabled={isSavingSettings} />
-                    <span class="flex flex-col gap-0.5">
-                      <strong class="text-[13px] font-medium text-white/90">Sync settings</strong>
-                      <small class="text-[11px] text-white/50">App preferences and configuration</small>
-                    </span>
-                  </label>
-
-                  <label class="flex items-start gap-3 py-2 cursor-pointer">
-                    <input type="checkbox" class="mt-1 accent-emerald-500 w-4 h-4 cursor-pointer" bind:checked={syncSettingsData.syncConversationBuffer} disabled={isSavingSettings} />
-                    <span class="flex flex-col gap-0.5">
-                      <strong class="text-[13px] font-medium text-white/90">Sync conversation buffer</strong>
-                      <small class="text-[11px] text-white/50">Recent chat history (can be large)</small>
-                    </span>
-                  </label>
-                </div>
-
                 <div class="flex gap-2 pt-2">
                   <button class="flex-1 px-3 py-2.5 rounded-md text-[13px] font-medium cursor-pointer transition-all bg-gradient-to-br from-emerald-500 to-emerald-600 border-0 text-[#1a1a2e] hover:shadow-[0_0_15px_rgba(0,255,136,0.3)] disabled:opacity-50 disabled:cursor-not-allowed" on:click={handleSaveSyncSettings} disabled={isSavingSettings}>
                     {isSavingSettings ? 'Saving...' : 'Save Settings'}
@@ -686,54 +481,6 @@
                 </select>
                 <span class="text-[11px] text-white/40 italic">{dateRangeOptions.find(o => o.value === memoryDays)?.description || ''}</span>
               </div>
-
-              <div class="flex gap-2 mb-3">
-                <button class="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-white/5 border border-white/20 rounded-lg text-sm font-medium text-white/80 cursor-pointer transition-all hover:bg-white/10 hover:border-white/30 disabled:opacity-50 disabled:cursor-not-allowed" on:click={handleCheckStatus} disabled={isCheckingStatus || isSyncing}>
-                  {#if isCheckingStatus}
-                    <span class="animate-spin">↻</span> Checking...
-                  {:else}
-                    <span>📊</span> Check Status
-                  {/if}
-                </button>
-              </div>
-
-              {#if syncComparison && !syncComparison.error}
-                <div class="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3 mb-3">
-                  <div class="flex justify-between items-center mb-3">
-                    <span class="text-[13px] font-semibold text-emerald-400">Sync Status</span>
-                    {#if syncComparison.differences.syncRecommended}
-                      <span class="text-[11px] font-semibold px-2 py-1 rounded bg-yellow-500/20 text-yellow-400">Sync Recommended</span>
-                    {:else}
-                      <span class="text-[11px] font-semibold px-2 py-1 rounded bg-emerald-500/20 text-emerald-400">Up to Date</span>
-                    {/if}
-                  </div>
-
-                  <div class="grid grid-cols-2 gap-2 mb-2">
-                    <div class="flex flex-col gap-0.5 p-2 bg-black/20 rounded-md">
-                      <span class="text-[11px] text-white/50 uppercase tracking-wider">Server</span>
-                      <span class="text-[15px] font-semibold font-mono text-blue-400">{syncComparison.server.memoryCount} memories</span>
-                    </div>
-                    <div class="flex flex-col gap-0.5 p-2 bg-black/20 rounded-md">
-                      <span class="text-[11px] text-white/50 uppercase tracking-wider">Local</span>
-                      <span class="text-[15px] font-semibold font-mono text-emerald-400">{syncComparison.local.memoryCount} memories</span>
-                    </div>
-                  </div>
-
-                  {#if syncComparison.differences.newMemoriesOnServer > 0}
-                    <div class="flex items-center gap-2 p-2 bg-yellow-500/10 rounded-md">
-                      <span class="text-base text-yellow-400">↓</span>
-                      <span class="text-xs text-yellow-400">{syncComparison.differences.newMemoriesOnServer} new memories available on server</span>
-                    </div>
-                  {/if}
-                </div>
-              {/if}
-
-              {#if statusCheckError}
-                <div class="flex items-center gap-2 px-2.5 py-2.5 bg-red-400/10 border border-red-400/30 rounded-md mb-3">
-                  <span class="text-base">⚠️</span>
-                  <span class="text-xs text-red-400">{statusCheckError}</span>
-                </div>
-              {/if}
 
               <span class="text-[11px] text-white/40 text-center">Download profile, memories, and credentials from your server</span>
             </div>
@@ -833,36 +580,7 @@
             </div>
           {/if}
 
-          {#if updateResult.checked}
-            {#if updateResult.downloadStarted}
-              <div class="flex items-center gap-2 p-3 bg-gradient-to-br from-blue-500/20 to-blue-600/20 border border-blue-500/40 rounded-lg">
-                <span class="text-xl animate-bounce-download">⬇️</span>
-                <span class="text-lg font-bold font-mono text-blue-400">{updateResult.version}</span>
-                <span class="flex-1 text-[13px] text-white/70 text-left">update started!</span>
-              </div>
-            {:else if updateResult.available}
-              <div class="flex items-center gap-2 p-3 bg-gradient-to-br from-amber-500/20 to-orange-500/20 border border-amber-500/40 rounded-lg animate-pulse-slow">
-                <span class="text-xl">🆕</span>
-                <span class="text-lg font-bold font-mono text-amber-400">{updateResult.version}</span>
-                <span class="flex-1 text-[13px] text-white/70 text-left">app update available!</span>
-              </div>
-            {:else if !updateResult.error}
-              <div class="flex items-center gap-2 p-3 bg-emerald-500/5 border border-emerald-500/15 rounded-lg">
-                <span class="text-xl">✅</span>
-                <span class="text-lg font-bold font-mono text-emerald-400">v{updateResult.version || 'current'}</span>
-                <span class="flex-1 text-[13px] text-white/70 text-left">app is up to date</span>
-              </div>
-            {/if}
-
-            {#if updateResult.error}
-              <div class="flex items-center gap-2 p-3 bg-gradient-to-br from-red-500/20 to-red-600/20 border border-red-500/40 rounded-lg">
-                <span class="text-xl">⚠️</span>
-                <span class="flex-1 text-[13px] text-red-300 text-left">{updateResult.error}</span>
-              </div>
-            {/if}
-          {/if}
-
-          {#if !syncResult.profileFiles && !syncResult.memoriesImported && !syncResult.credentialsSynced && !updateResult.checked}
+          {#if !syncResult.profileFiles && !syncResult.memoriesImported && !syncResult.credentialsSynced}
             <div class="flex items-center gap-2 p-3 bg-emerald-500/5 border border-emerald-500/15 rounded-lg">
               <span class="text-xl">📡</span>
               <span class="flex-1 text-[13px] text-white/70 text-left">Connection verified - no new data to sync</span>
@@ -870,33 +588,7 @@
           {/if}
         </div>
 
-        <p class="text-[13px] text-white/60 m-0 mb-6">
-          {#if updateResult.downloadStarted}
-            {#if $updateState.platform === 'mobile'}
-              APK download started. Check your browser or system downloads to install.
-            {:else}
-              Update started. Monitor server logs for completion.
-            {/if}
-          {:else if updateResult.available && $updateState.platform === 'mobile' && $updateState.latestMobileVersion?.downloadUrl}
-            Update available! Click below to download.
-          {:else if updateResult.available && $updateState.platform === 'server'}
-            Update available! Click below to apply.
-          {:else}
-            Your local device is now up to date with your server.
-          {/if}
-        </p>
-
-        {#if updateResult.available && !updateResult.downloadStarted}
-          {#if $updateState.platform === 'mobile' && $updateState.latestMobileVersion?.downloadUrl}
-            <button class="w-full px-4 py-3 mt-3 bg-gradient-to-br from-amber-500 to-amber-600 border-0 rounded-lg text-sm font-semibold text-white cursor-pointer transition-all hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] hover:-translate-y-0.5" on:click={() => downloadAndInstall()}>
-              ⬇ Download Update ({updateResult.version})
-            </button>
-          {:else if $updateState.platform === 'server'}
-            <button class="w-full px-4 py-3 mt-3 bg-gradient-to-br from-amber-500 to-amber-600 border-0 rounded-lg text-sm font-semibold text-white cursor-pointer transition-all hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] hover:-translate-y-0.5" on:click={() => downloadAndInstall()}>
-              ⬆ Apply Update ({updateResult.version || 'latest'})
-            </button>
-          {/if}
-        {/if}
+        <p class="text-[13px] text-white/60 m-0 mb-6">Your local profile is now synchronized with the configured server.</p>
       {:else}
         <div class="p-3 bg-red-400/10 border border-red-400/30 rounded-md mb-4">
           <span class="text-[13px] text-red-400">{syncResult.error || 'An unknown error occurred'}</span>
@@ -948,21 +640,4 @@
     animation: indeterminate 1.5s ease-in-out infinite;
   }
 
-  @keyframes bounce-download {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(3px); }
-  }
-
-  .animate-bounce-download {
-    animation: bounce-download 1s infinite;
-  }
-
-  .animate-pulse-slow {
-    animation: pulse 2s infinite;
-  }
-
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.8; }
-  }
 </style>

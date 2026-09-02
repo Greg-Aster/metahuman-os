@@ -1,45 +1,68 @@
 # Voice Features
 
-MetaHuman provides speech recognition, speech synthesis, voice chat, and profile-owned voice assets. Configure the active provider from the Voice page.
+MetaHuman OS supports microphone transcription, conversational speech synthesis, voice-asset collection, and selected voice-cloning workflows. These are separate stages with separate owners.
 
-## Provider roles
+## Open Voice
 
-- **Whisper** transcribes microphone audio.
-- **Piper** provides local synthesis from installed ONNX voices.
-- **Kokoro** provides local synthesis from built-in or imported voicepacks.
-- **GPT-SoVITS** synthesizes with profile reference audio through its service.
-- **RVC** converts Piper-generated speech with a trained profile model through Applio's maintained command-line interface.
+Select **Voice** in the left sidebar. The page has:
 
-Each role has one lifecycle owner. Whisper and Kokoro use the shared voice-service manager; GPT-SoVITS has its own service lifecycle; RVC conversion runs on demand and has no separate MetaHuman RVC server.
+- **Voice Settings** for speech-to-text, text-to-speech, provider, device, voice, speed, and voice-activity settings.
+- **Voice Clone Training** for supported dataset, reference, export, and training workflows.
 
-## Configure speech
+Save settings before testing a provider.
 
-1. Open **Voice Settings**.
-2. Select a TTS provider and its voice or speaker.
-3. Select the Whisper model and device for STT.
-4. Save, then use the provider test control.
+## Providers and Roles
 
-Provider settings are stored in the active profile's `etc/voice.json`. Prefer the UI or API over editing that file directly because the handler validates values and maintains profile paths.
+- **Whisper** transcribes microphone audio for the Site. The maintained React
+  Native shell may use device-native speech recognition instead.
+- **Piper** synthesizes speech from an installed ONNX voice.
+- **Kokoro** synthesizes speech with installed or imported voicepacks.
+- **GPT-SoVITS** synthesizes speech using its service and reference audio.
+- **RVC** converts Piper-generated speech with a trained profile model.
 
-## Voice chat
+Whisper and Kokoro use the shared voice-service lifecycle. GPT-SoVITS has its own server lifecycle. RVC conversion runs on demand and does not have a second MetaHuman RVC server.
 
-Voice chat records microphone input, sends it to Whisper, submits the transcript through the normal chat path, and plays the resulting TTS audio. If a stage fails, verify it independently:
+## Start and Check Shared Voice Services
 
-1. microphone permission and input level;
-2. Whisper service health;
-3. chat backend health;
-4. selected TTS provider and its required artifacts;
-5. browser audio permission and output device.
+```bash
+./bin/mh voice-server status --all
+./bin/mh voice-server start whisper
+./bin/mh voice-server start kokoro
+./bin/mh voice-server stop --all
+```
 
-## Provider requirements
+The optional `--boot` flag on `voice-server start` starts only services enabled for system boot in `etc/voice-servers.json`.
+
+## Use Voice Chat
+
+In Chat:
+
+- tap the microphone for a single recording and review its transcript before sending;
+- long-press or right-click to toggle continuous conversation listening;
+- enable the speaker control to request TTS for conversational replies.
+
+The complete path is:
+
+1. Site browser microphone capture;
+2. managed Whisper transcription;
+3. normal chat submission and model response;
+4. TTS synthesis;
+5. TTS queue delivery;
+6. authenticated browser playback.
+
+Check each stage independently. HTTP success from a speech provider proves synthesis only; it does not prove queue consumption or audible playback.
+
+On the maintained React Native shell, the input side may use native device
+speech recognition. The normal chat and response paths remain separate from
+that platform-specific transcription step.
+
+## Configure and Test a Provider
 
 ### Piper
 
-Requires an installed Piper binary, an `.onnx` voice model, and its JSON configuration. It is also the base and fallback synthesizer for RVC.
+Piper requires its executable, an `.onnx` model, and the matching model configuration. It is also the base synthesizer used by the RVC conversion path.
 
 ### Kokoro
-
-Requires the Kokoro addon and shared service. The repository supports synthesis and imported voicepack selection, not custom Kokoro training.
 
 ```bash
 ./bin/mh kokoro status
@@ -47,20 +70,65 @@ Requires the Kokoro addon and shared service. The repository supports synthesis 
 ./bin/mh kokoro test --text "Hello"
 ```
 
+MetaHuman OS supports Kokoro synthesis and voice selection. It does not provide a maintained custom Kokoro voicepack trainer.
+
 ### GPT-SoVITS
 
-Requires the addon, a running service, and reference audio for the selected speaker. The Voice page can record, select, and export the reference.
+```bash
+./bin/mh sovits status
+./bin/mh sovits start
+./bin/mh sovits test "Hello"
+```
+
+GPT-SoVITS requires its installed addon, a healthy service, and valid reference audio or speaker settings.
 
 ### RVC
 
-Requires Applio, an RVC model, and Piper. Device and quality settings apply to each conversion process. Use Voice Clone Training or the canonical CLI training command to create models.
-
 ```bash
-./bin/mh rvc status --name default
+./bin/mh rvc status --name MODEL_NAME
+./bin/mh rvc train --name MODEL_NAME --device cuda
 ```
 
-## Runtime data
+RVC requires Applio, Piper, an exported dataset, and enough local compute and storage for training. Choose the appropriate device for the installation.
 
-Voice recordings, models, references, caches, and logs are user/runtime data. They must remain outside maintained source and must not be committed.
+## Voice Samples and Exports
 
-See [Voice Training](../training-personalization/voice-training.md) for dataset and model workflows.
+The profile-owned sample commands are:
+
+```bash
+./bin/mh voice status
+./bin/mh voice list
+./bin/mh voice delete SAMPLE_ID
+./bin/mh voice export
+```
+
+`voice export` prepares a dataset; it is not proof that a model was trained. Use the maintained RVC or GPT-SoVITS workflow described in [Voice Training](/user-guide#voice-training).
+
+## Diagnose Failures
+
+### No transcript
+
+Check browser microphone permission, input device, audio level, and Whisper status.
+
+### Text response but no sound
+
+Check the selected TTS provider, its required artifacts, Queue state, browser autoplay/audio permission, and the active output device.
+
+### Wrong voice
+
+Confirm the active profile, selected provider, selected voice or model, and whether a provider-specific fallback is enabled. Fallbacks should be visible in configuration; do not assume the requested provider produced the audio.
+
+### Training does not start
+
+Confirm that the selected training path is supported, its addon is installed, the dataset exists, and the device has sufficient resources. Kokoro and Piper synthesis support must not be read as built-in custom training support.
+
+## Runtime Data
+
+Recordings, transcripts, datasets, reference audio, model weights, caches, logs, and generated audio are private runtime data. Keep them outside maintained source and do not commit them.
+
+## Related Guides
+
+- [Chat](/user-guide#chat-interface)
+- [Voice Training](/user-guide#voice-training)
+- [AI Training and Audio Data](/user-guide#ai-training)
+- [Troubleshooting](/user-guide#troubleshooting)

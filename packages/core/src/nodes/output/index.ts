@@ -8,7 +8,6 @@ export { MemoryCaptureNode } from './memory-capture.node.js';
 export { ConversationBufferNode } from './conversation-buffer.node.js';
 export { InnerDialogueBufferNode } from './inner-dialogue-buffer.node.js';
 export { SystemBufferNode } from './system-buffer.node.js';
-export { AuditLoggerNode } from './audit-logger.node.js';
 export { StreamWriterNode } from './stream-writer.node.js';
 export { ChatViewNode } from './chat-view.node.js';
 export { TTSNode } from './tts.node.js';

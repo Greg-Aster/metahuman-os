@@ -7,6 +7,8 @@ export interface EpisodicMemory {
   type?: string;
   response?: string;
   path?: string;
+  sourcePaths?: string[];
+  sourceMemoryIds?: string[];
   tags?: string[];
   metadata?: {
     cognitiveMode?: string;
@@ -27,9 +29,10 @@ export interface CuratedMemory {
   flags: string[];
   suitableForTraining: boolean;
   rejectionReason?: string;
-  cognitiveMode: 'dual' | 'agent' | 'emulation';
+  cognitiveMode: 'dual' | 'agent' | 'emulation' | 'environment';
   cognitiveModeSource: 'metadata' | 'legacy-default';
   memoryType: string;
+  sourceMemoryIds: string[];
 }
 
 export interface CuratorItemResult {
@@ -37,6 +40,7 @@ export interface CuratorItemResult {
   disposition?: CuratorDisposition;
   curated?: CuratedMemory;
   originalMemoryPath: string;
+  originalMemoryPaths?: string[];
   memoryId: string;
   error?: string;
 }
@@ -74,7 +78,7 @@ export function parseStoredCuratedMemory(value: unknown, source = 'Curator recor
   if (Number.isNaN(Date.parse(curatedAt))) throw new Error(`${source} has invalid curatedAt`);
 
   const mode = record.cognitiveMode;
-  if (mode !== undefined && mode !== 'dual' && mode !== 'agent' && mode !== 'emulation') {
+  if (mode !== undefined && mode !== 'dual' && mode !== 'agent' && mode !== 'emulation' && mode !== 'environment') {
     throw new Error(`${source} has invalid cognitiveMode`);
   }
   const modeSource = record.cognitiveModeSource;
@@ -105,7 +109,19 @@ export function parseStoredCuratedMemory(value: unknown, source = 'Curator recor
     cognitiveMode: mode ?? 'dual',
     cognitiveModeSource: modeSource ?? 'legacy-default',
     memoryType: storedString(record, 'memoryType', source),
+    sourceMemoryIds: Array.isArray(record.sourceMemoryIds)
+      && record.sourceMemoryIds.length > 0
+      && record.sourceMemoryIds.every(id => typeof id === 'string' && id.trim())
+      ? (record.sourceMemoryIds as string[]).map(id => id.trim())
+      : [storedString(record, 'id', source)],
   };
+}
+
+export function sourcePathsForResult(result: CuratorItemResult): string[] {
+  const candidates = result.originalMemoryPaths?.length
+    ? result.originalMemoryPaths
+    : [result.originalMemoryPath];
+  return [...new Set(candidates.filter(path => typeof path === 'string' && path.trim()))];
 }
 
 export function isTrainingCuratedMemory(memory: CuratedMemory): memory is TrainingCuratedMemory {

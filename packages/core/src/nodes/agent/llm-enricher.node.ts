@@ -6,6 +6,7 @@
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { extractMemoryContent } from '../../memory-content-filter.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 const DEFAULT_SYSTEM_PROMPT = 'You are a memory curator. Extract structured metadata from memory content.';
@@ -20,8 +21,64 @@ Return a JSON object with:
 
 Format: {"tags": [...], "entities": [...]}`;
 
-const execute: NodeExecutor = async (inputs, context, properties) => {
-  const memory = inputs.memory || inputs[0];
+export interface OrganizerAnalysis {
+  tags: string[];
+  entities: string[];
+}
+
+const GENERIC_TAGS = new Set(['ingested', 'inbox', 'ai', 'curated', 'audio', 'transcript']);
+const MAX_VALUES = 50;
+const MAX_VALUE_LENGTH = 100;
+
+function normalizedValues(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || !value.every(item => typeof item === 'string')) {
+    throw new Error(`Organizer LLM ${label} must be an array of strings`);
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of value) {
+    const normalized = item.trim().slice(0, MAX_VALUE_LENGTH);
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+    if (result.length >= MAX_VALUES) break;
+  }
+  return result;
+}
+
+export function parseOrganizerAnalysis(content: string): OrganizerAnalysis {
+  const withoutFence = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  const firstBrace = withoutFence.indexOf('{');
+  const lastBrace = withoutFence.lastIndexOf('}');
+  if (firstBrace < 0 || lastBrace <= firstBrace) {
+    throw new Error('Organizer LLM response did not contain a JSON object');
+  }
+  const parsed = JSON.parse(withoutFence.slice(firstBrace, lastBrace + 1)) as Record<string, unknown>;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Organizer LLM response must be a JSON object');
+  }
+  return {
+    tags: normalizedValues(parsed.tags, 'tags'),
+    entities: normalizedValues(parsed.entities, 'entities'),
+  };
+}
+
+function mergeValues(existing: unknown, additions: string[]): string[] {
+  const base = Array.isArray(existing) ? existing.filter(value => typeof value === 'string') : [];
+  return normalizedValues([...base, ...additions], 'values');
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('Organizer enrichment cancelled', 'AbortError');
+}
+
+export async function enrichOrganizerMemory(
+  memory: Record<string, any>,
+  context: Record<string, any>,
+  properties: Record<string, any> = {},
+  call: typeof callLLM = callLLM,
+): Promise<Record<string, any>> {
   const username = context.userId || context.username;
   const systemPrompt = properties?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const promptTemplate = properties?.promptTemplate ?? DEFAULT_PROMPT_TEMPLATE;
@@ -30,69 +87,85 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const repeatPenalty = properties?.repeatPenalty ?? 1.15;
   const role = properties?.role ?? 'curator';
 
-  if (!memory || !memory.content) {
-    return {
-      success: false,
-      error: 'Memory content required',
-    };
+  if (!memory || typeof memory !== 'object' || typeof memory.content !== 'string') {
+    throw new Error('Organizer memory content is required');
+  }
+  if (typeof username !== 'string' || !username.trim()) {
+    throw new Error('Organizer enrichment requires a resolved user');
   }
 
-  try {
-    const prompt = renderPromptTemplate(promptTemplate, { content: memory.content, memory });
-
-    const response = await callLLM({
-      role,
-      messages: [
-        {
-          role: 'system',
-          content: systemPrompt,
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      userId: username,
-      cognitiveMode: context.cognitiveMode || 'dual',
-      options: {
-        maxTokens,
-        repeatPenalty,
-        temperature,
-      },
-      keepAlive: 0, // Unload model immediately - background agent shouldn't hog VRAM
-    });
-
-    let enrichment = { tags: [], entities: [] };
-    try {
-      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        enrichment = JSON.parse(jsonMatch[0]);
-      }
-    } catch (parseError) {
-      console.warn('[LLMEnricher] Failed to parse JSON:', parseError);
-    }
-
+  const timestamp = typeof context.organizerTimestamp === 'string'
+    ? context.organizerTimestamp
+    : new Date().toISOString();
+  const extractedContent = extractMemoryContent(memory, 'all');
+  const storedResponse = typeof memory.response === 'string' ? memory.response.trim() : '';
+  const memoryContent = extractedContent && storedResponse && !extractedContent.includes(storedResponse)
+    ? `${extractedContent}\n\nAssistant: ${storedResponse}`
+    : extractedContent;
+  if (!memoryContent) {
     return {
-      success: true,
       memory: {
         ...memory,
-        tags: enrichment.tags || [],
-        entities: enrichment.entities || [],
+        tags: mergeValues(memory.tags, []),
+        entities: mergeValues(memory.entities, []),
         metadata: {
           ...memory.metadata,
           processed: true,
-          processedAt: new Date().toISOString(),
+          processedAt: timestamp,
+          organizerStatus: 'no-content',
         },
       },
-    };
-  } catch (error) {
-    console.error('[LLMEnricher] Error:', error);
-    return {
-      success: false,
-      error: (error as Error).message,
-      memory,
+      success: true,
+      outcome: 'skipped',
     };
   }
+
+  throwIfAborted(context.abortSignal);
+  const prompt = renderPromptTemplate(promptTemplate, { content: memoryContent, memory });
+  const response = await call({
+    role,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: prompt },
+    ],
+    userId: username,
+    cognitiveMode: context.cognitiveMode || 'dual',
+    options: { maxTokens, repeatPenalty, temperature, format: 'json' },
+    keepAlive: 0,
+  });
+  throwIfAborted(context.abortSignal);
+
+  const analysis = parseOrganizerAnalysis(response.content);
+  const reprocess = context.organizerReprocess === true;
+  const baseTags = reprocess
+    ? (Array.isArray(memory.tags) ? memory.tags.filter((tag: unknown) =>
+      typeof tag === 'string' && GENERIC_TAGS.has(tag.toLowerCase())) : [])
+    : memory.tags;
+  const tags = mergeValues(baseTags, analysis.tags);
+  const entities = mergeValues(reprocess ? [] : memory.entities, analysis.entities);
+  const outcome = analysis.tags.length > 0 || analysis.entities.length > 0 ? 'updated' : 'skipped';
+
+  return {
+    memory: {
+      ...memory,
+      tags,
+      entities,
+      metadata: {
+        ...memory.metadata,
+        processed: true,
+        processedAt: timestamp,
+        model: response.modelId,
+        organizerStatus: outcome,
+      },
+    },
+    success: true,
+    outcome,
+    analysis,
+  };
+}
+
+const execute: NodeExecutor = async (inputs, context, properties) => {
+  return enrichOrganizerMemory(inputs.memory, context, properties);
 };
 
 export const LLMEnricherNode: NodeDefinition = defineNode({
@@ -105,6 +178,8 @@ export const LLMEnricherNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'memory', type: 'memory', description: 'Enriched memory with tags/entities' },
     { name: 'success', type: 'boolean' },
+    { name: 'outcome', type: 'string', description: 'Updated or skipped' },
+    { name: 'analysis', type: 'object', description: 'Validated tags and entities', optional: true },
   ],
   properties: {
     systemPrompt: DEFAULT_SYSTEM_PROMPT,

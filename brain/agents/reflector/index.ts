@@ -2,11 +2,11 @@
  * Reflector Agent — Module Definition
  *
  * Exports the AgentModule for registration with agent-runtime.
- * This is the entry point for in-process execution on mobile.
+ * This is the Agent Runtime registration entry point.
  */
 
-import type { AgentModule, AgentMeta } from '@metahuman/agent-runtime';
-import { run } from './core.js';
+import type { AgentModule, AgentMeta } from '@metahuman/agent-runtime'
+import { run } from './core.js'
 
 /**
  * Agent metadata
@@ -14,12 +14,11 @@ import { run } from './core.js';
 export const meta: AgentMeta = {
   id: 'reflector',
   name: 'Reflector',
-  description: 'Generates internal reflections from associative memory chains',
+  description: 'Generates grounded, persona-aware reflections from profile memory',
   usesLLM: true,
   priority: 'low',
-  defaultInterval: 600, // 10 minutes
   tags: ['reflection', 'llm', 'background', 'inner-dialogue'],
-};
+}
 
 /**
  * Complete agent module for registration
@@ -27,14 +26,15 @@ export const meta: AgentMeta = {
 const agent: AgentModule = {
   meta,
   run,
-};
+}
 
-export default agent;
+export default agent
 
 // Re-export core functions for direct usage
 export {
-  runCycle,
-  generateUserReflection,
+  evaluateReflectorGraph,
+  parseReflectorArgs,
+  runReflector,
   type ReflectorOptions,
-  type ReflectorResult,
-} from './core.js';
+  type ReflectorOutcome,
+} from './core.js'

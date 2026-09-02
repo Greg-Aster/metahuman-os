@@ -1,136 +1,116 @@
 # Configuration Ownership
 
-MetaHuman configuration has two owners:
+MetaHuman configuration has machine and profile owners:
 
-- `etc/` contains machine-wide service configuration and templates used when a
-  profile is created.
-- `profiles/<username>/etc/` contains settings owned by one authenticated
-  profile.
+- root `etc/` contains machine-wide service policy and sanitized seeds used
+  when profiles are initialized;
+- a profile's logical `etc/` area contains configuration owned by that
+  authenticated profile. Default internal profiles commonly resolve below
+  `profiles/USERNAME/etc/`, while custom or encrypted profiles may not.
 
 Use the web Settings panels and Trigger Manager when a setting is exposed there.
-Those interfaces validate and apply changes through Core. Edit JSON directly
-only while the system is stopped, keep the existing schema, and do not copy
-credentials between profiles.
+Those interfaces validate changes through Core. Edit JSON directly only while
+the owning process is stopped, preserve its schema, and never copy credentials
+between profiles.
 
 ## Machine-wide configuration
 
-The main system-owned files are:
+Common system-owned files include:
 
-| File | Owner |
-| --- | --- |
-| `active-operator.json` | Robot Operator mode state |
-| `agents.json` | Trigger Manager registrations for finite work |
-| `services.json` | Persistent service boot and restart policy |
-| `queue.json` | Work Coordinator lane concurrency |
-| `llm-backend.json` | Active local inference backend |
-| `models.json` | Initial model registry for new profiles |
-| `voice-servers.json` | Shared voice-service ports and lifecycle |
-| `cloudflare.json` | Cloudflare tunnel settings |
-| `deployment.json` | Remote provider deployment defaults |
-| `logging.json` | System logging policy |
-| `tool-executor.json` | External tool-executor policy |
+- `active-operator.json` — Active Operator mode and policy state;
+- `agents.json` — Trigger Manager registrations for finite work;
+- `services.json` — persistent-service boot and restart policy;
+- `queue.json` — Work Coordinator lane concurrency;
+- `llm-backend.json` — deployment backend selection and lifecycle settings;
+- `models.json` — initial model-registry seed for new profiles;
+- `voice-servers.json` — shared voice-service ports and lifecycle;
+- `cloudflare.json` — Cloudflare tunnel settings;
+- `deployment.json` — deployment mode, storage, and provider endpoints;
+- `runtime.json` — the machine-wide headless state flag;
+- `logging.json` — system logging policy; and
+- `tool-executor.json` — external tool-executor policy.
 
-Training defaults live in `training.json`, `training-local.json`, and
-`fine-tune-config.json`. A training run reads the authenticated profile's
-`training.json` when present. RunPod credentials belong in the authenticated
-profile's `runpod.json`; do not commit real credentials.
+Training seeds live in `training.json`, `training-local.json`, and
+`fine-tune-config.json`. The Training Wizard reads and writes the authenticated
+profile's training configuration. RunPod credentials likewise belong to the
+authenticated profile's `runpod.json`; never commit real credentials.
 
 `agents.json` and `services.json` are deliberately separate. Trigger Manager
-owns schedules and event admission for bounded work. The service lifecycle owner
-controls long-running processes. Do not register the same responsibility in
-both files.
+owns schedule and event admission for bounded work. The service lifecycle owner
+controls long-running processes. Do not register one responsibility in both.
 
 ## Profile configuration
 
-New profiles receive their own configuration under
-`profiles/<username>/etc/`. Common files include:
+Common logical profile files include:
 
-| File | Responsibility |
-| --- | --- |
-| `models.json` | Provider and model assignments by role |
-| `runtime.json` | Headless state and graph-runtime selection |
-| `operator.json` | Operator scratchpad, execution, and Big Brother settings |
-| `chat-settings.json` | Context, history, temperature, and buffer limits |
-| `training.json` | Dataset and training parameters |
-| `voice.json` | Profile TTS, STT, cache, and voice-training settings |
-| `audio.json` | Audio ingestion and transcription defaults |
-| `autonomy.json` | Permitted autonomous actions and approvals |
-| `agency.json` | Desire generation, risk, and execution limits |
-| `agents.json` | Profile-specific Trigger Manager overrides |
-| `boredom.json` | Reflection presentation and compatibility settings |
-| `sleep.json` | Sleep workflow schedule and limits |
-| `curiosity.json` | User-facing and private curiosity controls |
-| `trust-coupling.json` | Cognitive-mode to trust-level mapping |
-| `ingestor.json` | Inbox ingestion settings |
-| `logging.json` | Profile logging preferences |
+- `models.json` — provider and model assignments by role;
+- `runtime.json` — cognitive graph-runtime selection through
+  `cognitive.useNodePipeline`;
+- `operator.json` — Operator scratchpad, execution, and Big Brother settings;
+- `chat-settings.json` — context, history, temperature, and buffer limits;
+- `training.json` — dataset and training parameters;
+- `runpod.json` — profile-owned remote-training credentials and settings;
+- `voice.json` — profile TTS, STT, cache, and voice-training settings;
+- `autonomy.json` — permitted autonomous actions and approvals;
+- `agency.json` — desire generation, risk, and execution limits;
+- `agents.json` — profile-specific Trigger Manager overrides;
+- `boredom.json` — reflection presentation and compatibility settings;
+- `sleep.json` — sleep workflow schedule and limits;
+- `curiosity.json` — user-facing and private curiosity controls;
+- `trust-coupling.json` — cognitive-mode to trust-level mapping; and
+- `logging.json` — profile logging preferences.
 
-Profile creation copies supported templates and generates missing required
-files. Core's configuration owner resolves the authenticated profile; business
-logic should not assemble `profiles/<username>/etc` paths independently.
+Profile creation copies supported seeds and generates required state. Core's
+configuration and storage owners resolve the authenticated profile; business
+logic must not construct a `profiles/USERNAME/etc` path independently.
 
-## Runtime and cognitive graphs
+## Runtime state and cognitive graphs
 
-`runtime.json` records headless mode and the active graph-runtime choice:
+The same filename has two distinct owners:
 
-```json
-{
-  "headless": false,
-  "lastChangedBy": "local",
-  "changedAt": "2026-08-24T00:00:00.000Z",
-  "claimedBy": null,
-  "cognitive": {
-    "useNodePipeline": true
-  }
-}
-```
+- root `etc/runtime.json` records only machine headless state for the maintained
+  routed UI/API;
+- profile `etc/runtime.json` records cognitive graph-runtime selection.
 
-Cognitive behavior is defined by the registered graphs for Dual, Agent,
-Emulation, and Environment modes. There is no separate cognitive-layer
-configuration stack and no legacy Operator V1/V2 switch.
+Cognitive behavior is defined by the registered Dual, Agent, Emulation, and
+Environment graphs. There is no legacy Operator V1/V2 switch. See
+[Headless Runtime Mode](/user-guide#headless-mode) for the current state-only
+contract and [Architecture](/user-guide#architecture) for graph ownership.
 
-See [Headless Runtime Mode](../advanced-features/headless-mode.md) for lifecycle
-behavior and [Architecture](../advanced-features/architecture.md) for graph
-ownership.
+## Models, training, and voice
 
-## Models and training
+Profile `models.json` assigns public model roles to provider/model records. Use
+Backend Settings to change assignments and load artifacts; do not hand-edit
+generated adapter state.
 
-`models.json` assigns public model roles to provider/model records. Use Backend
-Settings to change assignments and load an artifact. Do not hand-edit generated
-adapter state.
-
-Training has one target artifact per run:
-
-- an Ollama-targeted run produces a merged GGUF-backed model;
-- a remote LoRA vLLM-targeted run preserves one safetensors adapter.
-
-See [LLM Backend](llm-backend.md) and [AI Training](../training-personalization/ai-training.md).
-
-## Voice configuration
+Each training run has one target artifact: an Ollama-targeted run produces a
+merged GGUF-backed model, while a vLLM-targeted remote LoRA run preserves one
+safetensors adapter. See [AI Training](/user-guide#ai-training).
 
 Profile `voice.json` selects Kokoro, Piper, GPT-SoVITS, or RVC and stores
-profile-specific voice, cache, and training values. Machine ports, commands, and
-auto-start policy belong in `etc/voice-servers.json`. This separation prevents
-one profile from redefining a shared process.
-
-See [Voice Features](../using-metahuman/voice-features.md).
+profile-specific values. Machine ports, commands, and auto-start policy remain
+in root `etc/voice-servers.json`. See [Voice Features](/user-guide#voice-features).
 
 ## Environment variables
 
-The root `.env` is local and must not be committed. Current system-state flags
-include:
+The root `.env` is local and must not be committed. Supported configuration
+inputs include:
 
-- `HIGH_SECURITY=true`: restricts selectable cognitive modes to Emulation.
-- `WETWARE_DECEASED=true`: disables Dual mode.
-- `HEADLESS_RUNTIME=true`: starts in headless operation where supported by the
-  startup owner.
+- `HIGH_SECURITY=true` — restrict selectable cognitive modes to Emulation;
+- `WETWARE_DECEASED=true` — disable Dual mode;
+- `USE_NODE_PIPELINE` — select the maintained node-pipeline default;
+- `MH_EXPOSURE_MODE`, `MH_ALLOWED_HOSTS`, and `MH_ALLOWED_ORIGINS` — define
+  network exposure and origin policy;
+- `DEPLOYMENT_MODE` — select the deployment-mode contract; and
+- `METAHUMAN_ROOT` — identify the installation root to supported entrypoints.
 
-Provider tokens and credentials also remain local. Prefer the corresponding
-Settings interface or `.env.example` naming; never add live values to examples.
+Provider tokens and credentials also remain local. Use current `.env.example`
+names or the corresponding Settings interface; never add live values to docs.
 
 ## Recovery
 
-Core writes supported profile JSON atomically and retains bounded backups in a
-local `.backups/` directory. If a file becomes invalid, stop the process that
-owns it and restore through the Core configuration recovery utilities or the
-latest valid backup. Do not paper over invalid configuration with a second file
-or an undocumented fallback.
+Only configuration owners that use Core's safe JSON writer receive its atomic
+write and bounded `.backups/` behavior. Do not assume that every JSON file under
+`etc/` has that recovery contract. If a file becomes invalid, stop its owning
+process and use that owner's documented recovery path or a verified valid
+backup. Do not hide invalid state behind a second file or fallback.

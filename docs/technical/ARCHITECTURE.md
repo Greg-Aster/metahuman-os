@@ -9,12 +9,13 @@ owns application behavior; Brain owns asynchronous cognitive work.
 | --- | --- |
 | Web interface and Astro transport | `apps/site` |
 | React Native interface and bundled HTTP host | `apps/react-native` |
-| Domain services, API contracts, graphs, queues, storage, and providers | `packages/core` |
+| Domain services, API contracts, graphs, queues, storage, providers, and persistent-process supervision | `packages/core` |
 | Command-line interface | `packages/cli` |
-| Managed agent process runtime | `packages/agent-runtime` |
+| Shared agent execution interfaces and runtime adapters | `packages/agent-runtime` |
+| Persistent service and agent-process lifecycle | Agent Monitor and `packages/core/src/agent-process-runner.ts` |
 | Lightweight local model process | `packages/local-model-service` |
-| Agents, workflows, and model training | `brain` |
-| Operator defaults and deployment configuration | `etc` |
+| Finite agents, persistent service entrypoints, and model training | `brain` |
+| Operator defaults, deployment configuration, and editable graph composition | `etc` |
 | Policy checks and maintained automation | `scripts`, `bin` |
 
 ## Request Flow
@@ -36,7 +37,7 @@ Long-running work follows a different path:
 ```text
 Core service or API handler
   -> Work Coordinator queue
-  -> registered Brain agent or workflow
+  -> registered finite agent or Core-owned workflow handler
   -> durable result and audit event
 ```
 
@@ -58,6 +59,12 @@ streams typed events to clients.
 
 The model registry assigns model roles. Core provider and backend services own
 Ollama, vLLM, remote-server, RunPod, and Hugging Face integration.
+
+Multimodal messages use the same role resolver, backend selection, and provider
+bridge as text messages. Image content does not select a parallel vision backend.
+The router may use the existing orchestrator-role fallback when the requested
+role explicitly lacks image capability; the final provider/model path must
+preserve image input or fail explicitly.
 
 Training has one curation path and one artifact per requested target:
 
@@ -88,4 +95,4 @@ owner profile, or commit generated runtime content.
 
 See [MAINTAINED_SURFACE.md](MAINTAINED_SURFACE.md) for scope,
 [AUDIT_PROTOCOL.md](AUDIT_PROTOCOL.md) for review procedure, and
-[REFACTOR_BLUEPRINT.md](REFACTOR_BLUEPRINT.md) for the active refactor.
+[REFACTOR_BLUEPRINT.md](REFACTOR_BLUEPRINT.md) for the active refactor protocol.

@@ -23,7 +23,6 @@ import {
   acquireLock,
   getTargetUser,
   withUserContext,
-  captureEvent,
   runGraph,
   cognitiveGraphPath,
   getCachedCatalog,
@@ -40,7 +39,8 @@ import {
   saveDesire,
   saveDesireManifest,
   isAgencyEnabled,
-  submitAgencyConversationEntry,
+  submitSystemEvent,
+  submitInnerReflection,
 } from '@metahuman/core';
 import {
   needsClarifyingQuestions,
@@ -370,27 +370,27 @@ async function processDesire(
         await moveDesire(rejectedDesire, desire.status, 'rejected', username);
 
         // Log to inner dialogue so user can see why it was rejected
-        await captureEvent(
+        await submitInnerReflection(
+          username,
           `I assessed "${desire.title}" and determined it's not feasible: ${feasibility.reasoning}${feasibility.blockers?.length ? ` Blockers: ${feasibility.blockers.join(', ')}` : ''}`,
           {
-            type: 'inner_dialogue',
+            type: 'desire_feasibility_review',
             tags: ['agency', 'feasibility', 'rejected', 'inner'],
-            metadata: {
-              source: 'desire-planner',
-              desireId: desire.id,
-              feasibility: {
-                feasible: feasibility.feasible,
-                confidence: feasibility.confidence,
-                reasoning: feasibility.reasoning,
-                blockers: feasibility.blockers ?? [],
-                suggestedApproach: feasibility.suggestedApproach ?? null,
-              },
+            source: 'desire-planner',
+            desireId: desire.id,
+            feasibility: {
+              feasible: feasibility.feasible,
+              confidence: feasibility.confidence,
+              reasoning: feasibility.reasoning,
+              blockers: feasibility.blockers ?? [],
+              suggestedApproach: feasibility.suggestedApproach ?? null,
             },
           }
         );
 
-        // Also notify user in main chat so they can see the rejection and respond
-        await submitAgencyConversationEntry(
+        // Agency state changes are system events. Conversational text is owned
+        // by a cognitive graph and must not be injected into its rolling buffer.
+        await submitSystemEvent(
           username,
           `❌ **Desire Not Feasible:** "${desire.title}"\n\n` +
           `**Reason:** ${feasibility.reasoning}\n\n` +
@@ -398,6 +398,7 @@ async function processDesire(
           `_You can provide feedback to clarify or adjust this desire, or create a new one._`,
           {
             dialogueSource: 'agency-system',
+            source: 'agency',
             displayColor: '#ef4444',
             type: 'desire_rejected',
             desireId: desire.id,
@@ -449,16 +450,17 @@ async function processDesire(
       // Save desire with questions
       await saveDesireManifest(updatedDesire, username);
 
-      // Post questions to chat for user to answer
+      // Publish the questions with Agency state without fabricating a chat turn.
       const questionsList = questions
         .map((q, i) => `${i + 1}. ${q.text}${q.required ? ' *' : ''}`)
         .join('\n');
 
-      await submitAgencyConversationEntry(
+      await submitSystemEvent(
         username,
         `I'm working on planning "${desire.title}" and would like to ask a few questions to make sure I understand what you're looking for:\n\n${questionsList}\n\n_Please answer these questions to help me create a better plan._`,
         {
           type: 'clarifying_questions',
+          source: 'agency',
           desireId: desire.id,
           desireTitle: desire.title,
           questions: questions.map((q) => ({ id: q.id, text: q.text, type: q.type, required: q.required })),
@@ -572,14 +574,15 @@ async function processDesire(
       // Extract rejection reason if available
       const reviewReason = verdictOutput.reasoning || verdictOutput.concerns?.join(', ') || 'Plan did not pass safety/alignment review';
 
-      // Notify user in main chat
-      await submitAgencyConversationEntry(
+      // Publish the rejected plan as an Agency system event.
+      await submitSystemEvent(
         username,
         `❌ **Plan Rejected:** "${desire.title}"\n\n` +
         `**Reason:** ${reviewReason}\n\n` +
         `_The plan was reviewed but did not pass alignment or safety checks. You can provide feedback to adjust the approach._`,
         {
           dialogueSource: 'agency-system',
+          source: 'agency',
           displayColor: '#ef4444',
           type: 'plan_rejected',
           desireId: desire.id,
@@ -785,19 +788,18 @@ export async function processPlanningDesires(
     if (rejected > 0) parts.push(`${rejected} rejected by self-review`);
     if (failed > 0) parts.push(`${failed} failed to plan`);
 
-    await captureEvent(
+    await submitInnerReflection(
+      username,
       `I reviewed ${batch.length} desire plan(s): ${parts.join(', ')}.`,
       {
-        type: 'inner_dialogue',
+        type: 'desire_plan_review',
         tags: ['agency', 'planning', 'review', 'inner'],
-        metadata: {
-          source: 'desire-planner',
-          planned,
-          approved,
-          needsApproval,
-          rejected,
-          failed,
-        },
+        source: 'desire-planner',
+        planned,
+        approved,
+        needsApproval,
+        rejected,
+        failed,
       }
     );
   }

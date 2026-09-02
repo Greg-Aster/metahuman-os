@@ -4,10 +4,9 @@
  */
 
 import fs from 'node:fs';
-import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { audit } from '../../audit.js';
-import { getProfilePaths } from '../../paths.js';
+import { listEpisodicFiles } from '../../memory.js';
 
 interface Memory {
   id: string;
@@ -29,10 +28,22 @@ export function isGeneratedInnerMemory(type: string | undefined): boolean {
     || type === 'inner_dialogue';
 }
 
+function nonNegativeInteger(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : fallback;
+}
+
+function positiveNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : fallback;
+}
+
 const execute: NodeExecutor = async (_inputs, context, properties) => {
   const username = context.userId || context.username;
-  const sampleSize = properties?.sampleSize || 15;
-  const decayDays = properties?.decayDays || 227;
+  const sampleSize = nonNegativeInteger(properties?.sampleSize, 15);
+  const decayDays = positiveNumber(properties?.decayDays, 227);
 
   if (!username) {
     throw new Error('Dreamer memory curator requires an authenticated username');
@@ -50,26 +61,7 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
   });
 
   try {
-    const profilePaths = getProfilePaths(username);
-    const episodicDir = profilePaths.episodic;
-
-    function walkDir(dir: string): string[] {
-      const files: string[] = [];
-      if (!fs.existsSync(dir)) return files;
-
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          files.push(...walkDir(fullPath));
-        } else if (entry.isFile() && entry.name.endsWith('.json')) {
-          files.push(fullPath);
-        }
-      }
-      return files;
-    }
-
-    const episodicFiles = walkDir(episodicDir);
+    const episodicFiles = listEpisodicFiles();
     let invalidMemoryCount = 0;
 
     if (episodicFiles.length === 0) {
@@ -77,9 +69,22 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
     }
 
     for (const filepath of episodicFiles) {
+      if (context.signal?.aborted) {
+        throw new DOMException('Dream memory curation cancelled', 'AbortError');
+      }
       try {
         const content = fs.readFileSync(filepath, 'utf-8');
         const memory = JSON.parse(content) as Memory;
+
+        if (
+          typeof memory.id !== 'string'
+          || !memory.id.trim()
+          || typeof memory.content !== 'string'
+          || !memory.content.trim()
+        ) {
+          invalidMemoryCount++;
+          continue;
+        }
 
         const type = memory.type || memory.metadata?.type;
         if (isGeneratedInnerMemory(type)) continue;
@@ -90,7 +95,7 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
           continue;
         }
         const ageInMs = now.getTime() - memoryDate.getTime();
-        const ageInDays = Math.floor(ageInMs / (1000 * 60 * 60 * 24));
+        const ageInDays = Math.max(0, Math.floor(ageInMs / (1000 * 60 * 60 * 24)));
 
         const weight = Math.exp(-ageInDays / decayDays);
         memories.push({ ...memory, weight, age: ageInDays });
@@ -118,6 +123,9 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
     const tempMemories = [...memories];
 
     while (curated.length < sampleSize && tempMemories.length > 0) {
+      if (context.signal?.aborted) {
+        throw new DOMException('Dream memory curation cancelled', 'AbortError');
+      }
       const totalWeight = tempMemories.reduce((sum, m) => sum + m.weight, 0);
       let random = Math.random() * totalWeight;
 
@@ -135,7 +143,7 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
     const ages = curated.map(m => {
       const memDate = new Date(m.timestamp);
       const ageMs = now.getTime() - memDate.getTime();
-      return Math.floor(ageMs / (1000 * 60 * 60 * 24));
+      return Math.max(0, Math.floor(ageMs / (1000 * 60 * 60 * 24)));
     });
     const avgAgeDays = ages.length > 0 ? Math.floor(ages.reduce((a, b) => a + b, 0) / ages.length) : 0;
     const oldestAgeDays = ages.length > 0 ? Math.max(...ages) : 0;

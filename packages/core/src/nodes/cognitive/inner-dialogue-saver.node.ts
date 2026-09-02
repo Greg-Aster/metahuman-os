@@ -1,88 +1,178 @@
 /**
- * Inner Dialogue Saver Node
- * Saves content to episodic memory as inner_dialogue type
+ * Inner Dialogue Memory Saver Node
+ *
+ * Saves exact entries emitted by the Inner Dialogue Buffer to long-term
+ * Persona Memory. Buffer retention and long-term memory remain independent.
  */
 
+import type { ConversationMessage } from '../../conversation-buffer.js';
+import { captureEventWithDetails, type CaptureResult } from '../../memory.js';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { captureEventWithDetails } from '../../memory.js';
 
-const execute: NodeExecutor = async (inputs, _context, properties) => {
-  const data = inputs.data ?? inputs[0];
-  const tags = properties?.tags ?? ['inner'];
+const INNER_ROLES = new Set<ConversationMessage['role']>([
+  'thought',
+  'reflection',
+  'dream',
+  'daydream',
+  'reasoning',
+]);
 
-  if (!data) {
+function stringList(value: unknown, fallback: string[] = []): string[] {
+  const values = Array.isArray(value) ? value : typeof value === 'string' ? [value] : fallback;
+  return Array.from(new Set(values
+    .filter((item): item is string => typeof item === 'string' && Boolean(item.trim()))
+    .map(item => item.trim())));
+}
+
+function timestampForEntry(entry: ConversationMessage): string {
+  const raw = entry.timestamp ?? entry.meta?.timestamp;
+  const parsed = typeof raw === 'number'
+    ? raw
+    : typeof raw === 'string'
+      ? Date.parse(raw)
+      : Date.now();
+  if (!Number.isFinite(parsed)) throw new Error('Inner-dialogue memory entry has an invalid timestamp');
+  return new Date(parsed).toISOString();
+}
+
+function normalizeEntries(inputs: Record<string, any>): ConversationMessage[] {
+  const rawEntries = Array.isArray(inputs.entries)
+    ? inputs.entries
+    : inputs.entry && typeof inputs.entry === 'object'
+      ? [inputs.entry]
+      : [];
+
+  return rawEntries.map((rawEntry, index) => {
+    if (!rawEntry || typeof rawEntry !== 'object') {
+      throw new Error(`Inner-dialogue memory entry ${index + 1} must be an object`);
+    }
+    const role = rawEntry.role as ConversationMessage['role'];
+    const content = typeof rawEntry.content === 'string' ? rawEntry.content.trim() : '';
+    if (!INNER_ROLES.has(role) || !content) {
+      throw new Error(`Inner-dialogue memory entry ${index + 1} must contain a typed inner-dialogue message`);
+    }
     return {
-      success: false,
-      error: 'No data provided',
+      role,
+      content,
+      timestamp: rawEntry.timestamp,
+      meta: rawEntry.meta && typeof rawEntry.meta === 'object' ? { ...rawEntry.meta } : {},
     };
+  });
+}
+
+const execute: NodeExecutor = async (inputs, context, properties = {}) => {
+  const entries = normalizeEntries(inputs);
+  if (entries.length === 0) {
+    return { success: false, saved: false, savedCount: 0, entries: [], text: '', eventIds: [], eventPaths: [], results: [], reason: 'No admitted inner-dialogue entries' };
   }
 
-  try {
-    // Format content based on type
-    let content: string;
-    if (typeof data === 'string') {
-      content = data;
-    } else if (typeof data === 'object') {
-      // Extract meaningful content from object
-      if (data.content) {
-        content = data.content;
-      } else if (data.summary) {
-        content = data.summary;
-      } else if (data.verdict) {
-        content = `Verdict: ${data.verdict}`;
-        if (data.reason) content += `\nReason: ${data.reason}`;
-      } else {
-        content = JSON.stringify(data, null, 2);
-      }
-    } else {
-      content = String(data);
-    }
+  const username = typeof context.username === 'string'
+    ? context.username.trim()
+    : typeof context.userId === 'string'
+      ? context.userId.trim()
+      : '';
+  if (!username || username === 'anonymous') {
+    throw new Error('Inner-dialogue memory saving requires an authenticated username');
+  }
 
-    const result = captureEventWithDetails(content, {
-      type: 'inner_dialogue',
-      tags: Array.isArray(tags) ? tags : [tags],
+  const memoryWritesAllowed = context.recordPersonaMemory ?? context.allowMemoryWrites ?? false;
+  if (memoryWritesAllowed !== true) {
+    return { success: false, saved: false, savedCount: 0, entries: [], text: '', eventIds: [], eventPaths: [], results: [], reason: 'Persona Memory writes disabled' };
+  }
+
+  const configuredRoles = stringList(properties.roles);
+  const selectedEntries = configuredRoles.length > 0
+    ? entries.filter(entry => configuredRoles.includes(entry.role))
+    : entries;
+  if (selectedEntries.length === 0) {
+    return { success: true, saved: true, savedCount: 0, entries: [], text: '', eventIds: [], eventPaths: [], results: [], filteredCount: entries.length };
+  }
+
+  const propertyTags = stringList(properties.tags, ['inner']);
+  const results: CaptureResult[] = selectedEntries.map(entry => {
+    const tags = stringList(entry.meta?.tags, propertyTags);
+    const idempotencyKey = typeof entry.meta?.idempotencyKey === 'string'
+      ? entry.meta.idempotencyKey.trim()
+      : '';
+    const type = entry.role === 'dream'
+      ? 'dream'
+      : entry.role === 'daydream'
+        ? 'daydream'
+        : 'inner_dialogue';
+    return captureEventWithDetails(entry.content, {
+      type,
+      tags,
+      importance: typeof entry.meta?.importance === 'number' ? entry.meta.importance : undefined,
+      links: Array.isArray(entry.meta?.links) ? entry.meta.links : undefined,
+      idempotencyKey: idempotencyKey || undefined,
+      timestamp: timestampForEntry(entry),
       metadata: {
-        source: 'cognitive-graph',
+        ...entry.meta,
+        role: entry.role,
+        source: entry.meta?.source || (entry.role === 'thought' ? 'user' : 'agent'),
+        sessionId: entry.meta?.sessionId || context.sessionId,
         nodeType: 'inner_dialogue_saver',
+        skipDedup: true,
       },
     });
+  });
 
-    return {
-      success: true,
-      eventId: result.eventId,
-      content: content.substring(0, 100) + (content.length > 100 ? '...' : ''),
-    };
-  } catch (error) {
-    console.error('[InnerDialogueSaver] Error:', error);
-    return {
-      success: false,
-      error: (error as Error).message,
-    };
-  }
+  return {
+    success: results.length === selectedEntries.length,
+    saved: results.length === selectedEntries.length,
+    savedCount: results.length,
+    filteredCount: entries.length - selectedEntries.length,
+    entries: selectedEntries,
+    text: selectedEntries[0]?.content || '',
+    eventId: results[0]?.eventId,
+    eventIds: results.map(result => result.eventId),
+    eventPath: results[0]?.filePath,
+    eventPaths: results.map(result => result.filePath),
+    results,
+  };
 };
 
 export const InnerDialogueSaverNode: NodeDefinition = defineNode({
   id: 'inner_dialogue_saver',
-  name: 'Inner Dialogue Saver',
+  name: 'Inner Dialogue Memory Saver',
   category: 'cognitive',
   inputs: [
-    { name: 'data', type: 'any', description: 'Content to save' },
+    { name: 'entry', type: 'message', optional: true, description: 'One Inner Dialogue Buffer-admitted entry' },
+    { name: 'entries', type: 'array', optional: true, description: 'Ordered Inner Dialogue Buffer-admitted entries' },
+    { name: 'gate', type: 'boolean', optional: true, description: 'Optional upstream persistence gate used only for graph sequencing' },
   ],
   outputs: [
-    { name: 'success', type: 'boolean', description: 'Whether save succeeded' },
-    { name: 'eventId', type: 'string', optional: true, description: 'Created event ID' },
+    { name: 'success', type: 'boolean', description: 'Whether every selected entry was saved' },
+    { name: 'saved', type: 'boolean', description: 'Whether every selected entry was saved' },
+    { name: 'savedCount', type: 'number' },
+    { name: 'filteredCount', type: 'number' },
+    { name: 'entries', type: 'array', description: 'Entries confirmed in long-term Persona Memory' },
+    { name: 'text', type: 'string', description: 'First confirmed long-term memory text' },
+    { name: 'eventId', type: 'string', optional: true },
+    { name: 'eventIds', type: 'array' },
+    { name: 'eventPath', type: 'string', optional: true },
+    { name: 'eventPaths', type: 'array' },
+    { name: 'results', type: 'array' },
   ],
   properties: {
     tags: ['inner'],
+    roles: [],
   },
   propertySchemas: {
     tags: {
       type: 'tags',
       default: ['inner'],
       label: 'Tags',
-      description: 'Tags to apply to the inner dialogue',
+      description: 'Fallback tags when the admitted entry has none.',
+    },
+    roles: {
+      type: 'multiselect',
+      default: [],
+      label: 'Roles to Save',
+      description: 'Leave empty to save every admitted inner-dialogue role.',
+      options: ['thought', 'reflection', 'dream', 'daydream', 'reasoning'],
     },
   },
-  description: 'Saves content to episodic memory as inner_dialogue',
+  description: 'Saves each admitted inner-dialogue entry as its matching long-term Persona Memory type.',
   execute,
 });

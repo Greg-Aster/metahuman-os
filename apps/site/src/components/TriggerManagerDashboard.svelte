@@ -59,7 +59,7 @@
       const threshold = trigger.eventCountThreshold && trigger.eventCountThreshold > 1
         ? ` every ${trigger.eventCountThreshold} matches`
         : '';
-      const idle = trigger.idleResetSeconds ? ` · baseline after ${trigger.idleResetSeconds}s idle` : '';
+      const idle = trigger.idleResetSeconds ? ` · Semi baseline after ${trigger.idleResetSeconds}s idle` : '';
       return `Event ${trigger.eventPattern}${threshold}${idle}`;
     }
     return 'Manual only';

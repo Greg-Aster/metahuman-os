@@ -41,8 +41,6 @@ export interface SleepStatus {
   currentSession: SleepSessionStatus | null
   recentSessions: SleepSessionStatus[]
   configuredStages: Array<Pick<SleepStageStatus, 'id' | 'displayName' | 'handler'>>
-  learningsFile: string | null
-  learningsContent: string | null
   lastChecked: string
 }
 

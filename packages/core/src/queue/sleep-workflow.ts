@@ -58,12 +58,7 @@ function stageInput(session: SleepSessionRuntime, stageIndex: number): TaskInput
     totalStages: SLEEP_WORKFLOW_STAGES.length,
   }
   const usesAgentProcess = stage.handler.startsWith('agent.')
-  const usernameArgs = usesAgentProcess
-    && stage.agentId
-    && ['desire-generator', 'desire-planner'].includes(stage.agentId)
-    ? ['--username', session.username]
-    : []
-  const args = [...(stage.args ?? []), ...usernameArgs]
+  const args = stage.args ?? []
   return {
     type: stage.type,
     handler: stage.handler,

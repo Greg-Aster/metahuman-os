@@ -158,9 +158,7 @@ function init(): void {
     profilePaths.preferences,
     profilePaths.inbox,
     profilePaths.inboxArchive,
-    profilePaths.audioInbox,
     profilePaths.audioTranscripts,
-    profilePaths.audioArchive,
     profilePaths.tasks + '/active',
     profilePaths.tasks + '/completed',
     profilePaths.tasks + '/projects',
@@ -175,7 +173,6 @@ function init(): void {
   const systemDirs = [
     systemPaths.agents,
     systemPaths.skills,
-    systemPaths.policies,
   ];
 
   for (const dir of [...profileDirs, ...systemDirs]) {
@@ -197,7 +194,6 @@ function init(): void {
     { template: systemPaths.etc + '/sleep.json.template', target: systemPaths.etc + '/sleep.json' },
     { template: systemPaths.etc + '/voice.json.template', target: systemPaths.etc + '/voice.json' },
     { template: systemPaths.etc + '/autonomy.json.template', target: systemPaths.etc + '/autonomy.json' },
-    { template: systemPaths.etc + '/ingestor.json.template', target: systemPaths.etc + '/ingestor.json' },
     { template: systemPaths.etc + '/logging.json.template', target: systemPaths.etc + '/logging.json' },
   ];
 
@@ -946,216 +942,6 @@ async function indexCmd(args: string[]): Promise<void> {
   }
 }
 
-function audioCmd(args: string[]): void {
-  ensureInitialized();
-  const subcommand = args[0];
-
-  if (!subcommand) {
-    console.error('Usage: mh audio <subcommand> [args]');
-    console.error('\nSubcommands:');
-    console.error('  ingest <file-or-dir> Copy audio files to inbox for transcription');
-    console.error('  status              Show audio processing status');
-    console.error('  list                List audio files in inbox and transcripts');
-    console.error('  info <audio-id>     Show details for a specific audio file');
-    process.exit(1);
-  }
-
-  switch (subcommand) {
-    case 'ingest': {
-      const src = args[1];
-      if (!src) {
-        console.error('Usage: mh audio ingest <file-or-directory>');
-        console.error('\nExample:');
-        console.error('  mh audio ingest recording.wav');
-        console.error('  mh audio ingest ~/recordings/');
-        process.exit(1);
-      }
-
-      const abs = path.resolve(process.cwd(), src);
-      const copied: string[] = [];
-
-      const copyFile = (p: string) => {
-        const name = path.basename(p);
-        const ext = path.extname(p).toLowerCase();
-
-        // Only copy audio files
-        const audioExts = ['.wav', '.mp3', '.m4a', '.ogg', '.flac', '.aac', '.wma'];
-        if (!audioExts.includes(ext)) {
-          console.warn(`Skipping non-audio file: ${name}`);
-          return;
-        }
-
-        const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
-        const destName = `${stamp}-${name}`;
-        const dest = path.join(getCliPaths().audioInbox, destName);
-        fs.mkdirSync(getCliPaths().audioInbox, { recursive: true });
-        fs.copyFileSync(p, dest);
-        copied.push(dest);
-      };
-
-      const stat = fs.statSync(abs);
-      if (stat.isDirectory()) {
-        // Copy first-level audio files only
-        for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
-          if (entry.isFile()) {
-            copyFile(path.join(abs, entry.name));
-          }
-        }
-      } else if (stat.isFile()) {
-        copyFile(abs);
-      } else {
-        console.error('Path is neither file nor directory:', abs);
-        process.exit(1);
-      }
-
-      if (copied.length === 0) {
-        console.log('No audio files found to ingest.');
-        console.log('Supported formats: .wav, .mp3, .m4a, .ogg, .flac, .aac, .wma');
-        process.exit(0);
-      }
-
-      console.log(`✓ Copied ${copied.length} audio file(s) to inbox: ${getCliPaths().audioInbox}`);
-      console.log('\n💡 Next steps:');
-      console.log('   1. Start the transcriber: mh agent run transcriber');
-      console.log('   2. Or queue the configured Sleep Workflow from System Controls');
-
-      // Audit the ingestion
-      auditDataChange({
-        type: 'create',
-        resource: 'audio_inbox',
-        path: getCliPaths().audioInbox,
-        actor: 'human',
-        details: { fileCount: copied.length, source: abs },
-      });
-      break;
-    }
-
-    case 'status': {
-      // Count files in each stage
-      const inboxFiles = fs.existsSync(getCliPaths().audioInbox)
-        ? fs.readdirSync(getCliPaths().audioInbox).filter(f => !f.startsWith('.')).length
-        : 0;
-
-      const transcriptFiles = fs.existsSync(getCliPaths().audioTranscripts)
-        ? fs.readdirSync(getCliPaths().audioTranscripts).filter(f => f.endsWith('.txt')).length
-        : 0;
-
-      const archiveFiles = fs.existsSync(getCliPaths().audioArchive)
-        ? fs.readdirSync(getCliPaths().audioArchive).filter(f => !f.startsWith('.')).length
-        : 0;
-
-      // Count unorganized transcripts
-      let unorganizedCount = 0;
-      if (fs.existsSync(getCliPaths().audioTranscripts)) {
-        const metaFiles = fs.readdirSync(getCliPaths().audioTranscripts).filter(f => f.endsWith('.meta.json'));
-        for (const metaFile of metaFiles) {
-          try {
-            const metaPath = path.join(getCliPaths().audioTranscripts, metaFile);
-            const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-            if (!metadata.organized) {
-              unorganizedCount++;
-            }
-          } catch {}
-        }
-      }
-
-      console.log('Audio Processing Status');
-      console.log('======================\n');
-      console.log(`Inbox (pending transcription):  ${inboxFiles}`);
-      console.log(`Transcripts (total):            ${transcriptFiles}`);
-      console.log(`  - Unorganized:                ${unorganizedCount}`);
-      console.log(`  - Organized:                  ${transcriptFiles - unorganizedCount}`);
-      console.log(`Archive (processed):            ${archiveFiles}\n`);
-
-      if (inboxFiles > 0) {
-        console.log('💡 Tip: Start the transcriber agent to process inbox files');
-        console.log('   Run: mh agent run transcriber');
-      }
-      if (unorganizedCount > 0) {
-        console.log('💡 Tip: Start the audio-organizer agent to create memories');
-        console.log('   Run: mh agent run audio-organizer');
-      }
-      break;
-    }
-
-    case 'list': {
-      console.log('Audio Files\n');
-
-      // List inbox
-      if (fs.existsSync(getCliPaths().audioInbox)) {
-        const inboxFiles = fs.readdirSync(getCliPaths().audioInbox).filter(f => !f.startsWith('.'));
-        if (inboxFiles.length > 0) {
-          console.log('📥 Inbox (pending transcription):');
-          inboxFiles.forEach(f => console.log(`  - ${f}`));
-          console.log('');
-        }
-      }
-
-      // List transcripts
-      if (fs.existsSync(getCliPaths().audioTranscripts)) {
-        const transcriptFiles = fs.readdirSync(getCliPaths().audioTranscripts).filter(f => f.endsWith('.txt'));
-        if (transcriptFiles.length > 0) {
-          console.log('📝 Transcripts:');
-          transcriptFiles.forEach(f => {
-            const audioId = f.replace('.txt', '');
-            const metaPath = path.join(getCliPaths().audioTranscripts, `${audioId}.meta.json`);
-            let status = '';
-            if (fs.existsSync(metaPath)) {
-              try {
-                const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-                status = metadata.organized ? ' ✓ organized' : ' ⏳ pending organization';
-              } catch {}
-            }
-            console.log(`  - ${audioId}${status}`);
-          });
-        }
-      }
-      break;
-    }
-
-    case 'info': {
-      const audioId = args[1];
-      if (!audioId) {
-        console.error('Usage: mh audio info <audio-id>');
-        process.exit(1);
-      }
-
-      const metaPath = path.join(getCliPaths().audioTranscripts, `${audioId}.meta.json`);
-      const transcriptPath = path.join(getCliPaths().audioTranscripts, `${audioId}.txt`);
-
-      if (!fs.existsSync(metaPath)) {
-        console.error(`Audio file not found: ${audioId}`);
-        process.exit(1);
-      }
-
-      const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-
-      console.log(`Audio File: ${audioId}`);
-      console.log('='.repeat(50));
-      console.log(`Original File:   ${metadata.originalFile}`);
-      console.log(`Transcribed At:  ${metadata.transcribedAt}`);
-      console.log(`Model:           ${metadata.model}`);
-      console.log(`Language:        ${metadata.language}`);
-      console.log(`Status:          ${metadata.organized ? 'Organized' : 'Pending organization'}`);
-
-      if (fs.existsSync(transcriptPath)) {
-        const transcript = fs.readFileSync(transcriptPath, 'utf8');
-        const charCount = transcript.length;
-        const wordCount = transcript.split(/\s+/).length;
-        console.log(`\nTranscript:      ${charCount} characters, ~${wordCount} words`);
-        console.log(`\nPreview:`);
-        console.log(transcript.substring(0, 300) + (transcript.length > 300 ? '...' : ''));
-      }
-      break;
-    }
-
-    default:
-      console.error(`Unknown subcommand: ${subcommand}`);
-      console.error('Run: mh audio (without args) for help');
-      process.exit(1);
-  }
-}
-
 function voiceCmd(args: string[]): void {
   ensureInitialized();
   const subcommand = args[0];
@@ -1717,9 +1503,6 @@ async function main() {
         break;
       case 'index':
         await indexCmd(args);
-        break;
-      case 'audio':
-        audioCmd(args);
         break;
       case 'persona':
         await personaCommand(args);

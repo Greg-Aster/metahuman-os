@@ -39,11 +39,12 @@
 		"validate:agent-monitor": "node --import tsx scripts/validate-agent-monitor.ts",
 		"validate:security-routes": "node --import tsx scripts/validate-security-routes.ts",
 		"validate:node-defaults": "node --import tsx scripts/validate-node-defaults.ts",
-		"validate:tts-node-ownership": "node --import tsx packages/core/src/tts-node-ownership.spec.ts",
+		"validate:tts-node-ownership": "node --import tsx packages/core/src/tts-node-ownership.spec.ts && node --import tsx apps/site/src/lib/client/composables/useTTS.spec.ts",
 		"validate:tts-delivery-queue": "node --import tsx packages/core/src/tts/delivery-queue.spec.ts",
 		"validate:voice-service-ownership": "node --import tsx packages/core/src/voice-service-ownership.spec.ts",
+		"validate:update-ownership": "node --import tsx --test packages/core/src/update-ownership.spec.ts packages/core/src/api/handlers/mobile-update.spec.ts packages/core/src/api/handlers/server-update.spec.ts",
 		"validate:safety": "node --import tsx --test packages/core/src/nodes/safety/safety.spec.ts",
-		"validate:training-process": "node --import tsx --test packages/core/src/training-process.spec.ts",
+		"validate:training-process": "node --import tsx --test packages/core/src/training-process.spec.ts packages/core/src/api/handlers/training-history.spec.ts",
 		"validate:environment-action-selector": "node --import tsx --test brain/training/environment-action-selector/corpus.spec.ts brain/training/environment-action-selector/regression.spec.ts",
 		"generate:environment-action-selector-training": "node --import tsx brain/training/environment-action-selector/generate-training-data.ts",
 		"train:environment-action-selector:0.8b": "node --import tsx brain/training/environment-action-selector/train.ts",
@@ -68,7 +69,7 @@
 		"typecheck:mobile": "pnpm --dir apps/react-native typecheck",
 		"typecheck:site": "cd apps/site && pnpm exec astro check",
 		"typecheck": "pnpm typecheck:core && pnpm typecheck:brain && pnpm typecheck:cli && pnpm typecheck:agent-runtime && pnpm typecheck:local-model-service && pnpm typecheck:scripts && pnpm typecheck:tests && pnpm typecheck:mobile && pnpm typecheck:site",
-		"validate": "pnpm validate:agent-monitor && pnpm validate:security-routes && pnpm validate:node-defaults && pnpm validate:graphs && pnpm validate:tts-node-ownership && pnpm validate:tts-delivery-queue && pnpm validate:voice-service-ownership && pnpm validate:safety && pnpm validate:training-process && pnpm validate:environment-action-selector && pnpm validate:user-agnostic && pnpm validate:terminal-lifecycle && pnpm validate:big-brother-session",
+		"validate": "pnpm validate:agent-monitor && pnpm validate:security-routes && pnpm validate:node-defaults && pnpm validate:graphs && pnpm validate:tts-node-ownership && pnpm validate:tts-delivery-queue && pnpm validate:voice-service-ownership && pnpm validate:update-ownership && pnpm validate:safety && pnpm validate:training-process && pnpm validate:environment-action-selector && pnpm validate:user-agnostic && pnpm validate:terminal-lifecycle && pnpm validate:big-brother-session",
 		"test": "pnpm test:model-defaults && pnpm test:dual-graph && pnpm test:environment-graph && pnpm validate",
 		"dev": "cd apps/site && NODE_OPTIONS='--max-old-space-size=4096' pnpm dev",
 		"build": "pnpm typecheck && pnpm check:architecture && pnpm test && pnpm --dir apps/site build",
@@ -82,8 +83,8 @@
 		"pnpm": ">=10.15.1 <11"
 	},
 	"devDependencies": {
-		"@types/node": "^24.9.1",
-		"tsx": "^4.20.6",
+		"@types/node": "^22.0.0",
+		"tsx": "^4.23.13",
 		"typescript": "^5.9.3"
 	}
 }

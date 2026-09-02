@@ -1,119 +1,80 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "format": "svelte-flow",
   "name": "Organizer Agent",
-  "description": "Processes unprocessed episodic memories and enriches them with tags and entities using LLM analysis",
-  "last_modified": "2025-12-17",
+  "description": "Enriches one Core-selected episodic memory with validated tags and entities, then persists through the canonical memory owner",
+  "cognitiveMode": "agent",
   "nodes": [
     {
-      "id": "1",
+      "id": "memory-input",
       "type": "agentNode",
       "position": {
         "x": 100,
         "y": 100
       },
       "data": {
-        "label": "memory_loader",
+        "label": "organizer_memory_input",
         "nodeType": "memory_loader",
-        "properties": {
-          "limit": 10,
-          "onlyUnprocessed": true
-        }
+        "properties": {}
       }
     },
     {
-      "id": "2",
-      "type": "routerNode",
-      "position": {
-        "x": 400,
-        "y": 100
-      },
-      "data": {
-        "label": "for_each",
-        "nodeType": "for_each",
-        "properties": {
-          "itemName": "memory"
-        }
-      }
-    },
-    {
-      "id": "3",
+      "id": "enrich-memory",
       "type": "agentNode",
       "position": {
-        "x": 700,
+        "x": 460,
         "y": 100
       },
       "data": {
         "label": "llm_enricher",
         "nodeType": "llm_enricher",
         "properties": {
-          "promptTemplate": "Analyze this memory and extract relevant tags and entities.\n\nMemory: {content}\n\nReturn a JSON object with:\n- tags: array of relevant keyword tags (3-7 tags)\n- entities: array of entities mentioned (people, places, things)\n\nFormat: {\"tags\": [...], \"entities\": [...]}"
+          "systemPrompt": "You extract concise semantic metadata from saved episodic memory content. Return only the requested JSON object.",
+          "promptTemplate": "Analyze this saved episodic memory content and extract relevant tags and named entities.\n\nMemory:\n{{content}}\n\nReturn JSON with two arrays: {\"tags\": [\"topic\"], \"entities\": [\"name\"]}. Use short strings and return empty arrays when none apply.",
+          "role": "curator",
+          "temperature": 0.3,
+          "maxTokens": 512,
+          "repeatPenalty": 1.15
         }
       }
     },
     {
-      "id": "4",
+      "id": "save-memory",
       "type": "agentNode",
       "position": {
-        "x": 1000,
+        "x": 840,
         "y": 100
       },
       "data": {
         "label": "memory_saver",
         "nodeType": "memory_saver",
-        "properties": {
-          "updateOnly": true
-        }
-      }
-    },
-    {
-      "id": "5",
-      "type": "outputNode",
-      "position": {
-        "x": 1300,
-        "y": 100
-      },
-      "data": {
-        "label": "audit_logger",
-        "nodeType": "audit_logger",
-        "properties": {
-          "category": "agent",
-          "event": "organizer_memory_processed"
-        }
+        "properties": {}
       }
     }
   ],
   "edges": [
     {
-      "id": "e-1-memories-2-input",
-      "source": "1",
-      "target": "2",
-      "sourceHandle": "memories",
-      "targetHandle": "input",
-      "data": {}
-    },
-    {
-      "id": "e-2-results-3-memory",
-      "source": "2",
-      "target": "3",
-      "sourceHandle": "results",
-      "targetHandle": "memory",
-      "data": {}
-    },
-    {
-      "id": "e-3-memory-4-memory",
-      "source": "3",
-      "target": "4",
+      "id": "memory-input-memory-enrich-memory-memory",
+      "source": "memory-input",
+      "target": "enrich-memory",
       "sourceHandle": "memory",
       "targetHandle": "memory",
       "data": {}
     },
     {
-      "id": "e-4-success-5-eventType",
-      "source": "4",
-      "target": "5",
-      "sourceHandle": "success",
-      "targetHandle": "eventType",
+      "id": "enrich-memory-memory-save-memory-memory",
+      "source": "enrich-memory",
+      "target": "save-memory",
+      "sourceHandle": "memory",
+      "targetHandle": "memory",
+      "data": {}
+    },
+    {
+      "id": "enrich-memory-outcome-save-memory-outcome",
+      "source": "enrich-memory",
+      "target": "save-memory",
+      "sourceHandle": "outcome",
+      "targetHandle": "outcome",
       "data": {}
     }
   ]

@@ -138,6 +138,21 @@
       },
       "width": 180,
       "height": 80
+    },
+    {
+      "id": "10",
+      "type": "outputNode",
+      "position": {
+        "x": 1570,
+        "y": 220
+      },
+      "data": {
+        "label": "Conversation Memory Saver",
+        "nodeType": "memory_capture",
+        "properties": {}
+      },
+      "width": 220,
+      "height": 80
     }
   ],
   "edges": [
@@ -219,14 +234,25 @@
       }
     },
     {
-      "id": "e-3-question-9-conversation",
-      "source": "4",
+      "id": "e-8-entries-10-entries",
+      "source": "8",
+      "target": "10",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "data": {
+        "type": "array",
+        "comment": "Buffer-admitted curiosity question → Persona Memory"
+      }
+    },
+    {
+      "id": "e-8-response-9-conversation",
+      "source": "8",
       "target": "9",
-      "sourceHandle": "question",
+      "sourceHandle": "response",
       "targetHandle": "conversation",
       "data": {
         "type": "string",
-        "comment": "Generated question → TTS Output (speaks in conversation mode)"
+        "comment": "Speak the exact question retained by the Conversation Buffer"
       }
     }
   ]

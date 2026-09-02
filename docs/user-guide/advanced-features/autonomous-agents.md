@@ -29,15 +29,29 @@ available in every mode.
 uses explicit work IDs and idempotency keys, then competes under the same global
 priority rules as manually submitted work.
 
-Examples include:
+The default registrations have specific, distinct triggers:
 
-- `reflector`, `curiosity` (implemented by `curiosity-service`), and
-  `inner-curiosity` after configured
-  inactivity;
-- `dreamer`, `curator`, and other registered agents;
-- `mood`, which reviews recent user conversation and/or inner dialogue every
-  configured number of persisted user messages;
-- `sleep-workflow`, which admits bounded dream and persona-review child work.
+- after 15 idle minutes, `reflector` has a 70 percent admission chance and
+  `curiosity` (implemented by `curiosity-service`) may run;
+- after 5 idle minutes, `daydreamer` has a 15 percent admission chance;
+- `curiosity-researcher` and `inner-curiosity` run on independent hourly
+  intervals in Semi-autonomous mode;
+- `mood` is disabled by default; when enabled, it reviews configured buffers
+  after each ten persisted user messages, and may apply its 30-minute idle
+  baseline while Semi-autonomous mode is active;
+- `sleep-workflow` is scheduled for 02:00 in Semi-autonomous and Fully
+  autonomous modes.
+
+The sleep workflow runs one bounded sequence: organize memories, curate
+training memories, generate desires, plan desires, execute approved desires,
+review desire outcomes, dream from memories, review persona learnings, and
+refresh the memory index. Organizer, Curator, Dreamer, Psychoanalyzer, and the
+four desire agents are workflow children rather than independent scheduled
+producers.
+
+Audio Organizer and Profile Sync remain manual. Robot Operator owns its own
+robot and boredom timers through its persistent service contract; those are not
+duplicate Trigger Manager schedules.
 
 The sleep workflow does not silently start audio processing or model training.
 Those remain explicit owner-triggered controls.
@@ -57,9 +71,10 @@ Use **System → Agent Catalog → Mood** to select conversation, inner dialogue
 both; choose the baseline facet; set context and confidence limits; and control
 whether Mood may override a disabled persona system. Use **System → Trigger
 Manager → Mood** to change the message-count threshold or idle cooldown. The
-idle cooldown queues the same graph with a forced baseline decision, so a robot
-left unused does not remain stuck in a transient mood. Disabling Mood prevents
-future admissions without changing the current facet.
+idle cooldown queues the same graph with a forced baseline decision while Semi
+mode is active, so a robot left unused does not remain stuck in a transient
+mood. Disabling Mood prevents future admissions without changing the current
+facet.
 
 ## Active Operator
 
@@ -98,5 +113,6 @@ work: approval state, SSE and WebSocket buffers, TTS playback queues, graph
 traversal structures, and robot firmware buffers. Ainekio's hardware emergency
 stop remains body-owned.
 
-For the implementation contract and validation evidence, see
-`docs/implementation-plans/operator-queue-work-coordinator.md`.
+For the current ownership contract and validation entrypoints, repository
+maintainers should read `docs/technical/ARCHITECTURE.md` and
+`docs/technical/MAINTAINED_SURFACE.md` from the source tree.

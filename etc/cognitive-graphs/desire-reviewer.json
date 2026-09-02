@@ -226,11 +226,11 @@
       "id": "13",
       "type": "genericNode",
       "position": {
-        "x": 1450,
+        "x": 1750,
         "y": 300
       },
       "data": {
-        "label": "Log to Inner Dialogue",
+        "label": "Save Inner Dialogue Memory",
         "nodeType": "inner_dialogue_saver",
         "properties": {
           "tags": [
@@ -241,6 +241,25 @@
         }
       },
       "width": 200,
+      "height": 80
+    },
+    {
+      "id": "14",
+      "type": "outputNode",
+      "position": {
+        "x": 1450,
+        "y": 300
+      },
+      "data": {
+        "label": "Admit Inner Dialogue",
+        "nodeType": "inner_dialogue_buffer",
+        "properties": {
+          "tags": ["agency", "review", "inner"],
+          "dialogueSource": "desire-reviewer",
+          "role": "reflection"
+        }
+      },
+      "width": 220,
       "height": 80
     }
   ],
@@ -422,14 +441,25 @@
       }
     },
     {
-      "id": "e-7-slot_0-13-slot_0",
+      "id": "e-7-reasoning-14-text",
       "source": "7",
-      "target": "13",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_0",
+      "target": "14",
+      "sourceHandle": "reasoning",
+      "targetHandle": "text",
       "data": {
-        "type": "object",
-        "comment": "Verdict → Inner Dialogue"
+        "type": "string",
+        "comment": "Verdict reasoning → rolling Inner Dialogue"
+      }
+    },
+    {
+      "id": "e-14-entries-13-entries",
+      "source": "14",
+      "target": "13",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "data": {
+        "type": "array",
+        "comment": "Buffer-admitted review → Persona Memory"
       }
     }
   ]

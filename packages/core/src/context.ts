@@ -48,7 +48,7 @@ const contextStorage = new AsyncLocalStorage<UserContext | undefined>();
  * await withUserContext(
  *   { userId: 'abc123', username: 'profile-user', role: 'owner' },
  *   async () => {
- *     const memories = findUnprocessedMemories(); // Uses context!
+ *     const memoryPath = storageClient.resolvePath({ category: 'memory' }); // Uses context!
  *     await processMemories(memories);
  *   }
  * );

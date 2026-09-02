@@ -47,116 +47,174 @@ const categoryConfig: Record<string, { name: string; order: number }> = {
   appendix: { name: 'Appendix', order: 7 },
 };
 
-/**
- * Simple markdown to HTML converter
- * Uses basic regex patterns - no external dependencies
- */
-function parseMarkdown(markdown: string): string {
-  let html = markdown;
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-  // Escape HTML entities first (except in code blocks)
-  // We'll handle code blocks separately
-
-  // Headers
-  html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.*$)/gm, '<h2>$1</h2>');
-  html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>');
-
-  // Code blocks (fenced)
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const escaped = code
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-    return `<pre><code class="language-${lang || 'text'}">${escaped}</code></pre>`;
+function renderInline(markdown: string): string {
+  const codeSpans: string[] = [];
+  const links: string[] = [];
+  let html = markdown.replace(/`([^`\n]+)`/g, (_match, code: string) => {
+    const marker = `\u0000CODE${codeSpans.length}\u0000`;
+    codeSpans.push(`<code>${escapeHtml(code)}</code>`);
+    return marker;
   });
 
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, href: string) => {
+    const normalizedHref = href.trim();
+    if (!/^(?:https?:\/\/|mailto:|\/|#)/i.test(normalizedHref)) {
+      return label;
+    }
+    const marker = `\u0000LINK${links.length}\u0000`;
+    links.push(`<a href="${escapeHtml(normalizedHref)}">${escapeHtml(label)}</a>`);
+    return marker;
+  });
 
-  // Bold
+  html = escapeHtml(html);
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-
-  // Italic
   html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
   html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
 
-  // Links
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  for (let index = 0; index < links.length; index += 1) {
+    html = html.replace(`\u0000LINK${index}\u0000`, links[index]);
+  }
+  for (let index = 0; index < codeSpans.length; index += 1) {
+    html = html.replace(`\u0000CODE${index}\u0000`, codeSpans[index]);
+  }
 
-  // Unordered lists
-  html = html.replace(/^\s*[-*]\s+(.*)$/gm, '<li>$1</li>');
+  return html;
+}
 
-  // Ordered lists
-  html = html.replace(/^\s*\d+\.\s+(.*)$/gm, '<li>$1</li>');
+function parseTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
 
-  // Wrap consecutive <li> tags in <ul> or <ol>
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, (match) => {
-    return `<ul>${match}</ul>`;
-  });
+/**
+ * Convert the maintained guide's Markdown subset to safe HTML without adding a
+ * second documentation pipeline or a runtime dependency.
+ */
+export function parseMarkdown(markdown: string): string {
+  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+  const output: string[] = [];
+  let paragraph: string[] = [];
+  let listType: 'ul' | 'ol' | null = null;
+  let listItems: string[] = [];
 
-  // Blockquotes
-  html = html.replace(/^>\s*(.*)$/gm, '<blockquote>$1</blockquote>');
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    output.push(`<p>${renderInline(paragraph.join(' '))}</p>`);
+    paragraph = [];
+  };
 
-  // Horizontal rules
-  html = html.replace(/^---+$/gm, '<hr>');
+  const flushList = () => {
+    if (!listType || listItems.length === 0) return;
+    const items = listItems.map((item) => `<li>${renderInline(item)}</li>`).join('');
+    output.push(`<${listType}>${items}</${listType}>`);
+    listType = null;
+    listItems = [];
+  };
 
-  // Tables (basic support)
-  html = html.replace(/^\|(.+)\|$/gm, (_, row) => {
-    const cells = row.split('|').map((cell: string) => cell.trim());
-    const cellsHtml = cells.map((cell: string) => `<td>${cell}</td>`).join('');
-    return `<tr>${cellsHtml}</tr>`;
-  });
+  const flushBlocks = () => {
+    flushParagraph();
+    flushList();
+  };
 
-  // Wrap consecutive <tr> in <table>
-  html = html.replace(/(<tr>.*<\/tr>\n?)+/g, (match) => {
-    // Check if first row should be header
-    const rows = match.split('</tr>').filter(Boolean);
-    if (rows.length > 1) {
-      const headerRow = rows[0].replace(/<td>/g, '<th>').replace(/<\/td>/g, '</th>');
-      const bodyRows = rows.slice(1).join('</tr>');
-      return `<table><thead>${headerRow}</tr></thead><tbody>${bodyRows}</tr></tbody></table>`;
-    }
-    return `<table>${match}</table>`;
-  });
-
-  // Paragraphs (wrap standalone lines)
-  const lines = html.split('\n');
-  const processed: string[] = [];
-  let inParagraph = false;
-
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const trimmed = line.trim();
-    const isBlockElement = /^<(h[1-6]|ul|ol|li|pre|blockquote|hr|table|thead|tbody|tr|th|td)/.test(trimmed);
-    const isClosingBlock = /^<\/(h[1-6]|ul|ol|pre|blockquote|table|thead|tbody)>/.test(trimmed);
+    const fence = trimmed.match(/^```([A-Za-z0-9_-]*)\s*$/);
+
+    if (fence) {
+      flushBlocks();
+      const language = fence[1] || 'text';
+      const code: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^```\s*$/.test(lines[index].trim())) {
+        code.push(lines[index]);
+        index += 1;
+      }
+      output.push(`<pre><code class="language-${language}">${escapeHtml(code.join('\n'))}</code></pre>`);
+      continue;
+    }
 
     if (!trimmed) {
-      if (inParagraph) {
-        processed.push('</p>');
-        inParagraph = false;
-      }
-      processed.push('');
-    } else if (isBlockElement || isClosingBlock) {
-      if (inParagraph) {
-        processed.push('</p>');
-        inParagraph = false;
-      }
-      processed.push(line);
-    } else {
-      if (!inParagraph) {
-        processed.push('<p>');
-        inParagraph = true;
-      }
-      processed.push(line);
+      flushBlocks();
+      continue;
     }
+
+    const unorderedItem = line.match(/^\s*[-*]\s+(.*)$/);
+    const orderedItem = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (unorderedItem || orderedItem) {
+      flushParagraph();
+      const nextType: 'ul' | 'ol' = unorderedItem ? 'ul' : 'ol';
+      if (listType && listType !== nextType) flushList();
+      listType = nextType;
+      listItems.push((unorderedItem?.[1] || orderedItem?.[1] || '').trim());
+      continue;
+    }
+
+    if (listType && /^\s{2,}\S/.test(line)) {
+      listItems[listItems.length - 1] += ` ${trimmed}`;
+      continue;
+    }
+
+    flushList();
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      const level = heading[1].length;
+      output.push(`<h${level}>${renderInline(heading[2].trim())}</h${level}>`);
+      continue;
+    }
+
+    if (/^---+$/.test(trimmed)) {
+      flushParagraph();
+      output.push('<hr>');
+      continue;
+    }
+
+    if (trimmed.startsWith('>')) {
+      flushParagraph();
+      output.push(`<blockquote>${renderInline(trimmed.replace(/^>\s?/, ''))}</blockquote>`);
+      continue;
+    }
+
+    const nextLine = lines[index + 1]?.trim() || '';
+    if (/^\|.*\|$/.test(trimmed) && /^\|?\s*:?-{3,}/.test(nextLine)) {
+      flushParagraph();
+      const headers = parseTableRow(trimmed);
+      const rows: string[][] = [];
+      index += 2;
+      while (index < lines.length && /^\|.*\|$/.test(lines[index].trim())) {
+        rows.push(parseTableRow(lines[index]));
+        index += 1;
+      }
+      index -= 1;
+      const headerHtml = headers.map((cell) => `<th>${renderInline(cell)}</th>`).join('');
+      const bodyHtml = rows
+        .map((row) => `<tr>${row.map((cell) => `<td>${renderInline(cell)}</td>`).join('')}</tr>`)
+        .join('');
+      output.push(`<table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>`);
+      continue;
+    }
+
+    paragraph.push(trimmed);
   }
 
-  if (inParagraph) {
-    processed.push('</p>');
-  }
-
-  return processed.join('\n');
+  flushBlocks();
+  return output.join('\n');
 }
 
 /**
@@ -184,12 +242,14 @@ function readMarkdownFiles(dir: string, relativeDirPath: string = ''): Chapter[]
       const numberMatch = item.name.match(/^(\d+)-/);
       const number = numberMatch ? numberMatch[1] : '';
 
-      // Extract title from filename
+      // Prefer the maintained chapter heading; fall back to the filename for
+      // malformed or legacy documents.
       const filename = item.name.replace('.md', '');
-      const title = filename
-        .replace(/^\d+-/, '')
-        .replace(/-/g, ' ')
-        .replace(/\b\w/g, (l) => l.toUpperCase());
+      const title = rawContent.match(/^#\s+(.+)$/m)?.[1].trim()
+        || filename
+          .replace(/^\d+-/, '')
+          .replace(/-/g, ' ')
+          .replace(/\b\w/g, (l) => l.toUpperCase());
 
       // Determine category from directory path
       let category = 'root';
@@ -227,6 +287,9 @@ function loadChapters(): { categories: Category[]; chapters: Chapter[] } {
 
   // Read all chapters
   const chapters = readMarkdownFiles(userGuidePath).sort((a, b) => {
+    const categoryDifference = (categoryConfig[a.category]?.order ?? 99)
+      - (categoryConfig[b.category]?.order ?? 99);
+    if (categoryDifference !== 0) return categoryDifference;
     if (a.number && b.number) {
       return parseInt(a.number) - parseInt(b.number);
     }

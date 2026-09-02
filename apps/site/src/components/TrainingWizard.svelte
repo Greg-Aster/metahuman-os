@@ -36,8 +36,18 @@
       dual: number;
       agent: number;
       emulation: number;
+      environment: number;
     };
+    organizedMemories: number;
+    pendingOrganization: number;
+    curatedMemories: number;
+    pendingCuration: number;
+    curatedRecords: number;
+    validCuratedRecords: number;
+    invalidCuratedRecords: number;
+    trainableSamples: number;
     estimatedTrainingSamples: number;
+    latestCuratedAt: string | null;
   }
 
   interface TrainingConfig {
@@ -951,7 +961,7 @@
           </div>
         {:else if datasetStats}
           <p class="text-base text-gray-500 mb-8 text-center">
-            Review your episodic memory statistics. This data will be used for training.
+            Review the persisted memory pipeline. Training reads validated Curator records, not raw episodic files or a sample estimate.
           </p>
 
           <div class="stats-grid mb-8">
@@ -960,8 +970,8 @@
               <div class="stat-label">Total Memories</div>
             </div>
             <div class="stat-card">
-              <div class="stat-value text-emerald-500">{datasetStats.estimatedTrainingSamples.toLocaleString()}</div>
-              <div class="stat-label">Training Samples</div>
+              <div class="stat-value text-emerald-500">{datasetStats.trainableSamples.toLocaleString()}</div>
+              <div class="stat-label">Validated Training Samples</div>
             </div>
             <div class="stat-card">
               <div class="stat-value text-emerald-500">{datasetStats.recentMemories.toLocaleString()}</div>
@@ -971,6 +981,38 @@
               <div class="stat-value text-emerald-500">{datasetStats.oldestMemory ? new Date(datasetStats.oldestMemory).toLocaleDateString() : 'N/A'}</div>
               <div class="stat-label">Earliest Memory</div>
             </div>
+          </div>
+
+          <div class="mb-8">
+            <h4 class="text-lg mb-4 text-gray-100">Manual Training Pipeline</h4>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="p-4 bg-gray-900 rounded-lg">
+                <div class="text-sm text-gray-500">Needs Organizer</div>
+                <div class="mt-1 text-xl font-semibold {datasetStats.pendingOrganization === 0 ? 'text-emerald-500' : 'text-amber-400'}">
+                  {datasetStats.pendingOrganization.toLocaleString()}
+                </div>
+              </div>
+              <div class="p-4 bg-gray-900 rounded-lg">
+                <div class="text-sm text-gray-500">Needs Curator</div>
+                <div class="mt-1 text-xl font-semibold {datasetStats.pendingCuration === 0 ? 'text-emerald-500' : 'text-amber-400'}">
+                  {datasetStats.pendingCuration.toLocaleString()}
+                </div>
+              </div>
+              <div class="p-4 bg-gray-900 rounded-lg">
+                <div class="text-sm text-gray-500">Valid Curator Records</div>
+                <div class="mt-1 text-xl font-semibold text-emerald-500">{datasetStats.validCuratedRecords.toLocaleString()}</div>
+              </div>
+            </div>
+            <p class="mt-3 text-sm leading-relaxed text-gray-500">
+              Launching with preprocessing enabled drains the same finite Organizer agent used by Sleep, then runs Curator,
+              the curated aggregator, cognitive-mode formatter, model schema adapter, and selected trainer.
+            </p>
+            {#if datasetStats.invalidCuratedRecords > 0}
+              <div class="banner banner-warning mt-4">
+                {datasetStats.invalidCuratedRecords.toLocaleString()} existing Curator record(s) fail the current contract.
+                Curator must repair them before the dataset can be exported.
+              </div>
+            {/if}
           </div>
 
           <div class="mb-8">
@@ -1005,6 +1047,10 @@
               <div class="flex justify-between p-3 bg-gray-900 rounded-lg">
                 <span>Emulation Mode</span>
                 <span class="font-semibold text-emerald-500">{datasetStats.cognitiveModeCounts.emulation.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between p-3 bg-gray-900 rounded-lg">
+                <span>Environment Mode</span>
+                <span class="font-semibold text-emerald-500">{datasetStats.cognitiveModeCounts.environment.toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -1289,7 +1335,7 @@
               <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
                 <span class="font-semibold text-gray-100">Dataset:</span>
                 <span class="text-gray-400">
-                  {datasetStats ? datasetStats.estimatedTrainingSamples.toLocaleString() : 'N/A'} samples
+                  {datasetStats ? datasetStats.trainableSamples.toLocaleString() : 'N/A'} validated samples
                 </span>
               </div>
 
@@ -1340,9 +1386,9 @@
                 <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🚀 Full Cycle (RunPod - Remote GPU)</h4>
                 <p class="text-sm text-gray-500 m-0 mb-2">Complete LoRA training on RunPod cloud GPU. Best for full training runs.</p>
                 <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
-                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/full-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/personalization/full-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
                   <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
-                    navigator.clipboard.writeText(`pnpm exec tsx brain/training/full-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
+                    navigator.clipboard.writeText(`pnpm exec tsx brain/training/personalization/full-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
                     alert('Command copied to clipboard!');
                   }}>📋 Copy</button>
                 </div>
@@ -1350,9 +1396,9 @@
                 <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🖥️ Full Cycle Local (Local GPU)</h4>
                 <p class="text-sm text-gray-500 m-0 mb-2">Complete LoRA training on your local GPU. Requires CUDA-capable GPU.</p>
                 <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
-                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/full-cycle-local.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/personalization/full-cycle-local.ts --username {username || 'YOUR_USERNAME'}</code>
                   <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
-                    navigator.clipboard.writeText(`pnpm exec tsx brain/training/full-cycle-local.ts --username ${username || 'YOUR_USERNAME'}`);
+                    navigator.clipboard.writeText(`pnpm exec tsx brain/training/personalization/full-cycle-local.ts --username ${username || 'YOUR_USERNAME'}`);
                     alert('Command copied to clipboard!');
                   }}>📋 Copy</button>
                 </div>
@@ -1360,9 +1406,9 @@
                 <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🔧 Full Fine-Tune Cycle</h4>
                 <p class="text-sm text-gray-500 m-0 mb-2">Fine-tune the model-registry base model through the canonical remote workflow.</p>
                 <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
-                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/fine-tune-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
+                  <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/personalization/fine-tune-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
                   <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
-                    navigator.clipboard.writeText(`pnpm exec tsx brain/training/fine-tune-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
+                    navigator.clipboard.writeText(`pnpm exec tsx brain/training/personalization/fine-tune-cycle.ts --username ${username || 'YOUR_USERNAME'}`);
                     alert('Command copied to clipboard!');
                   }}>📋 Copy</button>
                 </div>

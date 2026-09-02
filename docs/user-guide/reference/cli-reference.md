@@ -1,6 +1,8 @@
 # CLI Command Reference
 
-Complete reference for the `mh` CLI. Use `./bin/mh` from the repo root, or `mh` if `bin/` is on your `PATH`.
+This is the maintained user-facing reference for the `mh` CLI. Use `./bin/mh`
+from the repository root, or `mh` if `bin/` is on your `PATH`. The executable's
+top-level and focused help remain authoritative when commands change.
 
 ## Core Commands
 
@@ -29,14 +31,16 @@ Show CLI help.
 ### `./bin/mh capture "text"`
 Capture a short observation or event into memory.
 
-### `./bin/mh remember <query>`
+### `./bin/mh remember QUERY`
 Search memory. Uses semantic search if an embeddings index is available, otherwise falls back to keyword matching.
 
-### `./bin/mh find <description>`
+### `./bin/mh find DESCRIPTION`
 Use the LLM to locate files by description.
 
-### `./bin/mh ingest <file-or-directory>`
-Copy files into the memory ingest inbox for processing.
+### `./bin/mh ingest FILE_OR_DIRECTORY`
+Copy UTF-8 TXT, Markdown, or JSON files into the memory inbox. This stages the
+files; run `./bin/mh agent run ingestor` or use **System → Agent Catalog → Inbox
+Ingestor → Run now** to process them.
 
 ## Tasks
 
@@ -46,10 +50,10 @@ List active tasks.
 ### `./bin/mh task add "title"`
 Create a new task.
 
-### `./bin/mh task start <task-id>`
+### `./bin/mh task start TASK_ID`
 Mark a task as in progress.
 
-### `./bin/mh task done <task-id>`
+### `./bin/mh task done TASK_ID`
 Mark a task as completed.
 
 ## Trust & Identity
@@ -57,66 +61,67 @@ Mark a task as completed.
 ### `./bin/mh trust`
 Show the current trust level and available modes.
 
-### `./bin/mh trust <level>`
-Set the trust level (`observe`, `suggest`, `supervised_auto`, `bounded_auto`).
+### `./bin/mh trust LEVEL`
+Set the trust level (`observe`, `suggest`, `supervised_auto`, `bounded_auto`, or
+`adaptive_auto`).
 
 ## Persona & Adaptation
 
-### `./bin/mh persona <command>`
+### `./bin/mh persona COMMAND`
 Manage persona profiles and the interactive interview flow.
 
 Commands:
-- `activate` (generate and activate daily profile)
 - `status` (show current persona state)
-- `diff` (compare base persona vs active profile)
 - `generate [--resume]` (start or resume interview)
 - `sessions` (list interview sessions)
-- `view <id>` (view session transcript)
-- `apply <id> [strategy]` (`replace`, `merge`, `append`)
-- `discard <id>` (delete a session)
-- `cleanup [--dry-run] [--max-age <days>]`
+- `view ID` (view session transcript)
+- `apply ID [strategy]` (`replace`, `merge`, `append`)
+- `discard ID` (delete a session)
+- `cleanup [--dry-run] [--max-age DAYS]`
 
 ## Agents & Automation
 
-### `./bin/mh agent <command>`
-Manage background agents.
+### `./bin/mh agent COMMAND`
+Run finite agents and inspect or control persistent agent processes through the
+maintained shared command surface.
 
 Commands:
-- `run <name>`
+- `run NAME`
 - `list`
 - `status [name]`
 - `logs [name]`
 - `ps`
-- `stop <name>` or `stop --all [--force]`
+- `stop NAME` or `stop --all [--force]`
 
 ## LLM Backends
 
-### `./bin/mh ollama <command>`
+### `./bin/mh ollama COMMAND`
 Ollama management.
 
 Commands:
 - `status`
 - `list`
-- `pull <model>`
-- `delete <model>`
-- `info <model>`
-- `chat <model>`
-- `ask <model> "text"`
+- `pull MODEL`
+- `delete MODEL`
+- `info MODEL`
+- `chat MODEL`
+- `ask MODEL "text"`
 
-### `./bin/mh vllm <command>`
+### `./bin/mh vllm COMMAND`
 vLLM server control.
 
 Commands:
 - `status`
-- `start [--model <name>] [--gpu-util <value>]`
+- `start [--model NAME] [--gpu-util VALUE]`
 - `stop`
 - `restart`
 
-### `./bin/mh backend <command>`
+### `./bin/mh backend COMMAND`
 Switch between active backends.
 
 Commands:
 - `status`
+- `start`
 - `switch <ollama|vllm>`
 - `detect`
 
@@ -129,60 +134,49 @@ service must be available when the queued job executes.
 
 Example:
 ```bash
-./bin/mh --user greggles index build
+./bin/mh --user USERNAME index build
 ```
 
 ### `./bin/mh index query "text"`
 Query the embeddings index.
 
-## Audio Processing
-
-### `./bin/mh audio <command>`
-Audio ingestion and transcription workflow.
-
-Commands:
-- `ingest <file-or-directory>`
-- `status`
-- `list`
-- `info <audio-id>`
-
 ## Voice Samples (Collection)
 
-### `./bin/mh voice <command>`
+### `./bin/mh voice COMMAND`
 Manage collected voice samples used for training.
 
 Commands:
 - `status`
 - `list`
-- `delete <sample-id>`
+- `delete SAMPLE_ID`
 - `export`
 
 ## Voice Training & Servers
 
-### `./bin/mh rvc <command>`
+### `./bin/mh rvc COMMAND`
 RVC (Applio) management.
 
 Commands:
 - `install`
-- `train [--name <model>] [--epochs <n>] [--save-every <n>] [--batch-size <n>] [--device auto|cpu|cuda]`
-- `status [--name <model>]`
+- `train [--name MODEL] [--epochs N] [--save-every N] [--batch-size N] [--device auto|cpu|cuda]`
+- `status [--name MODEL]`
 - `uninstall`
 
-### `./bin/mh sovits <command>`
+### `./bin/mh sovits COMMAND`
 GPT-SoVITS server management.
 
 Commands:
 - `install`
-- `start [--port <port>]`
+- `start [--port PORT]`
 - `stop`
-- `restart [--port <port>]`
+- `restart [--port PORT]`
 - `status`
-- `logs [--tail <n>]`
+- `logs [--tail N]`
 - `download-models`
 - `test [text]`
 - `uninstall`
 
-### `./bin/mh kokoro <command>`
+### `./bin/mh kokoro COMMAND`
 Kokoro TTS management.
 
 Commands:
@@ -190,39 +184,54 @@ Commands:
 - `status`
 - `serve <start|stop>`
 - `voices`
-- `test [--text <text>]`
+- `test [--text TEXT]`
 - `uninstall`
+
+### `./bin/mh voice-server COMMAND`
+Manage the shared Kokoro and Whisper service lifecycle.
+
+Commands:
+- `status <kokoro|whisper|--all>`
+- `start <kokoro|whisper|--all> [--boot]`
+- `stop <kokoro|whisper|--all>`
+
+### `./bin/mh big-brother COMMAND`
+Inspect or stop the active Big Brother terminal session.
+
+Commands:
+- `status`
+- `stop`
 
 ## User Management
 
-### `./bin/mh user <command>`
+### `./bin/mh user COMMAND`
 User management and account inspection.
 
 Commands:
 - `list`
 - `whoami`
-- `info <username>`
-- `reset-password <username> [--recovery]`
+- `info USERNAME`
+- `reset-password USERNAME [--recovery]`
 
-### `./bin/mh --user <username> <command>`
+### `./bin/mh --user USERNAME COMMAND`
 Run any command under a specific user context.
 
 ## Profile Storage
 
-### `./bin/mh profile <command>`
+### `./bin/mh profile COMMAND`
 Manage the profile storage path.
 
 Commands:
 - `path`
-- `path set <path> [--delete-source]`
+- `path set PATH [--delete-source]`
 - `path reset`
 - `devices`
-- `validate <path>`
+- `validate PATH`
 - `migrate status`
 
 ## System Setup
 
-### `./bin/mh setup <command>`
+### `./bin/mh setup COMMAND`
 System-level setup helpers.
 
 Commands:

@@ -1,198 +1,81 @@
-# Chat Interface
+# Chat
 
-The chat interface is your primary way to interact with MetaHuman OS. It provides a modern, three-column ChatGPT-style layout with real-time updates and comprehensive conversation management.
+Chat is the main conversational surface in MetaHuman OS. It combines profile-scoped conversation, optional inner and system feeds, voice input, queued work, and explicit operator controls without treating those different channels as one history.
 
-## Accessing the Chat
+## Open Chat
 
-Start the web interface:
+Start MetaHuman OS, sign in, and select **Chat** in the left sidebar. If the page reports that no model backend is available, check the configured backend before troubleshooting the conversation itself:
+
 ```bash
-cd apps/site && pnpm dev
-# Open http://localhost:4321
+./bin/mh status
+./bin/mh backend status
 ```
 
-## Layout Overview
+## Choose What You Read
 
-The interface uses a three-column layout:
+The buttons above the message list are independent filters. More than one can be enabled at once.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ Header (Authentication, Cognitive Mode, Settings)       │
-├─────────┬─────────────────────────────┬─────────────────┤
-│ Left    │ Center                      │ Right           │
-│ Sidebar │ Content                     │ Sidebar         │
-│         │                             │ (Collapsible)   │
-│ Feature │ ChatInterface /             │ Developer       │
-│ Menu    │ Dashboard /                 │ Tools           │
-│         │ Memory Browser /            │                 │
-│         │ TaskManager /               │                 │
-│         │ Terminal / etc.             │                 │
-└─────────┴─────────────────────────────┴─────────────────┘
-```
+- **Conversation** shows user and assistant messages from the conversation buffer.
+- **Inner Dialogue** shows persisted private thoughts, reflections, dreams, and related inner records.
+- **System** merges chronological System and Robot buffer records.
+- **Terminal** opens the terminal control surface. It is not another message buffer.
 
-**Key Components:**
-- **Header**: Authentication, cognitive mode selector, developer tools toggle
-- **Left Sidebar**: Feature menu with status widget
-- **Center Content**: Active view (chat, dashboard, memory, etc.)
-- **Right Sidebar**: Developer tools (audit stream, agent monitor, settings)
+Changing these filters does not change where a new message will be written. Use the compose-target buttons beside the input to choose **Conversation** or **Unvoiced thought**.
 
-## Authentication & Profile Selection
+## Send a Message
 
-When you first access the UI, you'll encounter the **Authentication Gate**:
+1. Select the intended compose target.
+2. Enter a message.
+3. Press **Send**.
 
-1. **Create Account** – Register a new user. The first account becomes the `owner` with full access.
-2. **Login** – Existing users authenticate to access their isolated profile.
-3. **Continue as Guest** – Start a 30-minute anonymous session. Guests choose from public profiles only (private profiles are hidden).
+If another chat request is already running, the new request may enter the shared queue instead of starting immediately. The **Queue** tab in the right sidebar shows admitted work and its state.
 
-The active profile displays in the header once authenticated.
+Select an existing message before sending to include it as focused reply context. Agency and curiosity cards use their dedicated response pipeline. In Environment mode, an ordinary selected-message reply stays in the Environment workflow so the same LLM decision can respond or select an environment action. Clear the selection when it is no longer relevant.
 
-## Header Controls
+## Stop and Clear
 
-### Profile Indicator
-Shows the active account with role and visibility badge. Owners can:
-- Open the profile menu
-- Log out
-- Access Settings
+- **Stop** cancels the current chat request.
+- Interrupting speech stops browser TTS playback; it does not by itself cancel model work.
+- **Clear** clears only the explicit compose target's server buffer. The visible read-filter combination never decides what is deleted.
 
-### Cognitive Mode Selector
-Switch between three operational modes:
-- **Dual Consciousness** (Default): Full operator pipeline with memory grounding
-- **Agent**: Heuristic routing for lightweight assistance
-- **Emulation**: Chat-only mode without operator overhead
+Clearing Conversation therefore does not clear Inner Dialogue, System, audit logs, memories, or unrelated runtime data.
 
-Locked modes display tooltips explaining access restrictions.
+## Thinking, Big Brother, and Active Operator
 
-### Developer Tools Toggle
-Opens the right sidebar with:
-- Live audit stream (real-time system events)
-- Agent monitor with statistics
-- Boredom control (reflection frequency)
-- Model selector (switch Ollama models)
+These controls change execution behavior and should be used deliberately:
 
-## System Status Banners
+- **Thinking mode** changes the chat reasoning behavior exposed by the current model path.
+- **Big Brother** can escalate selected work to its configured terminal provider. A normal click enables escalation mode; right-click enables full delegation. The provider must be configured and available.
+- **Active Operator** cycles through its supported operating modes. Higher-autonomy modes can admit bounded work from configured triggers and policy.
 
-Prominent banners appear at the top when special system states are active:
+A UI status message proves that a request was submitted or progressed only as far as the displayed state. For terminal work, inspect the Terminal view and final work result before treating it as complete.
 
-- **High Security Mode**: Red banner - system locked into read-only emulation mode
-- **Wetware Deceased**: Indigo banner - running as independent digital consciousness (Dual mode unavailable)
-- **Read-Only Mode**: General banner - current cognitive mode doesn't allow writes
+## Use the Microphone
 
-## Chat Modes
+- Tap the microphone for one recording. The transcript is placed in the input so you can review it before sending.
+- Long-press or right-click the microphone to toggle conversation listening mode. In that mode completed transcripts can be sent automatically.
+- Tap while speech is playing to interrupt playback and return to listening.
 
-The chat interface has three distinct modes accessible via toggle buttons above the message area:
+On the Site, the voice path is browser microphone → managed Whisper
+transcription → normal chat request → TTS queue → browser playback. The
+maintained React Native shell may use device-native speech recognition instead.
+Check each stage separately when diagnosing a failure. See
+[Voice Features](/user-guide#voice-features).
 
-### Conversation Mode (Default)
+## Speech Output
 
-**Purpose**: Active back-and-forth dialog between you and MetaHuman
+The speaker control enables or disables conversational speech. Generated audio is delivered through the TTS queue and played by the authenticated browser consumer. A healthy synthesis provider or completed audio file does not prove that the browser played it audibly; browser permission, the active output device, and the queue consumer also matter.
 
-**What appears**:
-- ✅ Your messages (user)
-- ✅ MetaHuman's responses (assistant)
-- ✅ System notifications
-- ✅ Live reasoning stages (while thinking)
+## Privacy and Persistence
 
-**What's hidden**:
-- ❌ Reflections (💭 Idle Thought)
-- ❌ Dreams (🌙 Dream)
-- ❌ Completed reasoning (ephemeral - disappears after thinking finishes)
+Conversation, inner-dialogue, system, and robot histories are server-owned, profile-resolved buffers. They are not interchangeable with durable episodic memory. Use explicit memory capture when something must be retained as a memory rather than relying on the current chat view.
 
-**Reasoning behavior**: Reasoning stages display in real-time during thinking for transparency, but disappear once the response completes to keep conversations clean.
+Guest sessions are authenticated, read-only sessions with limited profile access. Private profiles are not available to guests.
 
-### Inner Dialogue Mode
+## Related Guides
 
-**Purpose**: Observe MetaHuman's autonomous consciousness stream
-
-**What appears**:
-- ✅ Reflections (💭 Idle Thought) - Generated by reflector agent using associative memory chains
-- ✅ Dreams (🌙 Dream) - Generated by dreamer agent during sleep from lifetime memories
-- ✅ Reasoning stages (🤔 Reasoning) - Permanent record of thinking processes
-
-**What's hidden**:
-- ❌ User messages
-- ❌ Assistant responses
-- ❌ System messages
-
-**Memory Access**: Both reflections and dreams access your entire memory lifetime, weighted by recency:
-- Recent memories appear most frequently
-- 1-year-old memories retain ~20% probability (reflective weighting)
-- Older memories surface meaningfully, not just as rare exceptions
-- Exponential decay formula (227-day constant) allows contemplative exploration of your past
-
-**Train of Thought**: Reflections use associative chain-building to follow semantic links between memories, creating connected thought sequences.
-
-### Voice Mode
-
-**Purpose**: Voice-driven interaction with audio input/output
-- Real-time speech-to-text and text-to-speech
-- See [Voice Features](voice-features.md) for complete details
-
-## Dialog Type Separation: Thoughts vs. Words
-
-The strict separation ensures clarity:
-- **Conversation** = Spoken words (bidirectional communication)
-- **Inner Dialogue** = Silent thoughts (autonomous consciousness)
-- **Reasoning** = Ephemeral in conversation (live feedback only), permanent in inner dialogue (thought record)
-
-This architecture allows you to:
-- Have clean conversations without thought clutter
-- Observe MetaHuman's autonomous mental processes separately
-- See reasoning live during conversation without polluting history
-- Review complete thinking processes in inner dialogue mode
-
-## Left Sidebar - Status Widget
-
-### Trust Level
-Click to cycle through trust progression:
-- **observe** → **suggest** → **supervised_auto** → **bounded_auto** → **adaptive_auto** → **YOLO**
-
-Each level grants increasing autonomy for skill execution and system operations.
-
-### Persona Facets
-Click to cycle through personality facets:
-- **inactive** (Gray) - Persona disabled
-- **default** (Purple) - Balanced, authentic self
-- **poet** (Indigo) - Creative, metaphorical, expressive
-- **thinker** (Blue) - Analytical, systematic
-- **friend** (Green) - Warm, supportive, empathetic
-- **antagonist** (Red) - Critical, challenging
-
-Features:
-- Each facet shows as a colored badge
-- Messages are color-coded with left borders matching the active facet
-- Facet name appears in message header (e.g., "MetaHuman · poet")
-- Chat history persists across changes for multi-faceted conversations
-
-### Profile Visibility
-Owners can mark their persona as **Private** or **Public**:
-- **Public Profiles**: Visible to all guests; can be selected for guest sessions
-- **Private Profiles**: Hidden from guest selection; owner-only access
-- **Special Profile**: When 2+ public profiles exist, the Mutant Super Intelligence easter egg appears
-
-## Privacy Features & Session Controls
-
-### Clear Button
-Located in the chat interface header, provides complete session cleanup:
-- Clears all chat messages from the UI
-- Clears reasoning stages
-- Clears localStorage cache
-- Clears the live audit stream display
-- **Deletes all audit log files from disk** (`logs/audit/*.ndjson`)
-- Creates a new audit entry recording the clear action for accountability
-
-### Fresh Session Interface
-Each session starts with a clean slate - no historical chat or audit data loads automatically.
-
-### Audit Logs
-All system events are saved to `logs/audit/YYYY-MM-DD.ndjson` for accountability, but can be cleared at any time via the Clear button. The live sidebar stream mirrors the same data, organized into expandable groups.
-
-## Three Ways to Interact
-
-1. **Web UI (Recommended)** - Interactive interface with real-time updates
-2. **CLI (`mh` command)** - Command-line interface for quick operations
-3. **Direct File Access** - All data stored as human-readable JSON files for direct manipulation
-
-## Next Steps
-
-- Learn about the [Memory System](memory-system.md) for storing and organizing your data
-- Explore [Task Management](task-management.md) to track your goals and projects
-- Try [Voice Features](voice-features.md) for audio-driven interaction
-- Check the [Dashboard](dashboard-monitoring.md) for system status and metrics
+- [Memory](/user-guide#memory-system)
+- [Dashboard and Monitoring](/user-guide#dashboard-monitoring)
+- [Tasks and Projects](/user-guide#task-management)
+- [Voice Features](/user-guide#voice-features)
+- [Cognitive Modes](/user-guide#cognitive-modes)

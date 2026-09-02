@@ -62,7 +62,7 @@ test('daydreamer graph orders persona, citations, persistence, buffer admission,
 
   assert.equal(sourceType(edgeTo('daydreamer_generator', 'personaPrompt')), 'persona_formatter');
   assert.equal(sourceType(edgeTo('dreamer_dream_saver', 'sourceIds')), 'daydreamer_generator');
-  assert.equal(sourceType(edgeTo('inner_dialogue_buffer', 'text')), 'dreamer_dream_saver');
+  assert.equal(sourceType(edgeTo('inner_dialogue_buffer', 'entries')), 'dreamer_dream_saver');
   assert.equal(sourceType(edgeTo('tts', 'innerDialogue')), 'inner_dialogue_buffer');
   assert.equal(graph.nodes.some((node: any) => node.data.nodeType === 'audit_logger'), false);
 });

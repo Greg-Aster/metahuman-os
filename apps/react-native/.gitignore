@@ -19,5 +19,4 @@ nodejs-assets/nodejs-project/.env
 nodejs-assets/nodejs-project/dist/
 nodejs-assets/nodejs-project/etc/
 nodejs-assets/nodejs-project/www/
-releases/
 scripts/.backend_built

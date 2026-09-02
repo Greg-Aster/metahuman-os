@@ -19,7 +19,6 @@
   } from '../lib/client/server-health';
   import SyncStatus from './SyncStatus.svelte';
   import UpdateManager from './UpdateManager.svelte';
-  import ProfileManager from './ProfileManager.svelte';
 
   // ============ Shared State ============
   let isMobile = false;
@@ -797,7 +796,7 @@
       <div class="panel mb-6">
         <div class="flex items-center gap-4 flex-wrap mb-3">
           <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">🌐 Cloudflare Tunnel</h2>
-          <a href="https://github.com/yourusername/metahuman/blob/master/docs/user-guide/17-cloudflare-tunnel-setup.md" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-500 text-white no-underline rounded-md font-medium text-xs hover:bg-blue-600 transition-colors">
+          <a href="https://github.com/Greg-Aster/metahuman-os/blob/main/docs/user-guide/configuration-admin/deployment.md" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-500 text-white no-underline rounded-md font-medium text-xs hover:bg-blue-600 transition-colors">
             📖 Setup Guide
           </a>
         </div>
@@ -808,8 +807,7 @@
         {#if !tunnelStatus.installed}
           <div class="p-4 rounded-md mt-4 bg-amber-100 dark:bg-amber-900/50 border border-amber-300 dark:border-amber-600">
             <strong>⚠️ cloudflared not installed</strong>
-            <p>Install cloudflared to enable secure tunneling:</p>
-            <code class="block mt-2 p-2 bg-white dark:bg-gray-800 rounded text-sm overflow-x-auto">wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb && sudo dpkg -i cloudflared-linux-amd64.deb</code>
+            <p>Use the setup guide for current platform-specific installation and locally managed tunnel configuration.</p>
           </div>
         {:else}
           <div class="rounded-md p-4 mb-4 border-2 {tunnelStatus.running ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/50' : 'border-red-500 bg-red-50 dark:bg-red-900/50'}">
@@ -841,7 +839,7 @@
                   on:change={(e) => toggleTunnel(e.currentTarget.checked)}
                   disabled={loading}
                 />
-                <span>Auto-start on boot</span>
+                <span>Auto-start with MetaHuman</span>
               </label>
 
               <div class="flex gap-2">
@@ -944,55 +942,16 @@
     </div>
 
     <!-- App Updates -->
-    <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">
+    <div class="panel mb-6">
       <div class="flex items-center gap-4 flex-wrap mb-3">
-        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">⬇️ App Updates</h2>
-        {#if !isMobile}
-          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Mobile Only</span>
-        {/if}
+        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">⬇️ {isMobile ? 'App Updates' : 'Server Updates'}</h2>
       </div>
       <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
-        Check for and download new versions of the MetaHuman app from your connected server.
+        {isMobile
+          ? 'Check for and download signed MetaHuman app releases from your connected server.'
+          : 'Check the configured Git upstream, validate a fast-forward update, and restart into the new build.'}
       </p>
-      {#if isMobile}
-        <UpdateManager />
-      {:else}
-        <div class="opacity-50">
-          <div class="rounded-md p-4 border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
-            <div class="flex items-center gap-2 mb-3">
-              <span class="w-3 h-3 rounded-full bg-red-500"></span>
-              <strong>—</strong>
-            </div>
-            <p class="text-sm text-gray-500">Use mobile app to check for updates</p>
-          </div>
-        </div>
-      {/if}
-    </div>
-
-    <!-- Profile Management -->
-    <div class="panel mb-6 {!isMobile ? 'opacity-60 pointer-events-none' : ''}">
-      <div class="flex items-center gap-4 flex-wrap mb-3">
-        <h2 class="text-lg font-semibold m-0 text-gray-900 dark:text-gray-50">👤 Profile Data</h2>
-        {#if !isMobile}
-          <span class="text-xs px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 rounded-full font-medium">Mobile Only</span>
-        {/if}
-      </div>
-      <p class="text-gray-500 dark:text-gray-400 mb-4 text-sm">
-        Download your profile for offline use, create local profiles, or sync changes with the server.
-      </p>
-      {#if isMobile}
-        <ProfileManager />
-      {:else}
-        <div class="opacity-50">
-          <div class="rounded-md p-4 border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900">
-            <div class="flex items-center gap-2 mb-3">
-              <span class="w-3 h-3 rounded-full bg-red-500"></span>
-              <strong>—</strong>
-            </div>
-            <p class="text-sm text-gray-500">Use mobile app to manage profile data</p>
-          </div>
-        </div>
-      {/if}
+      <UpdateManager />
     </div>
 
     <!-- ============ MESSAGES ============ -->

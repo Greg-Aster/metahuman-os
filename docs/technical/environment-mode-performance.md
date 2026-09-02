@@ -4,6 +4,15 @@
 
 This document is the maintained paper trail for Environment Mode response-time work. It records measured behavior, architectural decisions, validation evidence, and remaining work. Performance changes must preserve persona quality, memory grounding, environment-action authorization, task lifecycle ownership, and evidence-based completion.
 
+## Current Status
+
+Source reconciled: 2026-08-31. The current worktree graph has 24 nodes and 58
+edges, including the new Robot Status context input. This documentation repair
+did not rebuild or restart the application, exercise a configured profile,
+contact the Environment Bridge, or run a physical robot. The dated work log and
+validation record below remain historical evidence; they are not a claim that
+the same commands or runtime results are current.
+
 ## Maintenance Rule
 
 - Update this document whenever Environment Mode performance is measured, a performance-related architecture decision is made, or an implementation changes the LLM critical path.
@@ -47,15 +56,25 @@ Historical warm Environment Mode turns before the recent task-contract expansion
 
 ## Current Architecture Findings
 
-- Environment Mode currently has 22 nodes and 56 edges.
+- Environment Mode currently has 24 nodes and 58 edges.
+- Robot Status supplies bounded supporting self-context to the Environment
+  Context Builder. It is not current sensory evidence, an action result, or
+  proof of external state.
 - The graph executor visits nodes in topological order and awaits them serially.
 - The work coordinator also serializes the broad `local-llm` resource lane with `maxConcurrent: 1` and a 2,000 ms cooldown between complete work items.
-- A normal question or named robot command requires one `environmentActionSelector` call. A valid named command makes no general-model or Movement Generator call. Substantive conversation makes one general-model call only after a typed `escalate` decision. Off-script body-local motion adds the Movement Generator only after the selector returns `movementRequest`.
+- A normal question or named robot command requires one
+  `environmentActionSelector` call. The checked-in registry maps that role to
+  the vision-capable `default.orchestrator`; the retired typed-escalation path is
+  not part of the current graph. A valid named command does not call Movement
+  Generator. Off-script body-local motion adds Movement Generator only after the
+  selector returns `movementRequest`.
 - Exact successful `action_result` feedback for a reactive one-step command is reduced without a model call. Autonomous results, failed results, and external visual/state objectives use one action-selector evidence/next-action call per physical attempt.
 - Long-term memory retrieval remains a bounded vector lookup. The generative Context Router and Memory Relevance Interpreter are no longer in the active Environment graph.
 - The retired Task Contract, Visual Evidence Assessor, Task Validator, Task Refiner, and Workflow Command nodes are no longer registered or present in the graph.
 - The checked-in registry maps `environmentActionSelector` to the vision-capable `default.orchestrator` model. Registry migration removes the retired `environmentRouter` role and replaces the known text-only `environment-action-selector-0.8b:v1` assignment while preserving explicit custom selector choices.
-- A rebuilt server artifact contains this implementation. Runtime profile migration and physical robot behavior still require proof after the next server start.
+- The current source and checked-in graph contain this implementation. Loaded
+  server state, profile-specific model resolution, bridge delivery, and physical
+  robot behavior remain unverified by this documentation update.
 - Ollama model unloading after five minutes adds an intermittent cold-start penalty.
 - Graph serialization and coordinator serialization are MetaHuman policies, not hard Ollama limitations.
 
@@ -72,7 +91,7 @@ Implemented change:
 - Skip post-action model inference for exact one-step action-result completion. Only objectives requiring new evidence return to the selector.
 - Default autonomous output to private inner dialogue. Conversation Buffer, conversational telemetry, and TTS receive output only after explicit conversation admission.
 - Queue familiarity matching after autonomous visual reasoning through the existing background semantic-search owner.
-- Reduce the Environment prompt to 212 words and the selector budget to 384 tokens. Task State, memories, and history each appear at most once; autonomous observations receive no conversation history; capability rules are generated only for advertised capabilities.
+- Reduce the Environment prompt to 212 words. Task State, memories, and history each appear at most once; autonomous observations receive no conversation history; capability rules are generated only for advertised capabilities. The original 384-token selector budget was raised to 2,048 on 2026-09-01 after a valid custom-motion decision exhausted the smaller budget before completing its JSON.
 - Add provider-native structured output for the shared Environment contract. Cross-field lifecycle consistency remains in Task State rather than a second validator model or graph.
 - Retire the text-only 0.8B selector from runtime selection because it cannot accept the directly routed image and failed the revised output contract. The exact spiky-friend/head-tilt case is an evaluation-only regression and is excluded from development training data and runtime logic.
 
@@ -1186,19 +1205,22 @@ current-scene query, and one bounded visual stopping task through the restarted
 production server. Source validation proves lifecycle and ownership behavior;
 it does not prove what a physical camera frame contains.
 
-## Current Priorities
+## Open Validation
 
-1. Restart the production server so its in-memory graph and rebuilt bundle use the bounded visual lifecycle repair.
-2. Run one direct command, one current-scene query, and one bounded visual stopping task on the physical robot; record semantic selection, image admission, bridge delivery, continuation count, completion basis, and end-to-end latency separately.
-3. Re-benchmark the merged 0.8B selector through this repaired lifecycle before generating more training data. Train again only for demonstrated semantic-selection errors.
-4. Decide whether complex conversation needs a separate general-model route only from live evidence. Any later conversation route must remain outside the physical command path and cannot veto an advertised command.
-5. Keep `qwen3.5-0.8b-cv-003` epoch two as the strongest cross-validation checkpoint and `cv-004` as negative distribution evidence. Neither fold adapter is a production artifact.
-6. Freeze a new action-selector held-out set before later final training. The retired 16 classifier cases remain closed and cannot validate this changed output contract.
-
-Deferred, accepted for now:
-
-- Tighten Visual Evidence Assessor around the exact stopping predicate and physically retest another bounded motion if this behavior becomes a practical blocker.
-- Repair cross-task terminal-feedback admission and rerun the text-input frame-acquisition acceptance case if the defect becomes a practical blocker.
+1. Rebuild and restart through the canonical application lifecycle before making
+   claims about the loaded Environment graph or profile-specific model mapping.
+2. Run one direct command, one current-scene query, and one bounded visual
+   stopping task on the physical robot. Record semantic selection, image
+   admission, bridge delivery, continuation count, completion basis, and
+   end-to-end latency separately.
+3. Benchmark the current 24-node graph with Robot Status admitted as supporting
+   context before attributing any latency change to that input.
+4. Treat the 0.8B experiments as historical rejected candidates. Do not resume
+   training or create another conversation route without a new measured failure
+   and an approved owner-scoped repair.
+5. Reproduce any cross-task terminal-feedback problem against the current Task
+   State owner before opening a repair. The retired Visual Evidence Assessor is
+   not a valid follow-up owner.
 
 ## Reference Points
 
@@ -1213,7 +1235,12 @@ Deferred, accepted for now:
 - Qwen3 embedding model: <https://huggingface.co/Qwen/Qwen3-Embedding-0.6B>
 - Qwen3 reranker model: <https://huggingface.co/Qwen/Qwen3-Reranker-0.6B>
 
-## Validation Record
+## Historical Validation Record
+
+This cumulative record preserves the command names, graph shapes, and results
+reported by their dated implementation slices. It is not a current all-pass
+matrix; the Current Status and Open Validation sections above govern present
+claims.
 
 Passed:
 

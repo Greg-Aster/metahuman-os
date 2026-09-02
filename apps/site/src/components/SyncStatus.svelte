@@ -15,15 +15,7 @@
     type ConflictResolution,
   } from '../lib/client/memory-sync';
   import { isMobileApp } from '../lib/client/api-config';
-  import {
-    checkForUpdates,
-    downloadAndInstall,
-    updateState,
-    isUpdateAvailable,
-    formatFileSize,
-    type UpdateState,
-  } from '../lib/client/app-updater';
-  import { getRemoteSyncConfig, syncFromRemoteServer } from '../lib/client/profile-sync';
+  import { getRemoteSyncConfig, runProfileSyncAgent } from '../lib/client/profile-sync';
   import SyncManager from './SyncManager.svelte';
 
   export let compact = false;
@@ -40,13 +32,7 @@
   let showConflictModal = false;
   let conflictList: SyncableMemory[] = [];
 
-  // Update state
-  let appUpdate: UpdateState | null = null;
-  let updateAvailable = false;
-  let showUpdateModal = false;
   let isMobile = false;
-  let updateDismissed = false;
-  let showUpdateNotice = false;
 
   // Sync Manager state
   let showSyncManager = false;
@@ -74,13 +60,6 @@
   });
   const unsubPending = hasPendingChanges.subscribe(p => pending = p);
   const unsubConflicts = hasConflicts.subscribe(c => conflicts = c);
-  const unsubUpdate = updateState.subscribe(s => {
-    appUpdate = s;
-    if (s.updateAvailable) {
-      updateDismissed = false;
-    }
-  });
-  const unsubHasUpdate = isUpdateAvailable.subscribe(u => updateAvailable = u);
 
   onMount(async () => {
     isMobile = isMobileApp();
@@ -103,12 +82,8 @@
     unsubState();
     unsubPending();
     unsubConflicts();
-    unsubUpdate();
-    unsubHasUpdate();
     stopBackgroundSync();
   });
-
-  $: showUpdateNotice = isMobile && updateAvailable && !updateDismissed && !!appUpdate?.latestMobileVersion;
 
   function handleOpenSyncManager() {
     if (syncing) return;
@@ -120,20 +95,14 @@
 
     syncing = true;
     try {
-      // Use REMOTE sync which writes to filesystem via local API
-      console.log('[SyncStatus] Quick sync - calling syncFromRemoteServer...');
-      const result = await syncFromRemoteServer(
+      const result = await runProfileSyncAgent(
+        [],
         (progress) => {
           syncProgress = {
             current: progress.current || 0,
             total: progress.total || 1,
             category: progress.message
           };
-        },
-        {
-          includeMemories: true,
-          includeCredentials: true,
-          priorityOnly: true,
         }
       );
 
@@ -154,14 +123,6 @@
         console.log('[SyncStatus] Quick sync complete:', result);
       }
 
-      // On mobile, also check for app updates
-      if (isMobile) {
-        try {
-          await checkForUpdates();
-        } catch (e) {
-          console.warn('[SyncStatus] Update check failed:', e);
-        }
-      }
     } catch (e) {
       // Catch any unexpected errors and show report
       syncReport = {
@@ -174,81 +135,6 @@
     } finally {
       syncing = false;
       syncProgress = null;
-    }
-  }
-
-  async function handleSyncWithOptions(event: CustomEvent<{ options: string[] }>) {
-    if (syncing) return;
-
-    const { options } = event.detail;
-    console.log('[SyncStatus] Starting sync with options:', options);
-
-    // Set syncing state
-    syncing = true;
-    syncProgress = null;
-
-    try {
-      // Use REMOTE sync which writes to filesystem via local API
-      // This is the unified approach - same code for web and mobile
-      const includeMemories = options.includes('memories');
-      const includeCredentials = options.includes('config');
-
-      console.log('[SyncStatus] Calling syncFromRemoteServer...');
-
-      const result = await syncFromRemoteServer(
-        (progress) => {
-          syncProgress = {
-            current: progress.current || 0,
-            total: progress.total || 1,
-            category: progress.message
-          };
-        },
-        {
-          includeMemories,
-          includeCredentials,
-          priorityOnly: true, // Use priority export to avoid OOM
-        }
-      );
-
-      // ALWAYS show sync report - never silently fail
-      syncReport = {
-        success: result.success,
-        profileFiles: result.profileFiles,
-        memoriesImported: result.memoriesImported,
-        credentialsSynced: result.credentialsSynced,
-        error: result.error,
-        timestamp: new Date().toISOString(),
-      };
-      showSyncReport = true;
-
-      if (result.success) {
-        console.log('[SyncStatus] Sync complete:', result);
-      } else {
-        console.error('[SyncStatus] Sync failed:', result.error);
-      }
-
-      // Check for app updates if requested
-      if (options.includes('update') && isMobile) {
-        try {
-          await checkForUpdates();
-        } catch (e) {
-          console.warn('[SyncStatus] Update check failed:', e);
-        }
-      }
-
-    } catch (e) {
-      // Catch any unexpected errors and show report
-      syncReport = {
-        success: false,
-        error: (e as Error).message,
-        timestamp: new Date().toISOString(),
-      };
-      showSyncReport = true;
-      console.error('[SyncStatus] Sync error:', e);
-    } finally {
-      syncing = false;
-      syncProgress = null;
-      showSyncManager = false;
     }
   }
 
@@ -258,16 +144,6 @@
       // Reload remote config in case it was changed
       await loadRemoteConfig();
     }
-  }
-
-  async function handleDownloadUpdate() {
-    await downloadAndInstall();
-    showUpdateModal = false;
-  }
-
-  function handleDismissUpdate() {
-    updateDismissed = true;
-    showUpdateModal = false;
   }
 
   async function handleShowConflicts() {
@@ -332,7 +208,7 @@
     class="inline-flex items-center gap-1 px-2 py-1 border-none bg-transparent cursor-pointer text-base relative disabled:cursor-wait"
     on:click={handleOpenSyncManager}
     disabled={syncing}
-    title={`Sync: ${getStatusLabel()}${showUpdateNotice ? ' - Update available!' : ''}`}
+    title={`Sync: ${getStatusLabel()}`}
   >
     <span class="text-base {syncing ? 'animate-spin' : ''}" style="color: {getStatusColor()}">
       {#if syncing}
@@ -347,8 +223,6 @@
     </span>
     {#if state.pendingCount > 0 || state.conflictCount > 0}
       <span class="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 bg-red-500 text-white text-[0.625rem] font-semibold rounded-full flex items-center justify-center">{state.pendingCount + state.conflictCount}</span>
-    {:else if showUpdateNotice}
-      <span class="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 bg-green-500 text-[0.5rem] rounded-full flex items-center justify-center">⬆️</span>
     {/if}
   </button>
 {:else}
@@ -427,37 +301,6 @@
         <div class="text-xs text-red-500 p-2 bg-red-50 dark:bg-red-900/50 rounded">{state.lastSyncError}</div>
       {/if}
 
-      <!-- App Update Available (mobile only) -->
-      {#if isMobile && showUpdateNotice && appUpdate?.latestMobileVersion}
-        <div class="mt-3 p-3 bg-gradient-to-br from-green-500/10 to-emerald-500/10 dark:from-green-500/15 dark:to-emerald-500/15 border border-green-500/30 rounded-lg">
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-base">⬆️</span>
-            <span class="text-sm font-semibold text-green-600 dark:text-green-400">Update Available</span>
-          </div>
-          <div class="text-xs text-gray-500 mb-2">
-            <span class="font-mono">v{appUpdate.currentVersion} → v{appUpdate.latestMobileVersion.version}</span>
-            {#if appUpdate.latestMobileVersion.fileSize}
-              <span class="ml-2 text-gray-400">({formatFileSize(appUpdate.latestMobileVersion.fileSize)})</span>
-            {/if}
-          </div>
-          <div class="flex gap-2">
-            <button class="flex-1 py-1.5 px-2 bg-green-500 text-white border-none rounded text-xs cursor-pointer font-medium hover:bg-green-600" on:click={() => showUpdateModal = true}>
-              View Details
-            </button>
-            <button class="py-1.5 px-2 bg-transparent text-gray-500 dark:text-gray-400 border border-gray-300 dark:border-gray-600 rounded text-xs cursor-pointer hover:bg-black/5 dark:hover:bg-white/5" on:click={handleDismissUpdate}>
-              Later
-            </button>
-          </div>
-        </div>
-      {/if}
-
-      <!-- App Version (mobile only, when no update) -->
-      {#if isMobile && !showUpdateNotice && appUpdate?.currentVersion}
-        <div class="flex justify-between text-xs">
-          <span class="text-gray-500">App version:</span>
-          <span class="text-gray-700 dark:text-gray-300">{appUpdate.currentVersion}</span>
-        </div>
-      {/if}
     </div>
   </div>
 {/if}
@@ -504,73 +347,11 @@
   </div>
 {/if}
 
-<!-- App Update Modal -->
-{#if showUpdateModal && appUpdate?.latestMobileVersion}
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]">
-    <div class="bg-white dark:bg-gray-800 rounded-lg w-[90%] max-w-[400px] max-h-[80vh] overflow-hidden flex flex-col" role="dialog" aria-modal="true" tabindex="-1">
-      <div class="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
-        <h3 class="m-0 text-base text-gray-900 dark:text-gray-50">App Update Available</h3>
-        <button class="bg-transparent border-none text-2xl text-gray-500 cursor-pointer leading-none" on:click={() => showUpdateModal = false}>×</button>
-      </div>
-
-      <div class="p-6">
-        <div class="flex items-center justify-center gap-4 mb-6">
-          <div class="text-center p-3 rounded-lg bg-gray-500/10 border border-gray-500/20">
-            <span class="block text-[0.625rem] uppercase text-gray-500 mb-1">Current</span>
-            <span class="text-base font-semibold font-mono text-gray-700 dark:text-gray-200">v{appUpdate.currentVersion}</span>
-          </div>
-          <span class="text-xl text-gray-400">→</span>
-          <div class="text-center p-3 rounded-lg bg-gradient-to-br from-green-500/10 to-emerald-500/10 border border-green-500/30">
-            <span class="block text-[0.625rem] uppercase text-gray-500 mb-1">New</span>
-            <span class="text-base font-semibold font-mono text-green-600 dark:text-green-400">v{appUpdate.latestMobileVersion.version}</span>
-          </div>
-        </div>
-
-        {#if appUpdate.latestMobileVersion.releaseNotes && appUpdate.latestMobileVersion.releaseNotes !== 'No release notes provided.'}
-          <div class="mb-4 p-3 bg-black/[0.02] dark:bg-white/[0.03] rounded-md">
-            <h4 class="m-0 mb-2 text-xs font-semibold text-gray-700 dark:text-gray-200">What's New</h4>
-            <p class="m-0 text-[0.8125rem] leading-relaxed text-gray-500">{appUpdate.latestMobileVersion.releaseNotes}</p>
-          </div>
-        {/if}
-
-        <div class="flex flex-col gap-1 mb-4">
-          {#if appUpdate.latestMobileVersion.fileSize}
-            <div class="flex justify-between text-xs">
-              <span class="text-gray-500">Download size:</span>
-              <span class="text-gray-700 dark:text-gray-300">{formatFileSize(appUpdate.latestMobileVersion.fileSize)}</span>
-            </div>
-          {/if}
-          {#if appUpdate.lastChecked}
-            <div class="flex justify-between text-xs">
-              <span class="text-gray-500">Checked:</span>
-              <span class="text-gray-700 dark:text-gray-300">{formatTimestamp(appUpdate.lastChecked)}</span>
-            </div>
-          {/if}
-        </div>
-
-        <div class="flex flex-col gap-2 mb-4">
-          <button class="w-full py-3 px-4 bg-gradient-to-br from-green-500 to-green-600 text-white border-none rounded-lg text-sm font-semibold cursor-pointer hover:from-green-600 hover:to-green-700" on:click={handleDownloadUpdate}>
-            Download Update
-          </button>
-          <button class="w-full py-2 px-4 bg-transparent text-gray-500 dark:text-gray-400 border border-gray-300 dark:border-gray-600 rounded-lg text-sm cursor-pointer hover:bg-black/5 dark:hover:bg-white/5" on:click={handleDismissUpdate}>
-            Remind Me Later
-          </button>
-        </div>
-
-        <p class="m-0 text-[0.6875rem] text-gray-400 text-center leading-relaxed">
-          The download will open in your browser. After downloading, open the APK to install.
-        </p>
-      </div>
-    </div>
-  </div>
-{/if}
-
 <!-- Sync Manager Modal -->
 <SyncManager
   isOpen={showSyncManager}
   isSyncing={syncing}
   {syncProgress}
-  on:sync={handleSyncWithOptions}
   on:close={handleCloseSyncManager}
 />
 

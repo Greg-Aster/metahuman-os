@@ -4,7 +4,9 @@ import type { EnvironmentObservation } from './types.js';
 import { environmentActionParserNode } from '../nodes/environment/action-parser.node.js';
 import { environmentInstructionInterpreterNode } from '../nodes/environment/instruction-interpreter.node.js';
 import {
+  AINEKIO_FREESTYLE_BODY_MODEL,
   MOVEMENT_GENERATOR_JSON_SCHEMA,
+  movementGeneratorPrompt,
   movementGeneratorNode,
   normalizeGeneratedMotionPlan,
 } from '../nodes/environment/movement-generator.node.js';
@@ -16,6 +18,14 @@ const movementRouting = {
   actionParams: { motionClass: 'body_local' },
 };
 const conversationRouting = { needsAction: false, actionType: 'none' };
+const standingCommandedPose = {
+  version: 1,
+  jointMapVersion: 1,
+  kind: 'reference',
+  reference: 'stand',
+  sourceActionId: 'stand-before-plan',
+  updatedAt: '2026-08-27T17:59:59.000Z',
+};
 
 function targets(degrees = 90): Array<{ joint: string; degrees: number }> {
   return joints.map(joint => ({ joint, degrees }));
@@ -95,6 +105,52 @@ test('normalizes one bounded generated plan and assigns the coordinator session'
   assert.equal(compact.summary, 'Raise both front legs, pause, then stand.');
 });
 
+test('Movement Generator preserves its semantic summary with the admitted motion action', async () => {
+  const result = await movementGeneratorNode.execute({
+    movementRequest: {
+      description: 'Raise both front legs, pause, then stand.',
+      motionClass: 'body_local',
+    },
+    instruction: 'Raise both front legs, pause, then stand.',
+    observation: {
+      environmentId: 'ainekio',
+      adapter: 'ainekio-gateway',
+      sessionId: 'ainekio-sim-1',
+      timestamp: '2026-08-27T18:00:00.000Z',
+      capabilities: { actions: ['robotMotionPlan'] },
+      state: { commandedPose: standingCommandedPose },
+    },
+  }, {
+    generateEnvironmentMotionPlan: async () => generatedResult({
+      summary: 'Raised both front legs, paused, then returned to standing.',
+    }),
+  }, {});
+
+  assert.equal(result.valid, true);
+  assert.equal(
+    result.action.metadata.motionSummary,
+    'Raised both front legs, paused, then returned to standing.',
+  );
+  assert.equal(result.response, '');
+});
+
+test('Movement Generator performs no inference when the selector did not choose Freestyle', async () => {
+  let calls = 0;
+  const result = await movementGeneratorNode.execute({
+    movementRequest: null,
+  }, {
+    generateEnvironmentMotionPlan: async () => {
+      calls += 1;
+      return generatedResult();
+    },
+  }, {});
+
+  assert.equal(calls, 0);
+  assert.deepEqual(result.actions, []);
+  assert.equal(result.rejected, false);
+  assert.equal(result.error, '');
+});
+
 test('Movement Generator structured output constrains every joint before runtime validation', () => {
   const schema = MOVEMENT_GENERATOR_JSON_SCHEMA as any;
   const frame = schema.properties.frames.items;
@@ -107,6 +163,77 @@ test('Movement Generator structured output constrains every joint before runtime
     assert.equal(frame.properties[joint].type, 'string');
     assert.match(frame.properties[joint].pattern, /180/);
   }
+});
+
+test('Movement Generator receives the physical body model without restricting creative motion', () => {
+  const messages = movementGeneratorPrompt({
+    description: 'Look around in a new way, then fall onto one side.',
+    motionClass: 'body_local',
+  }, 'Look around in a new way, then fall onto one side.', {
+    environmentId: 'ainekio',
+    adapter: 'ainekio-gateway',
+    sessionId: 'ainekio-physical-1',
+    timestamp: '2026-09-01T18:00:00.000Z',
+    capabilities: { actions: ['robotMotionPlan'] },
+    state: {
+      commandedPose: {
+        ...standingCommandedPose,
+        sourceActionId: 'physical-stand',
+      },
+    },
+  });
+
+  assert.doesNotMatch(messages[0].content, /robot emulator|this is an emulator/i);
+  assert.match(messages[0].content, /falling, rolling, collapsing.*valid choices/i);
+  assert.match(messages[0].content, /not mandatory goals/i);
+  assert.match(messages[0].content, /at most 300 ms.*holds that target/i);
+  assert.match(messages[0].content, /calculate the movement yourself/i);
+
+  const payload = JSON.parse(messages[1].content);
+  assert.deepEqual(payload.bodyModel.jointOrder, joints);
+  assert.deepEqual(payload.bodyModel.referencePoses.standing, {
+    R1: 135, R2: 45, L1: 45, L2: 135,
+    R4: 0, R3: 180, L3: 0, L4: 180,
+  });
+  assert.equal(payload.bodyModel.playback.maximumTransitionMsWithinFrame, 300);
+  assert.deepEqual(payload.currentCommandedPose, payload.bodyModel.referencePoses.standing);
+  assert.equal(payload.currentCommandedPoseBasis.reference, 'stand');
+  assert.equal(AINEKIO_FREESTYLE_BODY_MODEL.limbs.length, 4);
+});
+
+test('Movement Generator establishes standing before planning from an unknown pose', async () => {
+  let calls = 0;
+  const result = await movementGeneratorNode.execute({
+    movementRequest: {
+      description: 'Invent a low sideways stretch.',
+      motionClass: 'body_local',
+    },
+    observation: {
+      environmentId: 'ainekio',
+      adapter: 'ainekio-gateway',
+      sessionId: 'ainekio-physical-1',
+      timestamp: '2026-09-01T18:00:00.000Z',
+      capabilities: {
+        actions: ['robotCommand', 'robotMotionPlan'],
+        robotCommands: ['stand'],
+      },
+    },
+  }, {
+    generateEnvironmentMotionPlan: async () => {
+      calls += 1;
+      return generatedResult();
+    },
+  }, {});
+
+  assert.equal(calls, 0);
+  assert.equal(result.valid, true);
+  assert.equal(result.action.type, 'robotCommand');
+  assert.equal(result.action.command, 'stand');
+  assert.equal(result.response, '');
+  assert.equal(
+    result.action.metadata.motionPreparation.movementRequest.description,
+    'Invent a low sideways stretch.',
+  );
 });
 
 test('rejects prose, raw control fields, incomplete joints, precision, and duration overflow', () => {
@@ -665,6 +792,7 @@ test('Movement Generator rejects target-relative requests even when robotMotionP
       sessionId: 'ainekio-sim-1',
       timestamp: new Date().toISOString(),
       capabilities: { actions: ['robotMotionPlan'] },
+      state: { commandedPose: standingCommandedPose },
     },
   }, {
     callLLM: () => {
@@ -689,6 +817,7 @@ test('Movement Generator makes one inference attempt and surfaces an invalid pla
       sessionId: 'ainekio-sim-1',
       timestamp: new Date().toISOString(),
       capabilities: { actions: ['robotMotionPlan'] },
+      state: { commandedPose: standingCommandedPose },
     },
     sessionId: 'ainekio-sim-1',
   }, {
@@ -707,7 +836,7 @@ test('Movement Generator makes one inference attempt and surfaces an invalid pla
   assert.match(result.error, /outside 0\.\.180 degrees/i);
 });
 
-test('Movement Generator rejects a stale post-motion frame before calling a model', async () => {
+test('Movement Generator does not block body-local motion because a camera frame is stale', async () => {
   let calls = 0;
   const result = await movementGeneratorNode.execute({
     movementRequest: {
@@ -721,6 +850,7 @@ test('Movement Generator rejects a stale post-motion frame before calling a mode
       sessionId: 'robot-1',
       timestamp: '2026-08-04T12:00:05.000Z',
       capabilities: { actions: ['robotMotionPlan'] },
+      state: { commandedPose: standingCommandedPose },
       visual: {
         id: 'frame-before-motion',
         timestamp: '2026-08-04T12:00:00.000Z',
@@ -745,12 +875,10 @@ test('Movement Generator rejects a stale post-motion frame before calling a mode
     },
   }, {});
 
-  assert.equal(calls, 0);
-  assert.equal(result.valid, false);
-  assert.equal(result.actions.length, 0);
-  assert.equal(result.controlResult.status, 'stuck');
-  assert.equal(result.controlResult.reason, 'stale_motion_frame');
-  assert.match(result.response, /no fresh camera frame/i);
+  assert.equal(calls, 1);
+  assert.equal(result.valid, true);
+  assert.equal(result.actions[0]?.type, 'robotMotionPlan');
+  assert.equal('controlResult' in result, false);
 });
 
 test('current task text cannot be replaced by stale adapter transcript text', async () => {

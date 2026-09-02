@@ -1,13 +1,15 @@
 # System Refactor Blueprint
 
-- **Status:** Complete
+- **Status:** Baseline program complete; protocol active
 - **Started:** 2026-08-24
-- **Completed:** 2026-08-25
-- **Scope:** The complete maintained source surface
+- **Baseline completed:** 2026-08-25
+- **Scope:** Repository-wide baseline plus continuing owner-by-owner consolidation
 
-This is the canonical plan for the MetaHuman OS system refactor. Detailed audit
-findings belong under `docs/audits/`; chronological implementation evidence
-belongs in `docs/audits/consolidation-progress.md`.
+This is the canonical protocol and baseline plan for MetaHuman OS refactoring.
+The completion date records the initial repository-wide pass; it does not imply
+that later feature work or newly discovered ownership debt is already resolved.
+Detailed audit findings belong under `docs/audits/`; chronological implementation
+evidence belongs in `docs/audits/consolidation-progress.md`.
 
 ## Engineering Principles
 
@@ -53,15 +55,16 @@ apps/* and packages/cli
   -> call public engine and agent-runtime interfaces
 
 brain/*
-  -> autonomous workers, training jobs, schedulers
+  -> finite agents, persistent service entrypoints, training jobs
   -> call public engine interfaces
 
 packages/agent-runtime
-  -> agent execution abstraction for web/mobile/process modes
+  -> shared agent execution interfaces and adapters
+  -> does not own persistent-process supervision
 
 packages/core
   -> engine/domain logic, storage abstraction, auth, policy, memory,
-     model routing, graph execution, shared API handlers
+     model routing, graph execution, process supervision, shared API handlers
 ```
 
 ## Dependency Rules
@@ -109,7 +112,7 @@ deleted only after static references and real entrypoints or registrations agree
 5. Core API handlers, graph execution, nodes, schemas, and public exports.
 6. `packages/agent-runtime`, `packages/cli`, and the local model service package.
 7. `apps/site` transport, client stores, components, and public assets.
-8. `brain/*` agents, services, training, scripts, policies, and rules.
+8. `brain/*` agents, services, and training.
 9. React Native and other maintained interface applications.
 10. `etc`, `scripts`, `bin`, `docker`, plugins, tests, fixtures, and maintained docs.
 11. Final cross-repository orphan, duplicate-owner, dependency, configuration,

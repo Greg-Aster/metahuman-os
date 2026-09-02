@@ -1,9 +1,10 @@
 # Multi-User Profiles
 
-Each authenticated user has an isolated profile under
-`profiles/<username>/`. Core's profile, storage, session, and security-policy
-owners resolve access; callers should not build profile paths or copy private
-data themselves.
+Each authenticated user has an isolated logical profile. A default internal
+profile commonly resolves under `profiles/USERNAME/`; custom and encrypted
+profiles may resolve elsewhere. Core's profile, storage, session, and
+security-policy owners resolve access, so callers should not build profile paths
+or copy private data themselves.
 
 ## Roles
 
@@ -18,10 +19,10 @@ not by hiding controls in the browser.
 
 ## Profile boundary
 
-A normal profile contains:
+A default internal profile commonly contains:
 
 ```text
-profiles/<username>/
+profiles/USERNAME/
   persona/    identity, facets, decisions, and cognitive mode
   memory/     profile-owned memory and indexes
   etc/        profile-owned configuration
@@ -43,7 +44,7 @@ Machine service policy remains shared. For example, a profile chooses its voice
 provider in `voice.json`, while `etc/voice-servers.json` owns the single shared
 voice process configuration.
 
-See [Configuration Ownership](../configuration-admin/configuration-files.md).
+See [Configuration Ownership](/user-guide#configuration-files).
 
 ## Guest profile selection
 
@@ -58,7 +59,7 @@ merge or modify the source profiles.
 
 ## Administration
 
-Use **Settings -> Security** for account creation, roles, visibility,
+Use **System → Security** for account creation, roles, visibility,
 credentials, and deletion. Destructive profile operations are owner-authorized
 and must go through the profile owner so protected accounts and storage
 boundaries are checked.
@@ -75,5 +76,5 @@ runtime data is not recoverable from the source repository.
 - Keep temporary guest writes isolated from the selected source profile.
 - Record account, visibility, and destructive changes in the audit trail.
 
-See [Authentication](../configuration-admin/authentication.md) and
-[Security & Trust](../configuration-admin/security-trust.md).
+See [Authentication](/user-guide#authentication) and
+[Security & Trust](/user-guide#security-trust).

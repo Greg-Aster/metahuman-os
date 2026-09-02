@@ -6,7 +6,7 @@ import {
   type EnvironmentObservation,
   type EnvironmentVisualFrame,
 } from '../../environment-interface/index.js';
-import { loadRobotOperatorConfig, readRobotObserverCycle } from '../../robot-operator.js';
+import { readRobotObserverCycle } from '../../robot-operator.js';
 import {
   encodeEnvironmentTaskState,
   environmentInputSource,
@@ -15,6 +15,8 @@ import {
   robotOperatorActionRequirement,
   type EnvironmentCompletionBasis,
   type EnvironmentActionPurpose,
+  type EnvironmentMovementRequest,
+  type EnvironmentPendingMovementContract,
   type EnvironmentTaskDecision,
   type EnvironmentTaskFrameRef,
   type EnvironmentTaskSelectedAction,
@@ -40,14 +42,6 @@ function cleanText(value: unknown, maxLength: number): string {
   return typeof value === 'string'
     ? value.replace(/\s+/g, ' ').trim().slice(0, maxLength)
     : '';
-}
-
-function hasVisualStoppingCondition(instruction: string): boolean {
-  const normalized = cleanText(instruction, 4_000).toLowerCase();
-  if (!normalized) return false;
-  const conditional = /\b(?:until|unless|when|if)\b/.test(normalized);
-  const visualPredicate = /\b(?:see|sees|seeing|saw|spot|spots|spotted|detect|detects|detected|observe|observes|observed|visible|visibility|in view)\b/.test(normalized);
-  return conditional && visualPredicate;
 }
 
 function framesFromObservation(observation: EnvironmentObservation | null): EnvironmentVisualFrame[] {
@@ -98,33 +92,39 @@ function selectedAction(action: Partial<EnvironmentAction> | undefined): Environ
   const command = cleanText(action.command, 200);
   const direction = cleanText(action.direction, 40);
   const target = cleanText(action.target, 200);
+  const description = cleanText(action.metadata?.motionSummary, 500);
   return {
     type: action.type,
     ...(command ? { command } : {}),
     ...(direction ? { direction } : {}),
     ...(target ? { target } : {}),
+    ...(description ? { description } : {}),
   };
 }
 
-function admittedContinuationAction(
-  state: EnvironmentTaskState,
-  observation: EnvironmentObservation | null,
-): Partial<EnvironmentAction> | null {
-  const selected = state.selectedAction;
-  if (!selected || !observation?.capabilities.actions.includes(selected.type)) return null;
+function movementPreparationRequest(
+  action: Partial<EnvironmentAction> | undefined,
+): EnvironmentMovementRequest | null {
+  const preparation = isRecord(action?.metadata?.motionPreparation)
+    ? action.metadata.motionPreparation
+    : null;
+  const request = isRecord(preparation?.movementRequest)
+    ? preparation.movementRequest
+    : null;
+  const description = cleanText(request?.description, 500);
+  const sessionId = cleanText(request?.sessionId, 200);
   if (
-    selected.type === 'robotCommand'
-    && (
-      !selected.command
-      || !observation.capabilities.robotCommands?.includes(selected.command)
-    )
+    preparation?.version !== 1
+    || preparation.kind !== 'stand_before_freestyle'
+    || action?.type !== 'robotCommand'
+    || action.command !== 'stand'
+    || !description
+    || request?.motionClass !== 'body_local'
   ) return null;
   return {
-    sessionId: observation.sessionId,
-    type: selected.type,
-    ...(selected.command ? { command: selected.command } : {}),
-    ...(selected.direction ? { direction: selected.direction as EnvironmentAction['direction'] } : {}),
-    ...(selected.target ? { target: selected.target } : {}),
+    description,
+    ...(sessionId ? { sessionId } : {}),
+    motionClass: 'body_local',
   };
 }
 
@@ -170,29 +170,19 @@ function initialTaskState(
   const contract = useObservationContract
     ? environmentTaskContractFromObservation(observation ?? undefined)
     : null;
-  const visualStoppingCondition = !contract && hasVisualStoppingCondition(instruction);
-  const configuredMaxSteps = loadRobotOperatorConfig().maxCycleSteps;
   const baseline = framesFromObservation(observation).find(frame => validEnvironmentJpegDataUrl(frame.dataUrl));
   return {
     version: 1,
     objective: contract?.objective || instruction || 'Respond to the current environment input.',
     phase: 'new',
     step: 0,
-    maxSteps: configuredMaxSteps,
-    continuationPolicy: contract?.continuationPolicy
-      ?? (visualStoppingCondition ? 'bounded' : 'none'),
+    continuationPolicy: contract?.continuationPolicy ?? 'none',
     requiredCompletionBasis: contract && contract.requiredCompletionBasis !== 'none'
       ? contract.requiredCompletionBasis
-      : visualStoppingCondition
-        ? 'visual_observation'
-        : 'response',
+      : 'response',
     ...(contract?.motionClass ? { motionClass: contract.motionClass } : {}),
     ...(contract?.actionPurpose ? { actionPurpose: contract.actionPurpose } : {}),
-    ...(contract?.visualEvidenceMode
-      ? { visualEvidenceMode: contract.visualEvidenceMode }
-      : visualStoppingCondition
-        ? { visualEvidenceMode: 'single' as const }
-        : {}),
+    ...(contract?.visualEvidenceMode ? { visualEvidenceMode: contract.visualEvidenceMode } : {}),
     ...(frameRef(baseline) ? { baselineFrame: frameRef(baseline) } : {}),
   };
 }
@@ -220,27 +210,28 @@ function isObserverInputAcquisition(
   return Boolean(currentCorrelatedFrame(observation, frames));
 }
 
-function completionResponse(state: EnvironmentTaskState, terminal: EnvironmentFeedback): string {
-  const action = cleanText(
-    state.selectedAction?.command || state.selectedAction?.type,
-    200,
-  ).replace(/_/g, ' ');
-  const evidence = cleanText(terminal.message, 500) || 'The correlated robot action completed.';
-  return JSON.stringify({
-    response: action
-      ? `The ${action} action is complete.`
-      : 'The requested action is complete.',
-    actions: [],
-    movementRequest: null,
-    taskDecision: {
-      outcome: 'complete',
-      reason: `The exact correlated action result is sufficient for this one-step objective: ${evidence}`,
-      objectiveComplete: true,
-      continuationPolicy: state.continuationPolicy,
-      requiredCompletionBasis: 'action_result',
-      ...(state.motionClass ? { motionClass: state.motionClass } : {}),
+function completionEvidenceInstruction(
+  state: EnvironmentTaskState,
+  terminal: EnvironmentFeedback,
+): string {
+  return `EnvironmentCompletionEvent:${JSON.stringify({
+    objective: state.objective,
+    action: state.selectedAction ?? null,
+    result: {
+      type: terminal.type,
+      actionId: terminal.actionId ?? null,
+      message: cleanText(terminal.message, 500),
     },
-  });
+    lifecycle: {
+      objectiveComplete: true,
+      completionBasis: 'action_result',
+      outwardResponseOptional: true,
+    },
+    reporting: {
+      attribution: 'Distinguish the original objective from the action selected by Environment Action Selector. Do not say the user requested the exact selected action unless the objective actually did.',
+      response: 'An outward response is optional. If you provide one, ground it in the exact selected action and terminal result.',
+    },
+  })}`;
 }
 
 function feedbackInstruction(
@@ -273,10 +264,9 @@ function feedbackInstruction(
     terminal.type === 'completed' && state.requiredCompletionBasis === 'visual_observation'
       ? `The previously selected ${command} action returned a correlated camera result. Motor completion only means the command finished; it is not visual evidence that the stopping condition was met.`
       : `Exact terminal feedback: type=${terminal.type}; actionId=${terminal.actionId}; command=${command}; message=${cleanText(terminal.message, 500)}`,
-    `Action budget: ${state.step} of ${state.maxSteps} used. This is a safety ceiling, not a success condition.`,
     requiredEvidenceInstruction,
     evidenceInstruction,
-    'Evaluate the objective\'s observable stopping condition. Do not continue merely because unseen areas might still exist or certainty could be improved indefinitely. For a broad survey without a finite stopping condition, report what the bounded current evidence supports and stop rather than inventing perpetual coverage.',
+    'Evaluate the objective from the correlated evidence and decide whether to complete it, preserve it, or revise it with another supported action.',
     terminal.type === 'completed'
       ? 'Decide whether the original objective is complete from the required evidence. If it is incomplete, select the next advertised action directly in this response.'
       : 'The action did not complete successfully. Decide whether to select a different advertised action now or report the limitation honestly.',
@@ -329,7 +319,6 @@ function lifecycleDecision(
     objective: state.objective,
     phase: state.phase,
     step: state.step,
-    maxSteps: state.maxSteps,
     continuationPolicy: state.continuationPolicy,
     requiredCompletionBasis: state.requiredCompletionBasis,
     motionClass: state.motionClass ?? null,
@@ -363,9 +352,8 @@ export const environmentTaskStateNode = defineNode({
     { name: 'routingAnalysis', type: 'object', description: 'Deterministic context admission policy' },
     { name: 'memoryHints', type: 'object', description: 'Deterministic memory retrieval policy' },
     { name: 'visuals', type: 'array', description: 'Current frame or ordered before/after frames' },
-    { name: 'precomputedResponse', type: 'string', description: 'Deterministic exact-result closure, otherwise empty' },
     { name: 'actions', type: 'array', description: 'At most one admitted action for this objective step' },
-    { name: 'movementRequest', type: 'object', description: 'Always null after reduction; generated motion is emitted as an action' },
+    { name: 'movementRequest', type: 'object', description: 'Persisted off-script request resumed only after standing preparation completes' },
     { name: 'response', type: 'string', description: 'Visible response or explicit failure diagnostic' },
     { name: 'familiarityQuery', type: 'string', description: 'Optional current-scene summary for asynchronous memory matching' },
     { name: 'decision', type: 'object', description: 'Typed lifecycle decision' },
@@ -436,6 +424,9 @@ export const environmentTaskStateNode = defineNode({
               : 'evaluating_evidence',
           }
         : state;
+      const preparedMovementRequest = terminal?.type === 'completed'
+        ? preparedState.pendingMovementRequest ?? null
+        : null;
       const deterministicComplete = Boolean(
         !autonomous
         && terminal?.type === 'completed'
@@ -445,7 +436,9 @@ export const environmentTaskStateNode = defineNode({
       return {
         taskState: preparedState,
         instruction: terminal
-          ? feedbackInstruction(preparedState, terminal, visuals)
+          ? deterministicComplete
+            ? completionEvidenceInstruction(preparedState, terminal)
+            : feedbackInstruction(preparedState, terminal, visuals)
           : operatorActionRequired === true
             ? [
                 instruction,
@@ -480,13 +473,10 @@ export const environmentTaskStateNode = defineNode({
           memoryTypes: [],
         },
         visuals,
-        precomputedResponse: deterministicComplete && terminal
-          ? completionResponse(preparedState, terminal)
-          : '',
         terminalFeedback: terminal,
         deterministicComplete,
         actions: [],
-        movementRequest: null,
+        movementRequest: preparedMovementRequest,
         response: '',
         familiarityQuery: '',
         decision: lifecycleDecision(preparedState, { prepared: true, deterministicComplete }),
@@ -514,16 +504,14 @@ export const environmentTaskStateNode = defineNode({
       && preparedState.requiredCompletionBasis === 'action_result'
       && preparedState.continuationPolicy === 'none'
     ) {
-      const exactResponse = completionResponse(preparedState, terminal);
       const completeState: EnvironmentTaskState = { ...preparedState, phase: 'complete' };
-      const response = cleanText(inputs.response, 4_000) || JSON.parse(exactResponse).response;
+      const response = cleanText(inputs.response, 4_000);
       return {
         taskState: completeState,
         instruction,
         routingAnalysis: {},
         memoryHints: { needsMemory: false },
         visuals: observedFrames,
-        precomputedResponse: '',
         actions: [],
         movementRequest: null,
         response,
@@ -556,7 +544,6 @@ export const environmentTaskStateNode = defineNode({
     const taskDecisionError = cleanText(inputs.taskDecisionError, 500);
     const persistedPass = Boolean(terminal && environmentTaskStateFromObservation(observation));
     const userVisualStoppingContract = !autonomous
-      && hasVisualStoppingCondition(preparedState.objective)
       && preparedState.continuationPolicy === 'bounded'
       && preparedState.requiredCompletionBasis === 'visual_observation';
     const decisionFrames = Array.isArray(inputs.frames)
@@ -571,42 +558,37 @@ export const environmentTaskStateNode = defineNode({
       && currentFrame?.id
       && completionEvidence.includes(currentFrame.id)
     );
-    const modelSelectedWorkExists = parsedActions.length > 0 || generatedActions.length > 0;
-    const availableActionPurpose = taskDecision?.actionPurpose ?? preparedState.actionPurpose;
     const admissionBlocked = actionAdmission?.admitted === false;
+    const preparedMotionContinuation = Boolean(
+      terminal?.type === 'completed'
+      && preparedState.pendingMovementRequest,
+    );
+    const preparedMovementContract = preparedMotionContinuation
+      ? preparedState.pendingMovementContract
+      : undefined;
+    const availableActionPurpose = preparedMovementContract?.actionPurpose
+      ?? taskDecision?.actionPurpose
+      ?? preparedState.actionPurpose;
     const modelCandidateActions = admissionBlocked
       ? []
       : (parsedActions.length > 0 ? parsedActions : generatedActions).slice(0, 1);
-    // This is continuation of the one persisted user task, not request replay.
-    // If a completed motor step returned a fresh frame but the selector does not
-    // prove the visual stopping condition, advance the exact previously admitted
-    // action while the persisted safety budget allows it. The model may judge the
-    // image, but it cannot replace "wave until ..." with a different movement.
-    const continuationAction = !taskDecisionError
-      && terminal?.type === 'completed'
-      && userVisualStoppingContract
-      && Boolean(currentFrame)
-      && !groundedVisualCompletion
-      ? admittedContinuationAction(preparedState, observation)
-      : null;
-    const continuationFromTaskState = Boolean(continuationAction);
-    const candidateActions = continuationAction
-      ? [continuationAction]
+    const candidateActions = preparedMotionContinuation
+      ? generatedActions.slice(0, 1)
       : modelCandidateActions;
     const action = candidateActions[0];
+    const preparationRequest = movementPreparationRequest(action);
     const selectedWorkExists = candidateActions.length > 0;
     const generatedResponse = cleanText(inputs.generatedResponse, 2_000);
-    const movementGenerationFailed = isRecord(inputs.movementRequest)
+    const movementGenerationFailed = (
+      isRecord(inputs.movementRequest)
+      || preparedMotionContinuation
+    )
       && generatedActions.length === 0
       && Boolean(generatedResponse);
     const modelResponse = movementGenerationFailed
       ? generatedResponse
       : cleanText(inputs.response, 4_000)
-        || generatedResponse
-        || (autonomous && !modelSelectedWorkExists && !taskDecisionError
-          ? cleanText(taskDecision?.observationSummary, 1_000)
-            || cleanText(taskDecision?.reason, 1_000)
-          : '');
+        || generatedResponse;
     const familiarityQuery = autonomous
       ? cleanText(taskDecision?.observationSummary, 300)
         || (observedFrames.some(frame => validEnvironmentJpegDataUrl(frame.dataUrl))
@@ -616,24 +598,28 @@ export const environmentTaskStateNode = defineNode({
     const operatorActionRequired = !persistedPass
       && robotOperatorActionRequirement(observation) === true;
     const revisingAction = persistedPass && Boolean(action);
-    const contractLocked = (persistedPass && !revisingAction)
+    const contractLocked = Boolean(preparedMovementContract)
+      || (persistedPass && !revisingAction)
       || userVisualStoppingContract;
-    const actionPurpose = persistedPass && !revisingAction
-      ? preparedState.actionPurpose
-      : selectedWorkExists
-        ? availableActionPurpose
-        : undefined;
-    let requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'> = contractLocked
-      ? preparedState.requiredCompletionBasis
-      : taskDecision?.requiredCompletionBasis && taskDecision.requiredCompletionBasis !== 'none'
-        ? taskDecision.requiredCompletionBasis
-        : action
-          ? 'action_result'
-          : 'response';
+    const actionPurpose = preparedMovementContract?.actionPurpose
+      ?? (persistedPass && !revisingAction
+        ? preparedState.actionPurpose
+        : selectedWorkExists
+          ? availableActionPurpose
+          : undefined);
+    let requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'> = preparedMovementContract?.requiredCompletionBasis
+      ?? (contractLocked
+        ? preparedState.requiredCompletionBasis
+        : taskDecision?.requiredCompletionBasis && taskDecision.requiredCompletionBasis !== 'none'
+          ? taskDecision.requiredCompletionBasis
+          : action
+            ? 'action_result'
+            : 'response');
     if (action && requiredCompletionBasis === 'response') requiredCompletionBasis = 'action_result';
-    let continuationPolicy = contractLocked
-      ? preparedState.continuationPolicy
-      : taskDecision?.continuationPolicy ?? (requiredCompletionBasis === 'action_result' ? 'none' : 'bounded');
+    let continuationPolicy = preparedMovementContract?.continuationPolicy
+      ?? (contractLocked
+        ? preparedState.continuationPolicy
+        : taskDecision?.continuationPolicy ?? (requiredCompletionBasis === 'action_result' ? 'none' : 'bounded'));
     if (!contractLocked && action && requiredCompletionBasis === 'visual_observation') {
       continuationPolicy = 'bounded';
     }
@@ -645,23 +631,44 @@ export const environmentTaskStateNode = defineNode({
       requiredCompletionBasis = 'action_result';
     }
     if (!contractLocked && autonomous && action) continuationPolicy = 'bounded';
+    const intendedVisualEvidenceMode = preparedMovementContract?.visualEvidenceMode
+      ?? evidenceMode(
+        taskDecision,
+        preparedState,
+        action,
+        requiredCompletionBasis,
+        actionPurpose,
+        contractLocked,
+      );
+    const movementContractToPersist: EnvironmentPendingMovementContract | undefined = preparationRequest
+      ? {
+          continuationPolicy,
+          requiredCompletionBasis,
+          ...(actionPurpose ? { actionPurpose } : {}),
+          ...(intendedVisualEvidenceMode ? { visualEvidenceMode: intendedVisualEvidenceMode } : {}),
+        }
+      : undefined;
+    if (preparationRequest) {
+      continuationPolicy = 'bounded';
+      requiredCompletionBasis = 'action_result';
+    }
     const motionClass = persistedPass && !revisingAction
       ? preparedState.motionClass
       : taskDecision?.motionClass ?? preparedState.motionClass;
-    const visualEvidenceMode = evidenceMode(
-      taskDecision,
-      preparedState,
-      action,
-      requiredCompletionBasis,
-      actionPurpose,
-      contractLocked,
-    );
+    const visualEvidenceMode = preparationRequest ? undefined : intendedVisualEvidenceMode;
     const nextStep = preparedState.step + (action ? 1 : 0);
-    const atStepLimit = Boolean(action && nextStep > preparedState.maxSteps);
-    const admittedActions = atStepLimit ? [] : candidateActions;
+    const admittedActions = candidateActions;
     const actionQueued = admittedActions.length > 0;
     const baselineFrame = preparedState.baselineFrame
       ?? frameRef(observedFrames.find(frame => validEnvironmentJpegDataUrl(frame.dataUrl)));
+    const pendingMovementRequest = preparationRequest
+      ?? (preparedMotionContinuation && action?.type === 'robotMotionPlan'
+        ? undefined
+        : preparedState.pendingMovementRequest);
+    const pendingMovementContract = movementContractToPersist
+      ?? (preparedMotionContinuation && action?.type === 'robotMotionPlan'
+        ? undefined
+        : preparedState.pendingMovementContract);
     const nextState: EnvironmentTaskState = {
       ...preparedState,
       objective,
@@ -673,25 +680,23 @@ export const environmentTaskStateNode = defineNode({
       ...(actionPurpose ? { actionPurpose } : {}),
       ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
       ...(baselineFrame ? { baselineFrame } : {}),
+      pendingMovementRequest,
+      pendingMovementContract,
       ...(actionQueued && selectedAction(admittedActions[0])
         ? { selectedAction: selectedAction(admittedActions[0]) }
         : {}),
     };
 
     if (actionQueued) {
-      const visibleResponse = continuationFromTaskState
-        ? 'The current frame does not provide grounded evidence that the stopping condition is met, so I am continuing the requested action.'
-        : modelResponse || 'Executing the requested robot action.';
       return {
         taskState: nextState,
         instruction,
         routingAnalysis: {},
         memoryHints: { needsMemory: false },
         visuals: observedFrames,
-        precomputedResponse: '',
         actions: admittedActions,
         movementRequest: null,
-        response: visibleResponse,
+        response: preparedMotionContinuation ? '' : modelResponse,
         familiarityQuery,
         decision: lifecycleDecision(nextState, {
           complete: false,
@@ -712,7 +717,9 @@ export const environmentTaskStateNode = defineNode({
       decisionFrames,
     );
     const completionEvidenceAvailable = requiredCompletionBasis === 'response'
-      ? Boolean(modelResponse)
+      ? autonomous && claimedComplete
+        ? true
+        : Boolean(modelResponse)
       : requiredCompletionBasis === 'action_result'
         ? terminal?.type === 'completed'
         : requiredCompletionBasis === 'visual_observation'
@@ -749,26 +756,27 @@ export const environmentTaskStateNode = defineNode({
                 ? cleanText(context.userMessage, 500)
                 : ''
       : '';
-    const fallbackResponse = modelResponse || (atStepLimit
-      ? `I could not complete the objective within the ${preparedState.maxSteps}-action safety limit, so I stopped.`
-      : admissionBlocked
-        ? 'The selected robot action is not available on the connected robot.'
-        : taskDecisionError
-          ? `I received the request, but the Environment LLM returned an invalid task decision: ${taskDecisionError}`
-          : movementGenerationFailed
-            ? generatedResponse
-            : operatorActionRequired
-              ? 'I intended to act, but Environment Mode did not produce an executable supported action, so nothing was sent to the robot.'
-              : terminal
-                ? 'The robot result arrived, but I could not determine a usable completion or next action.'
-                : 'I received the request, but the Environment LLM produced neither a response nor an executable robot action.');
+    const fallbackResponse = complete
+      ? modelResponse
+      : modelResponse || (autonomous
+        ? ''
+        : admissionBlocked
+            ? 'The selected robot action is not available on the connected robot.'
+            : taskDecisionError
+              ? `I received the request, but the Environment LLM returned an invalid task decision: ${taskDecisionError}`
+              : movementGenerationFailed
+                ? generatedResponse
+                : operatorActionRequired
+                  ? 'I intended to act, but Environment Mode did not produce an executable supported action, so nothing was sent to the robot.'
+                  : terminal
+                    ? 'The robot result arrived, but I could not determine a usable completion or next action.'
+                    : 'I received the request, but the Environment LLM produced neither a response nor an executable robot action.');
     return {
       taskState: finalState,
       instruction,
       routingAnalysis: {},
       memoryHints: { needsMemory: false },
       visuals: observedFrames,
-      precomputedResponse: '',
       actions: [],
       movementRequest: null,
       response: fallbackResponse,
@@ -783,9 +791,7 @@ export const environmentTaskStateNode = defineNode({
         completionEvidence: verifiedCompletionEvidence,
         blockedReason: complete
           ? ''
-          : atStepLimit
-            ? 'step_limit'
-            : admissionBlocked
+          : admissionBlocked
               ? cleanText(actionAdmission?.reason, 200) || 'action_not_admitted'
               : movementGenerationFailed
                 ? 'movement_generation_failed'

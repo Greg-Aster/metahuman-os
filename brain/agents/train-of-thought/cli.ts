@@ -8,42 +8,25 @@
  *   npx tsx brain/agents/train-of-thought/cli.ts [options]
  *
  * Options:
- *   --username <name>  Process specific user
- *   --single-user      Process only the default user
+ *   --username <name>       Process one registered profile
+ *   --seed <text>           Continue from an explicit thought or result
+ *   --source-agent <name>   Record the upstream agent identity
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';
-import { runCycle, type TrainOfThoughtOptions } from './core.js';
+import { parseTrainOfThoughtArgs, runTrainOfThought } from './core.js';
 
 async function main() {
   initGlobalLogger('train-of-thought');
 
-  // Parse arguments
-  const args = process.argv.slice(2);
-  const options: TrainOfThoughtOptions = {
-    singleUser: args.includes('--single-user'),
-  };
-
-  // Parse username
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--username' && i + 1 < args.length) {
-      options.username = args[i + 1];
-      break;
-    }
-  }
-
-  console.log('[train-of-thought] Starting with options:', options);
-
   try {
-    const result = await runCycle(options);
-
-    console.log(`[train-of-thought] Completed: ${result.usersProcessed} users processed`);
-
-    if (result.errors.length > 0) {
-      console.error('[train-of-thought] Errors:', result.errors);
-    }
-
-    process.exit(result.success ? 0 : 1);
+    const options = parseTrainOfThoughtArgs(process.argv.slice(2));
+    const outcome = await runTrainOfThought(options);
+    console.log(
+      outcome.status === 'generated'
+        ? `[train-of-thought] Completed: ${outcome.thoughtCount} thoughts persisted`
+        : `[train-of-thought] Skipped: ${outcome.reason}`,
+    );
   } catch (error) {
     console.error('[train-of-thought] Fatal error:', error);
 
@@ -55,8 +38,8 @@ async function main() {
       details: { error: (error as Error).stack },
     });
 
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
-main();
+void main();

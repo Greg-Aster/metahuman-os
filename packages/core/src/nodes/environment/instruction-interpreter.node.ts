@@ -93,6 +93,7 @@ export const environmentInstructionInterpreterNode = defineNode({
   outputs: [
     { name: 'observation', type: 'object', description: 'Environment observation for Environment Mode' },
     { name: 'instruction', type: 'string', description: 'Current environment instruction text' },
+    { name: 'conversationInput', type: 'string', description: 'Fresh player-authored text eligible for the Conversation Buffer' },
     { name: 'text', type: 'array', description: 'Environment text events used as instruction input' },
     { name: 'state', type: 'object', description: 'Environment state payload' },
     { name: 'location', type: 'object', description: 'Environment location payload' },
@@ -105,6 +106,9 @@ export const environmentInstructionInterpreterNode = defineNode({
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
     const contextMessage = typeof context.userMessage === 'string' ? context.userMessage : '';
+    const conversationInput = typeof context.conversationInput === 'string'
+      ? context.conversationInput.trim()
+      : '';
     const validatorCommand = isRecord(rawObservation?.metadata?.taskValidatorCommand)
       ? rawObservation.metadata.taskValidatorCommand
       : null;
@@ -171,6 +175,7 @@ export const environmentInstructionInterpreterNode = defineNode({
         ? (rawObservation?.capabilities?.actions ?? []).filter(action => action !== 'captureImage')
         : rawObservation?.capabilities?.actions ?? [],
       robotCommands: rawObservation?.capabilities?.robotCommands,
+      robotCommandDescriptions: rawObservation?.capabilities?.robotCommandDescriptions,
       motionClasses: rawObservation?.capabilities?.motionClasses,
       text: rawObservation?.capabilities?.text ?? true,
       movement: rawObservation?.capabilities?.movement ?? false,
@@ -197,6 +202,7 @@ export const environmentInstructionInterpreterNode = defineNode({
     return {
       observation,
       instruction,
+      conversationInput,
       text,
       state: observation.state ?? {},
       location: observation.location ?? null,

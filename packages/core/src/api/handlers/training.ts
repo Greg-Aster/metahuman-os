@@ -7,94 +7,18 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { systemPaths } from '../../paths.js';
-import { getProfilePaths } from '../../path-builder.js';
 import { audit } from '../../audit.js';
 import { safeWriteJSON } from '../../safe-file.js';
+import { stopTrainingProcesses } from '../../training-process.js';
 import {
-  listTrainingProcesses,
-  releaseTrainingProcess,
-  stopTrainingProcesses,
-  trackTrainingProcess,
-  type TrainingProcessName,
-} from '../../training-process.js';
-
-function ensureProfileTrainingConfig(username: string): string {
-  const profilePaths = getProfilePaths(username);
-  const profileConfigPath = path.join(profilePaths.etc, 'training.json');
-  if (fs.existsSync(profileConfigPath)) return profileConfigPath;
-
-  const seedPath = path.join(systemPaths.etc, 'training.json');
-  if (!fs.existsSync(seedPath)) {
-    throw new Error('Training configuration seed not found');
-  }
-
-  const seed = JSON.parse(fs.readFileSync(seedPath, 'utf8')) as Record<string, unknown>;
-  safeWriteJSON(profileConfigPath, seed);
-  return profileConfigPath;
-}
-
-function validateLaunchTrainingConfig(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return 'Training configuration is required';
-  }
-
-  const config = value as Record<string, unknown>;
-  if (typeof config.base_model !== 'string' || config.base_model.trim().length === 0 || config.base_model.length > 300) {
-    return 'base_model must be a non-empty model identifier';
-  }
-
-  const positiveIntegers: Array<[string, number, number]> = [
-    ['num_train_epochs', 1, 50],
-    ['per_device_train_batch_size', 1, 128],
-    ['gradient_accumulation_steps', 1, 1024],
-    ['max_seq_length', 128, 262_144],
-  ];
-  for (const [field, minimum, maximum] of positiveIntegers) {
-    const valueForField = config[field];
-    if (!Number.isInteger(valueForField) || (valueForField as number) < minimum || (valueForField as number) > maximum) {
-      return `${field} must be an integer from ${minimum} to ${maximum}`;
-    }
-  }
-
-  if (config.max_samples !== null && (
-    !Number.isInteger(config.max_samples)
-    || (config.max_samples as number) < 1
-    || (config.max_samples as number) > 1_000_000
-  )) {
-    return 'max_samples must be null or an integer from 1 to 1000000';
-  }
-
-  if (!Number.isInteger(config.lora_rank) || (config.lora_rank as number) < 0 || (config.lora_rank as number) > 1024) {
-    return 'lora_rank must be an integer from 0 to 1024';
-  }
-  if (!Number.isInteger(config.lora_alpha) || (config.lora_alpha as number) < 0 || (config.lora_alpha as number) > 4096) {
-    return 'lora_alpha must be an integer from 0 to 4096';
-  }
-  if (typeof config.learning_rate !== 'number' || !Number.isFinite(config.learning_rate) || config.learning_rate <= 0 || config.learning_rate > 1) {
-    return 'learning_rate must be greater than 0 and no more than 1';
-  }
-  if (typeof config.quantization !== 'string' || !/^[A-Za-z0-9_.-]{1,32}$/.test(config.quantization)) {
-    return 'quantization is invalid';
-  }
-
-  return null;
-}
-
-function terminateDetachedProcess(pid: number): void {
-  try {
-    process.kill(-pid, 'SIGTERM');
-  } catch {
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
-    }
-  }
-}
+  ensureProfileTrainingConfig,
+  readProfileTrainingConfig,
+  updateProfileTrainingConfig,
+} from '../../training-config.js';
+import { launchTrainingJob, type TrainingLaunchRequest } from '../../training-launch.js';
 
 /**
  * GET /api/training-config - Get training configuration
@@ -105,11 +29,7 @@ export async function handleGetTrainingConfig(req: UnifiedRequest): Promise<Unif
 
     // All users are authenticated (no anonymous access)
     // Get their profile-specific config
-    const userConfigPath = ensureProfileTrainingConfig(user.username);
-
-    // Read and parse user's training config
-    const content = fs.readFileSync(userConfigPath, 'utf-8');
-    const config = JSON.parse(content);
+    const config = readProfileTrainingConfig(user.username);
 
     return successResponse(config);
   } catch (error) {
@@ -134,24 +54,15 @@ export async function handleUpdateTrainingConfig(req: UnifiedRequest): Promise<U
   if (!body || typeof body !== 'object') {
     return { status: 400, error: 'Invalid configuration data' };
   }
+  if (Object.prototype.hasOwnProperty.call(body, 'automatic')) {
+    return { status: 400, error: 'Use /api/training/automatic to update automatic training policy' };
+  }
 
   try {
-    const userConfigPath = ensureProfileTrainingConfig(user.username);
-
-    // Load existing config or create new
-    let config: Record<string, any> = {};
-    if (fs.existsSync(userConfigPath)) {
-      config = JSON.parse(fs.readFileSync(userConfigPath, 'utf-8'));
-    }
-
-    // Merge updates
-    const updatedConfig = {
-      ...config,
-      ...body,
+    const updatedConfig = updateProfileTrainingConfig(user.username, {
+      ...(body as Record<string, unknown>),
       lastUpdated: new Date().toISOString(),
-    };
-
-    safeWriteJSON(userConfigPath, updatedConfig);
+    });
 
     return successResponse({
       success: true,
@@ -172,10 +83,7 @@ export async function handleUpdateTrainingConfig(req: UnifiedRequest): Promise<U
  */
 export async function handleGetTrainingData(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    const trainingConfigPath = ensureProfileTrainingConfig(req.user.username);
-
-    const content = fs.readFileSync(trainingConfigPath, 'utf-8');
-    const unified = JSON.parse(content);
+    const unified = readProfileTrainingConfig(req.user.username) as Record<string, any>;
 
     // Convert unified format to legacy format for backwards compatibility
     const config = {
@@ -377,35 +285,6 @@ function getDefaultTrainingDataConfig() {
   };
 }
 
-interface LaunchRequest {
-  method: 'local-lora' | 'remote-lora' | 'fine-tune';
-  trainingTarget?: 'ollama' | 'vllm';
-  runpodConfig?: {
-    apiKey: string;
-    templateId: string;
-    gpuType: string;
-  };
-  trainingConfig: {
-    base_model: string;
-    num_train_epochs: number;
-    max_samples: number | null;
-    monthly_training?: boolean;
-    days_recent?: number;
-    old_samples?: number;
-    lora_rank: number;
-    learning_rate: number;
-    per_device_train_batch_size: number;
-    gradient_accumulation_steps: number;
-    max_seq_length: number;
-    quantization: string;
-    skipGguf?: boolean;
-  };
-  advancedSettings?: {
-    enableS3Upload: boolean;
-    enablePreprocessing: boolean;
-  };
-}
-
 /**
  * GET /api/training/[operation] - Read training operation status file.
  */
@@ -439,248 +318,17 @@ export async function handleGetTrainingOperation(req: UnifiedRequest): Promise<U
  * POST /api/training/launch - Launch a brain/training job.
  */
 export async function handleLaunchTraining(req: UnifiedRequest): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) {
+    return { status: 401, data: { success: false, error: 'Authentication required' } };
+  }
+
   try {
-    if (!req.user.isAuthenticated) {
-      return { status: 401, data: { success: false, error: 'Authentication required' } };
+    const result = launchTrainingJob(req.user.username, req.body as TrainingLaunchRequest);
+    if (!result.success) {
+      return { status: result.status, data: { success: false, error: result.error } };
     }
-
-    const body = req.body as LaunchRequest | undefined;
-    const { method, trainingTarget = 'ollama', runpodConfig, trainingConfig, advancedSettings } = body || {};
-
-    if (method !== 'local-lora' && method !== 'remote-lora' && method !== 'fine-tune') {
-      return {
-        status: 400,
-        data: { success: false, error: `Invalid training method: ${method}` },
-      };
-    }
-    if (!['ollama', 'vllm'].includes(trainingTarget)) {
-      return { status: 400, data: { success: false, error: `Invalid training target: ${trainingTarget}` } };
-    }
-    if (trainingTarget === 'vllm' && method !== 'remote-lora') {
-      return {
-        status: 400,
-        data: { success: false, error: 'vLLM artifacts require remote LoRA training' },
-      };
-    }
-
-    const configError = validateLaunchTrainingConfig(trainingConfig);
-    if (configError) {
-      return { status: 400, data: { success: false, error: configError } };
-    }
-    const launchConfig = trainingConfig as LaunchRequest['trainingConfig'];
-    if ((method === 'remote-lora' || method === 'fine-tune') && (
-      !runpodConfig
-      || typeof runpodConfig.apiKey !== 'string'
-      || runpodConfig.apiKey.trim().length === 0
-      || typeof runpodConfig.templateId !== 'string'
-      || runpodConfig.templateId.trim().length === 0
-      || typeof runpodConfig.gpuType !== 'string'
-      || runpodConfig.gpuType.trim().length === 0
-    )) {
-      return { status: 400, data: { success: false, error: 'Complete RunPod configuration is required' } };
-    }
-
-    const [running] = listTrainingProcesses();
-    if (running) {
-      return {
-        status: 409,
-        data: {
-          success: false,
-          error: `${running.name} is already running with PID ${running.pid}`,
-        },
-      };
-    }
-
-    const agentMap = {
-      'local-lora': 'full-cycle-local.ts',
-      'remote-lora': 'full-cycle.ts',
-      'fine-tune': 'fine-tune-cycle.ts',
-    };
-    const agentFileName = agentMap[method];
-    const agentPath = path.join(systemPaths.brain, 'training', agentFileName);
-
-    if (!fs.existsSync(agentPath)) {
-      return {
-        status: 500,
-        data: { success: false, error: `Training agent not found: ${agentFileName}` },
-      };
-    }
-
-    const profilePaths = getProfilePaths(req.user.username);
-    const trainingConfigPath = ensureProfileTrainingConfig(req.user.username);
-    const shouldConvertToGguf = trainingTarget !== 'vllm' && !launchConfig.skipGguf;
-    const {
-      monthly_training,
-      days_recent,
-      old_samples,
-      ...sharedTrainingConfig
-    } = launchConfig;
-    const fullConfig = {
-      ...sharedTrainingConfig,
-      ...(method === 'fine-tune' ? { monthly_training, days_recent, old_samples } : {}),
-      trainingTarget,
-      gguf_conversion: {
-        enabled: shouldConvertToGguf,
-        quantization_type: launchConfig.quantization || 'Q4_K_M',
-      },
-    };
-    safeWriteJSON(trainingConfigPath, fullConfig);
-
-    if ((method === 'remote-lora' || method === 'fine-tune') && runpodConfig) {
-      const runpodConfigPath = path.join(profilePaths.etc, 'runpod.json');
-      safeWriteJSON(runpodConfigPath, {
-        apiKey: runpodConfig.apiKey,
-        templateId: runpodConfig.templateId,
-        gpuType: runpodConfig.gpuType,
-      });
-    }
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const logPath = path.join(systemPaths.logs, 'run', `${agentFileName.replace('.ts', '')}-${timestamp}.log`);
-    fs.mkdirSync(path.dirname(logPath), { recursive: true });
-    const logStream = fs.openSync(logPath, 'w');
-
-    const agentArgs: string[] = ['--username', req.user.username];
-    if (method === 'fine-tune') {
-      if (launchConfig.base_model) agentArgs.push('--base-model', launchConfig.base_model);
-      if (launchConfig.monthly_training) {
-        agentArgs.push('--monthly');
-      } else {
-        if (launchConfig.days_recent) agentArgs.push('--days-recent', String(launchConfig.days_recent));
-        if (launchConfig.old_samples) agentArgs.push('--old-samples', String(launchConfig.old_samples));
-      }
-      if (launchConfig.max_samples) agentArgs.push('--max', String(launchConfig.max_samples));
-    }
-
-    const tsxPath = path.join(systemPaths.root, 'node_modules', '.bin', 'tsx');
-    if (!fs.existsSync(tsxPath)) {
-      return { status: 500, data: { success: false, error: 'Training runtime is not installed' } };
-    }
-
-    const trainingEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      NODE_PATH: [
-        path.join(systemPaths.root, 'node_modules'),
-        path.join(systemPaths.root, 'packages/cli/node_modules'),
-        path.join(systemPaths.root, 'apps/site/node_modules'),
-      ].join(':'),
-    };
-
-    if (advancedSettings?.enableS3Upload === false) {
-      trainingEnv.METAHUMAN_DISABLE_S3 = '1';
-    }
-    if (advancedSettings?.enablePreprocessing === false) {
-      trainingEnv.METAHUMAN_SKIP_PREPROCESSING = '1';
-    }
-    if (runpodConfig?.gpuType) {
-      trainingEnv.RUNPOD_GPU_TYPE = runpodConfig.gpuType;
-    }
-    if (runpodConfig?.apiKey) {
-      trainingEnv.RUNPOD_API_KEY = runpodConfig.apiKey;
-    }
-    if (runpodConfig?.templateId) {
-      trainingEnv.RUNPOD_TEMPLATE_ID = runpodConfig.templateId;
-    }
-
-    const child = spawn(tsxPath, [agentPath, ...agentArgs], {
-      stdio: ['ignore', logStream, logStream],
-      cwd: systemPaths.root,
-      env: trainingEnv,
-      detached: true,
-    });
-
-    let logClosed = false;
-    let launchEnded = false;
-    const closeLog = () => {
-      if (logClosed) return;
-      logClosed = true;
-      fs.closeSync(logStream);
-    };
-
-    if (!child.pid) {
-      child.once('error', closeLog);
-      closeLog();
-      return { status: 500, data: { success: false, error: 'Failed to spawn training agent' } };
-    }
-    const childPid = child.pid;
-
-    const agentName = agentFileName.replace('.ts', '') as TrainingProcessName;
-    const finalizeLaunch = (
-      event: 'training_completed' | 'training_failed',
-      details: Record<string, unknown>,
-    ) => {
-      if (launchEnded) return;
-      launchEnded = true;
-      closeLog();
-      releaseTrainingProcess(agentName, childPid);
-      audit({
-        level: event === 'training_completed' ? 'info' : 'error',
-        category: 'system',
-        event,
-        details: {
-          agent: agentName,
-          method,
-          pid: childPid,
-          username: req.user.username,
-          logPath: path.basename(logPath),
-          timestamp: new Date().toISOString(),
-          ...details,
-        },
-        actor: req.user.username,
-      });
-    };
-
-    child.once('error', (error) => {
-      finalizeLaunch('training_failed', { error: error.message });
-    });
-    child.once('exit', (code, signal) => {
-      finalizeLaunch(code === 0 ? 'training_completed' : 'training_failed', {
-        exitCode: code,
-        signal,
-      });
-    });
-
-    try {
-      trackTrainingProcess(agentName, childPid);
-    } catch (error) {
-      launchEnded = true;
-      terminateDetachedProcess(childPid);
-      closeLog();
-      return {
-        status: 500,
-        data: {
-          success: false,
-          error: `Failed to track training process: ${(error as Error).message}`,
-        },
-      };
-    }
-
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'training_started',
-      details: {
-        agent: agentName,
-        method,
-        trainingTarget,
-        pid: childPid,
-        username: req.user.username,
-        config: launchConfig,
-        runpodConfig: runpodConfig ? { templateId: runpodConfig.templateId, gpuType: runpodConfig.gpuType } : undefined,
-        commandArgs: agentArgs,
-        logPath: path.basename(logPath),
-      },
-      actor: req.user.username,
-    });
-
-    child.unref();
-
-    return successResponse({
-      success: true,
-      pid: childPid,
-      agentName,
-      message: `Training agent ${agentName} started with PID ${childPid}`,
-    });
+    const { status: _status, ...data } = result;
+    return successResponse(data);
   } catch (error) {
     return {
       status: 500,

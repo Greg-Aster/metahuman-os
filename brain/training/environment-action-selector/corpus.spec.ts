@@ -90,6 +90,7 @@ test('critical action boundaries have independent source cases on every fold', (
     'authority-boundary-positive',
     'target-relative',
     'target-relative-unavailable',
+    'multi-step-advertised-action',
   ]
   for (const suite of criticalSuites) {
     assert.deepEqual(

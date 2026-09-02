@@ -173,6 +173,11 @@ test('desire executor graph and coordinator configuration have one valid finaliz
     && edge.targetHandle === 'data'))
   assert.ok(graph.edges.some((edge: any) =>
     edge.source === '7'
+    && edge.sourceHandle === 'entries'
+    && edge.target === '9'
+    && edge.targetHandle === 'entries'))
+  assert.ok(graph.edges.some((edge: any) =>
+    edge.source === '9'
     && edge.sourceHandle === 'text'
     && edge.target === '8'
     && edge.targetHandle === 'innerDialogue'))

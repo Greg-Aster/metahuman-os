@@ -40,6 +40,7 @@ function formatSize(bytes: number): string {
  */
 let modelCache: { models: TrainingModel[]; timestamp: number } | null = null;
 const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const AI_TRAINING_GUIDE = '/user-guide#ai-training';
 
 function getCachedModels(): TrainingModel[] | null {
   if (!modelCache) return null;
@@ -69,7 +70,7 @@ export async function handleGetTrainingModels(_req: UnifiedRequest): Promise<Uni
         cached: true,
         notes: {
           usage: 'These are models available in your local Ollama installation',
-          setup_guide: '/docs/user-guide/lora-training.md',
+          setup_guide: AI_TRAINING_GUIDE,
         },
       });
     }
@@ -82,7 +83,7 @@ export async function handleGetTrainingModels(_req: UnifiedRequest): Promise<Uni
       return {
         status: 503,
         error: 'Ollama is not running. Please start Ollama first.',
-        data: { setupGuide: '/docs/user-guide/lora-training.md' },
+        data: { setupGuide: AI_TRAINING_GUIDE },
       };
     }
 
@@ -93,7 +94,7 @@ export async function handleGetTrainingModels(_req: UnifiedRequest): Promise<Uni
       return {
         status: 404,
         error: 'No models found in Ollama. Please pull at least one model first.',
-        data: { setupGuide: '/docs/user-guide/lora-training.md' },
+        data: { setupGuide: AI_TRAINING_GUIDE },
       };
     }
 
@@ -116,7 +117,7 @@ export async function handleGetTrainingModels(_req: UnifiedRequest): Promise<Uni
       cached: false,
       notes: {
         usage: 'These are models available in your local Ollama installation',
-        setup_guide: '/docs/user-guide/lora-training.md',
+        setup_guide: AI_TRAINING_GUIDE,
       },
     });
   } catch (error) {
@@ -124,7 +125,7 @@ export async function handleGetTrainingModels(_req: UnifiedRequest): Promise<Uni
     return {
       status: 500,
       error: (error as Error).message || 'Failed to load training models from Ollama',
-      data: { setupGuide: '/docs/user-guide/lora-training.md' },
+      data: { setupGuide: AI_TRAINING_GUIDE },
     };
   }
 }

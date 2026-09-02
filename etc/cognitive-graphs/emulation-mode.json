@@ -213,7 +213,7 @@
         "y": 100
       },
       "data": {
-        "label": "Memory Capture",
+        "label": "Conversation Memory Saver",
         "nodeType": "memory_capture",
         "properties": {}
       },
@@ -441,36 +441,14 @@
       }
     },
     {
-      "id": "e-17-stripped-14-assistantResponse",
-      "source": "17",
+      "id": "e-15-entries-14-entries",
+      "source": "15",
       "target": "14",
-      "sourceHandle": "stripped",
-      "targetHandle": "assistantResponse",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
       "data": {
-        "type": "string",
-        "comment": "Stripped response → Memory Capture (no <think> blocks)"
-      }
-    },
-    {
-      "id": "e-1-message-14-userMessage",
-      "source": "1",
-      "target": "14",
-      "sourceHandle": "message",
-      "targetHandle": "userMessage",
-      "data": {
-        "type": "string",
-        "comment": "User message → Memory Capture"
-      }
-    },
-    {
-      "id": "e-3-cognitiveMode-14-cognitiveMode",
-      "source": "3",
-      "target": "14",
-      "sourceHandle": "cognitiveMode",
-      "targetHandle": "cognitiveMode",
-      "data": {
-        "type": "object",
-        "comment": "System settings → Memory Capture"
+        "type": "array",
+        "comment": "Buffer-admitted entries → Conversation Memory Saver"
       }
     },
     {
@@ -485,17 +463,6 @@
       }
     },
     {
-      "id": "e-6-history-15-conversationHistory",
-      "source": "6",
-      "target": "15",
-      "sourceHandle": "history",
-      "targetHandle": "conversationHistory",
-      "data": {
-        "type": "array",
-        "comment": "Updated conversation history → Buffer Manager"
-      }
-    },
-    {
       "id": "e-17-stripped-15-response",
       "source": "17",
       "target": "15",
@@ -507,14 +474,25 @@
       }
     },
     {
-      "id": "e-13-response-tts-conversation",
-      "source": "13",
+      "id": "e-1-message-15-userMessage",
+      "source": "1",
+      "target": "15",
+      "sourceHandle": "message",
+      "targetHandle": "userMessage",
+      "data": {
+        "type": "string",
+        "comment": "Current user input admitted by this graph"
+      }
+    },
+    {
+      "id": "e-15-response-tts-conversation",
+      "source": "15",
       "target": "tts-out",
       "sourceHandle": "response",
       "targetHandle": "conversation",
       "data": {
         "type": "string",
-        "comment": "Response Refiner output → TTS Output (speaks conversation response)"
+        "comment": "Speak the exact response retained by the Conversation Buffer"
       }
     }
   ]

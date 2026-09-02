@@ -1,8 +1,7 @@
 /**
  * Dreamer Agent — Module Definition
  *
- * Exports the AgentModule for registration with agent-runtime.
- * This is the entry point for in-process execution on mobile.
+ * Exports the AgentModule for agent-runtime registration.
  */
 
 import type { AgentModule, AgentMeta } from '@metahuman/agent-runtime';
@@ -17,7 +16,6 @@ export const meta: AgentMeta = {
   description: 'Creates surreal dream narratives from lifetime memory fragments',
   usesLLM: true,
   priority: 'low',
-  defaultInterval: 3600, // 1 hour (dreams are rare)
   tags: ['dream', 'llm', 'background', 'sleep'],
 };
 
@@ -37,8 +35,12 @@ export {
   generateUserDreams,
   loadSleepConfig,
   loadDreamerGraph,
+  evaluateDreamerGraph,
+  parseDreamerArgs,
+  taskTriggerKind,
   type DreamerOptions,
   type DreamerResult,
+  type DreamerGraphEvaluation,
   type UserDreamerStats,
 } from './core.js';
 

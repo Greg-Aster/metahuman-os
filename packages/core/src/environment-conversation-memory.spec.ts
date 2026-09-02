@@ -50,6 +50,7 @@ const hasEdge = (source: string, sourceHandle: string, target: string, targetHan
   );
 
 const historyId = nodeId('conversation_history');
+const instructionInterpreterId = nodeId('environment_instruction_interpreter');
 const memoryRouterId = nodeId('memory_router');
 const contextId = nodeId('environment_context_builder');
 const personaLoaderId = nodeId('persona_loader');
@@ -76,9 +77,11 @@ assert.ok(hasEdge(personaFormatterId, 'formatted', contextId, 'personaText'));
 assert.ok(hasEdge(prepareId, 'routingAnalysis', contextId, 'routingAnalysis'));
 assert.ok(hasEdge(prepareId, 'routingAnalysis', actionParserId, 'routingAnalysis'));
 assert.ok(hasEdge(bridgeId, 'conversationResponse', bufferId, 'response'));
+assert.ok(hasEdge(instructionInterpreterId, 'conversationInput', bufferId, 'userMessage'));
+assert.equal(hasEdge(instructionInterpreterId, 'instruction', bufferId, 'userMessage'), false);
 assert.ok(hasEdge(actionParserId, 'actions', reducerId, 'actions'));
 assert.equal(hasEdge(reducerId, 'decision', bufferId, 'taskLifecycle'), false);
-assert.ok(hasEdge(bridgeId, 'conversationResponse', captureId, 'assistantResponse'));
+assert.ok(hasEdge(bufferId, 'entries', captureId, 'entries'));
 assert.ok(hasEdge(bufferId, 'response', streamId, 'response'));
 assert.ok(hasEdge(bufferId, 'response', ttsId, 'conversation'));
 assert.ok(hasEdge(bridgeId, 'bridgeRecord', robotBufferId, 'bridgeRecord'));
@@ -300,14 +303,13 @@ assert.deepEqual(currentStateContext.context.contextAdmission, {
 });
 
 const emptyCapture = await MemoryCaptureNode.execute({
-  userMessage: '',
-  assistantResponse: 'Sensor-only response.',
+  entries: [],
 }, {
   cognitiveMode: 'environment',
-  allowMemoryWrites: true,
+  recordPersonaMemory: true,
   userId: 'test-user',
 }, {});
 assert.equal(emptyCapture.saved, false);
-assert.equal(emptyCapture.reason, 'No user message to capture');
+assert.equal(emptyCapture.reason, 'No admitted conversation entries');
 
 console.log('environment-conversation-memory.spec.ts passed');

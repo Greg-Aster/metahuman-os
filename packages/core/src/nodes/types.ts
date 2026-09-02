@@ -87,6 +87,8 @@ export interface PropertySchema {
   default: any;
   label?: string;
   description?: string;
+  /** Render this setting in the inspector's collapsible advanced section. */
+  advanced?: boolean;
   min?: number;
   max?: number;
   step?: number;

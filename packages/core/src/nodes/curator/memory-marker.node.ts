@@ -6,11 +6,14 @@
 import fs from 'node:fs';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { writeJsonAtomically } from './atomic-json.js';
-import { isSuccessfulCuration, type CuratorItemResult } from './contracts.js';
+import { isSuccessfulCuration, sourcePathsForResult, type CuratorItemResult } from './contracts.js';
+import { curatedRecordFilename } from './curated-store.js';
 
 export interface MarkCuratedResult {
   markedCount: number;
   alreadyMarkedCount: number;
+  sourceMarkedCount: number;
+  sourceAlreadyMarkedCount: number;
   acceptedCount: number;
   rejectedCount: number;
   markedPaths: string[];
@@ -19,6 +22,8 @@ export interface MarkCuratedResult {
 export function markCuratedResults(curatedResults: CuratorItemResult[]): MarkCuratedResult {
   let markedCount = 0;
   let alreadyMarkedCount = 0;
+  let sourceMarkedCount = 0;
+  let sourceAlreadyMarkedCount = 0;
   let acceptedCount = 0;
   let rejectedCount = 0;
   const markedPaths: string[] = [];
@@ -30,49 +35,69 @@ export function markCuratedResults(curatedResults: CuratorItemResult[]): MarkCur
       continue;
     }
 
-    const originalMemoryPath = result.originalMemoryPath;
-    if (!originalMemoryPath) {
+    const originalMemoryPaths = sourcePathsForResult(result);
+    if (originalMemoryPaths.length === 0) {
       errors.push(`${result.memoryId}: missing original memory path`);
       continue;
     }
 
-    try {
-      const memory = JSON.parse(fs.readFileSync(originalMemoryPath, 'utf-8'));
-      const metadata = memory.metadata && typeof memory.metadata === 'object' && !Array.isArray(memory.metadata)
-        ? memory.metadata
-        : {};
-      const curationStatus = result.disposition;
-      const unchanged = metadata.curated === true
-        && metadata.curatorRecordId === result.curated.id
-        && metadata.curationStatus === curationStatus;
+    let unitChanged = false;
+    let unitFailed = false;
+    for (const originalMemoryPath of originalMemoryPaths) {
+      try {
+        const memory = JSON.parse(fs.readFileSync(originalMemoryPath, 'utf-8'));
+        const metadata = memory.metadata && typeof memory.metadata === 'object' && !Array.isArray(memory.metadata)
+          ? memory.metadata
+          : {};
+        const curationStatus = result.disposition;
+        const curatorRecordFile = curatedRecordFilename(result.curated);
+        const unchanged = metadata.curated === true
+          && metadata.curatorRecordId === result.curated.id
+          && metadata.curatorRecordFile === curatorRecordFile
+          && metadata.curationStatus === curationStatus;
 
-      if (unchanged) {
-        alreadyMarkedCount++;
-      } else {
-        memory.metadata = {
-          ...metadata,
-          curated: true,
-          curatedAt: typeof metadata.curatedAt === 'string' ? metadata.curatedAt : result.curated.curatedAt,
-          curatorRecordId: result.curated.id,
-          curationStatus,
-        };
-        writeJsonAtomically(originalMemoryPath, memory);
-        markedCount++;
+        if (unchanged) {
+          sourceAlreadyMarkedCount++;
+        } else {
+          memory.metadata = {
+            ...metadata,
+            curated: true,
+            curatedAt: typeof metadata.curatedAt === 'string' ? metadata.curatedAt : result.curated.curatedAt,
+            curatorRecordId: result.curated.id,
+            curatorRecordFile,
+            curationStatus,
+          };
+          writeJsonAtomically(originalMemoryPath, memory);
+          sourceMarkedCount++;
+          unitChanged = true;
+        }
+        markedPaths.push(originalMemoryPath);
+      } catch (error) {
+        unitFailed = true;
+        errors.push(`${result.memoryId} (${originalMemoryPath}): ${(error as Error).message}`);
       }
-
-      if (result.disposition === 'accepted') acceptedCount++;
-      else rejectedCount++;
-      markedPaths.push(originalMemoryPath);
-    } catch (error) {
-      errors.push(`${result.memoryId}: ${(error as Error).message}`);
     }
+
+    if (unitFailed) continue;
+    if (unitChanged) markedCount++;
+    else alreadyMarkedCount++;
+    if (result.disposition === 'accepted') acceptedCount++;
+    else rejectedCount++;
   }
 
   if (errors.length > 0) {
     throw new Error(`Curator left ${errors.length} memory record(s) retryable: ${errors.join('; ')}`);
   }
 
-  return { markedCount, alreadyMarkedCount, acceptedCount, rejectedCount, markedPaths };
+  return {
+    markedCount,
+    alreadyMarkedCount,
+    sourceMarkedCount,
+    sourceAlreadyMarkedCount,
+    acceptedCount,
+    rejectedCount,
+    markedPaths,
+  };
 }
 
 const execute: NodeExecutor = async (inputs, _context, _properties) => {
@@ -84,6 +109,8 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
       success: true,
       markedCount: 0,
       alreadyMarkedCount: 0,
+      sourceMarkedCount: 0,
+      sourceAlreadyMarkedCount: 0,
       acceptedCount: 0,
       rejectedCount: 0,
       markedPaths: [],
@@ -107,6 +134,8 @@ export const MemoryMarkerNode: NodeDefinition = defineNode({
     { name: 'success', type: 'boolean' },
     { name: 'markedCount', type: 'number' },
     { name: 'alreadyMarkedCount', type: 'number' },
+    { name: 'sourceMarkedCount', type: 'number' },
+    { name: 'sourceAlreadyMarkedCount', type: 'number' },
     { name: 'acceptedCount', type: 'number' },
     { name: 'rejectedCount', type: 'number' },
   ],

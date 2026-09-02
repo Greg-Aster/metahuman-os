@@ -1,10 +1,26 @@
 # TTS Pipeline Work
 
 Date opened: 2026-07-17
-Status: Phase 2 node-ownership cleanup implemented; runtime smoke reached the TTS queue, playback validation pending
+Status updated: 2026-08-31
+Status: canonical node-owned local and robot routing is implemented and source-validated; current audible browser and physical-robot playback remain unverified
 Scope owner: MetaHuman TTS request, synthesis, and playback flow, including the Ainekio robot output boundary
 
 > The filename keeps the requested `tts-pipleine-work` spelling. This document is the working paper trail for the cleanup. Update the progress checklist and append to the work log whenever implementation or validation occurs. Do not silently rewrite earlier log entries; add a correction entry when facts change.
+
+## Current owner status
+
+- The standard `tts` graph node is the only maintained LLM-response speech
+  admission owner.
+- `packages/core/src/tts/delivery-queue.ts` owns durable local delivery, leases,
+  retries, acknowledgement, interruption, and generation supersession.
+- `TTSQueueConsumer.svelte` is the always-mounted local playback actuator.
+- Saved voice settings select `local` or `robot`. Robot delivery is bounded to
+  explicit robot workflows and routes through `packages/core/src/tts/robot-speech.ts`
+  and the existing Environment Bridge action owner.
+- The July phase checklist below is a historical implementation plan, not a
+  current statement that every unchecked item remains open. Runtime provider
+  health, audible browser playback, correlated robot playback, and physical
+  speaker output still require fresh evidence.
 
 ## Purpose
 
@@ -231,7 +247,7 @@ This lower-level speaker path is real. It is not currently connected to Environm
 | TTS-F09 | Medium | Native Web Speech and the maintained voice-loop API are alternate synthesis/admission surfaces. | “One pipeline” cannot be proven until these are explicitly integrated, disabled, or classified as test/deferred surfaces. |
 | TTS-F10 | Medium | Robot speaker framing exists, but long-stream pacing and correlated completion are not yet connected to a speech request. | Fast frame bursts can overflow the bounded robot queue; success could be reported before audible completion. |
 | TTS-F11 | Critical | `ChatInterface.svelte` contains a raw-answer auto-play function plus a ten-second text deduplication mechanism. | Interface code bypasses graph configuration and attempts to reconcile duplicate admissions after they occur. This function and its deduplication state must be deleted. |
-| TTS-F12 | High | Both global and Ainekio saved voice configurations currently select Piper, while the service factory stops every running server that does not match the selected provider. | A manually started Kokoro server is gracefully terminated by the next Piper synthesis request and appears to have crashed. |
+| TTS-F12 | High | Both global and active robot-profile voice configurations selected Piper during the audit, while the service factory stopped every running server that did not match the selected provider. | A manually started Kokoro server was gracefully terminated by the next Piper synthesis request and appeared to have crashed. |
 | TTS-F13 | High | `bin/start-voice-server` resolves the default user only through a repo-local `profiles/<name>/etc/voice.json` path and falls back to global configuration when the active profile lives elsewhere. | Startup can announce and launch the global provider instead of the default user's saved provider. |
 
 ## Paused uncommitted work inventory
@@ -525,10 +541,10 @@ Append new entries in chronological order. Include changed files, validation evi
 
 ### TTS-008 - 2026-07-17 - Kokoro shutdown and Piper selection diagnosed
 
-- Observed state: no Kokoro process is currently running. Both `etc/voice.json` and `profiles/Ainekio/etc/voice.json` explicitly select `tts.provider: "piper"`.
+- Observed state at audit time: no Kokoro process was running. Both the global voice configuration and the active robot profile selected `tts.provider: "piper"`.
 - Startup behavior: `bin/start-voice-server` cannot find the default user's voice file at its assumed repo-local path, falls back to `etc/voice.json`, reads Piper, and correctly skips starting a Kokoro service.
 - Runtime cause: each Ainekio synthesis creates a Piper service. `createTTSService()` classifies the manually running Kokoro process as an inactive provider and calls `stopServer('kokoro')` to avoid competing TTS servers.
-- Evidence: `logs/server.log` records three repetitions of `Stopping inactive servers: kokoro`, followed by `kokoro server stopped gracefully`, immediately after graph queue delivery. `logs/run/kokoro-server.log` shows healthy startup, successful health checks, and orderly Uvicorn shutdown with no exception or crash traceback.
+- Evidence: sanitized local lifecycle evidence recorded repeated intentional Kokoro shutdown immediately after graph queue delivery, following healthy startup and health checks with no crash traceback.
 - Piper interpretation: the observed speech is not evidence that Kokoro failed and fell back. Piper is the saved primary provider for these requests. Kokoro's separate `autoFallbackToPiper` option is enabled, but the observed requests never selected Kokoro synthesis in the first place.
 - Required correction before further playback validation: select Kokoro in the intended active profile through the canonical voice-settings owner, then make startup resolve that same profile path. Do not keep manually restarting a server while the saved provider remains Piper.
 
@@ -539,7 +555,7 @@ Append new entries in chronological order. Include changed files, validation evi
 - Changed: `bin/start-voice-server` consumes that command instead of constructing `profiles/$PROFILE/etc/voice.json`. A configured external/encrypted path resolution failure now stops voice startup visibly instead of silently selecting global Piper.
 - Preserved: when no resolved profile voice file exists, the existing global `etc/voice.json` fallback remains. The prior Kokoro voice-default environment wiring is unchanged.
 - Regression guard: added `packages/core/src/tts-startup-profile.spec.ts` and the root `validate:tts-startup-profile` build gate to reject a return to hard-coded repo-local profile paths or silent resolution failure.
-- Runtime validation: the machine command returned `/media/greggles/STACK/metahuman-profiles/greggles/etc/voice.json`, whose selected provider is Kokoro. The currently running server remained healthy on port 9882 with voice `af_heart`, speed `1.0`, and CPU device.
+- Runtime validation at audit time: the machine command resolved the active external profile through the canonical path owner, whose selected provider was Kokoro. The configured server remained healthy; machine-specific paths and saved voice preferences are intentionally omitted.
 - Passed: `pnpm validate:tts-startup-profile`, `pnpm -s check:architecture` with zero violations, `bash -n`, `shellcheck`, and scoped `git diff --check`.
 - Existing validation debt: `pnpm typecheck:cli` remains blocked before checking this change because the workspace cannot find existing `diff` and `minimatch` type-definition packages. The changed CLI path was executed directly and returned successfully.
 - Build note: no Astro build was run while the production site was live, avoiding the already characterized `dist` replacement race.

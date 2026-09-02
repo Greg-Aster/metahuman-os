@@ -8,7 +8,7 @@ import { REPOSITORY_ROOT } from './corpus.js'
 
 const OUTPUT_ROOT = resolve(REPOSITORY_ROOT, 'out/environment-action-selector/training')
 const PYTHON_PATH = resolve(REPOSITORY_ROOT, 'venv/bin/python')
-const EXPORTER_PATH = resolve(REPOSITORY_ROOT, 'brain/training/export-merged-gguf.py')
+const EXPORTER_PATH = resolve(REPOSITORY_ROOT, 'brain/training/environment-action-selector/export-merged-gguf.py')
 
 interface FinalProvenance {
   owner?: string

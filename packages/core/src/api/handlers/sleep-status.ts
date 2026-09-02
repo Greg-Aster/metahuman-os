@@ -5,11 +5,8 @@
  * Works for both web (Astro) and mobile (nodejs-mobile).
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { storageClient } from '../../storage-client.js';
 import { isLocked } from '../../locks.js';
 import { loadSleepConfig } from '../../sleep-config.js';
 import { readSleepRuntimeState, type SleepSessionRuntime } from '../../sleep-runtime.js';
@@ -60,38 +57,6 @@ export async function handleGetSleepStatus(req: UnifiedRequest): Promise<Unified
       displayName: stage.displayName,
       handler: stage.handler,
     }));
-    let learningsFile: string | null = null;
-    let learningsContent: string | null = null;
-
-    // Try to resolve path - gracefully handle anonymous users
-    if (user.isAuthenticated) {
-      const pathResult = storageClient.resolvePath({
-        username: user.username,
-        category: 'memory',
-        subcategory: 'procedural',
-        relativePath: 'overnight',
-      });
-
-      if (pathResult.success && pathResult.path) {
-        const overnightDir = pathResult.path;
-        if (fs.existsSync(overnightDir)) {
-          const files = fs
-            .readdirSync(overnightDir)
-            .filter(
-              (file) => file.startsWith('overnight-learnings-') && file.endsWith('.md')
-            )
-            .sort()
-            .reverse();
-
-          if (files.length > 0) {
-            learningsFile = files[0];
-            const filepath = path.join(overnightDir, learningsFile);
-            learningsContent = fs.readFileSync(filepath, 'utf-8');
-          }
-        }
-      }
-    }
-
     return successResponse({
       status: determineState(visibleCurrent),
       phase: visibleCurrent ? runtime.phase : 'awake',
@@ -99,8 +64,6 @@ export async function handleGetSleepStatus(req: UnifiedRequest): Promise<Unified
       currentSession,
       recentSessions,
       configuredStages,
-      learningsFile,
-      learningsContent,
       lastChecked: new Date().toISOString(),
     });
   } catch (error) {

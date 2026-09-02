@@ -9,6 +9,15 @@
 - Consolidation progress: [../audits/consolidation-progress.md](../audits/consolidation-progress.md)
 - Maintained-source inventory: [../audits/maintained-source-inventory.md](../audits/maintained-source-inventory.md)
 
+## Maintained Technical Evidence
+
+- Environment Mode performance ledger:
+  [environment-mode-performance.md](environment-mode-performance.md)
+
+This ledger preserves dated measurements and validation evidence. Its current
+status section is maintained, but historical entries are not current runtime
+claims or architecture authority.
+
 ## Public Orientation
 
 - Project overview: [../../README.md](../../README.md)

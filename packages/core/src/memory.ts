@@ -1,60 +1,15 @@
 /**
- * Memory System
- * =============
+ * Canonical episodic-memory persistence for MetaHuman OS.
  *
- * Core module for episodic memory storage in MetaHuman OS.
+ * New producers use `captureEventWithDetails()` so persistence, validation,
+ * encryption state, idempotency, and index admission stay on one path.
+ * Existing-record readers use `scanEpisodicMemoryRecords()` for profile-scoped,
+ * encryption-aware access. Semantic indexing and retrieval are owned by
+ * `vector-index.ts`; graph nodes delegate to that owner rather than maintaining
+ * a second memory worker or index implementation.
  *
- * ## Architecture Evolution
- *
- * ### Legacy System (Pre-2025-11)
- * - `captureEvent(content, opts)` - Returns file path string only
- * - No encryption awareness - all files written as plain JSON
- * - Synchronous, blocking writes in the main thread
- * - Used by: CLI commands, older agent code, backward-compatible paths
- *
- * ### Current System (2025-11+)
- * - `captureEventWithDetails(content, opts)` - Returns full CaptureResult with metadata
- * - Runtime encryption support via `getEncryptionContext()`
- * - Encryption status included in pipeline responses
- * - Graceful fallback when encryption unavailable (with audit logging)
- *
- * ## Worker Services (Recommended for New Code)
- *
- * For performance-critical paths, use the worker-based services:
- *
- * - `brain/services/memory-service.ts` - Worker thread for memory I/O
- *   - Encryption-aware read/write/search/list operations
- *   - Runs on separate CPU core for non-blocking I/O
- *
- * - `brain/services/semantic-search-service.ts` - Worker thread for vector ops
- *   - Vector embedding generation via Ollama
- *   - Cosine similarity search
- *   - Index building and incremental updates
- *
- * - `packages/core/src/memory-service-client.ts` - IPC client
- *   - Request/response routing to memory service worker
- *   - 30-second timeout with proper cleanup
- *   - Convenience functions: writeMemoryAsync(), readMemoryAsync(), searchMemoryAsync()
- *
- * ## Encryption Behavior
- *
- * When a profile has encryption enabled (via ProfileLocation UI):
- * - AES-256-GCM: Files encrypted with cached key (requires profile unlock)
- * - VeraCrypt: Transparent filesystem-level encryption (no app-level encryption)
- *
- * If encryption is configured but unavailable (e.g., profile not unlocked):
- * - Files written as plain JSON (fallback behavior)
- * - Warning logged to console
- * - Security audit event logged: `memory_encryption_fallback`
- * - `encryptionFallback: true` in CaptureResult for pipeline awareness
- *
- * ## Future Agents: Important Notes
- *
- * 1. Always prefer `captureEventWithDetails()` over `captureEvent()` for new code
- * 2. Check `CaptureResult.encrypted` to know if file was encrypted
- * 3. Check `CaptureResult.encryptionFallback` to detect security concerns
- * 4. For high-throughput operations, use the worker services
- * 5. The legacy `captureEvent()` is a thin wrapper for backward compatibility
+ * `captureEvent()` remains a compatibility wrapper for maintained callers that
+ * only require the resulting file path.
  *
  * @module memory
  */
@@ -73,13 +28,16 @@ import { canWriteMemory, type EventType } from './memory-policy.js';
 import { appendToolToCache } from './recent-tools-cache.js';
 import { validateEvent } from './memory-validation.js';
 import {
+  decrypt,
   encrypt,
   getCachedKey,
   isProfileUnlocked,
   ENCRYPTED_EXTENSION,
+  type EncryptedData,
 } from './encryption.js';
 import { getProfileStorageConfig } from './users.js';
 import * as agencyStorage from './agency/storage.js';
+import { safeWriteJSON } from './safe-file.js';
 
 const LOG_PREFIX = '[memory]';
 
@@ -133,10 +91,11 @@ function isDuplicateContent(content: string): boolean {
     console.log(`${LOG_PREFIX} Duplicate content detected, skipping save (hash: ${hash.slice(0, 8)}...)`);
     return true;
   }
-
-  // Not a duplicate - add to cache
-  recentContentHashes.set(hash, Date.now());
   return false;
+}
+
+function rememberCapturedContent(content: string): void {
+  recentContentHashes.set(contentHash(content), Date.now());
 }
 
 /**
@@ -324,6 +283,15 @@ export interface CaptureResult {
   deduplicated?: boolean;
 }
 
+export type CaptureEventOptions = Partial<EpisodicEvent> & {
+  /**
+   * Stable producer-owned identity for retryable captures. Callers must also
+   * provide a stable timestamp so retries resolve to the same dated memory
+   * path. The key is hashed and is not used as a filename directly.
+   */
+  idempotencyKey?: string;
+};
+
 const DEFAULT_EVENT_CATEGORY = 'episodic';
 
 function normalizeTag(value: string): string {
@@ -433,9 +401,87 @@ function getEncryptionContext(username?: string): EncryptionContext {
  * Capture event with full metadata (encryption-aware)
  * Returns detailed result including file path and encryption status
  */
-export function captureEventWithDetails(content: string, opts: Partial<EpisodicEvent> = {}): CaptureResult {
+export function captureEventWithDetails(content: string, opts: CaptureEventOptions = {}): CaptureResult {
   // Get current user context (if any)
   const ctx = getUserContext();
+
+  const idempotencyKey = opts.idempotencyKey?.trim();
+  if (opts.idempotencyKey !== undefined && !idempotencyKey) {
+    throw new Error('Memory capture idempotencyKey must be a non-empty string');
+  }
+  if (idempotencyKey && idempotencyKey.length > 512) {
+    throw new Error('Memory capture idempotencyKey must not exceed 512 characters');
+  }
+
+  if (idempotencyKey && (!opts.timestamp || Number.isNaN(Date.parse(opts.timestamp)))) {
+    throw new Error('Idempotent memory capture requires a valid stable timestamp');
+  }
+  const eventTimestamp = idempotencyKey ? opts.timestamp! : timestamp();
+
+  const idempotencyDigest = idempotencyKey
+    ? crypto.createHash('sha256').update(idempotencyKey).digest('hex')
+    : undefined;
+  const eventId = idempotencyDigest
+    ? `evt-idempotent-${idempotencyDigest.slice(0, 24)}`
+    : generateId('evt');
+
+  const rawEvent: EpisodicEvent = {
+    id: eventId,
+    timestamp: eventTimestamp,
+    content,
+    type: opts.type || 'observation',
+    response: opts.response,
+    entities: opts.entities || [],
+    tags: opts.tags || [],
+    importance: opts.importance || 0.5,
+    links: opts.links || [],
+    userId: ctx?.userId,
+    metadata: idempotencyKey
+      ? { ...opts.metadata, idempotencyKeyHash: idempotencyDigest }
+      : opts.metadata || {},
+  };
+
+  // Validate and sanitize the event data before deriving its durable path.
+  const validation = validateEvent(rawEvent);
+
+  if (validation.warnings.length > 0) {
+    console.warn(`${LOG_PREFIX} Event validation warnings:`, validation.warnings);
+  }
+
+  if (!validation.valid) {
+    console.error(`${LOG_PREFIX} Event validation failed:`, validation.errors);
+    console.warn(`${LOG_PREFIX} Attempting to save sanitized version`);
+  }
+
+  const event = validation.sanitized!;
+  const category = resolveEventCategory(event);
+  const dir = buildEventDirectory(category, event.timestamp);
+  const slug = idempotencyKey
+    ? ''
+    : `-${content.toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 50) || 'event'}`;
+  const baseFilename = `${event.id}${slug}.json`;
+
+  if (idempotencyKey) {
+    const encryptedPath = path.join(dir, baseFilename + ENCRYPTED_EXTENSION);
+    const plainPath = path.join(dir, baseFilename);
+    const existingPath = [encryptedPath, plainPath].find(candidate => fs.existsSync(candidate));
+    if (existingPath) {
+      const encrypted = existingPath === encryptedPath;
+      return {
+        eventId: event.id,
+        filePath: existingPath,
+        encrypted,
+        encryptionType: encrypted ? 'aes256' : undefined,
+        timestamp: event.timestamp,
+        eventType: event.type || 'observation',
+        bytesWritten: 0,
+        deduplicated: true,
+      };
+    }
+  }
 
   // Check for duplicate content (skip if already saved recently)
   // This prevents the same question/message from being saved multiple times
@@ -452,43 +498,7 @@ export function captureEventWithDetails(content: string, opts: Partial<EpisodicE
     };
   }
 
-  const rawEvent: EpisodicEvent = {
-    id: generateId('evt'),
-    timestamp: timestamp(),
-    content,
-    type: opts.type || 'observation',
-    response: opts.response,
-    entities: opts.entities || [],
-    tags: opts.tags || [],
-    importance: opts.importance || 0.5,
-    links: opts.links || [],
-    userId: ctx?.userId,
-    metadata: opts.metadata || {},
-  };
-
-  // Validate and sanitize the event data
-  const validation = validateEvent(rawEvent);
-
-  if (validation.warnings.length > 0) {
-    console.warn(`${LOG_PREFIX} Event validation warnings:`, validation.warnings);
-  }
-
-  if (!validation.valid) {
-    console.error(`${LOG_PREFIX} Event validation failed:`, validation.errors);
-    console.warn(`${LOG_PREFIX} Attempting to save sanitized version`);
-  }
-
-  const event = validation.sanitized!;
-  const category = resolveEventCategory(event);
-  const dir = buildEventDirectory(category, event.timestamp);
   fs.mkdirSync(dir, { recursive: true });
-
-  const slug = content.toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 50) || 'event';
-
-  const baseFilename = `${event.id}-${slug}.json`;
 
   // Check encryption status
   const encryptionCtx = getEncryptionContext(ctx?.username);
@@ -533,6 +543,8 @@ export function captureEventWithDetails(content: string, opts: Partial<EpisodicE
     fs.writeFileSync(filepath, plaintext, 'utf8');
     bytesWritten = Buffer.byteLength(plaintext);
   }
+
+  rememberCapturedContent(content);
 
   // Log to sync
   logSync('capture', { event, encrypted });
@@ -600,9 +612,311 @@ export function captureEventWithDetails(content: string, opts: Partial<EpisodicE
 /**
  * Capture event (backward compatible - returns file path string)
  */
-export function captureEvent(content: string, opts: Partial<EpisodicEvent> = {}): string {
+export function captureEvent(content: string, opts: CaptureEventOptions = {}): string {
   const result = captureEventWithDetails(content, opts);
   return result.filePath;
+}
+
+// ============================================================================
+// Existing Episodic Memory Records
+// ============================================================================
+
+const DEFAULT_MAX_EPISODIC_RECORD_BYTES = 2 * 1024 * 1024;
+
+export interface EpisodicMemoryRecord {
+  relativePath: string;
+  encrypted: boolean;
+  sizeBytes: number;
+  event: EpisodicEvent;
+}
+
+export type EpisodicMemoryScanOutcome =
+  | { status: 'record'; record: EpisodicMemoryRecord }
+  | { status: 'failed'; relativePath: string; error: string };
+
+export interface EpisodicMemoryScanOptions {
+  maxFileSizeBytes?: number;
+  maxFiles?: number;
+  newestFirst?: boolean;
+}
+
+export interface EpisodicMemoryMetadataUpdate {
+  username: string;
+  relativePath: string;
+  expectedId: string;
+  tags: string[];
+  entities: string[];
+  metadata: {
+    processed: true;
+    processedAt: string;
+    model?: string;
+    organizerStatus: 'updated' | 'skipped' | 'no-content';
+  };
+}
+
+export interface EpisodicMemoryUpdateResult {
+  relativePath: string;
+  encrypted: boolean;
+  event: EpisodicEvent;
+}
+
+function episodicRootFor(username: string): string {
+  const resolved = storageClient.resolvePath({ username, category: 'memory', subcategory: 'episodic' });
+  if (!resolved.success || !resolved.path) {
+    throw new Error(resolved.error || `Cannot resolve episodic memory path for ${username}`);
+  }
+  return path.resolve(resolved.path);
+}
+
+function resolveEpisodicRecordPath(root: string, relativePath: string): string {
+  if (!relativePath || path.isAbsolute(relativePath)) {
+    throw new Error('Episodic memory path must be a non-empty relative path');
+  }
+  if (!relativePath.endsWith('.json') && !relativePath.endsWith(`.json${ENCRYPTED_EXTENSION}`)) {
+    throw new Error(`Unsupported episodic memory file: ${relativePath}`);
+  }
+
+  const resolved = path.resolve(root, relativePath);
+  if (resolved === root || !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`Episodic memory path escapes its profile root: ${relativePath}`);
+  }
+  return resolved;
+}
+
+function encryptionKeyForRecord(username: string, relativePath: string): Buffer {
+  const resolved = storageClient.resolvePath({
+    username,
+    category: 'memory',
+    subcategory: 'episodic',
+  });
+  if (!resolved.success || !resolved.profileRoot) {
+    throw new Error(resolved.error || `Cannot resolve encrypted profile storage for ${relativePath}`);
+  }
+  if (!isProfileUnlocked(resolved.profileRoot)) {
+    throw new Error(`Encrypted episodic memory is unavailable while the profile is locked: ${relativePath}`);
+  }
+  const key = getCachedKey(resolved.profileRoot);
+  if (!key) {
+    throw new Error(`Encrypted episodic memory key is unavailable: ${relativePath}`);
+  }
+  return key;
+}
+
+function parseEpisodicRecord(username: string, fullPath: string, relativePath: string): EpisodicEvent {
+  const encrypted = relativePath.endsWith(ENCRYPTED_EXTENSION);
+  const serialized = encrypted
+    ? decrypt(
+      JSON.parse(fs.readFileSync(fullPath, 'utf8')) as EncryptedData,
+      encryptionKeyForRecord(username, relativePath),
+    ).toString('utf8')
+    : fs.readFileSync(fullPath, 'utf8');
+  const parsed = JSON.parse(serialized) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Episodic memory must contain a JSON object');
+  }
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.id !== 'string'
+      || typeof record.timestamp !== 'string'
+      || Number.isNaN(Date.parse(record.timestamp))
+      || typeof record.content !== 'string') {
+    throw new Error('Episodic memory requires string id, timestamp, and content fields');
+  }
+  if (typeof record.tags !== 'undefined'
+      && (!Array.isArray(record.tags) || !record.tags.every(value => typeof value === 'string'))) {
+    throw new Error('Episodic memory tags must be an array of strings');
+  }
+  if (typeof record.entities !== 'undefined'
+      && (!Array.isArray(record.entities) || !record.entities.every(value => typeof value === 'string'))) {
+    throw new Error('Episodic memory entities must be an array of strings');
+  }
+  if (typeof record.metadata !== 'undefined'
+      && (!record.metadata || typeof record.metadata !== 'object' || Array.isArray(record.metadata))) {
+    throw new Error('Episodic memory metadata must be an object');
+  }
+
+  const validation = validateEvent(parsed as Partial<EpisodicEvent>);
+  if (!validation.valid) {
+    throw new Error(`Invalid episodic memory: ${validation.errors.join('; ')}`);
+  }
+  if (validation.warnings.length > 0) {
+    throw new Error(`Episodic memory requires normalization: ${validation.warnings.join('; ')}`);
+  }
+  return parsed as EpisodicEvent;
+}
+
+/**
+ * Enumerate existing episodic records through the canonical profile and
+ * encryption owners. Per-file failures are explicit so finite maintenance work
+ * cannot turn malformed, locked, or oversized records into an empty success.
+ */
+export function* scanEpisodicMemoryRecords(
+  username: string,
+  options: EpisodicMemoryScanOptions = {},
+): Generator<EpisodicMemoryScanOutcome> {
+  const maxFileSizeBytes = options.maxFileSizeBytes ?? DEFAULT_MAX_EPISODIC_RECORD_BYTES;
+  if (!Number.isInteger(maxFileSizeBytes) || maxFileSizeBytes < 1) {
+    throw new Error('Episodic memory maximum file size must be a positive integer');
+  }
+  const maxFiles = options.maxFiles ?? Number.POSITIVE_INFINITY;
+  if (maxFiles !== Number.POSITIVE_INFINITY && (!Number.isInteger(maxFiles) || maxFiles < 1)) {
+    throw new Error('Episodic memory maximum file count must be a positive integer');
+  }
+
+  const root = episodicRootFor(username);
+  if (!fs.existsSync(root)) return;
+  let filesConsidered = 0;
+
+  function* walk(directory: string): Generator<EpisodicMemoryScanOutcome> {
+    if (filesConsidered >= maxFiles) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(directory, { withFileTypes: true })
+        .sort((left, right) => left.name.localeCompare(right.name));
+      if (options.newestFirst) entries.reverse();
+    } catch (error) {
+      yield {
+        status: 'failed',
+        relativePath: path.relative(root, directory) || '.',
+        error: `Cannot read episodic memory directory: ${(error as Error).message}`,
+      };
+      return;
+    }
+
+    for (const entry of entries) {
+      if (filesConsidered >= maxFiles) return;
+      if (entry.name.startsWith('.')) continue;
+      const fullPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        yield* walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || (!entry.name.endsWith('.json') && !entry.name.endsWith(`.json${ENCRYPTED_EXTENSION}`))) {
+        continue;
+      }
+
+      filesConsidered += 1;
+      const relativePath = path.relative(root, fullPath);
+      try {
+        const stats = fs.statSync(fullPath);
+        if (stats.size > maxFileSizeBytes) {
+          throw new Error(`Memory file exceeds ${maxFileSizeBytes} bytes`);
+        }
+        yield {
+          status: 'record',
+          record: {
+            relativePath,
+            encrypted: relativePath.endsWith(ENCRYPTED_EXTENSION),
+            sizeBytes: stats.size,
+            event: parseEpisodicRecord(username, fullPath, relativePath),
+          },
+        };
+      } catch (error) {
+        yield {
+          status: 'failed',
+          relativePath,
+          error: (error as Error).message,
+        };
+      }
+    }
+  }
+
+  yield* walk(root);
+}
+
+/**
+ * Atomically update only enrichment-owned fields on an existing memory. The
+ * record is re-read and identity-checked immediately before writing so a stale
+ * graph result cannot replace another writer's memory content.
+ */
+export function updateEpisodicMemoryMetadata(
+  input: EpisodicMemoryMetadataUpdate,
+): EpisodicMemoryUpdateResult {
+  if (!input.username.trim()) throw new Error('Episodic memory update requires a username');
+  if (!input.expectedId.trim()) throw new Error('Episodic memory update requires an expected memory id');
+  if (!Array.isArray(input.tags) || !input.tags.every(value => typeof value === 'string')) {
+    throw new Error('Episodic memory tags must be an array of strings');
+  }
+  if (!Array.isArray(input.entities) || !input.entities.every(value => typeof value === 'string')) {
+    throw new Error('Episodic memory entities must be an array of strings');
+  }
+  if (!input.metadata || typeof input.metadata !== 'object' || Array.isArray(input.metadata)) {
+    throw new Error('Episodic memory metadata update must be an object');
+  }
+  const metadataKeys = Object.keys(input.metadata);
+  if (metadataKeys.some(key => !['processed', 'processedAt', 'model', 'organizerStatus'].includes(key))) {
+    throw new Error('Episodic memory update contains metadata outside the Organizer contract');
+  }
+  if (input.metadata.processed !== true
+      || !input.metadata.processedAt
+      || Number.isNaN(Date.parse(input.metadata.processedAt))) {
+    throw new Error('Episodic memory Organizer metadata requires a valid processed timestamp');
+  }
+  if (typeof input.metadata.model !== 'undefined' && typeof input.metadata.model !== 'string') {
+    throw new Error('Episodic memory Organizer model must be a string');
+  }
+  if (!['updated', 'skipped', 'no-content'].includes(input.metadata.organizerStatus)) {
+    throw new Error('Episodic memory Organizer status is invalid');
+  }
+
+  const root = episodicRootFor(input.username);
+  const fullPath = resolveEpisodicRecordPath(root, input.relativePath);
+  const realRoot = fs.realpathSync(root);
+  const realPath = fs.realpathSync(fullPath);
+  if (!realPath.startsWith(`${realRoot}${path.sep}`)) {
+    throw new Error(`Episodic memory path escapes its profile root: ${input.relativePath}`);
+  }
+
+  const current = parseEpisodicRecord(input.username, fullPath, input.relativePath);
+  if (current.id !== input.expectedId) {
+    throw new Error(`Episodic memory identity changed before update: ${input.relativePath}`);
+  }
+
+  const candidate: EpisodicEvent = {
+    ...current,
+    tags: input.tags,
+    entities: input.entities,
+    metadata: { ...current.metadata, ...input.metadata },
+  };
+  const validation = validateEvent(candidate);
+  if (!validation.valid || !validation.sanitized) {
+    throw new Error(`Invalid enriched memory: ${validation.errors.join('; ')}`);
+  }
+  if (validation.warnings.length > 0) {
+    throw new Error(`Enriched memory requires normalization: ${validation.warnings.join('; ')}`);
+  }
+  const durable: EpisodicEvent = {
+    ...current,
+    tags: validation.sanitized.tags,
+    entities: validation.sanitized.entities,
+    metadata: { ...current.metadata, ...input.metadata },
+  };
+
+  const encrypted = input.relativePath.endsWith(ENCRYPTED_EXTENSION);
+  if (encrypted) {
+    const key = encryptionKeyForRecord(input.username, input.relativePath);
+    safeWriteJSON(fullPath, encrypt(Buffer.from(JSON.stringify(durable, null, 2), 'utf8'), key));
+  } else {
+    const encryptionConfig = getProfileStorageConfig(input.username)?.encryption;
+    if (encryptionConfig?.type === 'aes256') {
+      encryptionKeyForRecord(input.username, input.relativePath);
+    }
+    safeWriteJSON(fullPath, durable);
+  }
+
+  auditDataChange({
+    type: 'update',
+    resource: 'episodic-memory-metadata',
+    path: input.relativePath,
+    actor: 'organizer',
+    details: {
+      eventId: durable.id,
+      tagCount: durable.tags?.length ?? 0,
+      entityCount: durable.entities?.length ?? 0,
+      encrypted,
+    },
+  });
+
+  return { relativePath: input.relativePath, encrypted, event: durable };
 }
 
 function readTasksFromDirectory(dir: string): Task[] {

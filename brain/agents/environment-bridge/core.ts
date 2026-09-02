@@ -24,6 +24,11 @@ import {
   type ParsedAudioUtterance,
 } from './audio-transport.js';
 import { AudioVisualObservationJoin } from './audio-visual-join.js';
+import {
+  createCoalescedTaskRunner,
+  createSerialTaskQueue,
+  type SerialTaskQueue,
+} from './async-control.js';
 import { attachCorrelatedFeedback } from './feedback-correlation.js';
 import { encodeRobotSpeechMessage } from './speech-transport.js';
 
@@ -32,6 +37,7 @@ const PROTOCOL_VERSION = 1;
 const RECONNECT_DELAY_MS = 2_000;
 const MAX_MESSAGE_BYTES = audioTransportLimits.maxMessageBytes;
 const MAX_PENDING_AUDIO_UTTERANCES = 2;
+const MAX_PENDING_ADAPTER_MESSAGES = 128;
 const DIAGNOSTIC_TELEMETRY_INTERVAL_MS = 1_000;
 const MAX_DIAGNOSTIC_EVENTS_PER_WINDOW = 20;
 const MAX_ACTION_TIMINGS = 256;
@@ -78,7 +84,7 @@ interface DiagnosticWindow {
   events: DiagnosticEvent[];
 }
 
-interface BridgeConfig {
+export interface BridgeConfig {
   adapterUrl: string;
   adapterToken: string;
   coreUrl: string;
@@ -226,7 +232,7 @@ async function postDiagnosticAudio(
   }
 }
 
-async function consumeActionStream(
+export async function consumeActionStream(
   config: BridgeConfig,
   sessionId: string,
   sendAction: (action: Record<string, unknown>) => Promise<void>,
@@ -251,7 +257,10 @@ async function consumeActionStream(
   let buffer = '';
   while (!signal.aborted) {
     const { done, value } = await reader.read();
-    if (done) return;
+    if (done) {
+      if (signal.aborted) return;
+      throw new Error('Environment action stream ended unexpectedly');
+    }
     buffer += decoder.decode(value, { stream: true });
     let boundary = buffer.indexOf('\n\n');
     while (boundary >= 0) {
@@ -294,7 +303,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
     let pendingAudioUtterances = 0;
     let audioQueue = Promise.resolve();
     let diagnosticSessionId = '';
-    let telemetryQueue = Promise.resolve();
+    let observedTelemetryFlush: Promise<void> | undefined;
     const awaitingAdapterAcceptance = new Set<string>();
     const actionTimings = new Map<string, EnvironmentActionTiming>();
     const terminalActionsAwaitingObservation = new Set<string>();
@@ -466,51 +475,47 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       }
     };
 
-    const flushTelemetry = (_force = false): Promise<void> => {
-      const flush = async () => {
-        if (!diagnosticSessionId) return;
-        const now = Date.now();
-        const intervalMs = Math.max(1, now - diagnostics.startedAt);
-        const eventCount = diagnostics.events.length;
-        const counters = {
-          inboundBytes: diagnostics.inboundBytes,
-          outboundBytes: diagnostics.outboundBytes,
-          inboundMessages: diagnostics.inboundMessages,
-          outboundMessages: diagnostics.outboundMessages,
-          imageFrames: diagnostics.imageFrames,
-          imageBytes: diagnostics.imageBytes,
-          audioUtterances: diagnostics.audioUtterances,
-          audioBytes: diagnostics.audioBytes,
-        };
-        await postJson(config, '/api/environment-bridge/telemetry', {
-          sessionId: diagnosticSessionId,
-          timestamp: new Date(now).toISOString(),
-          intervalMs,
-          robotId: diagnostics.robotId,
-          ...counters,
-          microphoneLevel: diagnostics.microphoneLevel,
-          pendingAudioUtterances,
-          transcriptionStatus: diagnostics.transcriptionStatus,
-          transcript: diagnostics.transcript,
-          robotStatus: diagnostics.robotStatus,
-          freestyleMovement: diagnostics.freestyleMovement,
-          movementPlan: diagnostics.movementPlan,
-          events: diagnostics.events.slice(0, eventCount),
-        });
-        diagnostics.startedAt = now;
-        diagnostics.inboundBytes -= counters.inboundBytes;
-        diagnostics.outboundBytes -= counters.outboundBytes;
-        diagnostics.inboundMessages -= counters.inboundMessages;
-        diagnostics.outboundMessages -= counters.outboundMessages;
-        diagnostics.imageFrames -= counters.imageFrames;
-        diagnostics.imageBytes -= counters.imageBytes;
-        diagnostics.audioUtterances -= counters.audioUtterances;
-        diagnostics.audioBytes -= counters.audioBytes;
-        diagnostics.events.splice(0, eventCount);
+    const flushTelemetry = createCoalescedTaskRunner(async () => {
+      if (!diagnosticSessionId) return;
+      const now = Date.now();
+      const intervalMs = Math.max(1, now - diagnostics.startedAt);
+      const eventCount = diagnostics.events.length;
+      const counters = {
+        inboundBytes: diagnostics.inboundBytes,
+        outboundBytes: diagnostics.outboundBytes,
+        inboundMessages: diagnostics.inboundMessages,
+        outboundMessages: diagnostics.outboundMessages,
+        imageFrames: diagnostics.imageFrames,
+        imageBytes: diagnostics.imageBytes,
+        audioUtterances: diagnostics.audioUtterances,
+        audioBytes: diagnostics.audioBytes,
       };
-      telemetryQueue = telemetryQueue.then(flush, flush);
-      return telemetryQueue;
-    };
+      await postJson(config, '/api/environment-bridge/telemetry', {
+        sessionId: diagnosticSessionId,
+        timestamp: new Date(now).toISOString(),
+        intervalMs,
+        robotId: diagnostics.robotId,
+        ...counters,
+        microphoneLevel: diagnostics.microphoneLevel,
+        pendingAudioUtterances,
+        transcriptionStatus: diagnostics.transcriptionStatus,
+        transcript: diagnostics.transcript,
+        robotStatus: diagnostics.robotStatus,
+        freestyleMovement: diagnostics.freestyleMovement,
+        movementPlan: diagnostics.movementPlan,
+        events: diagnostics.events.slice(0, eventCount),
+      });
+      diagnostics.startedAt = now;
+      diagnostics.inboundBytes -= counters.inboundBytes;
+      diagnostics.outboundBytes -= counters.outboundBytes;
+      diagnostics.inboundMessages -= counters.inboundMessages;
+      diagnostics.outboundMessages -= counters.outboundMessages;
+      diagnostics.imageFrames -= counters.imageFrames;
+      diagnostics.imageBytes -= counters.imageBytes;
+      diagnostics.audioUtterances -= counters.audioUtterances;
+      diagnostics.audioBytes -= counters.audioBytes;
+      diagnostics.events.splice(0, eventCount);
+    });
 
     const recordVisual = (observation: EnvironmentObservation) => {
       const visual = observation.visual ?? observation.visuals?.[0];
@@ -543,9 +548,16 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
     };
 
     diagnosticTimer = setInterval(() => {
-      void flushTelemetry().catch(error => {
-        console.error(`${LOG_PREFIX} diagnostic telemetry failed: ${(error as Error).message}`);
-      });
+      const flush = flushTelemetry();
+      if (flush === observedTelemetryFlush) return;
+      observedTelemetryFlush = flush;
+      void flush
+        .catch(error => {
+          console.error(`${LOG_PREFIX} diagnostic telemetry failed: ${(error as Error).message}`);
+        })
+        .finally(() => {
+          if (observedTelemetryFlush === flush) observedTelemetryFlush = undefined;
+        });
     }, DIAGNOSTIC_TELEMETRY_INTERVAL_MS);
     diagnosticTimer.unref?.();
 
@@ -678,7 +690,10 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       audioQueue = audioQueue.then(processUtterance, processUtterance);
     };
 
+    let connectionFailure: unknown;
+    let inboundMessages: SerialTaskQueue | undefined;
     await new Promise<void>((resolve, reject) => {
+      inboundMessages = createSerialTaskQueue(reject, MAX_PENDING_ADAPTER_MESSAGES);
       websocket.on('message', (raw: RawData | string, isBinary?: boolean) => {
         const incoming = rawDataBuffer(raw);
         diagnostics.inboundBytes += incoming.length;
@@ -687,7 +702,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           enqueueAudioUtterance(incoming);
           return;
         }
-        void (async () => {
+        inboundMessages?.enqueue(async () => {
           const encoded = incoming.toString();
           if (Buffer.byteLength(encoded) > MAX_MESSAGE_BYTES) {
             throw new Error('Environment adapter message exceeds its size limit');
@@ -870,13 +885,16 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
               });
             }
           }
-        })().catch(reject);
+        });
       });
       websocket.once('close', () => resolve());
       websocket.once('error', reject);
       localAbort.signal.addEventListener('abort', () => resolve(), { once: true });
+    }).catch(error => {
+      connectionFailure = error;
     });
     localAbort.abort();
+    if (!signal.aborted) await inboundMessages?.drain();
     await Promise.allSettled([...awaitingAdapterAcceptance].map(actionId => (
       failUnacceptedAction(actionId, 'environment adapter disconnected before accepting command')
     )));
@@ -885,10 +903,15 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
     if (diagnosticTimer) clearInterval(diagnosticTimer);
     await audioQueue;
     await Promise.allSettled(mediaUploads);
-    await flushTelemetry(true).catch(error => {
-      console.error(`${LOG_PREFIX} final diagnostic telemetry failed: ${(error as Error).message}`);
+    const finalTelemetryFlush = flushTelemetry();
+    const finalTelemetryAlreadyObserved = finalTelemetryFlush === observedTelemetryFlush;
+    await finalTelemetryFlush.catch(error => {
+      if (!finalTelemetryAlreadyObserved) {
+        console.error(`${LOG_PREFIX} final diagnostic telemetry failed: ${(error as Error).message}`);
+      }
     });
     await actionStream;
+    if (connectionFailure) throw connectionFailure;
   } finally {
     if (diagnosticTimer) clearInterval(diagnosticTimer);
     signal.removeEventListener('abort', abort);

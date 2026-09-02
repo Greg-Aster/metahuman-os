@@ -5,7 +5,7 @@
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
-import { queryIndex } from '../../vector-index.js';
+import { queryIndexWithReconciliation } from '../../vector-index.js';
 
 export const SemanticSearchNode: NodeDefinition = defineNode({
   id: 'semantic_search',
@@ -58,27 +58,26 @@ export const SemanticSearchNode: NodeDefinition = defineNode({
       };
     }
 
-    try {
-      const results = await queryIndex(query, { topK });
-
-      return {
-        memories: results
-          .filter(r => r.score >= threshold)
-          .map(r => ({
-            content: r.item.text || '',
-            timestamp: r.item.timestamp,
-            type: r.item.type || 'observation',
-            score: r.score,
-          })),
-        query,
-      };
-    } catch (error) {
-      console.error('[SemanticSearch] Error:', error);
-      return {
-        memories: [],
-        query,
-        error: (error as Error).message,
-      };
+    const username = typeof context.username === 'string' ? context.username.trim() : '';
+    if (!username || username === 'anonymous') {
+      throw new Error('Semantic Search requires an authenticated profile username');
     }
+    const results = await queryIndexWithReconciliation(query, {
+      topK,
+      username,
+      reconciliationSource: 'semantic-search-node',
+    });
+
+    return {
+      memories: results
+        .filter(r => r.score >= threshold)
+        .map(r => ({
+          content: r.item.text || '',
+          timestamp: r.item.timestamp,
+          type: r.item.memoryType || r.item.type || 'observation',
+          score: r.score,
+        })),
+      query,
+    };
   },
 });

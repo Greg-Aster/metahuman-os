@@ -7,30 +7,12 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import path from 'node:path';
-import { systemPaths } from '../../paths.js';
+import { loadLatestMobileRelease, MobileReleaseError } from '../../mobile-release.js';
 
-interface VersionInfo {
-  version: string;
-  versionCode: number;
-  releaseDate: string;
-  releaseNotes: string;
-  downloadUrl: string;
-  fileSize: number;
-  checksum?: string;
-  minAndroidVersion: number;
-}
-
-interface VersionResponse {
-  latest: VersionInfo;
-  updateAvailable: boolean;
-  currentVersion?: string;
-}
-
-// Path to mobile releases directory
-const RELEASES_DIR = path.join(systemPaths.root, 'apps', 'mobile', 'releases');
-const VERSION_FILE = path.join(RELEASES_DIR, 'version.json');
+const PUBLIC_RELEASE_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Cache-Control': 'public, max-age=300',
+};
 
 /**
  * GET /api/mobile/version - Get mobile app version info
@@ -39,58 +21,43 @@ export async function handleGetMobileVersion(req: UnifiedRequest): Promise<Unifi
   try {
     const { query } = req;
     const currentVersion = query?.current || null;
-    const currentVersionCode = parseInt(query?.versionCode || '0', 10);
-
-    // Check if version.json exists
-    if (!existsSync(VERSION_FILE)) {
-      return {
-        status: 404,
-        error: 'No releases available',
-        data: {
-          message: 'No mobile app releases have been published yet.',
-        },
-      };
+    const currentVersionCode = Number(query?.versionCode || 0);
+    if (!Number.isInteger(currentVersionCode) || currentVersionCode < 0) {
+      return { status: 400, error: 'versionCode must be a non-negative integer', headers: PUBLIC_RELEASE_HEADERS };
     }
 
-    // Read version info
-    const versionData = JSON.parse(readFileSync(VERSION_FILE, 'utf-8')) as VersionInfo;
-
-    // Check if APK file exists
-    const apkPath = path.join(RELEASES_DIR, `metahuman-${versionData.version}.apk`);
-    if (!existsSync(apkPath)) {
-      return {
-        status: 404,
-        error: 'APK not found',
-        data: {
-          message: `Release ${versionData.version} APK file is missing.`,
-        },
-      };
-    }
-
-    // Get file size
-    const stats = statSync(apkPath);
-    versionData.fileSize = stats.size;
+    const release = loadLatestMobileRelease();
 
     // Determine if update is available
     const updateAvailable = currentVersionCode > 0
-      ? versionData.versionCode > currentVersionCode
+      ? release.versionCode > currentVersionCode
       : false;
 
-    const response: VersionResponse = {
+    const response = successResponse({
       latest: {
-        ...versionData,
-        downloadUrl: `/api/mobile/download?version=${versionData.version}`,
+        version: release.version,
+        versionCode: release.versionCode,
+        releaseDate: release.releaseDate,
+        releaseNotes: release.releaseNotes,
+        minAndroidVersion: release.minAndroidVersion,
+        fileSize: release.fileSize,
+        checksum: release.checksum,
+        downloadUrl: `/api/mobile/download?version=${release.version}`,
       },
       updateAvailable,
       currentVersion: currentVersion || undefined,
-    };
-
-    return successResponse(response);
+    });
+    response.headers = PUBLIC_RELEASE_HEADERS;
+    return response;
   } catch (error) {
     console.error('[mobile-version] GET failed:', error);
+    if (error instanceof MobileReleaseError) {
+      return { status: error.status, error: error.message, headers: PUBLIC_RELEASE_HEADERS };
+    }
     return {
       status: 500,
       error: (error as Error).message || 'Internal server error',
+      headers: PUBLIC_RELEASE_HEADERS,
     };
   }
 }

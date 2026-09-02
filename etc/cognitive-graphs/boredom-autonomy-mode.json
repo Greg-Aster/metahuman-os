@@ -4,7 +4,7 @@
   "name": "Boredom Autonomy Mode",
   "description": "Executes a boredom planner's self-authored intention and uses canonical Environment Task State to revise it from correlated action results and fresh evidence.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-25",
+  "last_modified": "2026-09-01",
   "nodes": [
     { "id": "observation", "type": "environmentNode", "position": { "x": 40, "y": 220 }, "data": { "label": "Current Robot Stimulus or Result", "nodeType": "environment_observation", "properties": {} } },
     { "id": "trigger-instruction", "type": "inputNode", "position": { "x": 40, "y": 20 }, "data": { "label": "Incoming Boredom Stimulus", "nodeType": "text_input", "properties": { "message": "", "inputKey": "environmentTaskInstruction" } } },
@@ -17,7 +17,7 @@
         "label": "Boredom Autonomy Executive Policy",
         "nodeType": "text_input",
         "properties": {
-          "message": "You are Ainekio's Boredom Autonomy executor. Use the planner-authored intention with the active persona, current Environment Task State, fresh correlated evidence, recent conversation and reflection, verified prior actions, sampled memory, current state, and advertised capabilities. Choose one supported consequence for this pass: a deliberate response, one exact advertised action, or one supported body-local movement request. Preserve the intended kind of consequence: a physical or sensing intention must become a structured action or movementRequest, not response-only completion. Prefer an exact advertised action whose meaning fits; use movementRequest only when no advertised action expresses the intended body-local change. Do not replace the intention with a generic idle task or ask the user to decide what happens.\n\nAfter an action, interpret its correlated result, preserve or revise the objective from evidence, and choose the next consequence while the interest remains. Action completion is evidence, not automatic episode completion. Historical narrative may guide meaning but cannot prove present physical facts.\n\nReturn strict JSON with exactly response, actions, movementRequest, and taskDecision. Include a non-empty objective, reason, outcome, objectiveComplete, continuationPolicy, and requiredCompletionBasis. Physical work uses outcome=act and objectiveComplete=false. An unfinished episode includes one action or movementRequest now; otherwise give the substantive response that resolves it and mark it complete. Never promise an absent action.",
+          "message": "You are Ainekio's Boredom Autonomy executor. Use the complete plannerDecision (observed, instruction, and reason), persona, Environment Task State, Robot Status, current evidence, recent conversation/reflection, verifiedActionHistory, memory, state, and advertised capabilities. The planner's desired effect is authoritative intent; correlated evidence is authoritative physical context. Choose a response, exact action, or body-local movementRequest. Use robotCommandDescriptions to understand exact commands, including punctuation-only names. For the current step, prefer an exact command whose described effect fits; use movementRequest only when that movement is uncovered. Recent actions may break a genuine tie, but contextual fit comes first. Physical or sensing intent requires an action or movementRequest, not response-only completion. Do not replace the intention with a generic idle task.\n\nAfter an action, interpret its correlated result; preserve or revise the objective from evidence. Action completion is evidence, not automatic episode completion. Continue, revise, repeat, or complete from the objective and current evidence; do not impose a fixed action count or deterministic stop. Darkness or occlusion is missing evidence, not proof of hidden activity, heat, or an unsupported sensor reading. Robot Status and narrative cannot prove present physical facts.\n\nReturn strict JSON: response, actions, movementRequest, and taskDecision with objective, reason, outcome, objectiveComplete, continuationPolicy, and requiredCompletionBasis. Physical work uses outcome=act and objectiveComplete=false. An unfinished episode includes an action or movementRequest; otherwise mark it complete. Outward response is always optional; leave response empty when speaking adds nothing. If present, use one or two concise sentences. Never promise an absent action.",
           "inputKey": ""
         }
       }
@@ -26,12 +26,13 @@
     { "id": "conversation-history", "type": "contextNode", "position": { "x": 40, "y": 550 }, "data": { "label": "Recent Conversation", "nodeType": "conversation_history", "properties": { "mode": "conversation", "limit": 4 } } },
     { "id": "inner-history", "type": "contextNode", "position": { "x": 40, "y": 700 }, "data": { "label": "Recent Private Reflection", "nodeType": "conversation_history", "properties": { "mode": "inner", "limit": 4 } } },
     { "id": "robot-history", "type": "contextNode", "position": { "x": 40, "y": 850 }, "data": { "label": "Verified Robot Action History", "nodeType": "conversation_history", "properties": { "mode": "robot", "limit": 20 } } },
+    { "id": "robot-status", "type": "contextNode", "position": { "x": 340, "y": 850 }, "data": { "label": "Current Robot Status", "nodeType": "robot_status", "properties": { "historyLimit": 3 } } },
     { "id": "persona-loader", "type": "personaNode", "position": { "x": 340, "y": 650 }, "data": { "label": "Active Persona", "nodeType": "persona_loader", "properties": {} } },
     { "id": "persona-formatter", "type": "personaNode", "position": { "x": 640, "y": 650 }, "data": { "label": "Compact Persona Context", "nodeType": "persona_formatter", "properties": { "includeValues": true, "includeGoals": true, "includePersonality": true } } },
     { "id": "autonomy-context", "type": "operatorNode", "position": { "x": 680, "y": 180 }, "data": { "label": "Build Bounded Autonomy Context", "nodeType": "robot_operator_context_builder", "properties": {} } },
-    { "id": "autonomy-selector", "type": "llmNode", "position": { "x": 1060, "y": 210 }, "data": { "label": "Choose the Next Episode Consequence", "nodeType": "model_router", "properties": { "role": "environmentActionSelector", "maxTokens": 384, "temperature": 0.55, "format": "json" } } },
+    { "id": "autonomy-selector", "type": "llmNode", "position": { "x": 1060, "y": 210 }, "data": { "label": "Choose the Next Episode Consequence", "nodeType": "model_router", "properties": { "role": "environmentActionSelector", "maxTokens": 2048, "temperature": 0.55, "format": "json" } } },
     { "id": "action-parser", "type": "environmentNode", "position": { "x": 1340, "y": 210 }, "data": { "label": "Validate Selected Consequence", "nodeType": "environment_action_parser", "properties": {} } },
-    { "id": "movement-generator", "type": "environmentNode", "position": { "x": 1870, "y": -40 }, "data": { "label": "Optional Novel Body Movement", "nodeType": "movement_generator", "properties": { "role": "orchestrator", "maxTokens": 1536, "temperature": 0.2 } } },
+    { "id": "movement-generator", "type": "environmentNode", "position": { "x": 1870, "y": -40 }, "data": { "label": "Optional Novel Body Movement", "nodeType": "movement_generator", "properties": { "role": "orchestrator", "maxTokens": 4096, "temperature": 0.2 } } },
     { "id": "task-state-reduce", "type": "environmentNode", "position": { "x": 2160, "y": 190 }, "data": { "label": "Reduce Autonomy Objective", "nodeType": "environment_task_state", "properties": { "phase": "reduce" } } },
     {
       "id": "bridge-out",
@@ -50,6 +51,7 @@
     },
     { "id": "robot-buffer", "type": "outputNode", "position": { "x": 2790, "y": 20 }, "data": { "label": "Robot Action Record", "nodeType": "robot_buffer", "properties": { "recordNoAction": false } } },
     { "id": "conversation-buffer", "type": "outputNode", "position": { "x": 2790, "y": 310 }, "data": { "label": "Voiced Conversation", "nodeType": "conversation_buffer", "properties": {} } },
+    { "id": "conversation-memory", "type": "outputNode", "position": { "x": 3090, "y": 450 }, "data": { "label": "Conversation Memory Saver", "nodeType": "memory_capture", "properties": {} } },
     { "id": "tts-out", "type": "outputNode", "position": { "x": 3090, "y": 310 }, "data": { "label": "Speak Deliberate Conversation", "nodeType": "tts", "properties": { "source": "boredom-autonomy", "defaultMode": "conversation" } } }
   ],
   "edges": [
@@ -66,16 +68,17 @@
     { "id": "e-conversation-context", "source": "conversation-history", "target": "autonomy-context", "sourceHandle": "history", "targetHandle": "conversationHistory", "type": "default", "data": { "type": "array" } },
     { "id": "e-inner-context", "source": "inner-history", "target": "autonomy-context", "sourceHandle": "history", "targetHandle": "innerHistory", "type": "default", "data": { "type": "array" } },
     { "id": "e-robot-history-context", "source": "robot-history", "target": "autonomy-context", "sourceHandle": "history", "targetHandle": "actionHistory", "type": "default", "data": { "type": "array" } },
+    { "id": "e-robot-status-context", "source": "robot-status", "target": "autonomy-context", "sourceHandle": "context", "targetHandle": "robotStatus", "type": "default", "data": { "type": "object" } },
     { "id": "e-persona-format", "source": "persona-loader", "target": "persona-formatter", "sourceHandle": "persona", "targetHandle": "persona", "type": "default", "data": { "type": "object" } },
     { "id": "e-persona-context", "source": "persona-formatter", "target": "autonomy-context", "sourceHandle": "formatted", "targetHandle": "personaText", "type": "default", "data": { "type": "string" } },
     { "id": "e-context-selector", "source": "autonomy-context", "target": "autonomy-selector", "sourceHandle": "messages", "targetHandle": "messages", "type": "default", "data": { "type": "array" } },
     { "id": "e-schema-selector", "source": "autonomy-context", "target": "autonomy-selector", "sourceHandle": "jsonSchema", "targetHandle": "jsonSchema", "type": "default", "data": { "type": "object" } },
-    { "id": "e-precomputed-selector", "source": "task-state-prepare", "target": "autonomy-selector", "sourceHandle": "precomputedResponse", "targetHandle": "precomputedResponse", "type": "default", "data": { "type": "string" } },
     { "id": "e-selector-parser", "source": "autonomy-selector", "target": "action-parser", "sourceHandle": "response", "targetHandle": "response", "type": "default", "data": { "type": "llm_response" } },
     { "id": "e-observation-parser", "source": "observation", "target": "action-parser", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } },
     { "id": "e-session-parser", "source": "observation", "target": "action-parser", "sourceHandle": "sessionId", "targetHandle": "sessionId", "type": "default", "data": { "type": "string" } },
     { "id": "e-routing-parser", "source": "task-state-prepare", "target": "action-parser", "sourceHandle": "routingAnalysis", "targetHandle": "routingAnalysis", "type": "default", "data": { "type": "object" } },
     { "id": "e-movement-request", "source": "action-parser", "target": "movement-generator", "sourceHandle": "movementRequest", "targetHandle": "movementRequest", "type": "default", "data": { "type": "object" } },
+    { "id": "e-prepared-movement-request", "source": "task-state-prepare", "target": "movement-generator", "sourceHandle": "movementRequest", "targetHandle": "preparedMovementRequest", "type": "default", "data": { "type": "object", "comment": "Resume the exact request after correlated standing preparation" } },
     { "id": "e-prepared-instruction-movement", "source": "task-state-prepare", "target": "movement-generator", "sourceHandle": "instruction", "targetHandle": "instruction", "type": "default", "data": { "type": "string" } },
     { "id": "e-observation-movement", "source": "observation", "target": "movement-generator", "sourceHandle": "observation", "targetHandle": "observation", "type": "default", "data": { "type": "object" } },
     { "id": "e-session-movement", "source": "observation", "target": "movement-generator", "sourceHandle": "sessionId", "targetHandle": "sessionId", "type": "default", "data": { "type": "string" } },
@@ -99,6 +102,7 @@
     { "id": "e-bridge-robot-buffer", "source": "bridge-out", "target": "robot-buffer", "sourceHandle": "bridgeRecord", "targetHandle": "bridgeRecord", "type": "default", "data": { "type": "object" } },
     { "id": "e-bridge-conversation", "source": "bridge-out", "target": "conversation-buffer", "sourceHandle": "conversationResponse", "targetHandle": "response", "type": "default", "data": { "type": "string" } },
     { "id": "e-bridge-conversation-metadata", "source": "bridge-out", "target": "conversation-buffer", "sourceHandle": "responseMetadata", "targetHandle": "metadata", "type": "default", "data": { "type": "object" } },
+    { "id": "e-conversation-memory", "source": "conversation-buffer", "target": "conversation-memory", "sourceHandle": "entries", "targetHandle": "entries", "type": "default", "data": { "type": "array", "comment": "Buffer-admitted autonomous speech enters Persona Memory" } },
     { "id": "e-conversation-tts", "source": "conversation-buffer", "target": "tts-out", "sourceHandle": "response", "targetHandle": "conversation", "type": "default", "data": { "type": "string" } }
   ]
 }

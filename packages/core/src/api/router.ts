@@ -24,10 +24,15 @@ import { handleGetStatus } from './handlers/status.js';
 import { handleCapture, handleListMemories, handleSearchMemories } from './handlers/memories.js';
 import { handleListTasks, handleCreateTask, handleUpdateTask, handleDeleteTask } from './handlers/tasks.js';
 import { handleGetMe, handleLogin, handleLogout, handleListUsers, handleSyncUser, handleRegister, handleCreateSyncUser, handleGuest, handleChangePassword, handleResetPassword, handleChangeUsername, handleUpdateProfile } from './handlers/auth.js';
-import { handleExportProfile, handleImportProfile, handleExportPriorityProfile, handleGetProfileMetadata, handleGetProfileMemories, handleGetProfileTasks, handleGetProfileChanges } from './handlers/profile-sync.js';
+import { handleImportProfile, handleExportPriorityProfile, handleGetProfileMemories } from './handlers/profile-sync.js';
+import {
+  handleDeleteProfileSyncConfig,
+  handleGetProfileSyncConfig,
+  handlePutProfileSyncConfig,
+} from './handlers/profile-sync-config.js';
 import { handleGetPersona, handleGetPersonaSummary, handleGetPersonaCore, handleUpdatePersonaCore, handleGetPersonaRelationships, handleGetPersonaRoutines, handleGetPersonaDecisionRules } from './handlers/persona.js';
 import { handleGetCognitiveMode, handleSetCognitiveMode } from './handlers/cognitive-mode.js';
-import { handleGetBuffer, handleAppendBuffer, handleClearBuffer } from './handlers/conversation.js';
+import { handleGetBuffer, handleClearBuffer } from './handlers/conversation.js';
 import {
   handleListDesires,
   handleGetDesire,
@@ -167,7 +172,6 @@ import {
 } from './handlers/unified-queue.js';
 import { handleGetRunpodConfig } from './handlers/runpod-config.js';
 import { handleValidateRunpodKey } from './handlers/runpod-validate.js';
-import { handleGetConversationSummary } from './handlers/conversation-summary.js';
 import { handleSemanticTurn } from './handlers/semantic-turn.js';
 import { handleGetTrainingModels } from './handlers/training-models.js';
 import { handleWarmupModel } from './handlers/warmup-model.js';
@@ -175,10 +179,7 @@ import { handleGetVoiceModels } from './handlers/voice-models.js';
 import { handleGetTrainingHistory } from './handlers/training-history.js';
 import { handleGetMemoryContent, handlePutMemoryContent } from './handlers/memory-content.js';
 import { handleListPersonaArchives, handlePersonaArchiveAction } from './handlers/persona-archives.js';
-import { handleGetAppVersion, handleAppVersionOptions } from './handlers/app-version.js';
 import { handleGetPsychoanalyzerConfig, handleSetPsychoanalyzerConfig } from './handlers/psychoanalyzer-config.js';
-import { handleGetDriftConfig, handleSetDriftConfig } from './handlers/drift-config.js';
-import { handleGetDriftHistory } from './handlers/drift-history.js';
 import { handleGetPersonaFacet, handleSetPersonaFacet } from './handlers/persona-facet.js';
 import { handleBigBrotherEscalate } from './handlers/big-brother-escalate.js';
 import { handleGetAgencyMetrics } from './handlers/agency-metrics.js';
@@ -191,8 +192,6 @@ import { handleExecuteGraph } from './handlers/execute-graph.js';
 import { handleGetNodeSchemas } from './handlers/node-schemas.js';
 import { handleGetPersonaCoreManage, handleUpdatePersonaCoreManage } from './handlers/persona-core-manage.js';
 import { handleGetPersonaFacetsManage, handleUpdatePersonaFacetsManage } from './handlers/persona-facets-manage.js';
-import { handleGetDriftSummary } from './handlers/drift-summary.js';
-import { handleGetDriftReports } from './handlers/drift-reports.js';
 import { handleGetLlmBackendConfig, handleSetLlmBackendConfig } from './handlers/llm-backend-config.js';
 import { handleGetLlmBackendStatus } from './handlers/llm-backend-status.js';
 import { handleSwitchLlmBackend } from './handlers/llm-backend-switch.js';
@@ -212,12 +211,15 @@ import {
   handleInterpreterControl,
 } from './handlers/interpreter-status.js';
 import { handleGetFineTuneModels } from './handlers/fine-tune-models.js';
-import { handleGetDriftReport } from './handlers/drift-report.js';
 import { handleGetCloudflareStatus, handleCloudflareStart, handleCloudflareStop, handleCloudflareToggle } from './handlers/cloudflare.js';
 import { handleGetTrainingStatus } from './handlers/training-status.js';
 import { handleGetTrainingConsoleLogs } from './handlers/training-console-logs.js';
 import { handleGetTrainingRunning } from './handlers/training-running.js';
 import { handleGetTrainingDatasetStats } from './handlers/training-dataset-stats.js';
+import {
+  handleGetAutomaticTraining,
+  handleUpdateAutomaticTraining,
+} from './handlers/training-automation.js';
 import { handleGetTrainingLogs } from './handlers/training-logs.js';
 import { handleGetVeracryptStatus } from './handlers/veracrypt-status.js';
 import { handleGetTrainingLogFile } from './handlers/training-log-file.js';
@@ -292,7 +294,7 @@ import {
   handlePostSovitsTraining,
   handlePostVoiceTraining,
 } from './handlers/voice-training-routes.js';
-import { handleAudioUpload, handleVoiceProfileUpload } from './handlers/audio-uploads.js';
+import { handleVoiceProfileUpload } from './handlers/audio-uploads.js';
 import {
   handleTtsQueueDelivery,
   handleTtsQueueInterrupt,
@@ -336,12 +338,6 @@ import {
   handleParseChat,
   handleDetectPlatform,
 } from './handlers/chat-ingestion.js';
-import {
-  handleIngestVoiceMemo,
-  handleIngestVoiceMemoDirectory,
-  handleExtractVoiceMemoMetadata,
-  handleGetTranscriptionStatus,
-} from './handlers/voice-memo-ingestion.js';
 import {
   handleTagImage,
   handleTagImageDirectory,
@@ -480,7 +476,6 @@ import {
 } from './handlers/window-session.js';
 import { handleWindowSessionStream } from './handlers/window-session-stream.js';
 import { handleGetServerInfo } from './handlers/server-info.js';
-import { handleGetProfileSyncState, handleGetUpdateState } from './handlers/local-state.js';
 import { handleGetPauseState, handleUpdatePauseState } from './handlers/pause-state.js';
 
 // ============================================================================
@@ -492,8 +487,6 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/status', handler: handleGetStatus },
   { method: 'GET', pattern: '/api/app-info', handler: handleAppInfo },
   { method: 'GET', pattern: '/api/server-info', handler: handleGetServerInfo },
-  { method: 'GET', pattern: '/api/profile-sync-state', handler: handleGetProfileSyncState, requiresAuth: true },
-  { method: 'GET', pattern: '/api/update-state', handler: handleGetUpdateState, requiresAuth: true },
   { method: 'GET', pattern: '/api/pause-state', handler: handleGetPauseState, requiresAuth: true },
   { method: 'POST', pattern: '/api/pause-state', handler: handleUpdatePauseState, requiresAuth: true },
   { method: 'GET', pattern: '/api/event-bus-status', handler: handleGetEventBusStatus },
@@ -528,15 +521,14 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/auth/change-username', handler: handleChangeUsername, requiresAuth: true },
   { method: 'PUT', pattern: '/api/auth/update-profile', handler: handleUpdateProfile, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/user', handler: handleSyncUser, requiresAuth: true },
-  { method: 'GET', pattern: '/api/profile-sync/export', handler: handleExportProfile, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/export-priority', handler: handleExportPriorityProfile, requiresAuth: true },
   { method: 'POST', pattern: '/api/profile-sync/export-priority', handler: handleExportPriorityProfile, public: true, publicReason: 'cross-device sync authenticates with body credentials' },
   { method: 'POST', pattern: '/api/profile-sync/import', handler: handleImportProfile, requiresAuth: true },
-  { method: 'GET', pattern: '/api/profile-sync/metadata', handler: handleGetProfileMetadata, requiresAuth: true },
   { method: 'GET', pattern: '/api/profile-sync/memories', handler: handleGetProfileMemories, requiresAuth: true },
   { method: 'POST', pattern: '/api/profile-sync/memories', handler: handleGetProfileMemories, public: true, publicReason: 'cross-device sync authenticates with body credentials' },
-  { method: 'GET', pattern: '/api/profile-sync/tasks', handler: handleGetProfileTasks, requiresAuth: true },
-  { method: 'GET', pattern: '/api/profile-sync/changes', handler: handleGetProfileChanges, requiresAuth: true },
+  { method: 'GET', pattern: '/api/profile-sync/config', handler: handleGetProfileSyncConfig, requiresAuth: true },
+  { method: 'PUT', pattern: '/api/profile-sync/config', handler: handlePutProfileSyncConfig, requiresAuth: true },
+  { method: 'DELETE', pattern: '/api/profile-sync/config', handler: handleDeleteProfileSyncConfig, requiresAuth: true },
   { method: 'GET', pattern: /^\/api\/memory\/sync\/([^\/]+)$/, handler: handleGetMemorySyncItem, requiresAuth: true },
   { method: 'DELETE', pattern: /^\/api\/memory\/sync\/([^\/]+)$/, handler: handleDeleteMemorySyncItem, requiresAuth: true },
 
@@ -698,7 +690,6 @@ const routes: RouteDefinition[] = [
 
   // Conversation Buffer
   { method: 'GET', pattern: /^\/api\/conversation-buffer/, handler: handleGetBuffer },
-  { method: 'POST', pattern: '/api/conversation-buffer', handler: handleAppendBuffer, requiresAuth: true },
   { method: 'DELETE', pattern: /^\/api\/conversation-buffer/, handler: handleClearBuffer, requiresAuth: true },
 
   // Persona Chat (full cognitive graph pipeline - SAME for web and mobile)
@@ -758,7 +749,6 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/training-data', handler: handleUpdateTrainingData, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/voice-training', handler: handleGetVoiceTraining, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/voice-training', handler: handlePostVoiceTraining, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: '/api/audio/upload', handler: handleAudioUpload, requiresAuth: true },
   { method: 'POST', pattern: '/api/voice-profile/upload', handler: handleVoiceProfileUpload, requiresAuth: true },
   { method: 'GET', pattern: '/api/tts-queue-stream', handler: handleTtsQueueStream, requiresAuth: true },
   { method: 'POST', pattern: '/api/tts-queue-delivery', handler: handleTtsQueueDelivery, requiresAuth: true },
@@ -907,7 +897,7 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/unified-queue/activity', handler: handleRecordActivity, requiresAuth: true },
   { method: 'POST', pattern: '/api/unified-queue/clear', handler: handleClearQueueTasks, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/unified-queue/triggers', handler: handleGetTriggers, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: /^\/api\/unified-queue\/trigger\/([^\/]+)$/, handler: handleTriggerAgent, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: /^\/api\/unified-queue\/trigger\/([^\/]+)$/, handler: handleTriggerAgent, requiresAuth: true },
   { method: 'GET', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)\/stream$/, handler: handleQueueTaskStream },
   { method: 'GET', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)$/, handler: handleGetQueueTask, requiresAuth: true },
   { method: 'DELETE', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)$/, handler: handleDeleteQueueTask, requiresAuth: true },
@@ -916,9 +906,6 @@ const routes: RouteDefinition[] = [
   // RunPod
   { method: 'GET', pattern: '/api/runpod/config', handler: handleGetRunpodConfig, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/runpod/validate', handler: handleValidateRunpodKey, requiresAuth: true, guard: 'owner' },
-
-  // Conversation Summary
-  { method: 'GET', pattern: '/api/conversation/summary', handler: handleGetConversationSummary, requiresAuth: true },
 
   // Semantic Turn Detection
   { method: 'POST', pattern: '/api/semantic-turn', handler: handleSemanticTurn, requiresAuth: true },
@@ -943,20 +930,9 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/persona-archives', handler: handleListPersonaArchives, requiresAuth: true },
   { method: 'POST', pattern: '/api/persona-archives', handler: handlePersonaArchiveAction, requiresAuth: true },
 
-  // App Version
-  { method: 'GET', pattern: '/api/app-version', handler: handleGetAppVersion },
-  { method: 'OPTIONS', pattern: '/api/app-version', handler: handleAppVersionOptions },
-
   // Psychoanalyzer Config
-  { method: 'GET', pattern: '/api/psychoanalyzer-config', handler: handleGetPsychoanalyzerConfig },
+  { method: 'GET', pattern: '/api/psychoanalyzer-config', handler: handleGetPsychoanalyzerConfig, requiresAuth: true },
   { method: 'POST', pattern: '/api/psychoanalyzer-config', handler: handleSetPsychoanalyzerConfig, requiresAuth: true, guard: 'owner' },
-
-  // Drift Config
-  { method: 'GET', pattern: '/api/drift/config', handler: handleGetDriftConfig, requiresAuth: true },
-  { method: 'PUT', pattern: '/api/drift/config', handler: handleSetDriftConfig, requiresAuth: true },
-
-  // Drift History
-  { method: 'GET', pattern: '/api/drift/history', handler: handleGetDriftHistory, requiresAuth: true },
 
   // Persona Facet
   { method: 'GET', pattern: '/api/persona-facet', handler: handleGetPersonaFacet },
@@ -997,10 +973,6 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/persona-facets-manage', handler: handleUpdatePersonaFacetsManage, requiresAuth: true },
   { method: 'GET', pattern: '/api/persona-insights', handler: handleGetPersonaInsights, requiresAuth: true },
 
-  // Drift Summary & Reports
-  { method: 'GET', pattern: '/api/drift/summary', handler: handleGetDriftSummary, requiresAuth: true },
-  { method: 'GET', pattern: '/api/drift/reports', handler: handleGetDriftReports, requiresAuth: true },
-
   // LLM Backend
   { method: 'GET', pattern: '/api/llm-backend/config', handler: handleGetLlmBackendConfig, requiresAuth: true, guard: 'owner' },
   { method: 'PUT', pattern: '/api/llm-backend/config', handler: handleSetLlmBackendConfig, requiresAuth: true, guard: 'owner' },
@@ -1037,9 +1009,6 @@ const routes: RouteDefinition[] = [
   // Fine-Tune Models
   { method: 'GET', pattern: '/api/fine-tune/models', handler: handleGetFineTuneModels, requiresAuth: true, guard: 'owner' },
 
-  // Drift Report by ID
-  { method: 'GET', pattern: /^\/api\/drift\/reports\/([^\/]+)$/, handler: handleGetDriftReport, requiresAuth: true },
-
   // Cloudflare Tunnel
   { method: 'GET', pattern: '/api/cloudflare/status', handler: handleGetCloudflareStatus, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/cloudflare/start', handler: handleCloudflareStart, requiresAuth: true, guard: 'owner' },
@@ -1053,6 +1022,8 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/training/console-logs', handler: handleGetTrainingConsoleLogs, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/training/running', handler: handleGetTrainingRunning, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/training/dataset-stats', handler: handleGetTrainingDatasetStats, requiresAuth: true },
+  { method: 'GET', pattern: '/api/training/automatic', handler: handleGetAutomaticTraining, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/training/automatic', handler: handleUpdateAutomaticTraining, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/training/logs', handler: handleGetTrainingLogs, requiresAuth: true, guard: 'owner' },
 
   // VeraCrypt
@@ -1158,12 +1129,6 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/chats/ingest-directory', handler: handleIngestChatDirectory, requiresAuth: true },
   { method: 'POST', pattern: '/api/chats/parse', handler: handleParseChat, requiresAuth: true },
   { method: 'POST', pattern: '/api/chats/detect-platform', handler: handleDetectPlatform, requiresAuth: true },
-
-  // Voice Memo Ingestion (Phase 3 Connectors)
-  { method: 'POST', pattern: '/api/voice-memos/ingest', handler: handleIngestVoiceMemo, requiresAuth: true },
-  { method: 'POST', pattern: '/api/voice-memos/ingest-directory', handler: handleIngestVoiceMemoDirectory, requiresAuth: true },
-  { method: 'POST', pattern: '/api/voice-memos/metadata', handler: handleExtractVoiceMemoMetadata, requiresAuth: true },
-  { method: 'GET', pattern: '/api/voice-memos/transcription-status', handler: handleGetTranscriptionStatus, requiresAuth: true },
 
   // CLIP Image Tagging (Phase 3 Connectors)
   { method: 'POST', pattern: '/api/images/tag', handler: handleTagImage, requiresAuth: true },

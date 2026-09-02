@@ -2,15 +2,16 @@
  * Inner Dialogue Buffer Node
  *
  * The only graph node allowed to persist typed thoughts and generated
- * inner dialogue. Optional long-term-memory capture happens from the same
- * admitted entry so storage and memory cannot drift into separate meanings.
+ * inner dialogue to the rolling short-term buffer. Long-term capture is a
+ * separate downstream responsibility of the Inner Dialogue Saver node.
  */
 
-import path from 'node:path';
-import { audit } from '../../audit.js';
-import { getBufferPathForUser, writeBufferEntry, type ConversationMessage } from '../../conversation-buffer.js';
-import { captureEventWithDetails, type CaptureResult } from '../../memory.js';
-import { ROOT } from '../../path-builder.js';
+import {
+  getBufferPathForUser,
+  loadBufferForUser,
+  writeBufferEntry,
+  type ConversationMessage,
+} from '../../conversation-buffer.js';
 import { defineNode, type NodeExecutor } from '../types.js';
 
 const INNER_ROLES = new Set<ConversationMessage['role']>([
@@ -25,13 +26,23 @@ function resolveText(value: unknown): string {
   if (typeof value === 'string') return value.trim();
   if (!value || typeof value !== 'object') return '';
   const record = value as Record<string, unknown>;
-  for (const key of ['content', 'response', 'reflection', 'dream', 'consolidatedChain', 'insight']) {
+  for (const key of ['content', 'response', 'reflection', 'dream', 'reasoning', 'consolidatedChain', 'insight']) {
     if (typeof record[key] === 'string' && record[key].trim()) return record[key].trim();
   }
   return '';
 }
 
-const execute: NodeExecutor = async (inputs, context, properties) => {
+function resolveTimestamp(explicitRecord: Record<string, any> | null, context: Record<string, any>): number {
+  const candidate = explicitRecord?.timestamp ?? context.memoryTimestamp;
+  if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
+  if (typeof candidate === 'string') {
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+const admitSingle: NodeExecutor = async (inputs, context, properties) => {
   const username = typeof context.username === 'string'
     ? context.username.trim()
     : typeof context.userId === 'string'
@@ -54,12 +65,13 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const passthrough = inputs.passthrough;
 
   if (!username || username === 'anonymous') {
-    return { saved: false, persisted: false, text: '', reason: 'No authenticated username', passthrough };
+    return { saved: false, persisted: false, entries: [], text: '', reason: 'No authenticated username', passthrough };
   }
   if (!text) {
     return {
       saved: false,
       persisted: false,
+      entries: [],
       text: '',
       reason: 'No inner-dialogue text to admit',
       passthrough,
@@ -69,12 +81,25 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   const displayColor = inputs.displayColor || properties?.displayColor || metadataInput.displayColor || '';
   const dialogueSource = properties?.dialogueSource || metadataInput.dialogueSource || explicitRecord?.meta?.dialogueSource || '';
-  const configuredTags = metadataInput.tags ?? properties?.tags ?? ['idle-thought', 'self-reflection', 'inner'];
+  const configuredTags = metadataInput.tags
+    ?? explicitRecord?.meta?.tags
+    ?? properties?.tags
+    ?? ['idle-thought', 'self-reflection', 'inner'];
   const tags = Array.from(new Set(
     (Array.isArray(configuredTags) ? configuredTags : [configuredTags])
       .filter((tag): tag is string => typeof tag === 'string' && Boolean(tag.trim()))
       .map(tag => tag.trim()),
   ));
+  const explicitIdempotencyKey = typeof explicitRecord?.meta?.idempotencyKey === 'string'
+    ? explicitRecord.meta.idempotencyKey.trim()
+    : typeof metadataInput.idempotencyKey === 'string'
+      ? metadataInput.idempotencyKey.trim()
+      : '';
+  const executionIdempotencyKey = typeof context.idempotencyKey === 'string'
+    ? context.idempotencyKey.trim()
+    : '';
+  const idempotencyKey = explicitIdempotencyKey
+    || (executionIdempotencyKey ? `${executionIdempotencyKey}:${role}` : '');
   const meta = {
     type: role,
     source: role === 'thought' ? 'user' : 'agent',
@@ -83,69 +108,112 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     tags,
     ...(dialogueSource ? { dialogueSource } : {}),
     ...(displayColor ? { displayColor } : {}),
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   };
 
   try {
-    const persisted = await writeBufferEntry(username, 'inner', { role, content: text, meta });
-    let result: CaptureResult | null = null;
-    const captureMemory = context.captureMemory ?? properties?.captureMemory ?? true;
-
-    if (persisted && captureMemory && context.allowMemoryWrites !== false) {
-      const memoryContent = typeof context.memoryContent === 'string' && context.memoryContent.trim()
-        ? context.memoryContent.trim()
-        : text;
-      result = captureEventWithDetails(memoryContent, {
-        type: role === 'dream' ? 'dream' : role === 'daydream' ? 'daydream' : 'inner_dialogue',
-        tags,
-        links: metadataInput.links || undefined,
-        metadata: {
-          ...meta,
-          role,
-          sessionId: context.sessionId,
-        },
-      });
-
-      audit({
-        category: 'data',
-        level: 'info',
-        event: 'inner_dialogue_captured',
-        actor: username,
-        details: {
-          type: role,
-          path: path.relative(ROOT, result.filePath),
-          textLength: memoryContent.length,
-          encrypted: result.encrypted,
-          encryptionType: result.encryptionType,
-        },
-      });
+    const timestamp = resolveTimestamp(explicitRecord, context);
+    const persisted = await writeBufferEntry(username, 'inner', { role, content: text, meta, timestamp });
+    if (!persisted) {
+      return {
+        saved: false,
+        persisted: false,
+        entries: [],
+        text: '',
+        reason: 'Inner-dialogue buffer rejected the entry',
+        passthrough,
+        bufferPath: getBufferPathForUser(username, 'inner'),
+      };
     }
+    const durableEntry = idempotencyKey
+      ? loadBufferForUser(username, 'inner').messages.find(
+        message => message.meta?.idempotencyKey === idempotencyKey,
+      )
+      : undefined;
+    if (idempotencyKey && !durableEntry) {
+      throw new Error('Inner-dialogue buffer did not retain the admitted idempotent entry');
+    }
+    const admittedEntry: ConversationMessage = durableEntry || {
+      role,
+      content: text,
+      meta,
+      timestamp,
+    };
+    const durableText = admittedEntry.content;
 
     return {
       saved: persisted,
       persisted,
-      text: persisted ? text : '',
+      text: durableText,
       role,
-      eventId: result?.eventId,
-      eventPath: result ? path.relative(ROOT, result.filePath) : undefined,
+      entry: admittedEntry,
+      entries: [admittedEntry],
       bufferPath: getBufferPathForUser(username, 'inner'),
       passthrough,
-      result: result ? {
-        eventId: result.eventId,
-        path: path.relative(ROOT, result.filePath),
-        encrypted: result.encrypted,
-      } : undefined,
     };
   } catch (error) {
     console.error('[InnerDialogueBuffer] Error:', error);
+    throw error;
+  }
+};
+
+const execute: NodeExecutor = async (inputs, context, properties) => {
+  if (!Array.isArray(inputs.entries)) {
+    return admitSingle(inputs, context, properties);
+  }
+
+  if (inputs.entries.length === 0) {
     return {
       saved: false,
       persisted: false,
+      savedCount: 0,
+      roleCounts: {},
+      results: [],
+      entries: [],
       text: '',
-      error: (error as Error).message,
-      passthrough,
-      bufferPath: getBufferPathForUser(username, 'inner'),
+      reason: 'No inner-dialogue entries to admit',
+      passthrough: inputs.passthrough,
     };
   }
+
+  const results: Record<string, any>[] = [];
+  for (const rawEntry of inputs.entries) {
+    const entry = typeof rawEntry === 'string' ? { content: rawEntry } : rawEntry;
+    const result = await admitSingle({
+      ...inputs,
+      entries: undefined,
+      entry,
+      text: undefined,
+      thinking: undefined,
+    }, context, properties);
+    results.push(result);
+    if (!result.saved) break;
+  }
+
+  const savedResults = results.filter(result => result.saved);
+  const roleCounts = savedResults.reduce<Record<string, number>>((counts, result) => {
+    const role = typeof result.role === 'string' ? result.role : 'unknown';
+    counts[role] = (counts[role] || 0) + 1;
+    return counts;
+  }, {});
+  const saved = results.length === inputs.entries.length && savedResults.length === inputs.entries.length;
+  const firstFailure = results.find(result => !result.saved);
+  const admittedEntries = savedResults.flatMap(result => Array.isArray(result.entries) ? result.entries : []);
+
+  return {
+    saved,
+    persisted: saved,
+    savedCount: savedResults.length,
+    roleCounts,
+    results,
+    entry: admittedEntries[0],
+    entries: admittedEntries,
+    text: savedResults[0]?.text || '',
+    passthrough: inputs.passthrough,
+    ...(firstFailure?.error ? { error: firstFailure.error } : {}),
+    ...(firstFailure?.reason ? { reason: firstFailure.reason } : {}),
+    bufferPath: results[0]?.bufferPath,
+  };
 };
 
 export const InnerDialogueBufferNode = defineNode({
@@ -154,6 +222,7 @@ export const InnerDialogueBufferNode = defineNode({
   category: 'output',
   inputs: [
     { name: 'entry', type: 'message', optional: true, description: 'One typed inner-dialogue entry' },
+    { name: 'entries', type: 'array', optional: true, description: 'Ordered typed inner-dialogue entries' },
     { name: 'text', type: 'string', optional: true, description: 'Thought or generated inner dialogue' },
     { name: 'thinking', type: 'string', optional: true, description: 'Reasoning text (stored with reasoning role)' },
     { name: 'metadata', type: 'object', optional: true },
@@ -165,7 +234,11 @@ export const InnerDialogueBufferNode = defineNode({
     { name: 'persisted', type: 'boolean' },
     { name: 'text', type: 'string', description: 'Exact admitted text for standard downstream output nodes' },
     { name: 'role', type: 'string' },
-    { name: 'result', type: 'object' },
+    { name: 'entry', type: 'message', optional: true, description: 'First exact entry retained by the buffer' },
+    { name: 'entries', type: 'array', description: 'Exact entries retained by the buffer for downstream long-term saving' },
+    { name: 'results', type: 'array', description: 'Per-entry short-term admission results' },
+    { name: 'savedCount', type: 'number' },
+    { name: 'roleCounts', type: 'object' },
     { name: 'passthrough', type: 'any' },
     { name: 'bufferPath', type: 'string' },
   ],
@@ -174,7 +247,6 @@ export const InnerDialogueBufferNode = defineNode({
     displayColor: '',
     dialogueSource: '',
     role: 'reflection',
-    captureMemory: true,
   },
   propertySchemas: {
     tags: { type: 'json', default: ['idle-thought', 'self-reflection', 'inner'], label: 'Tags' },
@@ -186,13 +258,7 @@ export const InnerDialogueBufferNode = defineNode({
       label: 'Message Role',
       options: ['thought', 'reflection', 'dream', 'daydream', 'reasoning'],
     },
-    captureMemory: {
-      type: 'toggle',
-      default: true,
-      label: 'Capture Long-term Memory',
-      description: 'Create a long-term memory from the same admitted entry.',
-    },
   },
-  description: 'Persists typed inner-dialogue entries, exposes admitted text to standard output nodes, and optionally captures matching long-term memory.',
+  description: 'Persists typed inner-dialogue entries to the rolling short-term buffer and emits the exact admitted entries for downstream saving.',
   execute,
 });

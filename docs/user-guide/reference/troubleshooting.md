@@ -51,7 +51,7 @@ vLLM targets require the compatible base model and explicit adapter loading.
 ```bash
 ./bin/mh agent list
 ./bin/mh agent status
-./bin/mh agent logs <name>
+./bin/mh agent logs NAME
 ```
 
 Check both ownership layers:
@@ -69,8 +69,8 @@ Confirm the embedding backend is reachable, then queue a rebuild for the exact
 profile:
 
 ```bash
-./bin/mh --user <username> index build
-./bin/mh --user <username> index query "test query"
+./bin/mh --user USERNAME index build
+./bin/mh --user USERNAME index query "test query"
 ```
 
 Queue admission is not semantic completion. Verify that the index job finishes
@@ -78,9 +78,12 @@ and that a subsequent query reads the refreshed profile index.
 
 ## A write returns 403
 
-Check the authenticated role and current cognitive mode. Guest sessions and
-Emulation mode are read-only. Switch to Dual or Agent mode only if the user is
-authorized and the special system-state flags permit it.
+Check the authenticated role and the exact operation first. Guest sessions are
+read-only. Emulation blocks long-term memory capture, Operator work, proactive
+work, and training, but it does not make every owner/standard configuration
+operation read-only. Switch to Dual or Agent only when the rejected operation
+requires that mode, the user is authorized, and special system-state flags
+permit it.
 
 ```bash
 curl -X POST http://localhost:4321/api/cognitive-mode \
@@ -113,7 +116,7 @@ the requested action and its audit history.
 A failed preprocessing, training, conversion, transfer, or registration stage
 must remain failed; do not treat partial files as a completed model.
 
-See [AI Training](../training-personalization/ai-training.md).
+See [AI Training](/user-guide#ai-training).
 
 ## Voice is silent
 

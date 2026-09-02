@@ -94,8 +94,7 @@
           ],
           "displayColor": "#a78bfa",
           "dialogueSource": "daydreamer",
-          "role": "daydream",
-          "captureMemory": false
+          "role": "daydream"
         },
         "title": "Inner Dialogue"
       },
@@ -201,14 +200,25 @@
       }
     },
     {
-      "id": "e-4-dream-5-text",
+      "id": "e-4-bufferEntries-5-entries",
+      "source": "4",
+      "target": "5",
+      "sourceHandle": "bufferEntries",
+      "targetHandle": "entries",
+      "data": {
+        "type": "array",
+        "comment": "Persisted daydream entries -> short-term Inner Dialogue Buffer"
+      }
+    },
+    {
+      "id": "e-4-dream-5-passthrough",
       "source": "4",
       "target": "5",
       "sourceHandle": "dream",
-      "targetHandle": "text",
+      "targetHandle": "passthrough",
       "data": {
         "type": "string",
-        "comment": "Persisted daydream -> Inner Dialogue (for UI display)"
+        "comment": "Persisted daydream -> downstream output after buffer admission"
       }
     },
     {

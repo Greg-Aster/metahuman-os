@@ -43,6 +43,15 @@ test('agent runtime reports unsupported input as a real failure', async () => {
   assert.match(result.error || '', /does not accept/);
 });
 
+test('agent runtime refuses to fabricate a profile identity', async () => {
+  const result = await run(
+    { username: '__missing-curiosity-profile__' } as never,
+    {} as never,
+  );
+  assert.equal(result.success, false);
+  assert.match(result.error || '', /No authenticated user found/);
+});
+
 test('graph publishes conversation and TTS only from the persisted saver output', () => {
   const graph = JSON.parse(fs.readFileSync(`${ROOT}/etc/cognitive-graphs/curiosity-mode.json`, 'utf8'));
   const ttsEdge = graph.edges.find((edge: { target: string }) => edge.target === '9');

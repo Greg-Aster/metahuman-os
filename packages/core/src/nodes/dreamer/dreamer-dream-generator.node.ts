@@ -14,7 +14,11 @@ interface Memory {
 }
 
 function markBackgroundActivity() {
-  try { recordSystemActivity(); } catch {}
+  try {
+    recordSystemActivity();
+  } catch (error) {
+    console.warn('[DreamerDreamGenerator] Failed to record system activity:', error);
+  }
 }
 
 const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are the dreamer. You are processing recent experiences into a surreal, metaphorical dream.
@@ -26,13 +30,31 @@ Start the dream directly, without any preamble. Let it be as long or short as it
 const DEFAULT_USER_PROMPT_TEMPLATE = `Memory Fragments:
 {{memoriesText}}`;
 
+export function buildDreamerMessages(
+  systemPrompt: string,
+  userPrompt: string,
+  personaPrompt?: unknown,
+): RouterMessage[] {
+  const persona = typeof personaPrompt === 'string' ? personaPrompt.trim() : '';
+  return [
+    {
+      role: 'system',
+      content: persona ? `${persona}\n\n${systemPrompt}` : systemPrompt,
+    },
+    { role: 'user', content: userPrompt },
+  ];
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('Dream generation cancelled', 'AbortError');
+}
+
 const execute: NodeExecutor = async (inputs, context, properties) => {
   // inputs is an object keyed by handle name, not an array
   const memoriesInput = inputs.memories?.memories || inputs.memories || [];
   const memories = Array.isArray(memoriesInput) ? memoriesInput : [];
-  // Note: personaPrompt input is ignored - we use LoRA adapter for persona voice instead
-  const temperature = properties?.temperature || 1.0;
-  const role = properties?.role || 'persona'; // 'persona' role triggers LoRA adapter
+  const temperature = properties?.temperature ?? 1.0;
+  const role = properties?.role ?? 'persona';
   const username = context.userId || context.username;
 
   if (memories.length < 3) {
@@ -57,45 +79,26 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     promptValues,
   ).trim();
 
-  try {
-    markBackgroundActivity();
+  throwIfAborted(context.signal);
+  markBackgroundActivity();
 
-    const messages: RouterMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ];
+  const response = await callLLM({
+    role,
+    messages: buildDreamerMessages(systemPrompt, userPrompt, inputs.personaPrompt),
+    userId: username,
+    options: { temperature },
+  });
 
-    const response = await callLLM({
-      role,
-      messages,
-      userId: username,
-      options: { temperature },
-    });
+  throwIfAborted(context.signal);
+  const dream = response.content.trim();
+  if (!dream) throw new Error('LLM returned empty dream');
 
-    const dream = response.content.trim();
-
-    if (!dream) {
-      return {
-        dream: null,
-        error: 'LLM returned empty dream',
-        memoryCount: memories.length,
-      };
-    }
-
-    return {
-      dream,
-      memoryCount: memories.length,
-      sourceIds: memories.map((m: Memory) => m.id).filter(Boolean),
-      username,
-    };
-  } catch (error) {
-    console.error('[DreamerDreamGenerator] Error:', error);
-    return {
-      dream: null,
-      error: (error as Error).message,
-      memoryCount: memories.length,
-    };
-  }
+  return {
+    dream,
+    memoryCount: memories.length,
+    sourceIds: memories.map((m: Memory) => m.id).filter(Boolean),
+    username,
+  };
 };
 
 export const DreamerDreamGeneratorNode: NodeDefinition = defineNode({

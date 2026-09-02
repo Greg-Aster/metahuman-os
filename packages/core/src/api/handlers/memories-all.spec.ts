@@ -41,7 +41,6 @@ try {
   writeJson(path.join(datedRoot, 'daydream.json'), event('evt-3', 'daydream'));
   writeJson(path.join(datedRoot, 'ingested.json'), event('evt-4', 'observation', { tags: ['ingested'] }));
   writeJson(path.join(episodicRoot, 'audio', '2026', '07', '18', 'audio.json'), event('evt-5', 'audio', { tags: ['transcript'] }));
-  writeJson(path.join(datedRoot, '_pruned', 'pruned.json'), event('evt-6', 'conversation'));
   writeJson(path.join(datedRoot, 'curiosity.json'), event('evt-7', 'inner_dialogue', {
     content: 'What did you notice?',
     tags: ['curiosity', 'question'],
@@ -58,7 +57,6 @@ try {
   assert.deepEqual(inventory.curiosity.map(item => item.id), ['evt-7']);
   assert.deepEqual(inventory.aiIngestor.map(item => item.id), ['evt-4']);
   assert.deepEqual(inventory.audio.map(item => item.id), ['evt-5']);
-  assert.deepEqual(inventory.pruned.map(item => item.id), ['evt-6']);
   assert.equal(inventory.activeTotal, 7);
 
   const curatedPath = path.join(memoryRoot, 'curated', 'conversations', 'curated.json');

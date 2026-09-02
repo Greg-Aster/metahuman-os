@@ -80,11 +80,11 @@ const MODE_DEFINITIONS: Record<CognitiveModeId, CognitiveModeDefinition> = {
   emulation: {
     id: 'emulation',
     label: 'Emulation',
-    description: 'Stable conversational personality with read-only memories.',
+    description: 'Stable conversational personality with transcript capture and read-only derived memories.',
     guidance: [
-      'Do not create new memories or modify persona state.',
+      'Persist raw conversation and inner-dialogue records, but do not create derived memories or modify persona state.',
       'Respond using accumulated knowledge and tone.',
-      'Treat all interactions as ephemeral sessions.'
+      'Treat session working state as ephemeral; Persona Memory retains the transcript.'
     ],
     defaults: {
       recordingEnabled: false,
@@ -266,13 +266,14 @@ export function applyModeDefaults(mode: CognitiveModeId): void {
       defaults: def.defaults,
     },
   });
-  // Note: Agent scheduler, memory service, and training pipeline read mode from file
+  // Trigger scheduling, Core memory policy, and training load the persisted mode as needed.
 }
 
 /**
  * Helper to check if memory writes are allowed based on cognitive mode defaults.
  * Returns true for dual mode (full write access), true for agent mode (command outcomes),
- * and false for emulation mode (read-only).
+ * and false for emulation mode (derived memory remains read-only; dedicated
+ * transcript saver nodes use their narrower recordPersonaMemory capability).
  *
  * @param input - Mode key, full config object, or defaults object
  */

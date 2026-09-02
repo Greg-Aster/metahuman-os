@@ -112,16 +112,39 @@ copyBundledConfigs();
 
 // The canonical bundle is required. A partial shadow API would hide packaging
 // failures and write profile data through a second implementation.
-const { handleHttpRequest } = require('./dist/http-adapter.js');
+const {
+  handleHttpRequest,
+  parseCookies,
+  resolveUserFromCookie,
+} = require('./dist/http-adapter.js');
 const mobileHandlers = require('./dist/handlers.js');
 const { initializeMobileAgents, stopMobileAgents } = mobileHandlers;
-let agentsInitialized = false;
+const { createMobileAgentLifecycle } = require('./mobile-agent-lifecycle.js');
 
 if (typeof handleHttpRequest !== 'function'
+  || typeof parseCookies !== 'function'
+  || typeof resolveUserFromCookie !== 'function'
   || typeof initializeMobileAgents !== 'function'
-  || typeof stopMobileAgents !== 'function') {
+  || typeof stopMobileAgents !== 'function'
+  || typeof createMobileAgentLifecycle !== 'function') {
   throw new Error('Mobile backend bundle is missing required HTTP or agent exports');
 }
+
+const mobileAgentLifecycle = createMobileAgentLifecycle({
+  initializeAgents: username => initializeMobileAgents(dataDir, username),
+  stopAgents: () => stopMobileAgents(),
+});
+
+async function resolveRequestUserAndEnsureAgents(req, pathname) {
+  if (pathname === '/api/auth/logout') return undefined;
+  const cookies = parseCookies(req.headers.cookie);
+  const user = resolveUserFromCookie(cookies.mh_session);
+  if (user?.isAuthenticated) {
+    await mobileAgentLifecycle.ensure(user.username);
+  }
+  return user;
+}
+
 console.log('[Node.js] Unified HTTP adapter loaded');
 
 // =============================================================================
@@ -313,6 +336,7 @@ function startHttpServer() {
       }
 
       try {
+        const resolvedUser = await resolveRequestUserAndEnsureAgents(req, pathname);
         const result = await handleHttpRequest({
           path: pathname,
           method: req.method,
@@ -320,7 +344,12 @@ function startHttpServer() {
           query: Object.fromEntries(url.searchParams),
           headers: req.headers,
           cookieHeader: req.headers.cookie,
+          resolvedUser,
         });
+
+        if (pathname === '/api/auth/logout' && result.status >= 200 && result.status < 300) {
+          await mobileAgentLifecycle.stop();
+        }
 
         if (result.cookies && result.cookies.length > 0) {
           res.setHeader('Set-Cookie', result.cookies);
@@ -495,108 +524,24 @@ function initializeSystemDirs() {
 // Initialize on startup
 initializeSystemDirs();
 
-// Current active user for agents
-let currentUsername = null;
-
-// Handle agent initialization when user logs in
-rn_bridge.channel.on('message', (msg) => {
-  if (!msg || !msg.type) return;
-
-  if (msg.type === 'agent-init') {
-    const username = msg.username;
-    console.log('[Node.js] Agent init request for user:', username);
-
-    try {
-      // Stop existing agents if running
-      if (agentsInitialized && stopMobileAgents) {
-        console.log('[Node.js] Stopping existing agents');
-        stopMobileAgents();
-      }
-
-      // Initialize agents for new user
-      if (username) {
-        currentUsername = username;
-        initializeMobileAgents(dataDir, username);
-        agentsInitialized = true;
-        console.log('[Node.js] Agents initialized for:', username);
-        rn_bridge.channel.send({
-          type: 'agent-status',
-          status: 'ok',
-          username,
-          agentsRunning: true
-        });
-      } else {
-        agentsInitialized = false;
-        rn_bridge.channel.send({
-          type: 'agent-status',
-          status: 'ok',
-          agentsRunning: false
-        });
-      }
-    } catch (error) {
-      console.error('[Node.js] Agent initialization failed:', error);
-      rn_bridge.channel.send({
-        type: 'agent-status',
-        status: 'error',
-        error: error.message
-      });
-    }
-  } else if (msg.type === 'agent-stop') {
-    console.log('[Node.js] Agent stop request');
-
-    if (agentsInitialized && stopMobileAgents) {
-      try {
-        stopMobileAgents();
-        agentsInitialized = false;
-        currentUsername = null;
-        console.log('[Node.js] Agents stopped');
-        rn_bridge.channel.send({
-          type: 'agent-status',
-          status: 'ok',
-          agentsRunning: false
-        });
-      } catch (error) {
-        console.error('[Node.js] Agent stop failed:', error);
-        rn_bridge.channel.send({
-          type: 'agent-status',
-          status: 'error',
-          error: error.message
-        });
-      }
-    }
-  }
-});
-
 // Handle app lifecycle events
 rn_bridge.app.on('pause', (pauseLock) => {
   console.log('[Node.js] App paused');
-
-  // Stop agents on pause to save battery
-  if (agentsInitialized && stopMobileAgents) {
-    try {
-      stopMobileAgents();
-      console.log('[Node.js] Agents paused');
-    } catch (error) {
-      console.error('[Node.js] Failed to pause agents:', error);
-    }
-  }
-
-  pauseLock.release();
+  mobileAgentLifecycle.stop({ retainUsername: true })
+    .then(() => console.log('[Node.js] Agents paused'))
+    .catch(error => console.error('[Node.js] Failed to pause agents:', error))
+    .finally(() => pauseLock.release());
 });
 
 rn_bridge.app.on('resume', () => {
   console.log('[Node.js] App resumed');
-
-  // Restart agents on resume if we had a user
-  if (currentUsername) {
-    try {
-      initializeMobileAgents(dataDir, currentUsername);
-      agentsInitialized = true;
-      console.log('[Node.js] Agents resumed for:', currentUsername);
-    } catch (error) {
-      console.error('[Node.js] Failed to resume agents:', error);
-    }
-  }
+  mobileAgentLifecycle.resume()
+    .then(state => {
+      if (state.runningUsername) {
+        console.log('[Node.js] Agents resumed for:', state.runningUsername);
+      }
+    })
+    .catch(error => console.error('[Node.js] Failed to resume agents:', error));
 });
 
 // Notify React Native that Node.js is ready

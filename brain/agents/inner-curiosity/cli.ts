@@ -4,31 +4,23 @@
  *
  * Generates self-directed questions and answers them using local memory.
  *
- * Usage:
- *   npx tsx brain/agents/inner-curiosity/cli.ts [options]
- *
- * Options:
- *   --single-user  Process only the default user
+ * The Work Coordinator supplies profile and execution identity through its
+ * process environment. This entry point intentionally has no private options.
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';
-import { runCycle, type InnerCuriosityOptions } from './core.js';
+import { parseInnerCuriosityArgs, runCycle } from './core.js';
 
 async function main() {
   initGlobalLogger('inner-curiosity');
 
-  // Parse arguments
-  const args = process.argv.slice(2);
-  const options: InnerCuriosityOptions = {
-    singleUser: args.includes('--single-user'),
-  };
-
-  console.log('[inner-curiosity] Starting with options:', options);
-
   try {
+    const options = parseInnerCuriosityArgs(process.argv.slice(2));
     const result = await runCycle(options);
 
-    console.log(`[inner-curiosity] Completed: ${result.questionsGenerated} questions generated`);
+    console.log(
+      `[inner-curiosity] Completed: ${result.questionsGenerated} generated, ${result.questionsSkipped} skipped`,
+    );
 
     if (result.errors.length > 0) {
       console.error('[inner-curiosity] Errors:', result.errors);

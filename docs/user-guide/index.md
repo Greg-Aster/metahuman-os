@@ -1,58 +1,79 @@
 # MetaHuman OS User Guide
 
-Welcome to **MetaHuman OS** — an autonomous digital personality extension operating system that mirrors your identity, memories, goals, and personality.
+This guide explains how to install, configure, use, monitor, and troubleshoot the
+current MetaHuman OS application. It follows the maintained web interface and
+`./bin/mh` CLI. Features that require an optional provider, external service,
+remote server, or robot say so explicitly.
 
----
+Start with the three Getting Started chapters. After first login, use the
+task-oriented chapters for normal operation and the Configuration sections for
+owner-only setup.
 
-## Table of Contents
+## Getting Started
 
-### 🚀 1. Getting Started
-- [Overview & Philosophy](getting-started/01-overview.md) - What is MetaHuman OS?
-- [Installation](getting-started/02-installation.md) - Install the system
-- [Setup & Login](getting-started/03-setup-and-login.md) - Accounts and onboarding
+- [Overview](getting-started/01-overview.md) explains the application, its main
+  surfaces, and its operating boundaries.
+- [Installation](getting-started/02-installation.md) installs, builds, starts,
+  stops, and verifies a Linux server.
+- [Setup and First Login](getting-started/03-setup-and-login.md) covers account
+  creation, recovery codes, onboarding, guest access, initial model checks, and
+  a first-use walkthrough.
 
-### 💬 2. Using MetaHuman
-- [Chat Interface](using-metahuman/chat-interface.md) - Conversation and cognitive modes
-- [Memory System](using-metahuman/memory-system.md) - Browse, search, and manage memories
-- [Task Management](using-metahuman/task-management.md) - Organize your work
-- [Voice Features](using-metahuman/voice-features.md) - TTS, STT, and voice interaction
-- [Dashboard & Monitoring](using-metahuman/dashboard-monitoring.md) - System overview
+## Using MetaHuman
 
-### 🧠 3. Training & Personalization
-- [Persona Generator](training-personalization/persona-generator.md) - Interview-based persona creation
-- [Persona Editor](training-personalization/persona-editor.md) - Manual personality editing
-- [Voice Training](training-personalization/voice-training.md) - Clone your voice with RVC & GPT-SoVITS
-- [AI Training](training-personalization/ai-training.md) - LoRA adapters and model fine-tuning
-- [Cognitive Modes](training-personalization/cognitive-modes.md) - Dual, Agent, and Emulation modes
+- [Chat Interface](using-metahuman/chat-interface.md)
+- [Dashboard and Monitoring](using-metahuman/dashboard-monitoring.md)
+- [Memory System](using-metahuman/memory-system.md)
+- [Task Management](using-metahuman/task-management.md)
+- [Voice Features](using-metahuman/voice-features.md)
 
-### 🎓 4. Advanced Features
-- [Architecture](advanced-features/architecture.md) - System design and ownership boundaries
-- [Node Editor](advanced-features/node-editor.md) - Visual workflow design
-- [Autonomous Agents](advanced-features/autonomous-agents.md) - Background processing agents
-- [Agency System](advanced-features/agency-system.md) - Desires, goals, and autonomous goal pursuit
-- [Skills System](advanced-features/skills-system.md) - Operator and ReAct engine
-- [Multi-User Profiles](advanced-features/multi-user-profiles.md) - Shared system management
-- [Headless Runtime Mode](advanced-features/headless-mode.md) - Run without UI
+## Training and Personalization
 
-### ⚙️ 5. Configuration & Administration
-- [Configuration Files](configuration-admin/configuration-files.md) - System configuration reference
-- [Security & Trust](configuration-admin/security-trust.md) - Trust levels and safety
-- [Authentication](configuration-admin/authentication.md) - User accounts and access
-- [Accounts & Security](configuration-admin/accounts-security.md) - Account lifecycle and recovery
-- [LLM Backend](configuration-admin/llm-backend.md) - Ollama, vLLM, and switching
-- [Deployment Guide](configuration-admin/deployment.md) - Cloudflare tunnels and hosting
-- [Special States](configuration-admin/special-states.md) - Deceased mode and high security
+- [AI Training](training-personalization/ai-training.md)
+- [Cognitive Modes](training-personalization/cognitive-modes.md)
+- [Persona Editor](training-personalization/persona-editor.md)
+- [Persona Generator](training-personalization/persona-generator.md)
+- [Voice Training](training-personalization/voice-training.md)
 
-### 📖 6. Reference
-- [CLI Command Reference](reference/cli-reference.md) - Complete `mh` command list
-- [Troubleshooting Guide](reference/troubleshooting.md) - Common issues and solutions
-- [FAQ](reference/faq.md) - Frequently asked questions
+## Advanced Features
 
-### 📋 7. Policies
-- [Terms of Service](../technical/TERMS_OF_SERVICE.md) - Usage terms
-- [Ethical Use Policy](../technical/ETHICAL_USE_POLICY.md) - Responsible AI guidelines
+- [Agency System](advanced-features/agency-system.md)
+- [Architecture](advanced-features/architecture.md)
+- [Autonomous Work](advanced-features/autonomous-agents.md)
+- [Headless Runtime Mode](advanced-features/headless-mode.md)
+- [Multi-User Profiles](advanced-features/multi-user-profiles.md)
+- [Node Editor](advanced-features/node-editor.md)
+- [Skills System](advanced-features/skills-system.md)
 
----
+## Configuration and Administration
 
-**Version**: 2.0 (User-Journey Oriented)
-**Last Updated**: 2025-12-28
+- [Accounts and Security](configuration-admin/accounts-security.md)
+- [Authentication](configuration-admin/authentication.md)
+- [Configuration Ownership](configuration-admin/configuration-files.md)
+- [Deployment and Remote Access](configuration-admin/deployment.md)
+- [LLM Backend Configuration](configuration-admin/llm-backend.md)
+- [Security and Trust](configuration-admin/security-trust.md)
+- [Runtime Safety States](configuration-admin/special-states.md)
+
+## Reference
+
+- [CLI Command Reference](reference/cli-reference.md)
+- [Frequently Asked Questions](reference/faq.md)
+- [Troubleshooting](reference/troubleshooting.md)
+
+## Policies
+
+- [Terms of Service](appendix/21-terms-of-service.md)
+- [Ethical Use Policy](appendix/22-ethical-use-policy.md)
+
+## Reading the guide
+
+Paths such as `System → Backend` describe web-interface navigation. Commands
+are run from the repository root unless stated otherwise. Owner-only controls
+are labelled; standard and guest accounts will not see every control.
+
+Runtime status is evidence about the current installation. Documentation, source
+code, or a successful build does not prove that an optional provider, remote
+server, environment adapter, or physical robot is connected.
+
+Last source reconciliation: 2026-09-01.

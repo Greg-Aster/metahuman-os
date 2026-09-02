@@ -2,12 +2,13 @@
  * App Update Checker
  *
  * Platform-aware update system:
- * - Mobile (Capacitor): Downloads APK from server and triggers install
+ * - Mobile (React Native): Opens the configured server's APK download
  * - Web/Desktop: Uses git pull to update server code
  */
 
 import { writable, derived, type Writable } from 'svelte/store';
-import { apiFetch, getApiBaseUrlAsync, isMobileApp, isReactNativeWebView } from './api-config';
+import { apiFetch, isMobileApp, isReactNativeWebView } from './api-config';
+import { getRemoteSyncConfig } from './profile-sync';
 
 // Types for mobile APK updates
 export interface MobileVersionInfo {
@@ -39,6 +40,7 @@ export interface UpdateState {
   updating: boolean;
   updateProgress: number;
   updateAvailable: boolean;
+  restartRequired: boolean;
   error: string | null;
   lastChecked: string | null;
 
@@ -66,6 +68,7 @@ const initialState: UpdateState = {
   updating: false,
   updateProgress: 0,
   updateAvailable: false,
+  restartRequired: false,
   error: null,
   lastChecked: null,
   platform: 'unknown',
@@ -81,8 +84,69 @@ export const updateState: Writable<UpdateState> = writable(initialState);
 export const isUpdateAvailable = derived(updateState, $state => $state.updateAvailable);
 export const isChecking = derived(updateState, $state => $state.checking);
 export const isUpdating = derived(updateState, $state => $state.updating);
-// Legacy alias
-export const isDownloading = isUpdating;
+let nativeUpdateListenerInstalled = false;
+let mobileReleaseBaseUrl: string | null = null;
+
+function handleNativeUpdateMessage(event: Event): void {
+  const raw = (event as MessageEvent).data;
+  if (typeof raw !== 'string') return;
+
+  let message: Record<string, unknown>;
+  try {
+    message = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+
+  if (message.type !== 'url-opened' || typeof message.url !== 'string' || !message.url.includes('/api/mobile/download')) {
+    return;
+  }
+
+  if (message.success === true) {
+    updateState.update(state => ({
+      ...state,
+      updating: false,
+      updateProgress: 100,
+      error: null,
+    }));
+    return;
+  }
+
+  const error = typeof message.error === 'string' ? message.error : 'The mobile release download could not be opened';
+  updateState.update(state => ({
+    ...state,
+    updating: false,
+    error,
+  }));
+}
+
+function installNativeUpdateListener(): void {
+  if (nativeUpdateListenerInstalled || typeof window === 'undefined') return;
+  window.addEventListener('message', handleNativeUpdateMessage);
+  document.addEventListener('message', handleNativeUpdateMessage);
+  nativeUpdateListenerInstalled = true;
+}
+
+function parseAppInfo(value: unknown): AppInfo {
+  if (!value || typeof value !== 'object') {
+    throw new Error('App information response must be an object');
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.version !== 'string' || record.version.trim().length === 0) {
+    throw new Error('App information is missing a version');
+  }
+  if (!Number.isInteger(record.versionCode) || (record.versionCode as number) < 0) {
+    throw new Error('App information contains an invalid version code');
+  }
+  if (typeof record.packageName !== 'string' || record.packageName.trim().length === 0) {
+    throw new Error('App information is missing a package name');
+  }
+  return {
+    version: record.version.trim(),
+    versionCode: record.versionCode as number,
+    packageName: record.packageName.trim(),
+  };
+}
 
 /**
  * Detect current platform
@@ -92,40 +156,23 @@ export function detectPlatform(): 'mobile' | 'server' {
 }
 
 /**
- * Get current app info from native plugin or React Native bridge
+ * Get current app info from the maintained React Native bridge
  */
 async function getCurrentAppInfo(): Promise<AppInfo> {
   if (!isMobileApp()) {
-    return {
-      version: '0.0.0',
-      versionCode: 0,
-      packageName: 'com.metahuman.os',
-    };
+    throw new Error('Mobile app information was requested outside the mobile app');
   }
 
-  // React Native: Get app info from Node.js backend via HTTP
   if (isReactNativeWebView()) {
-    try {
-      const response = await apiFetch('/api/app-info');
-      if (response.ok) {
-        return await response.json();
-      }
-    } catch {
-      // Fall through to defaults
+    const response = await apiFetch('/api/app-info');
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(errorData.error || `App information request returned ${response.status}`);
     }
-    return {
-      version: '1.0.0',
-      versionCode: 1,
-      packageName: 'com.metahuman.os',
-    };
+    return parseAppInfo(await response.json());
   }
 
-  // Legacy Capacitor path (no longer used)
-  return {
-    version: '1.0.0',
-    versionCode: 1,
-    packageName: 'com.metahuman.os',
-  };
+  throw new Error('This mobile runtime does not expose the maintained React Native update bridge');
 }
 
 /**
@@ -154,7 +201,7 @@ export async function checkForUpdates(): Promise<boolean> {
       checking: false,
       error: errorMsg,
     }));
-    return false;
+    throw e instanceof Error ? e : new Error(errorMsg);
   }
 }
 
@@ -163,6 +210,13 @@ export async function checkForUpdates(): Promise<boolean> {
  */
 async function checkMobileUpdate(): Promise<boolean> {
   const appInfo = await getCurrentAppInfo();
+  const remoteConfig = await getRemoteSyncConfig();
+  if (!remoteConfig.configured || !remoteConfig.serverUrl) {
+    throw new Error('Configure a remote MetaHuman server before checking for mobile updates');
+  }
+  const versionUrl = new URL('/api/mobile/version', remoteConfig.serverUrl);
+  versionUrl.searchParams.set('current', appInfo.version);
+  versionUrl.searchParams.set('versionCode', String(appInfo.versionCode));
 
   updateState.update(s => ({
     ...s,
@@ -170,9 +224,7 @@ async function checkMobileUpdate(): Promise<boolean> {
     currentVersionCode: appInfo.versionCode,
   }));
 
-  const response = await apiFetch(
-    `/api/mobile/version?current=${appInfo.version}&versionCode=${appInfo.versionCode}`
-  );
+  const response = await fetch(versionUrl, { credentials: 'omit' });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
@@ -180,6 +232,10 @@ async function checkMobileUpdate(): Promise<boolean> {
   }
 
   const data = await response.json();
+  if (!data?.latest || typeof data.latest.downloadUrl !== 'string') {
+    throw new Error('Mobile update server returned invalid release metadata');
+  }
+  mobileReleaseBaseUrl = remoteConfig.serverUrl;
 
   updateState.update(s => ({
     ...s,
@@ -230,7 +286,7 @@ export async function performUpdate(): Promise<void> {
   }
 
   if (state.platform === 'mobile') {
-    return await downloadAndInstallMobile();
+    return await downloadMobileRelease();
   } else {
     return await updateServer();
   }
@@ -239,7 +295,7 @@ export async function performUpdate(): Promise<void> {
 /**
  * Download and install APK (mobile)
  */
-async function downloadAndInstallMobile(): Promise<void> {
+async function downloadMobileRelease(): Promise<void> {
   const state = await new Promise<UpdateState>(resolve => {
     updateState.subscribe(s => resolve(s))();
   });
@@ -252,29 +308,24 @@ async function downloadAndInstallMobile(): Promise<void> {
 
   try {
     // Get full download URL
-    const baseUrl = await getApiBaseUrlAsync() || window.location.origin;
-    const downloadUrl = `${baseUrl}${state.latestMobileVersion.downloadUrl}`;
+    if (!mobileReleaseBaseUrl) {
+      throw new Error('Check for mobile updates before starting a download');
+    }
+    const downloadUrl = new URL(state.latestMobileVersion.downloadUrl, mobileReleaseBaseUrl).toString();
 
     if (isReactNativeWebView()) {
-      // React Native: Send message to native layer to download and install
-      if ((window as any).ReactNativeWebView) {
-        (window as any).ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'download-update',
-          url: downloadUrl,
-          version: state.latestMobileVersion.version,
-        }));
-        // The native layer will handle download/install
-        // We'll receive progress updates via window message events
-        updateState.update(s => ({ ...s, updateProgress: 10 }));
-      } else {
-        // Fallback: Open download URL in browser
-        window.open(downloadUrl, '_blank');
-        updateState.update(s => ({ ...s, updating: false, updateProgress: 100 }));
+      // React Native: ask the native layer to open the signed APK download.
+      if (!(window as any).ReactNativeWebView) {
+        throw new Error('React Native update bridge is unavailable');
       }
+      (window as any).ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'open-url',
+        url: downloadUrl,
+        purpose: 'mobile-update',
+      }));
+      updateState.update(s => ({ ...s, updateProgress: 10 }));
     } else {
-      // Fallback for unknown mobile platforms - just open the URL
-      window.open(downloadUrl, '_blank');
-      updateState.update(s => ({ ...s, updating: false, updateProgress: 100 }));
+      throw new Error('This mobile runtime cannot install MetaHuman updates');
     }
   } catch (e) {
     const errorMsg = e instanceof Error ? e.message : 'Download failed';
@@ -326,6 +377,7 @@ async function updateServer(): Promise<void> {
       updating: false,
       updateProgress: 100,
       updateAvailable: false,
+      restartRequired: result.restartRequired === true,
       serverUpdateInfo: {
         ...s.serverUpdateInfo!,
         updateAvailable: false,
@@ -381,13 +433,6 @@ export async function restartServer(): Promise<void> {
 }
 
 /**
- * Legacy alias for downloadAndInstall
- */
-export async function downloadAndInstall(): Promise<void> {
-  return performUpdate();
-}
-
-/**
  * Format file size for display
  */
 export function formatFileSize(bytes: number): string {
@@ -422,40 +467,19 @@ export async function initUpdateChecker(): Promise<void> {
   updateState.update(s => ({ ...s, platform }));
 
   if (platform === 'mobile') {
-    const appInfo = await getCurrentAppInfo();
-    updateState.update(s => ({
-      ...s,
-      currentVersion: appInfo.version,
-      currentVersionCode: appInfo.versionCode,
-    }));
-  }
-}
-
-/**
- * Get human-readable update description
- */
-export function getUpdateDescription(state: UpdateState): string {
-  if (state.platform === 'mobile' && state.latestMobileVersion) {
-    return `Version ${state.latestMobileVersion.version} available (${formatFileSize(state.latestMobileVersion.fileSize)})`;
-  }
-
-  if (state.platform === 'server' && state.serverUpdateInfo) {
-    const { commitsBehind, changesSummary } = state.serverUpdateInfo;
-    if (commitsBehind === 1) {
-      return `1 commit behind: ${changesSummary[0] || 'Update available'}`;
+    installNativeUpdateListener();
+    try {
+      const appInfo = await getCurrentAppInfo();
+      updateState.update(s => ({
+        ...s,
+        currentVersion: appInfo.version,
+        currentVersionCode: appInfo.versionCode,
+        error: null,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load mobile app information';
+      updateState.update(s => ({ ...s, error: message }));
+      throw error instanceof Error ? error : new Error(message);
     }
-    return `${commitsBehind} commits behind`;
   }
-
-  return 'Update available';
-}
-
-/**
- * Get update action text
- */
-export function getUpdateActionText(state: UpdateState): string {
-  if (state.updating) {
-    return state.platform === 'mobile' ? 'Downloading...' : 'Updating...';
-  }
-  return state.platform === 'mobile' ? 'Download & Install' : 'Update Now';
 }

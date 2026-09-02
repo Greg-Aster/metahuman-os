@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import type { EnvironmentObservation } from '../../environment-interface/index.js';
 import { environmentContextBuilderNode } from './context-builder.node.js';
+import { buildEnvironmentSelectorJsonSchema } from './helpers.js';
 
 const TEST_JPEG = 'data:image/jpeg;base64,/9j/2gAA/9k=';
 
@@ -86,8 +87,55 @@ test('typed vision authorization admits the correlated camera input', async () =
 
   assert.equal(result.images.length, 1);
   assert.equal(Array.isArray(result.messages.at(-1)?.content), true);
+  const content = result.messages.at(-1)?.content;
+  assert.match(
+    String(Array.isArray(content) ? content[0]?.text : ''),
+    /^The attached image is what you currently see\./,
+  );
   assert.equal(result.context.contextAdmission.vision, true);
   assert.equal(result.context.imageSelection.used, 1);
+});
+
+test('an authorized freestyle request bypasses redundant selector inference after standing preparation', async () => {
+  const current = correlatedObservation('environment-perception');
+  current.capabilities = {
+    actions: ['robotCommand', 'robotMotionPlan'],
+    robotCommands: ['stand'],
+    motionClasses: ['body_local'],
+    movement: true,
+    visual: true,
+  };
+  const preparedMovementRequest = {
+    description: 'Create one original asymmetric body-local gesture.',
+    motionClass: 'body_local',
+  };
+  const result = await environmentContextBuilderNode.execute({
+    instruction: 'Resume the already-authorized movement after standing preparation.',
+    observation: current,
+    preparedMovementRequest,
+    taskState: {
+      version: 1,
+      objective: 'Create one original asymmetric body-local gesture.',
+      phase: 'evaluating_evidence',
+      step: 1,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      pendingMovementRequest: preparedMovementRequest,
+      pendingMovementContract: {
+        continuationPolicy: 'none',
+        requiredCompletionBasis: 'action_result',
+      },
+    },
+    routingAnalysis: {
+      ...typedConversationRoute,
+      needsEnvironment: true,
+    },
+  }, {}, { systemPrompt: 'Return the typed Environment output.', recentHistoryLimit: 4 });
+
+  assert.deepEqual(result.messages, []);
+  assert.equal(result.jsonSchema, null);
+  assert.equal(result.context.contextAdmission.selector, false);
 });
 
 test('an action-required route tells the selector that prose alone cannot satisfy the handoff', async () => {
@@ -131,6 +179,147 @@ test('action-required command-only autonomy is structurally bound to advertised 
   assert.deepEqual(item.properties.command.enum, ['gesture_alpha', 'gesture_beta']);
   assert.deepEqual(item.required, ['type', 'command']);
   assert.equal(schema.properties.movementRequest.type, 'null');
+});
+
+test('the selector receives the complete body-sized catalog including punctuation commands', async () => {
+  const current = correlatedObservation('boredom-movement');
+  const robotCommands = [
+    '#1',
+    '#2',
+    ...Array.from({ length: 40 }, (_value, index) => `motion_${String(index + 1).padStart(2, '0')}`),
+  ];
+  const robotCommandDescriptions = Object.fromEntries(robotCommands.map(command => [
+    command,
+    `perform the body-owned physical effect for ${command}`,
+  ]));
+  current.capabilities = {
+    actions: ['robotCommand'],
+    robotCommands,
+    robotCommandDescriptions: {
+      ...robotCommandDescriptions,
+      unadvertised: 'must not enter the selector prompt',
+    },
+    movement: true,
+    visual: false,
+  };
+  (current.metadata!.robotObserver as Record<string, unknown>).triggerSource = 'autonomy';
+
+  const result = await environmentContextBuilderNode.execute({
+    instruction: 'Choose one fitting advertised movement.',
+    observation: current,
+    routingAnalysis: {
+      ...typedConversationRoute,
+      needsEnvironment: true,
+      needsAction: true,
+    },
+  }, {}, { systemPrompt: 'Return the typed Environment output.', recentHistoryLimit: 4 });
+  const selectorEnvelope = JSON.parse(String(result.message));
+  const commandSchema = (result.jsonSchema as any).properties.actions.items.properties.command;
+
+  assert.equal(selectorEnvelope.currentEnvironment.capabilities.robotCommands, undefined);
+  assert.deepEqual(
+    selectorEnvelope.currentEnvironment.capabilities.robotCommandCatalog,
+    robotCommandDescriptions,
+  );
+  assert.match(selectorEnvelope.capabilityRules.join('\n'), /choose from robotCommandCatalog descriptions/i);
+  assert.match(selectorEnvelope.capabilityRules.join('\n'), /multi-step objective/i);
+  assert.match(selectorEnvelope.capabilityRules.join('\n'), /appropriate current step, then reassess after feedback/i);
+  assert.match(selectorEnvelope.capabilityRules.join('\n'), /body part, motion, direction, and timing detail/i);
+  assert.doesNotMatch(String(result.message), /must not enter the selector prompt/);
+  assert.deepEqual(commandSchema.enum, robotCommands);
+});
+
+test('current robot state remains authoritative over dated Robot Status context', async () => {
+  const current = correlatedObservation('environment-perception');
+  current.state = {
+    transport: 'protocol-v1',
+    safety: 'body-owned',
+    adapterConnected: true,
+    body: {
+      authenticated: true,
+      robotId: 'ainekio-01',
+      heartbeatAgeMs: 20,
+      motionAvailable: true,
+      cameraReady: true,
+      microphoneReady: true,
+      speakerReady: true,
+    },
+    gateway: {
+      profile: 'home',
+      effectiveCaps: {
+        cameraMaxFps: 10,
+        cameraDefaultResolution: 'VGA',
+        statusIntervalSeconds: 5,
+      },
+    },
+    freestyleMovement: {
+      supported: true,
+      enabled: true,
+      available: true,
+    },
+    commandedPose: {
+      version: 1,
+      jointMapVersion: 1,
+      sourceActionId: 'current-neutral-action',
+      updatedAt: current.timestamp,
+      kind: 'reference',
+      reference: 'neutral',
+    },
+  };
+
+  const result = await environmentContextBuilderNode.execute({
+    instruction: 'Please stand up.',
+    observation: current,
+    robotStatus: {
+      version: 1,
+      updatedAt: '2026-08-04T11:30:00.000Z',
+      body: {
+        motion: { available: false, activity: 'idle' },
+        state: { posture: 'standing' },
+      },
+      lastAction: {
+        command: 'stand',
+        status: 'completed',
+        message: 'The robot stood earlier.',
+      },
+      situation: {
+        situationalSummary: 'I am already standing with motion unavailable.',
+        environmentDescription: 'An earlier view of the room.',
+        currentGoal: 'Remain available for the user.',
+        currentIntent: 'Wait for the next instruction.',
+        userContext: 'The user is interacting with me.',
+        uncertainties: ['The current pose may have changed.'],
+      },
+      agency: {
+        activeDesires: [{ id: 'social', title: 'Stay engaged', strength: 0.7 }],
+      },
+      history: [{ situationalSummary: 'I was standing earlier.' }],
+    },
+    routingAnalysis: {
+      ...typedConversationRoute,
+      needsAction: true,
+      needsEnvironment: true,
+    },
+  }, {
+    userMessage: 'Please stand up.',
+    username: 'greggles',
+  }, { systemPrompt: 'Return the typed Environment output.', recentHistoryLimit: 4 });
+
+  const selectorEnvelope = JSON.parse(String(result.message));
+  assert.equal(selectorEnvelope.currentEnvironment.state.body.motionAvailable, true);
+  assert.equal(selectorEnvelope.currentEnvironment.state.commandedPose.reference, 'neutral');
+  assert.deepEqual(selectorEnvelope.robotStatus, {
+    updatedAt: '2026-08-04T11:30:00.000Z',
+    situation: {
+      currentGoal: 'Remain available for the user.',
+      currentIntent: 'Wait for the next instruction.',
+      userContext: 'The user is interacting with me.',
+      uncertainties: ['The current pose may have changed.'],
+    },
+    agency: {
+      activeDesires: [{ id: 'social', title: 'Stay engaged', strength: 0.7 }],
+    },
+  });
 });
 
 test('mixed action schema keeps robot command fields off captureImage actions', async () => {
@@ -191,6 +380,28 @@ test('selector receives history once inside its bounded envelope', async () => {
   const selectorEnvelope = JSON.parse(String(result.messages[1]?.content));
   assert.equal(selectorEnvelope.currentInstruction, 'Please wave now.');
   assert.equal(selectorEnvelope.recentConversation.length, 2);
+});
+
+test('an ordinary selected-message reply reaches the Environment selector as focused context', async () => {
+  const result = await environmentContextBuilderNode.execute({
+    instruction: 'Please wave now.',
+    observation: correlatedObservation('environment-perception'),
+    routingAnalysis: {
+      ...typedConversationRoute,
+      needsEnvironment: true,
+    },
+  }, {
+    userMessage: 'Please wave now.',
+    replyToContent: 'You previously described the object beside the chair.',
+    username: 'greggles',
+  }, { systemPrompt: 'Return the typed Environment output.', recentHistoryLimit: 4 });
+
+  const selectorEnvelope = JSON.parse(String(result.messages[1]?.content));
+  assert.equal(selectorEnvelope.currentInstruction, 'Please wave now.');
+  assert.equal(
+    selectorEnvelope.replyToContext,
+    'You previously described the object beside the chair.',
+  );
 });
 
 test('a fresh user control turn retains memory context without unrelated action lineage', async () => {
@@ -258,7 +469,6 @@ test('a bounded feedback pass must return completion or one next action', async 
       objective: 'Wave until a hand is visible.',
       phase: 'evaluating_evidence',
       step: 1,
-      maxSteps: 8,
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
       visualEvidenceMode: 'single',
@@ -276,7 +486,11 @@ test('a bounded feedback pass must return completion or one next action', async 
 
   const envelope = JSON.parse(String(result.message));
   const schema = result.jsonSchema as any;
-  const progressBranches = schema.allOf[0].anyOf;
+  const progressBranches = schema.allOf.find((constraint: any) => (
+    constraint.anyOf?.some((branch: any) => (
+      branch.properties?.taskDecision?.properties?.outcome?.enum?.[0] === 'complete'
+    ))
+  )).anyOf;
   const actionBranch = progressBranches.find((branch: any) => (
     branch.properties?.actions?.minItems === 1
   ));
@@ -328,6 +542,34 @@ test('autonomous observations exclude conversation history by default', async ()
     1,
     'the active persona must enter the selector envelope exactly once',
   );
+});
+
+test('autonomous completion permits the model to choose silence', () => {
+  const schema = buildEnvironmentSelectorJsonSchema({
+    requireAutonomousConsequence: true,
+  }) as any;
+  const completionBranch = schema.allOf.flatMap((constraint: any) => constraint.anyOf ?? []).find((branch: any) => (
+    branch.properties?.taskDecision?.properties?.outcome?.enum?.[0] === 'complete'
+  ));
+
+  assert.equal(completionBranch.properties.response.type, 'string');
+  assert.equal('minLength' in completionBranch.properties.response, false);
+});
+
+test('selector schema exposes exactly conversation, named-action, and Freestyle routes', () => {
+  const schema = buildEnvironmentSelectorJsonSchema({
+    actions: ['robotCommand', 'robotMotionPlan'],
+    robotCommands: ['stand', 'wave'],
+  }) as any;
+  const routes = schema.allOf[0].anyOf;
+
+  assert.equal(routes.length, 3);
+  assert.deepEqual(routes[0].properties.actions, { maxItems: 0 });
+  assert.deepEqual(routes[0].properties.movementRequest, { type: 'null' });
+  assert.deepEqual(routes[1].properties.actions, { minItems: 1 });
+  assert.deepEqual(routes[1].properties.movementRequest, { type: 'null' });
+  assert.deepEqual(routes[2].properties.actions, { maxItems: 0 });
+  assert.deepEqual(routes[2].properties.movementRequest, { type: 'object' });
 });
 
 test('sampled Robot Operator inspiration enters the Environment envelope exactly once', async () => {

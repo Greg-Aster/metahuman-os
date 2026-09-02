@@ -6,6 +6,7 @@ import {
   PersonaFacetConfigurationError,
   resolvePersonaFacetPath,
 } from './persona-facets.js';
+import { safeWriteJSON } from './safe-file.js';
 
 const LOG_PREFIX = '[identity]';
 
@@ -48,6 +49,13 @@ export interface PersonaCore {
   goals: GoalsConfig;
   context: ContextConfig;
   background?: string | Record<string, unknown>;
+  learningProvenance?: Array<{
+    path: string;
+    key: string;
+    evidenceIds: string[];
+    reason: string;
+    updatedAt: string;
+  }>;
   // Allow additional properties for flexibility
   [key: string]: unknown;
 }
@@ -347,7 +355,7 @@ export function loadDecisionRules(): DecisionRules {
   }
 }
 
-export function savePersonaCore(persona: PersonaCore): void {
+export function savePersonaCore(persona: PersonaCore, updatedAt = new Date()): void {
   try {
     const result = storageClient.resolvePath({
       category: 'config',
@@ -357,12 +365,28 @@ export function savePersonaCore(persona: PersonaCore): void {
     if (!result.success || !result.path) {
       throw new Error('Cannot resolve persona core path');
     }
-    persona.lastUpdated = new Date().toISOString();
-    fs.writeFileSync(result.path, JSON.stringify(persona, null, 2));
+    persona.lastUpdated = updatedAt.toISOString();
+    safeWriteJSON(result.path, persona);
   } catch (error) {
     console.error(`${LOG_PREFIX} Error saving persona core:`, error);
     throw new Error(`Failed to save persona core: ${(error as Error).message}`);
   }
+}
+
+export function archivePersonaCore(persona: PersonaCore, archivedAt = new Date()): string {
+  const result = storageClient.resolvePath({
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: 'archives',
+  });
+  if (!result.success || !result.path) {
+    throw new Error('Cannot resolve persona archive path');
+  }
+
+  const timestamp = archivedAt.toISOString().replace(/[:.]/g, '-');
+  const filename = `core-${timestamp}.json`;
+  safeWriteJSON(path.join(result.path, filename), persona);
+  return filename;
 }
 
 export function saveDecisionRules(rules: DecisionRules): void {

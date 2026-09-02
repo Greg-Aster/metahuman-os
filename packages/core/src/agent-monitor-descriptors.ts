@@ -53,16 +53,18 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'graph',
   'environmentGraph',
   'jitterMs',
+  'robotStatusInactivityThreshold',
+  'robotStatusJitterMs',
   'boredomObserverInactivityThreshold',
   'boredomObserverJitterMs',
   'boredomMovementInactivityThreshold',
   'boredomMovementJitterMs',
   'boredomReflectionInactivityThreshold',
   'boredomReflectionJitterMs',
+  'robotStatusGraph',
   'boredomObserverGraph',
   'boredomMovementGraph',
   'boredomReflectionGraph',
-  'maxCycleSteps',
   'sessionId',
 ]);
 
@@ -263,17 +265,6 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
     })
   }
 
-  if (typeof effective.maxCycleSteps === 'number') {
-    variables.push({
-      key: 'maxCycleSteps',
-      label: 'Maximum Observation Steps',
-      type: 'number',
-      value: effective.maxCycleSteps,
-      applyMode: 'restart',
-      writable: true,
-    })
-  }
-
   if (id === 'environment-bridge') {
     variables.push(
       {
@@ -299,6 +290,28 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
 
   if (id === 'robot-operator') {
     variables.push(
+      {
+        key: 'robotStatusInactivityThreshold',
+        label: 'Robot Status Idle Seconds',
+        type: 'number',
+        value: typeof effective.robotStatusInactivityThreshold === 'number'
+          ? effective.robotStatusInactivityThreshold
+          : 300,
+        applyMode: 'restart',
+        writable: true,
+        description: 'Semi-autonomous idle threshold for refreshing the reusable Robot Status snapshot.',
+      },
+      {
+        key: 'robotStatusJitterMs',
+        label: 'Robot Status Jitter Milliseconds',
+        type: 'number',
+        value: typeof effective.robotStatusJitterMs === 'number'
+          ? effective.robotStatusJitterMs
+          : 60000,
+        applyMode: 'restart',
+        writable: true,
+        description: 'Random variation around the Robot Status refresh threshold.',
+      },
       {
         key: 'boredomObserverInactivityThreshold',
         label: 'Boredom Observer Idle Seconds',
@@ -364,6 +377,14 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         applyMode: 'restart',
         writable: true,
         description: 'Random variation around the reflection idle threshold.',
+      },
+      {
+        key: 'robotStatusGraph',
+        label: 'Robot Status Graph',
+        type: 'text',
+        value: typeof effective.robotStatusGraph === 'string' ? effective.robotStatusGraph : 'robot-status',
+        applyMode: 'restart',
+        writable: true,
       },
       {
         key: 'boredomObserverGraph',

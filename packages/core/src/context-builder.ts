@@ -11,7 +11,8 @@
 import { queryIndex, getIndexStatus } from './vector-index.js';
 import { loadPersonaCore } from './identity.js';
 import { getPersonaValueNames } from './persona-summary.js';
-import { loadShortTermState, loadPersonaCache } from './state.js';
+import { getConfirmedPreferences } from './preference-learner.js';
+import { loadShortTermState } from './state.js';
 import { audit } from './audit.js';
 import { listActiveTasks } from './memory.js';
 import { readFileSync, existsSync, readdirSync } from 'fs';
@@ -26,7 +27,6 @@ import {
   getMaxMemoriesForRole
 } from './memory-policy.js';
 import { readRecentToolsFromCache } from './recent-tools-cache.js';
-import { isSummarizing } from './summary-state.js';
 
 // ============================================================================
 // Context Package Cache (5min TTL)
@@ -39,9 +39,6 @@ interface CacheEntry {
 
 const contextCache = new Map<string, CacheEntry>();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-const conversationSummaryCache = new Map<string, { value: string | null; timestamp: number }>();
-const SUMMARY_CACHE_TTL = 5 * 60 * 1000;
 
 const functionAvailabilityCache = new Map<string, { available: boolean; timestamp: number }>();
 const FUNCTION_CACHE_TTL = 5 * 60 * 1000;
@@ -82,29 +79,6 @@ function setWarmCachedTasks(userKey: string, tasks: any[]): void {
     tasks,
     timestamp: Date.now()
   });
-}
-
-function getSummaryCacheKey(conversationId: string, username?: string): string {
-  return `${username || 'anonymous'}:${conversationId}`;
-}
-
-function getCachedConversationSummary(conversationId?: string): string | null | undefined {
-  if (!conversationId) return undefined;
-  const ctx = getUserContext();
-  const cacheKey = getSummaryCacheKey(conversationId, ctx?.username);
-  const cached = conversationSummaryCache.get(cacheKey);
-  if (!cached) return undefined;
-  if (Date.now() - cached.timestamp > SUMMARY_CACHE_TTL) {
-    conversationSummaryCache.delete(cacheKey);
-    return undefined;
-  }
-  return cached.value;
-}
-
-function setCachedConversationSummary(conversationId: string, value: string | null): void {
-  const ctx = getUserContext();
-  const cacheKey = getSummaryCacheKey(conversationId, ctx?.username);
-  conversationSummaryCache.set(cacheKey, { value, timestamp: Date.now() });
 }
 
 function hasFunctionMemoryAvailable(): boolean {
@@ -226,92 +200,6 @@ function setCachedContext(key: string, pkg: ContextPackage): void {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * Query conversation summary for a specific session
- *
- * Phase 3: Memory Continuity - retrieves existing conversation summary
- * Workstream C3: Skip if summary is currently being generated (backpressure)
- *
- * @param conversationId - Session ID to find summary for
- * @returns Conversation summary or null if not found
- */
-async function queryConversationSummary(conversationId?: string): Promise<string | null> {
-  if (!conversationId) return null;
-
-  const ctx = getUserContext();
-  if (!ctx) return null;
-
-  const cached = getCachedConversationSummary(conversationId);
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  // C3: Skip if currently being summarized (prevents concurrent LLM calls)
-  const beingSummarized = await isSummarizing(ctx.username, conversationId);
-  if (beingSummarized) {
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'conversation_summary_skipped_concurrent',
-      details: { conversationId, reason: 'summary_in_progress' },
-      actor: 'context_builder',
-    });
-    return null;
-  }
-
-  try {
-    if (!ctx.profilePaths) return null;
-    const episodicDir = ctx.profilePaths.episodic;
-    if (!existsSync(episodicDir)) return null;
-
-    // Look back 7 days for summaries
-    const today = new Date();
-    const lookbackDays = 7;
-
-    for (let i = 0; i < lookbackDays; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() - i);
-      const year = date.getFullYear().toString();
-      const yearDir = path.join(episodicDir, year);
-
-      if (!existsSync(yearDir)) continue;
-
-      const files = readdirSync(yearDir)
-        .filter(f => f.endsWith('.json'))
-        .sort()
-        .reverse();
-
-      for (const file of files) {
-        const filepath = path.join(yearDir, file);
-        try {
-          const content = readFileSync(filepath, 'utf-8');
-          const event = JSON.parse(content);
-
-          // Look for summary events with matching conversation ID
-          if (event.type === 'summary' && event.metadata) {
-            const summarySessionId = event.metadata.conversationId || event.metadata.sessionId;
-            if (summarySessionId === conversationId) {
-              // Return the full summary from metadata
-              const summary = event.metadata.fullSummary || event.content || null;
-              setCachedConversationSummary(conversationId, summary);
-              return summary;
-            }
-          }
-        } catch (error) {
-          continue;
-        }
-      }
-    }
-
-    setCachedConversationSummary(conversationId, null);
-    return null;
-  } catch (error) {
-    console.error('[context-builder] Error querying conversation summary:', error);
-    setCachedConversationSummary(conversationId, null);
-    return null;
-  }
-}
 
 /**
  * Query recent tool invocations for the current conversation
@@ -483,8 +371,10 @@ export interface PersonaSummary {
   name: string;
   role: string;
   coreValues: string[];
-  recentThemes: string[];
-  frequentFacts: Record<string, string>;
+  interests: string[];
+  currentFocus: string[];
+  projects: string[];
+  confirmedPreferences: string[];
 }
 
 /**
@@ -525,9 +415,6 @@ export interface ContextPackage {
   // Function guides (Phase 2: Function Memory)
   functionGuides: Array<{ id: string; title: string; summary: string; score: number }>;
 
-  // Conversation summary (Phase 3: Future)
-  conversationSummary?: string;
-
   // Metadata
   mode: CognitiveModeId;
   retrievalTime: number;
@@ -549,7 +436,6 @@ export interface ContextBuilderOptions {
 
   // State integration
   includeShortTermState?: boolean; // Default: true
-  includePersonaCache?: boolean; // Default: true
   includeTaskContext?: boolean; // Include active tasks (default: only if user mentions them)
 
   // Hybrid search (keyword + semantic)
@@ -626,7 +512,6 @@ export async function buildContextPackage(
     filterInnerDialogue = true,
     filterReflections = true,
     includeShortTermState = true,
-    includePersonaCache = true,
     includeTaskContext = false,
     metadataFilters,
     forceSemanticSearch = mode === 'dual',
@@ -801,13 +686,30 @@ export async function buildContextPackage(
     // Load persona
     Promise.resolve().then(() => {
       const personaCore = loadPersonaCore();
-      const personaCache = includePersonaCache ? loadPersonaCache() : null;
+      const source = personaCore as Record<string, any>;
+      const projects = Array.isArray(source.context?.projects)
+        ? source.context.projects.map((project: unknown) =>
+            typeof project === 'string'
+              ? project
+              : project && typeof project === 'object' && 'name' in project
+                ? String((project as { name: unknown }).name)
+                : ''
+          ).filter(Boolean)
+        : [];
       return {
         name: personaCore.identity?.name || 'Assistant',
         role: personaCore.identity?.role || 'AI Assistant',
         coreValues: getPersonaValueNames(personaCore),
-        recentThemes: personaCache?.recentThemes?.slice(0, 5).map(t => t.theme) || [],
-        frequentFacts: personaCache?.frequentFacts || {}
+        interests: Array.isArray(source.personality?.interests)
+          ? source.personality.interests.filter((interest: unknown): interest is string => typeof interest === 'string')
+          : [],
+        currentFocus: Array.isArray(source.context?.currentFocus)
+          ? source.context.currentFocus.filter((focus: unknown): focus is string => typeof focus === 'string')
+          : [],
+        projects,
+        confirmedPreferences: getConfirmedPreferences().map(preference =>
+          preference.userModification || preference.behavior || preference.description
+        ),
       };
     }),
     // Load state
@@ -821,8 +723,10 @@ export async function buildContextPackage(
         name: 'Assistant',
         role: 'AI Assistant',
         coreValues: [],
-        recentThemes: [],
-        frequentFacts: {}
+        interests: [],
+        currentFocus: [],
+        projects: [],
+        confirmedPreferences: [],
       };
 
   if (personaResult.status === 'rejected') {
@@ -884,27 +788,6 @@ export async function buildContextPackage(
   }
 
   // ========================================================================
-  // Step 6: Query Conversation Summary (Phase 3: Memory Continuity)
-  // ========================================================================
-
-  let conversationSummary: string | undefined;
-
-  if (options.conversationId) {
-    const summaryStart = Date.now();
-    try {
-      const summary = await queryConversationSummary(options.conversationId);
-      if (summary) {
-        conversationSummary = summary;
-      }
-    } catch (error) {
-      console.error('[context-builder] Error querying conversation summary:', error);
-      // Continue without summary
-    } finally {
-      timings.summaryLookup = Date.now() - summaryStart;
-    }
-  }
-
-  // ========================================================================
   // Step 6.5: Retrieve Function Guides (Phase 2: Function Memory)
   // ========================================================================
 
@@ -961,7 +844,6 @@ export async function buildContextPackage(
     recentTopics,
     recentTools,
     functionGuides,
-    conversationSummary,
     mode,
     retrievalTime,
     timestamp: new Date().toISOString(),
@@ -992,7 +874,6 @@ export async function buildContextPackage(
       activeTasks: activeTasks.length,
       recentTools: recentTools.length,
       functionGuides: functionGuides.length,
-      hasSummary: !!conversationSummary,
       userRole: auditCtx?.role || 'unknown',
       privacyFiltered,
       effectiveMemoryLimit
@@ -1114,9 +995,20 @@ export function formatContextForPrompt(
       sections.push(`Core values: ${context.persona.coreValues.join(', ')}.`);
     }
 
-    // Recent themes
-    if (context.persona.recentThemes.length > 0) {
-      sections.push(`Recent themes: ${context.persona.recentThemes.join(', ')}.`);
+    if (context.persona.interests.length > 0) {
+      sections.push(`Stable interests: ${context.persona.interests.join(', ')}.`);
+    }
+
+    if (context.persona.currentFocus.length > 0) {
+      sections.push(`Persona focus: ${context.persona.currentFocus.join(', ')}.`);
+    }
+
+    if (context.persona.projects.length > 0) {
+      sections.push(`Projects: ${context.persona.projects.join(', ')}.`);
+    }
+
+    if (context.persona.confirmedPreferences.length > 0) {
+      sections.push(`Confirmed preferences: ${context.persona.confirmedPreferences.join(', ')}.`);
     }
   }
 
@@ -1133,11 +1025,6 @@ export function formatContextForPrompt(
   // Recent conversation topics
   if (context.recentTopics.length > 0) {
     sections.push(`Recent topics: ${context.recentTopics.join(', ')}.`);
-  }
-
-  // Conversation summary (Phase 3: Memory Continuity)
-  if (context.conversationSummary) {
-    sections.push(`\n## Conversation Summary:\n${context.conversationSummary}`);
   }
 
   // Function guides (Phase 2: Function Memory)

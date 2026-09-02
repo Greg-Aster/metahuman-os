@@ -6,7 +6,7 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { queryIndex } from '../../vector-index.js';
+import { queryIndexWithReconciliation } from '../../vector-index.js';
 
 export function normalizeRequestedMemoryTypes(value: unknown): string[] | undefined {
   const values = Array.isArray(value)
@@ -95,10 +95,15 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     const hasScopedRecall = Boolean(memoryTypes?.length);
 
     console.log(`[memory_router] Searching with topK=${searchTopK}, threshold=${threshold}, types=${memoryTypes?.join(',') ?? 'all'}, query="${query.substring(0, 80)}"`);
-    const results = await queryIndex(query, {
+    const username = typeof context.username === 'string' ? context.username.trim() : '';
+    if (!username || username === 'anonymous') {
+      throw new Error('Memory Router requires an authenticated profile username');
+    }
+    const results = await queryIndexWithReconciliation(query, {
       topK: searchTopK,
-      username: context.username,
+      username,
       memoryTypes,
+      reconciliationSource: 'memory-router',
     });
 
     // Filter by threshold and format results
@@ -134,11 +139,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     };
   } catch (error) {
     console.error('[memory_router] Search error:', error);
-    return {
-      memories: [],
-      searchPerformed: false,
-      error: (error as Error).message,
-    };
+    throw error;
   }
 };
 

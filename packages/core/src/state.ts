@@ -1,14 +1,13 @@
 /**
  * State Management
  *
- * Manages short-term working state (for orchestrator) and long-term persona cache.
+ * Manages short-term working state for the orchestrator.
  * Part of Phase 5: Conscious/Unconscious State implementation.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from './path-builder.js';
-import { storageClient } from './storage-client.js';
 import { audit } from './audit.js';
 
 // ============================================================================
@@ -191,149 +190,6 @@ export function updateConversationContext(
   saveShortTermState(state, actor);
 }
 
-// ============================================================================
-// Persona Cache (Long-Term Frequently Referenced Facts)
-// ============================================================================
-
-export interface PersonaCache {
-  catchphrases: string[];
-  frequentFacts: Record<string, any>;
-  quirks: string[];
-  recentThemes: Array<{
-    theme: string;
-    frequency: number;
-    lastSeen: string;
-  }>;
-  lastUpdated: string;
-}
-
-function getPersonaCachePath(): string {
-  const result = storageClient.resolvePath({
-    category: 'config',
-    subcategory: 'persona',
-    relativePath: 'cache.json',
-  });
-  if (!result.success || !result.path) {
-    // Fallback to system-level persona path
-    return path.join(systemPaths.root, 'persona', 'cache.json');
-  }
-  return result.path;
-}
-
-/**
- * Load persona cache
- */
-export function loadPersonaCache(): PersonaCache {
-  const cachePath = getPersonaCachePath();
-  if (!fs.existsSync(cachePath)) {
-    // Return default cache
-    return {
-      catchphrases: [],
-      frequentFacts: {},
-      quirks: [],
-      recentThemes: [],
-      lastUpdated: new Date().toISOString(),
-    };
-  }
-
-  try {
-    const content = fs.readFileSync(cachePath, 'utf-8');
-    return JSON.parse(content);
-  } catch (error) {
-    console.error('[state] Failed to load persona cache:', error);
-    return {
-      catchphrases: [],
-      frequentFacts: {},
-      quirks: [],
-      recentThemes: [],
-      lastUpdated: new Date().toISOString(),
-    };
-  }
-}
-
-/**
- * Save persona cache with audit logging
- */
-export function savePersonaCache(cache: PersonaCache, actor = 'system') {
-  cache.lastUpdated = new Date().toISOString();
-  const cachePath = getPersonaCachePath();
-
-  try {
-    fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), 'utf-8');
-
-    audit({
-      level: 'info',
-      category: 'data',
-      event: 'persona_cache_updated',
-      actor,
-      details: {
-        catchphrases: cache.catchphrases.length,
-        facts: Object.keys(cache.frequentFacts).length,
-        quirks: cache.quirks.length,
-        themes: cache.recentThemes.length,
-      },
-    });
-  } catch (error) {
-    console.error('[state] Failed to save persona cache:', error);
-    audit({
-      level: 'error',
-      category: 'system',
-      event: 'persona_cache_save_failed',
-      actor,
-      details: { error: (error as Error).message },
-    });
-  }
-}
-
-/**
- * Add or update a frequent fact
- */
-export function updateFrequentFact(key: string, value: any, actor = 'digest_agent') {
-  const cache = loadPersonaCache();
-  cache.frequentFacts[key] = value;
-  savePersonaCache(cache, actor);
-}
-
-/**
- * Add a catchphrase if not already present
- */
-export function addCatchphrase(phrase: string, actor = 'digest_agent') {
-  const cache = loadPersonaCache();
-  if (!cache.catchphrases.includes(phrase)) {
-    cache.catchphrases.push(phrase);
-    // Keep only last 50 catchphrases
-    if (cache.catchphrases.length > 50) {
-      cache.catchphrases = cache.catchphrases.slice(-50);
-    }
-    savePersonaCache(cache, actor);
-  }
-}
-
-/**
- * Add or increment a theme
- */
-export function trackTheme(theme: string, actor = 'digest_agent') {
-  const cache = loadPersonaCache();
-  const existing = cache.recentThemes.find(t => t.theme === theme);
-
-  if (existing) {
-    existing.frequency++;
-    existing.lastSeen = new Date().toISOString();
-  } else {
-    cache.recentThemes.push({
-      theme,
-      frequency: 1,
-      lastSeen: new Date().toISOString(),
-    });
-  }
-
-  // Sort by frequency and keep top 30
-  cache.recentThemes.sort((a, b) => b.frequency - a.frequency);
-  cache.recentThemes = cache.recentThemes.slice(0, 30);
-
-  savePersonaCache(cache, actor);
-}
-
 /**
  * Get context summary for orchestrator (short-term focus)
  */
@@ -356,36 +212,6 @@ export function getOrchestratorContext(): string {
 
   if (state.conversationContext.userIntent) {
     parts.push(`User intent: ${state.conversationContext.userIntent}`);
-  }
-
-  return parts.length > 0 ? parts.join('\n') : '';
-}
-
-/**
- * Get context summary for persona (long-term themes and facts)
- */
-export function getPersonaContext(): string {
-  const cache = loadPersonaCache();
-
-  const parts: string[] = [];
-
-  if (Object.keys(cache.frequentFacts).length > 0) {
-    const facts = Object.entries(cache.frequentFacts)
-      .map(([key, val]) => `${key}: ${JSON.stringify(val)}`)
-      .join(', ');
-    parts.push(`Frequent facts: ${facts}`);
-  }
-
-  if (cache.recentThemes.length > 0) {
-    const themes = cache.recentThemes
-      .slice(0, 5)
-      .map(t => `${t.theme} (${t.frequency}x)`)
-      .join(', ');
-    parts.push(`Recent themes: ${themes}`);
-  }
-
-  if (cache.quirks.length > 0) {
-    parts.push(`Quirks: ${cache.quirks.join(', ')}`);
   }
 
   return parts.length > 0 ? parts.join('\n') : '';

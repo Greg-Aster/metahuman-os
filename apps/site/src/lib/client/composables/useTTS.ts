@@ -26,6 +26,39 @@ interface AudioChunk {
 export type TTSPlaybackOutcome = 'completed' | 'interrupted' | 'suppressed' | 'failed';
 export type TTSStopReason = 'interrupted' | 'disabled' | 'superseded' | 'cleanup';
 
+export interface TTSPlaybackRequestHandle {
+  readonly requestId?: string;
+}
+
+export function createTTSPlaybackRequestTracker() {
+  let activeRequest: TTSPlaybackRequestHandle | null = null;
+
+  return {
+    begin(requestId?: string): TTSPlaybackRequestHandle {
+      const request = { requestId };
+      activeRequest = request;
+      return request;
+    },
+    owns(requestId: string): boolean {
+      return Boolean(requestId) && activeRequest?.requestId === requestId;
+    },
+    isActive(request: TTSPlaybackRequestHandle): boolean {
+      return activeRequest === request;
+    },
+    interrupt(requestId: string): boolean {
+      if (!requestId || activeRequest?.requestId !== requestId) return false;
+      activeRequest = null;
+      return true;
+    },
+    interruptActive(): void {
+      activeRequest = null;
+    },
+    finish(request: TTSPlaybackRequestHandle): void {
+      if (activeRequest === request) activeRequest = null;
+    },
+  };
+}
+
 // Constants
 const VOICE_MODELS_CACHE_TTL = 60_000; // 1 minute
 const VOICE_PROVIDER_CACHE_TTL = 30_000; // 30 seconds
@@ -104,6 +137,7 @@ function normalizeTextForSpeech(text: string): string {
  */
 function createTTS() {
   // State
+  const playbackRequests = createTTSPlaybackRequestTracker();
   let audioCtx: AudioContext | null = null;
   let currentAudio: HTMLAudioElement | null = null;
   let currentObjectUrl: string | null = null;
@@ -243,6 +277,22 @@ function createTTS() {
       currentTtsAbort = null;
     }
     isLoading.set(false);
+  }
+
+  function interruptPlayback(reason: TTSStopReason = 'interrupted'): void {
+    playbackRequests.interruptActive();
+    stopActiveAudio(reason);
+    cancelInFlightTts(reason);
+  }
+
+  function interruptPlaybackRequest(
+    requestId: string,
+    reason: TTSStopReason = 'interrupted',
+  ): boolean {
+    if (!playbackRequests.interrupt(requestId)) return false;
+    stopActiveAudio(reason);
+    cancelInFlightTts(reason);
+    return true;
   }
 
   /**
@@ -859,37 +909,44 @@ function createTTS() {
     source?: string;
     requestId?: string;
   }): Promise<TTSPlaybackOutcome> {
-    // Check if native voice mode is enabled
-    if (
-      isNativeVoiceModeEnabled()
-      && isNativeTTSAvailable()
-    ) {
-      console.log('[useTTS] Native voice mode enabled - using device TTS');
-      return speakTextNative(text);
-    }
-
-    // Use server TTS - auto-select streaming for slow providers
-    let useStreaming = options?.streaming;
-    // If streaming not explicitly set, auto-detect based on provider
-    if (useStreaming === undefined) {
-      const provider = await fetchVoiceProvider();
-      // RVC is slow (especially on CPU) - always use streaming for lower latency
-      // Kokoro has native streaming support, also benefits from streaming mode
-      useStreaming = provider === 'rvc' || provider === 'kokoro';
-      if (useStreaming) {
-        console.log(`[useTTS] Auto-selecting streaming mode for ${provider} provider`);
+    const playbackRequest = playbackRequests.begin(options?.requestId);
+    try {
+      // Check if native voice mode is enabled
+      if (
+        isNativeVoiceModeEnabled()
+        && isNativeTTSAvailable()
+      ) {
+        console.log('[useTTS] Native voice mode enabled - using device TTS');
+        return await speakTextNative(text);
       }
-    }
 
-    if (useStreaming) {
-      return speakTextStreaming(text, {
-        pitchShift: options?.pitchShift,
-        speed: options?.speed,
-        source: options?.source,
-        requestId: options?.requestId,
-      });
+      // Use server TTS - auto-select streaming for slow providers
+      let useStreaming = options?.streaming;
+      // If streaming not explicitly set, auto-detect based on provider
+      if (useStreaming === undefined) {
+        const provider = await fetchVoiceProvider();
+        if (!playbackRequests.isActive(playbackRequest)) return 'interrupted';
+        // RVC is slow (especially on CPU) - always use streaming for lower latency
+        // Kokoro has native streaming support, also benefits from streaming mode
+        useStreaming = provider === 'rvc' || provider === 'kokoro';
+        if (useStreaming) {
+          console.log(`[useTTS] Auto-selecting streaming mode for ${provider} provider`);
+        }
+      }
+
+      if (!playbackRequests.isActive(playbackRequest)) return 'interrupted';
+      if (useStreaming) {
+        return await speakTextStreaming(text, {
+          pitchShift: options?.pitchShift,
+          speed: options?.speed,
+          source: options?.source,
+          requestId: options?.requestId,
+        });
+      }
+      return await speakText(text);
+    } finally {
+      playbackRequests.finish(playbackRequest);
     }
-    return speakText(text);
   }
 
   return {
@@ -908,6 +965,8 @@ function createTTS() {
     stopNativeTTS,
     stopStreaming,
     cancelInFlightTts,
+    interruptPlayback,
+    interruptPlaybackRequest,
     ensureAudioUnlocked,
     prefetchVoiceResources,
     refreshVoiceSettings,

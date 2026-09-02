@@ -1,392 +1,162 @@
 /**
- * Mobile Agent Wrappers
+ * Brain-owned mobile agent registration.
  *
- * Wraps unified agent functionality for in-process execution on mobile.
- * These agents register in-process handlers with the core work coordinator.
- *
- * All agents use the model router which respects the user's LLM configuration
- * (local Ollama, vLLM, RunPod, Claude, etc.)
- *
- * Mobile-Compatible Agents (using unified agents):
- * - organizer: Memory enrichment
- * - ingestor: Process inbox files
- * - reflector: Generate reflections from memory chains
- * - dreamer: Create dream narratives
- * - curiosity: User-facing curiosity questions
- * - inner-curiosity: Self-directed Q&A
- * - digest: Activity summaries
- * - desire-generator: Synthesize desires from system inputs
- * - desire-planner: Generate execution plans for desires
- * Core Work Coordinator handlers own desire execution and outcome review on all platforms.
- *
- * Server-Only Agents (cannot run on mobile):
- * - transcriber: Requires Whisper/GPU
- * - fine-tune-trainer: Requires GPU training
- * - lora-trainer: Requires GPU training
+ * The Work Coordinator owns queue execution. This file only adapts the
+ * canonical AgentModule contract used by each finite brain agent to the
+ * coordinator's in-process mobile registration contract.
  */
 
-import { withUserContext } from '@metahuman/core/context';
+import { getUserByUsername } from '@metahuman/core'
 import {
   initializeMobileAgents as initializeCoordinatorMobileAgents,
   stopMobileAgents as stopCoordinatorMobileAgents,
   type MobileAgentContext,
   type MobileAgentRegistration,
-} from '@metahuman/core/mobile-handlers';
+} from '@metahuman/core/mobile-handlers'
+import type { AgentModule, AgentResult } from '@metahuman/agent-runtime'
 
-// All agents now use the new modular structure (core.ts + cli.ts + index.ts)
-import { syncUserProfile } from './agents/profile-sync/core.js';
-import { processUserMemories as organizerProcessUserMemories } from './agents/organizer/core.js';
-import { generateUserReflection } from './agents/reflector/core.js';
-import { generateUserDreams } from './agents/dreamer/core.js';
-import { ingestUserFiles } from './agents/ingestor/core.js';
-import { generateUserQuestion } from './agents/curiosity-service/core.js';
-import { generateInnerQuestion } from './agents/inner-curiosity/core.js';
-import { generateUserDigest } from './agents/digest/core.js';
+import profileSyncAgent from './agents/profile-sync/index.js'
+import organizerAgent from './agents/organizer/index.js'
+import ingestorAgent from './agents/ingestor/index.js'
+import reflectorAgent from './agents/reflector/index.js'
+import dreamerAgent from './agents/dreamer/index.js'
+import curiosityServiceAgent from './agents/curiosity-service/index.js'
+import innerCuriosityAgent from './agents/inner-curiosity/index.js'
+import psychoanalyzerAgent from './agents/psychoanalyzer/index.js'
+import desireGeneratorAgent from './agents/desire-generator/index.js'
+import desirePlannerAgent from './agents/desire-planner/index.js'
 
-// Agency system agents (new modular structure)
-import { runCycle as runDesireGeneratorCycle } from './agents/desire-generator/core.js';
-import { runCycle as runDesirePlannerCycle } from './agents/desire-planner/core.js';
+type ResolvedUser = NonNullable<ReturnType<typeof getUserByUsername>>
 
-// ============================================================================
-// Organizer Agent (uses new modular structure)
-// ============================================================================
+export interface MobileAgentBinding {
+  agent: AgentModule
+  systemOptions?: (context: MobileAgentContext) => Record<string, unknown>
+}
 
-/**
- * Organizer wrapper - uses brain/agents/organizer/core.ts
- */
-async function runOrganizer(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-organizer] No username, skipping');
-    return;
+export interface MobileAgentAdapterDependencies {
+  resolveUser?: (username: string) => ResolvedUser | null | undefined
+}
+
+const MOBILE_AGENT_BINDINGS: MobileAgentBinding[] = [
+  { agent: profileSyncAgent },
+  { agent: organizerAgent },
+  { agent: ingestorAgent },
+  {
+    agent: reflectorAgent,
+    systemOptions: context => ({
+      executionId: context.taskId,
+      executionTimestamp: context.createdAt,
+    }),
+  },
+  { agent: dreamerAgent },
+  { agent: curiosityServiceAgent },
+  {
+    agent: innerCuriosityAgent,
+    systemOptions: context => ({
+      executionId: context.taskId,
+      executionTimestamp: context.createdAt,
+    }),
+  },
+  { agent: psychoanalyzerAgent },
+  { agent: desireGeneratorAgent },
+  { agent: desirePlannerAgent },
+]
+
+function assertTaskIdentity(context: MobileAgentContext, agentName: string): string {
+  const username = context.username?.trim()
+  if (!username) {
+    throw new Error(`${agentName} requires an authenticated profile`)
   }
 
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      try {
-        // Use the unified organizer with a limit for mobile
-        const processed = await organizerProcessUserMemories(context.username!, { limit: 3 });
-        console.log(`[mobile-organizer] Complete: ${processed} memories processed`);
-      } catch (error) {
-        console.error('[mobile-organizer] Error:', (error as Error).message);
+  const identityFlags = new Set(['--username', '--user', '-u'])
+  const hasIdentityArgument = context.args.some(argument =>
+    identityFlags.has(argument)
+      || argument.startsWith('--username=')
+      || argument.startsWith('--user='),
+  )
+  const hasIdentityOption = Object.hasOwn(context.options, 'username')
+    || Object.hasOwn(context.options, 'userId')
+
+  if (hasIdentityArgument || hasIdentityOption) {
+    throw new Error(
+      `${agentName} cannot override the authenticated profile in mobile task input`,
+    )
+  }
+
+  return username
+}
+
+function failureMessage(agentName: string, result: AgentResult): string {
+  const messages = [result.error, ...(result.errors || [])]
+    .filter((message): message is string => typeof message === 'string' && message.trim().length > 0)
+  return [...new Set(messages)].join('; ') || `${agentName} failed`
+}
+
+function mobileLogger(agentId: string) {
+  return (message: string, level: 'info' | 'warn' | 'error' = 'info'): void => {
+    const formatted = `[mobile-${agentId}] ${message}`
+    if (level === 'error') console.error(formatted)
+    else if (level === 'warn') console.warn(formatted)
+    else console.info(formatted)
+  }
+}
+
+/** Adapt one canonical AgentModule to the Work Coordinator mobile contract. */
+export function createMobileAgentRegistration(
+  binding: MobileAgentBinding,
+  dependencies: MobileAgentAdapterDependencies = {},
+): MobileAgentRegistration {
+  const resolveUser = dependencies.resolveUser || getUserByUsername
+  const { agent } = binding
+
+  return {
+    id: agent.meta.id,
+    name: agent.meta.name,
+    async run(context): Promise<void> {
+      const requestedUsername = assertTaskIdentity(context, agent.meta.name)
+      const user = resolveUser(requestedUsername)
+      if (!user) {
+        throw new Error(`${agent.meta.name} profile does not exist: ${requestedUsername}`)
       }
-    }
-  );
-}
 
-// ============================================================================
-// Ingestor Agent (uses new modular structure)
-// ============================================================================
+      const result = await agent.run(
+        {
+          username: user.username,
+          userId: user.id,
+          dataDir: context.dataDir,
+          signal: context.signal,
+          log: mobileLogger(agent.meta.id),
+        },
+        {
+          args: [...context.args],
+          options: {
+            ...context.options,
+            ...(binding.systemOptions?.(context) || {}),
+          },
+        },
+      )
 
-/**
- * Ingestor wrapper - uses brain/agents/ingestor/core.ts
- */
-async function runIngestor(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-ingestor] No username, skipping');
-    return;
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      try {
-        // Use the unified ingestor with a limit for mobile
-        const processed = await ingestUserFiles(context.username!, { limit: 5 });
-        console.log(`[mobile-ingestor] Complete: ${processed} files processed`);
-      } catch (error) {
-        console.error('[mobile-ingestor] Error:', (error as Error).message);
+      if (!result.success) {
+        throw new Error(failureMessage(agent.meta.name, result))
       }
-    }
-  );
-}
-
-// ============================================================================
-// Brain Agent Wrappers (unified codebase - same code as server)
-// ============================================================================
-
-/**
- * Reflector wrapper - uses brain/agents/reflector.ts
- */
-async function runReflectorWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-reflector] No username, skipping');
-    return;
+    },
   }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      try {
-        const success = await generateUserReflection(context.username!);
-        console.log(`[mobile-reflector] ${success ? 'Complete' : 'Skipped'}`);
-      } catch (error) {
-        console.error('[mobile-reflector] Error:', (error as Error).message);
-      }
-    }
-  );
 }
 
-/**
- * Dreamer wrapper - uses brain/agents/dreamer.ts
- */
-async function runDreamerWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-dreamer] No username, skipping');
-    return;
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      try {
-        const result = await generateUserDreams(context.username!);
-        console.log(`[mobile-dreamer] Complete: ${result.dreamsGenerated} dreams, ${result.memoriesCurated} memories`);
-      } catch (error) {
-        console.error('[mobile-dreamer] Error:', (error as Error).message);
-      }
-    }
-  );
-}
-
-/**
- * Curiosity wrapper - uses brain/agents/curiosity-service.ts
- */
-async function runCuriosityWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    throw new Error('Curiosity handler requires an authenticated username');
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      const outcome = await generateUserQuestion(context.username!);
-      console.log(`[mobile-curiosity] ${outcome.status === 'generated' ? 'Question generated' : `Skipped: ${outcome.reason}`}`);
-    }
-  );
-}
-
-/**
- * Inner Curiosity wrapper - uses brain/agents/inner-curiosity.ts
- */
-async function runInnerCuriosityWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-inner-curiosity] No username, skipping');
-    return;
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      try {
-        const success = await generateInnerQuestion(context.username!);
-        console.log(`[mobile-inner-curiosity] ${success ? 'Inner Q&A generated' : 'Skipped'}`);
-      } catch (error) {
-        console.error('[mobile-inner-curiosity] Error:', (error as Error).message);
-      }
-    }
-  );
-}
-
-/**
- * Digest wrapper - uses brain/agents/digest/core.ts
- */
-async function runDigestWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-digest] No username, skipping');
-    return;
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      try {
-        const digest = await generateUserDigest(context.username!);
-        console.log(`[mobile-digest] Complete: ${digest.themesIdentified} themes analyzed`);
-      } catch (error) {
-        console.error('[mobile-digest] Error:', (error as Error).message);
-      }
-    }
-  );
-}
-
-// ============================================================================
-// Agent Registration
-// ============================================================================
-
-// ============================================================================
-// Agency System Agent Wrappers (desire-*)
-// ============================================================================
-
-/**
- * Desire Generator wrapper - uses brain/agents/desire-generator.ts
- */
-async function runDesireGeneratorWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-desire-generator] No username, skipping');
-    return;
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      const result = await runDesireGeneratorCycle({ username: context.username! });
-      if (!result.success) throw new Error(result.errors.join('; '));
-      console.log(`[mobile-desire-generator] Complete: ${result.totalGenerated} desires generated`);
-    }
-  );
-}
-
-/**
- * Desire Planner wrapper - uses brain/agents/desire-planner/core.ts
- */
-async function runDesirePlannerWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-desire-planner] No username, skipping');
-    return;
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      const result = await runDesirePlannerCycle({ username: context.username! });
-      if (!result.success) throw new Error(result.errors.join('; '));
-      console.log(`[mobile-desire-planner] Complete: ${result.stats.planned} planned, ${result.stats.approved} approved`);
-    }
-  );
-}
-
-// ============================================================================
-// Sync Agents (new modular structure)
-// ============================================================================
-
-/**
- * Profile Sync wrapper - uses brain/agents/profile-sync/core.ts
- */
-async function runProfileSyncWrapper(context: MobileAgentContext): Promise<void> {
-  if (!context.username) {
-    console.log('[mobile-profile-sync] No username, skipping');
-    return;
-  }
-
-  await withUserContext(
-    { userId: context.username, username: context.username, role: 'owner' },
-    async () => {
-      try {
-        // Default options for mobile sync: pull-only, skip device-specific configs
-        const result = await syncUserProfile(context.username!, {
-          pullOnly: true,
-          skipConfig: true,
-        });
-        console.log(
-          `[mobile-profile-sync] Complete: ${result.profileFiles} files, ${result.memoriesImported} memories`
-        );
-      } catch (error) {
-        console.error('[mobile-profile-sync] Error:', (error as Error).message);
-      }
-    }
-  );
-}
-
-// ============================================================================
-// Agent Registration
-// ============================================================================
-
-/**
- * Register mobile-compatible in-process executors with the canonical coordinator.
- * Trigger Manager remains the sole owner of admission policy and timing.
- */
+/** Register the finite agents supported by the in-process mobile runtime. */
 export function registerMobileAgents(): MobileAgentRegistration[] {
-  const agents: MobileAgentRegistration[] = [
-    // Sync agents
-    {
-      id: 'profile-sync',
-      name: 'Profile Sync',
-      run: runProfileSyncWrapper,
-    },
-    // Original agents
-    {
-      id: 'organizer',
-      name: 'Memory Organizer',
-      run: runOrganizer,
-    },
-    {
-      id: 'ingestor',
-      name: 'Inbox Ingestor',
-      run: runIngestor,
-    },
-    // Unified agents
-    {
-      id: 'reflector',
-      name: 'Reflector',
-      run: runReflectorWrapper,
-    },
-    {
-      id: 'dreamer',
-      name: 'Dreamer',
-      run: runDreamerWrapper,
-    },
-    {
-      id: 'curiosity',
-      name: 'Curiosity',
-      handler: 'agent.curiosity-service',
-      run: runCuriosityWrapper,
-    },
-    {
-      id: 'inner-curiosity',
-      name: 'Inner Curiosity',
-      run: runInnerCuriosityWrapper,
-    },
-    {
-      id: 'digest',
-      name: 'Daily Digest',
-      run: runDigestWrapper,
-    },
-    // Agency system agents
-    {
-      id: 'desire-generator',
-      name: 'Desire Generator',
-      run: runDesireGeneratorWrapper,
-    },
-    {
-      id: 'desire-planner',
-      name: 'Desire Planner',
-      run: runDesirePlannerWrapper,
-    },
-  ];
-
-  return agents;
+  return MOBILE_AGENT_BINDINGS.map(binding => createMobileAgentRegistration(binding))
 }
 
-/**
- * Initialize and start mobile agents
- */
-export async function initializeMobileAgents(dataDir: string, username?: string): Promise<void> {
-  const agents = registerMobileAgents();
-  await initializeCoordinatorMobileAgents(dataDir, username, agents);
-  console.log('[mobile-agents] Mobile agent system initialized');
+export async function initializeMobileAgents(dataDir: string, username: string): Promise<void> {
+  const user = getUserByUsername(username)
+  if (!user) throw new Error(`Cannot initialize mobile agents for unknown profile: ${username}`)
+
+  await initializeCoordinatorMobileAgents(dataDir, user.username, registerMobileAgents())
+  console.info(`[mobile-agents] Registered agents for ${user.username}`)
 }
 
-/**
- * Stop mobile agents
- */
 export function stopMobileAgents(): void {
-  stopCoordinatorMobileAgents();
-  console.log('[mobile-agents] Mobile agent system stopped');
+  stopCoordinatorMobileAgents()
+  console.info('[mobile-agents] Unregistered mobile agents')
 }
-
-// Export individual agent functions for manual triggering
-export {
-  runOrganizer,
-  runIngestor,
-  runReflectorWrapper as runReflector,
-  runDreamerWrapper as runDreamer,
-  runCuriosityWrapper as runCuriosity,
-  runInnerCuriosityWrapper as runInnerCuriosity,
-  runDigestWrapper as runDigest,
-  // Sync agents
-  runProfileSyncWrapper as runProfileSync,
-  // Agency system
-  runDesireGeneratorWrapper as runDesireGenerator,
-  runDesirePlannerWrapper as runDesirePlanner,
-};

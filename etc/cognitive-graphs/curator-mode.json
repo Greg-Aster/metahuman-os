@@ -4,7 +4,7 @@
   "name": "Curator Workflow",
   "description": "Validates episodic memories into canonical curated conversation records, then marks only durably saved sources",
   "cognitiveMode": "agent",
-  "last_modified": "2026-08-24",
+  "last_modified": "2026-09-02",
   "nodes": [
     {
       "id": "1",
@@ -85,23 +85,6 @@
       },
       "width": 220,
       "height": 80
-    },
-    {
-      "id": "9",
-      "type": "outputNode",
-      "position": {
-        "x": 1300,
-        "y": 200
-      },
-      "data": {
-        "label": "Audit Completion",
-        "nodeType": "audit_logger",
-        "properties": {
-          "event": "curator_completed"
-        }
-      },
-      "width": 180,
-      "height": 60
     }
   ],
   "edges": [
@@ -147,17 +130,6 @@
       "data": {
         "type": "object",
         "comment": "Durably saved curation results → Mark source memories"
-      }
-    },
-    {
-      "id": "e-8-markedCount-9-eventType",
-      "source": "8",
-      "target": "9",
-      "sourceHandle": "markedCount",
-      "targetHandle": "eventType",
-      "data": {
-        "type": "number",
-        "comment": "Committed source count → Audit Logger"
       }
     }
   ]

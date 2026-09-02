@@ -35,8 +35,11 @@ import {
 } from '../../agency/index.js';
 import { proposalEvents } from '../../active-operator/index.js';
 import { audit } from '../../audit.js';
-import { captureEvent } from '../../memory.js';
-import { submitAgencyConversationEntry } from '../../buffer-admission.js';
+import {
+  submitInnerDialogue,
+  submitInnerReflection,
+  submitSystemEvent,
+} from '../../buffer-admission.js';
 import { submitCoordinatorWork, submitDesireExecution } from '../../queue/index.js';
 
 // Valid DesireStatus values from types.ts
@@ -1383,13 +1386,11 @@ export async function handleConfirmCompleteDesire(req: UnifiedRequest): Promise<
       },
     });
 
-    captureEvent(`My desire "${desire.title}" has been confirmed complete by the user!`, {
-      type: 'inner_dialogue',
+    await submitInnerReflection(user.username, `My desire "${desire.title}" has been confirmed complete by the user!`, {
+      type: 'desire_completion_confirmed',
       tags: ['agency', 'outcome', 'confirmed', 'inner'],
-      metadata: {
-        source: 'user-confirmation',
-        desireId: id,
-      },
+      source: 'user-confirmation',
+      desireId: id,
     });
 
     return successResponse({
@@ -1603,23 +1604,27 @@ export async function handleDesireFeedback(req: UnifiedRequest): Promise<Unified
       },
     });
 
-    captureEvent(`User provided feedback on "${desire.title}": "${trimmedMessage}"`, {
-      type: 'inner_dialogue',
-      tags: ['agency', 'feedback', 'user-input', 'inner'],
-      metadata: {
-        source: 'user-feedback',
+    await submitInnerDialogue(user.username, {
+      role: 'thought',
+      content: `User provided feedback on "${desire.title}": "${trimmedMessage}"`,
+      meta: {
+        type: 'agency_feedback',
+        tags: ['agency', 'feedback', 'user-input', 'inner'],
+        source: 'user',
+        dialogueSource: 'user-feedback',
         desireId: id,
         action,
       },
     });
 
-    await submitAgencyConversationEntry(
+    await submitSystemEvent(
       user.username,
       `📝 **Feedback Received:** "${desire.title}"\n\n` +
       `Your input: "${trimmedMessage.length > 200 ? trimmedMessage.substring(0, 200) + '...' : trimmedMessage}"\n\n` +
       `${responseMessage}`,
       {
         dialogueSource: 'agency-system',
+        source: 'agency',
         displayColor: '#8b5cf6',
         type: 'desire_feedback_received',
         desireId: id,
@@ -1850,14 +1855,12 @@ export async function handleRequestDesireRevision(req: UnifiedRequest): Promise<
       },
     });
 
-    captureEvent(`The user wants me to revise "${desire.title}". Their feedback: "${trimmedFeedback}"`, {
-      type: 'inner_dialogue',
+    await submitInnerReflection(user.username, `The user wants me to revise "${desire.title}". Their feedback: "${trimmedFeedback}"`, {
+      type: 'desire_revision_requested',
       tags: ['agency', 'revision', 'feedback', 'inner'],
-      metadata: {
-        source: 'user-revision-request',
-        desireId: id,
-        feedback: trimmedFeedback,
-      },
+      source: 'user-revision-request',
+      desireId: id,
+      feedback: trimmedFeedback,
     });
 
     return successResponse({

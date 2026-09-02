@@ -5,10 +5,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RN_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$RN_DIR/../.."
-RELEASES_DIR="$RN_DIR/releases"
+RELEASES_DIR="$ROOT_DIR/out/releases/mobile"
 VERSION_FILE="$RELEASES_DIR/version.json"
 APK_SOURCE="$RN_DIR/android/app/build/outputs/apk/release/app-release.apk"
-DOWNLOADS_DIR="$ROOT_DIR/apps/site/public/downloads"
 
 usage() {
     echo "Usage: $0 [version] [--notes text]"
@@ -41,6 +40,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 command -v jq >/dev/null || { echo "Error: jq is required."; exit 1; }
+command -v sha256sum >/dev/null || { echo "Error: sha256sum is required."; exit 1; }
 
 SIGNING_VARIABLES=(
     METAHUMAN_ANDROID_KEYSTORE_PATH
@@ -92,14 +92,11 @@ METAHUMAN_MOBILE_BUILD_VARIANT=release \
 
 [ -f "$APK_SOURCE" ] || { echo "Error: signed APK not found at $APK_SOURCE"; exit 1; }
 
-mkdir -p "$DOWNLOADS_DIR"
 APK_VERSIONED="$RELEASES_DIR/metahuman-$NEW_VERSION.apk"
-APK_LATEST="$RELEASES_DIR/metahuman-latest.apk"
 cp "$APK_SOURCE" "$APK_VERSIONED"
-cp "$APK_SOURCE" "$APK_LATEST"
-cp "$APK_SOURCE" "$DOWNLOADS_DIR/metahuman-os.apk"
 
 APK_SIZE_BYTES="$(stat -c%s "$APK_VERSIONED")"
+APK_CHECKSUM="$(sha256sum "$APK_VERSIONED" | awk '{print $1}')"
 TEMP_VERSION_FILE="$(mktemp "$RELEASES_DIR/.version.XXXXXX")"
 trap 'rm -f "$TEMP_VERSION_FILE"' EXIT
 jq -n \
@@ -108,6 +105,7 @@ jq -n \
     --arg releaseDate "$(date +%Y-%m-%d)" \
     --arg releaseNotes "$RELEASE_NOTES" \
     --argjson fileSize "$APK_SIZE_BYTES" \
+    --arg checksum "$APK_CHECKSUM" \
     '{
         version: $version,
         versionCode: $versionCode,
@@ -115,12 +113,10 @@ jq -n \
         releaseNotes: $releaseNotes,
         minAndroidVersion: 24,
         fileSize: $fileSize,
-        downloadUrl: "/downloads/metahuman-os.apk"
+        checksum: $checksum
     }' > "$TEMP_VERSION_FILE"
 mv "$TEMP_VERSION_FILE" "$VERSION_FILE"
 trap - EXIT
 
 echo "Published signed APK v$NEW_VERSION (code $NEW_VERSION_CODE)."
 echo "Versioned: $APK_VERSIONED"
-echo "Latest: $APK_LATEST"
-echo "Download: $DOWNLOADS_DIR/metahuman-os.apk"

@@ -2,6 +2,7 @@ import {
   loadMoodSettings,
   loadMoodState,
   saveMoodSettings,
+  validateMoodSettingsUpdate,
   type MoodSettings,
 } from '../../mood-settings.js';
 import { loadPersonaFacetConfig } from '../../persona-facets.js';
@@ -53,8 +54,23 @@ export async function handleGetMoodSettings(req: UnifiedRequest): Promise<Unifie
 export async function handleUpdateMoodSettings(req: UnifiedRequest): Promise<UnifiedResponse> {
   const authError = requireAuthenticated(req);
   if (authError) return authError;
+  if (req.user.role === 'guest') {
+    return response(403, { success: false, error: 'Write access is required to change Mood settings' });
+  }
   try {
-    const body = req.body && typeof req.body === 'object' ? req.body as Record<string, any> : {};
+    if (req.body !== undefined && (!req.body || typeof req.body !== 'object' || Array.isArray(req.body))) {
+      return response(400, { success: false, error: 'Mood update body must be an object' });
+    }
+    const body = (req.body || {}) as Record<string, any>;
+    for (const key of Object.keys(body)) {
+      if (key !== 'settings' && key !== 'trigger') {
+        return response(400, { success: false, error: `Unknown Mood update field: ${key}` });
+      }
+    }
+    if (body.trigger !== undefined && req.user.role !== 'owner') {
+      return response(403, { success: false, error: 'Owner permission required to change Mood trigger admission' });
+    }
+    let settingsPatch: Partial<MoodSettings> | undefined;
     if (body.settings !== undefined) {
       if (!body.settings || typeof body.settings !== 'object' || Array.isArray(body.settings)) {
         return response(400, { success: false, error: 'settings must be an object' });
@@ -70,21 +86,33 @@ export async function handleUpdateMoodSettings(req: UnifiedRequest): Promise<Uni
       for (const key of Object.keys(body.settings)) {
         if (!allowed.has(key as keyof MoodSettings)) return response(400, { success: false, error: `Unknown Mood setting: ${key}` });
       }
-      saveMoodSettings(req.user.username, body.settings, req.user.username);
+      if (Object.keys(body.settings).length > 0) {
+        settingsPatch = body.settings as Partial<MoodSettings>;
+        validateMoodSettingsUpdate(req.user.username, settingsPatch);
+      }
     }
+    let triggerPatch: Record<string, unknown> | undefined;
     if (body.trigger !== undefined) {
-      if (req.user.role !== 'owner') return response(403, { success: false, error: 'Owner permission required to change Mood trigger admission' });
       if (!body.trigger || typeof body.trigger !== 'object' || Array.isArray(body.trigger)) {
         return response(400, { success: false, error: 'trigger must be an object' });
       }
-      const patch: Record<string, unknown> = {};
-      for (const key of ['enabled', 'eventCountThreshold', 'idleResetSeconds'] as const) {
-        if (body.trigger[key] !== undefined) patch[key] = body.trigger[key];
+      const allowed = new Set(['enabled', 'eventCountThreshold', 'idleResetSeconds']);
+      for (const key of Object.keys(body.trigger)) {
+        if (!allowed.has(key)) return response(400, { success: false, error: `Unknown Mood trigger setting: ${key}` });
       }
-      if (Object.keys(patch).length > 0) {
-        getTriggerConfigService().update({ agents: { mood: patch } }, req.user.username);
+      triggerPatch = {};
+      for (const key of ['enabled', 'eventCountThreshold', 'idleResetSeconds'] as const) {
+        if (body.trigger[key] !== undefined) triggerPatch[key] = body.trigger[key];
+      }
+      if (Object.keys(triggerPatch).length > 0) {
+        getTriggerConfigService().validateUpdate({ agents: { mood: triggerPatch } });
       }
     }
+    snapshot(req.user.username);
+    if (triggerPatch && Object.keys(triggerPatch).length > 0) {
+      getTriggerConfigService().update({ agents: { mood: triggerPatch } }, req.user.username);
+    }
+    if (settingsPatch) saveMoodSettings(req.user.username, settingsPatch, req.user.username);
     return response(200, snapshot(req.user.username));
   } catch (error) {
     return response(400, { success: false, error: (error as Error).message });

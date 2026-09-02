@@ -8,6 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { getProfilePaths } from '../paths.js';
+import { scanEpisodicMemoryRecords } from '../memory.js';
 import { getIndexStatus, indexFilePath, loadIndex } from '../vector-index.js';
 import { submitMemoryIndexRefresh } from '../queue/index.js';
 import { audit } from '../audit.js';
@@ -30,29 +31,6 @@ interface IndexHealthCheck {
   needsRebuild: boolean;
 }
 
-function listJsonFiles(root: string): string[] {
-  const files: string[] = [];
-  const visit = (directory: string) => {
-    if (!fs.existsSync(directory)) return;
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const entryPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) visit(entryPath);
-      else if (entry.isFile() && entry.name.endsWith('.json')) files.push(entryPath);
-    }
-  };
-  visit(root);
-  return files.sort();
-}
-
-function readMemoryId(filePath: string): string | null {
-  try {
-    const value = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { id?: unknown };
-    return typeof value.id === 'string' && value.id ? value.id : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Check the health of the index.
  */
@@ -62,9 +40,13 @@ export function checkIndexHealth(
   rebuildThreshold = 20,
 ): IndexHealthCheck {
   const profilePaths = getProfilePaths(username);
-
-  const memoryFiles = listJsonFiles(profilePaths.episodic);
-  const memoryIds = new Set(memoryFiles.map(readMemoryId).filter((id): id is string => Boolean(id)));
+  const memoryIds = new Set<string>();
+  for (const outcome of scanEpisodicMemoryRecords(username)) {
+    if (outcome.status === 'failed') {
+      throw new Error(`Cannot inspect episodic memory ${outcome.relativePath}: ${outcome.error}`);
+    }
+    memoryIds.add(outcome.record.event.id);
+  }
 
   // Load the current index
   const index = loadIndex(model, username);

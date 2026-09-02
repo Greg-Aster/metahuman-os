@@ -122,12 +122,5 @@
       {/if}
     </section>
 
-    <section class="rounded border border-gray-200 p-3 dark:border-gray-800">
-      <h3 class="font-semibold text-gray-900 dark:text-gray-100">Latest overnight learnings</h3>
-      {#if $sleepStatus.learningsFile}
-        <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">{$sleepStatus.learningsFile}</div>
-      {/if}
-      <pre class="mt-3 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-3 text-xs text-gray-700 dark:bg-gray-950 dark:text-gray-300">{$sleepStatus.learningsContent || 'No overnight learnings available yet.'}</pre>
-    </section>
   {/if}
 </div>

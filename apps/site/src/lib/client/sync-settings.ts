@@ -6,7 +6,6 @@
  * - WiFi-only sync (default for mobile)
  * - Manual sync only
  * - Sync on login
- * - Background sync interval
  */
 
 import { getSetting, setSetting } from './local-memory';
@@ -17,27 +16,12 @@ export interface SyncSettings {
   syncOnWifiOnly: boolean;       // Only sync on WiFi, not cellular (default: true for mobile)
   manualSyncOnly: boolean;       // Disable auto-sync, only sync when user requests (default: false)
 
-  // Frequency control
-  minSyncIntervalMinutes: number;  // Minimum time between syncs (default: 15)
-  backgroundSyncIntervalMinutes: number; // How often to sync in background (default: 60)
-  backgroundSyncEnabled: boolean;  // Enable periodic background sync (default: false)
-
-  // What to sync
-  syncPersona: boolean;          // Sync persona/identity data (default: true)
-  syncSettings: boolean;         // Sync app settings (default: true)
-  syncConversationBuffer: boolean; // Sync conversation history (default: false - can be large)
 }
 
 const DEFAULT_SYNC_SETTINGS: SyncSettings = {
   syncOnLogin: true,
   syncOnWifiOnly: true,  // Conservative default - don't use cellular data
   manualSyncOnly: false,
-  minSyncIntervalMinutes: 15,  // Don't sync more than once per 15 minutes
-  backgroundSyncIntervalMinutes: 60,
-  backgroundSyncEnabled: false,
-  syncPersona: true,
-  syncSettings: true,
-  syncConversationBuffer: false,  // Large, sync manually
 };
 
 const SETTINGS_KEY = 'syncSettings';
@@ -47,7 +31,11 @@ const SETTINGS_KEY = 'syncSettings';
  */
 export async function getSyncSettings(): Promise<SyncSettings> {
   const stored = await getSetting<Partial<SyncSettings>>(SETTINGS_KEY, {});
-  return { ...DEFAULT_SYNC_SETTINGS, ...stored };
+  return {
+    syncOnLogin: stored.syncOnLogin ?? DEFAULT_SYNC_SETTINGS.syncOnLogin,
+    syncOnWifiOnly: stored.syncOnWifiOnly ?? DEFAULT_SYNC_SETTINGS.syncOnWifiOnly,
+    manualSyncOnly: stored.manualSyncOnly ?? DEFAULT_SYNC_SETTINGS.manualSyncOnly,
+  };
 }
 
 /**
@@ -55,7 +43,11 @@ export async function getSyncSettings(): Promise<SyncSettings> {
  */
 export async function updateSyncSettings(updates: Partial<SyncSettings>): Promise<SyncSettings> {
   const current = await getSyncSettings();
-  const updated = { ...current, ...updates };
+  const updated: SyncSettings = {
+    syncOnLogin: updates.syncOnLogin ?? current.syncOnLogin,
+    syncOnWifiOnly: updates.syncOnWifiOnly ?? current.syncOnWifiOnly,
+    manualSyncOnly: updates.manualSyncOnly ?? current.manualSyncOnly,
+  };
   await setSetting(SETTINGS_KEY, updated);
   return updated;
 }

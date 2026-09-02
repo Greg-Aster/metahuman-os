@@ -17,6 +17,13 @@
     order: number;
   }
 
+  interface SearchResult {
+    id: string;
+    title: string;
+    category: string;
+    snippet: string;
+  }
+
   let categories: Category[] = [];
   let chapters: Chapter[] = [];
   let currentChapter: Chapter | null = null;
@@ -25,6 +32,11 @@
   let loading = true;
   let error = '';
   let collapsedCategories: Set<string> = new Set();
+  let searchQuery = '';
+  let searchResults: SearchResult[] = [];
+  let searchAttempted = false;
+  let searching = false;
+  let searchError = '';
 
   // Load chapter list on mount
   onMount(async () => {
@@ -97,6 +109,37 @@
   function navigateTo(chapterId: string) {
     loadChapter(chapterId);
   }
+
+  async function searchGuide() {
+    const query = searchQuery.trim();
+    searchAttempted = true;
+    searchError = '';
+    searchResults = [];
+
+    if (query.length < 2) {
+      searchError = 'Enter at least two characters.';
+      return;
+    }
+
+    searching = true;
+    try {
+      const response = await fetch(`/api/user-guide/search?q=${encodeURIComponent(query)}`);
+      if (!response.ok) throw new Error('Search is unavailable');
+      const data = await response.json();
+      searchResults = data.results || [];
+    } catch (e) {
+      searchError = (e as Error).message;
+    } finally {
+      searching = false;
+    }
+  }
+
+  function clearSearch() {
+    searchQuery = '';
+    searchResults = [];
+    searchAttempted = false;
+    searchError = '';
+  }
 </script>
 
 <div class="flex h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
@@ -105,7 +148,53 @@
     <div class="p-6 pb-4 border-b border-gray-200 dark:border-gray-800">
       <h2 class="text-2xl font-bold mb-2 text-gray-900 dark:text-gray-100">User Guide</h2>
       <p class="text-sm text-gray-500 dark:text-gray-400 m-0">MetaHuman OS Manual</p>
+      <form class="mt-4 flex gap-2" on:submit|preventDefault={searchGuide}>
+        <input
+          class="min-w-0 flex-1 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 px-2.5 py-1.5 text-sm text-gray-900 dark:text-gray-100"
+          type="search"
+          bind:value={searchQuery}
+          aria-label="Search the user guide"
+          placeholder="Search guide"
+        />
+        <button
+          class="rounded-md border-0 bg-blue-600 px-2.5 py-1.5 text-sm font-semibold text-white cursor-pointer hover:bg-blue-700 disabled:opacity-60"
+          type="submit"
+          disabled={searching}
+        >
+          {searching ? '...' : 'Search'}
+        </button>
+      </form>
+      {#if searchQuery || searchAttempted}
+        <button
+          class="mt-2 border-0 bg-transparent p-0 text-xs text-gray-500 dark:text-gray-400 underline cursor-pointer"
+          type="button"
+          on:click={clearSearch}
+        >Clear search</button>
+      {/if}
     </div>
+
+    {#if searchError}
+      <p class="m-0 border-b border-gray-200 dark:border-gray-800 px-6 py-3 text-sm text-red-600 dark:text-red-400">{searchError}</p>
+    {:else if searchAttempted && !searching}
+      <div class="max-h-64 overflow-y-auto border-b border-gray-200 dark:border-gray-800 py-2">
+        {#if searchResults.length === 0}
+          <p class="m-0 px-6 py-2 text-sm text-gray-500 dark:text-gray-400">No matching chapters.</p>
+        {:else}
+          {#each searchResults as result}
+            <button
+              class="block w-full border-0 bg-transparent px-6 py-2 text-left cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800"
+              type="button"
+              on:click={() => navigateTo(result.id)}
+            >
+              <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">{result.title}</span>
+              {#if result.snippet}
+                <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{result.snippet}</span>
+              {/if}
+            </button>
+          {/each}
+        {/if}
+      </div>
+    {/if}
 
     <nav class="flex-1 overflow-y-auto py-2">
       {#if loading}
@@ -208,5 +297,31 @@
   .category-section.collapsed .chapter-list {
     max-height: 0;
     opacity: 0;
+  }
+
+  :global(.prose-content ul) {
+    list-style: disc;
+    margin: 1rem 0;
+    padding-left: 1.75rem;
+  }
+
+  :global(.prose-content ol) {
+    list-style: decimal;
+    margin: 1rem 0;
+    padding-left: 1.75rem;
+  }
+
+  :global(.prose-content li + li) {
+    margin-top: 0.5rem;
+  }
+
+  :global(.prose-content pre) {
+    overflow-x: auto;
+  }
+
+  :global(.prose-content pre code) {
+    background: transparent;
+    color: inherit;
+    padding: 0;
   }
 </style>

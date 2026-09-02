@@ -5,6 +5,7 @@ import { audit } from './audit.js'
 import { storageClient } from './storage-client.js'
 import { cosineSimilarity } from './embeddings.js'
 import { extractMemoryContent, type ContentMode } from './memory-content-filter.js'
+import { scanEpisodicMemoryRecords } from './memory.js'
 import { callEmbeddings, isEmbeddingServiceAvailable } from './model-router.js'
 import { ROOT } from './paths.js'
 
@@ -83,8 +84,22 @@ export interface VectorIndexFile {
   data: VectorIndexItem[]
 }
 
+export type MemoryIndexUnavailableReason = 'missing' | 'legacy' | 'corrupt'
+
+export interface LegacyMemoryIndex {
+  fileName: string
+  model?: string
+  provider?: string
+  createdAt?: string
+  items?: number
+}
+
 export type MemoryIndexStatus =
-  | { exists: false }
+  | {
+      exists: false
+      reason?: MemoryIndexUnavailableReason
+      legacyIndexes?: LegacyMemoryIndex[]
+    }
   | {
       exists: true
       model: string
@@ -92,7 +107,51 @@ export type MemoryIndexStatus =
       items: number
       dimensions?: number
       createdAt: string
+      legacyIndexes?: LegacyMemoryIndex[]
     }
+
+export interface MemoryIndexQueryOptions {
+  model?: string
+  topK?: number
+  username?: string
+  hybridWeight?: number
+  memoryTypes?: string[]
+}
+
+export class MemoryIndexUnavailableError extends Error {
+  readonly code = 'MEMORY_INDEX_UNAVAILABLE'
+
+  constructor(readonly status: Extract<MemoryIndexStatus, { exists: false }>) {
+    const reason = status.reason ?? 'missing'
+    const detail = reason === 'legacy'
+      ? ` Legacy index files: ${(status.legacyIndexes ?? []).map(index => index.fileName).join(', ') || 'unknown'}.`
+      : ''
+    super(`Semantic memory index is ${reason}; a profile-scoped rebuild is required.${detail}`)
+    this.name = 'MemoryIndexUnavailableError'
+  }
+}
+
+export class MemoryIndexIncompatibleError extends Error {
+  readonly code = 'MEMORY_INDEX_INCOMPATIBLE'
+
+  constructor(message = 'The configured embedding route does not match the current semantic memory index') {
+    super(`${message}; a profile-scoped rebuild is required`)
+    this.name = 'MemoryIndexIncompatibleError'
+  }
+}
+
+export class MemoryIndexReconciliationQueuedError extends Error {
+  readonly code = 'MEMORY_INDEX_RECONCILIATION_QUEUED'
+
+  constructor(
+    message: string,
+    readonly taskId: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`${message} Reconciliation was queued as ${taskId}.`, options)
+    this.name = 'MemoryIndexReconciliationQueuedError'
+  }
+}
 
 export interface MemoryIndexRefreshOptions {
   username: string
@@ -105,7 +164,7 @@ export interface MemoryIndexRefreshResult {
   username: string
   rebuilt: boolean
   skipped: boolean
-  reason: 'forced' | 'missing' | 'stale' | 'recent'
+  reason: 'forced' | 'missing' | 'legacy' | 'corrupt' | 'stale' | 'recent'
   indexPath?: string
   status: MemoryIndexStatus
 }
@@ -134,6 +193,27 @@ function readJSON<T>(p: string): T | null {
   } catch {
     return null
   }
+}
+
+function listLegacyIndexes(model?: string, username?: string): LegacyMemoryIndex[] {
+  const canonicalPath = indexFilePath(model, username)
+  const indexDir = path.dirname(canonicalPath)
+  const canonicalName = path.basename(canonicalPath)
+  const legacyIndexes: LegacyMemoryIndex[] = []
+
+  for (const fileName of fs.readdirSync(indexDir).sort()) {
+    if (!fileName.startsWith('embeddings-') || !fileName.endsWith('.json') || fileName === canonicalName) continue
+    const parsed = readJSON<VectorIndexFile>(path.join(indexDir, fileName))
+    legacyIndexes.push({
+      fileName,
+      ...(parsed?.meta?.model ? { model: parsed.meta.model } : {}),
+      ...(parsed?.meta?.provider ? { provider: parsed.meta.provider } : {}),
+      ...(parsed?.meta?.createdAt ? { createdAt: parsed.meta.createdAt } : {}),
+      ...(Number.isInteger(parsed?.meta?.items) ? { items: parsed!.meta.items } : {}),
+    })
+  }
+
+  return legacyIndexes
 }
 
 function readRequiredJSON<T>(p: string): T {
@@ -234,17 +314,26 @@ async function buildMemoryIndex(options: {
   }
 
   if (includeEpisodic) {
-    const files = walkFiles(memPaths.episodic, p => p.endsWith('.json'))
-    console.log(`[vector-index] Processing ${files.length} episodic memories...`)
+    if (!username) throw new Error('A username is required to rebuild episodic memory indexes')
+    console.log('[vector-index] Processing profile-scoped episodic memories...')
     let processed = 0
+    let considered = 0
     let skippedLLM = 0
     let embeddingErrors = 0
-    for (const f of files) {
-      try {
-        const obj = readRequiredJSON<any>(f)
-        if (!obj || !obj.id || !obj.content) continue
-        if (obj.validation && obj.validation.status === 'incorrect') continue
+    for (const outcome of scanEpisodicMemoryRecords(username)) {
+      considered++
+      if (outcome.status === 'failed') {
+        embeddingErrors++
+        indexingErrors.push({ path: outcome.relativePath, message: outcome.error })
+        if (embeddingErrors <= 3) {
+          console.error(`[vector-index] Episodic record error: ${outcome.relativePath}: ${outcome.error}`)
+        }
+        continue
+      }
 
+      const obj = outcome.record.event
+      const recordPath = path.join(memPaths.episodic, outcome.record.relativePath)
+      try {
         // Skip LLM-generated memory types when in 'user' mode
         const memType = obj.type?.toLowerCase() || ''
         const llmGeneratedTypes = [
@@ -275,7 +364,7 @@ async function buildMemoryIndex(options: {
         const vector = await getEmbedding(text)
         items.push({
           id: obj.id,
-          path: f,
+          path: recordPath,
           type: 'episodic',
           memoryType: memType || 'observation',
           timestamp: obj.timestamp,
@@ -284,11 +373,11 @@ async function buildMemoryIndex(options: {
         })
         processed++
         if (processed % 50 === 0) {
-          console.log(`[vector-index]   ...processed ${processed}/${files.length} episodic`)
+          console.log(`[vector-index]   ...processed ${processed}/${considered} episodic`)
         }
       } catch (err) {
         embeddingErrors++
-        indexingErrors.push({ path: f, message: (err as Error).message })
+        indexingErrors.push({ path: outcome.record.relativePath, message: (err as Error).message })
         // Log first few errors then summarize
         if (embeddingErrors <= 3) {
           console.error(`[vector-index] Embedding error: ${(err as Error).message}`)
@@ -298,7 +387,7 @@ async function buildMemoryIndex(options: {
     if (embeddingErrors > 3) {
       console.error(`[vector-index] ...and ${embeddingErrors - 3} more embedding errors`)
     }
-    console.log(`[vector-index] ✓ Indexed ${processed} episodic memories (skipped ${skippedLLM} LLM-generated, ${embeddingErrors} errors)`)
+    console.log(`[vector-index] ✓ Indexed ${processed}/${considered} episodic memories (skipped ${skippedLLM} LLM-generated, ${embeddingErrors} errors)`)
   }
 
   if (includeTasks) {
@@ -492,13 +581,7 @@ function keywordScore(query: string, text: string): number {
 
 export async function queryIndex(
   query: string,
-  options: {
-    model?: string
-    topK?: number
-    username?: string
-    hybridWeight?: number
-    memoryTypes?: string[]
-  } = {}
+  options: MemoryIndexQueryOptions = {}
 ): Promise<Array<{ item: VectorIndexItem; score: number }>> {
   const totalStart = Date.now()
   const topK = options.topK ?? 10
@@ -510,9 +593,9 @@ export async function queryIndex(
   const idx = loadIndex(options.model, options.username)
   const loadTime = Date.now() - loadStart
   if (!idx) {
-    // Gracefully handle missing index (new users, etc.)
-    console.log('[vector-index] No index found - returning empty results. Build with: mh --user <username> index build')
-    return []
+    const status = getIndexStatus(options.model, options.username)
+    if (status.exists) throw new Error('Semantic memory index changed while it was being loaded; retry the search')
+    throw new MemoryIndexUnavailableError(status)
   }
   if (idx.data.length === 0) return []
 
@@ -524,7 +607,7 @@ export async function queryIndex(
     || queryEmbedding.provider !== idx.meta.provider
     || (idx.meta.dimensions && queryEmbedding.dimensions !== idx.meta.dimensions)
   ) {
-    throw new Error('The configured embedding model does not match this index; queue a full index rebuild')
+    throw new MemoryIndexIncompatibleError()
   }
   const qvec = queryEmbedding.embeddings
   const embedTime = Date.now() - embedStart
@@ -555,15 +638,79 @@ export async function queryIndex(
 }
 
 export function getIndexStatus(model?: string, username?: string): MemoryIndexStatus {
+  const canonicalPath = indexFilePath(model, username)
+  const legacyIndexes = listLegacyIndexes(model, username)
   const idx = loadIndex(model, username)
-  if (!idx) return { exists: false }
+  if (!idx) {
+    return {
+      exists: false,
+      reason: fs.existsSync(canonicalPath)
+        ? 'corrupt'
+        : legacyIndexes.length > 0 ? 'legacy' : 'missing',
+      ...(legacyIndexes.length > 0 ? { legacyIndexes } : {}),
+    }
+  }
   return {
     exists: true,
     model: idx.meta.model,
     provider: idx.meta.provider,
     items: idx.meta.items,
     dimensions: idx.meta.dimensions,
-    createdAt: idx.meta.createdAt
+    createdAt: idx.meta.createdAt,
+    ...(legacyIndexes.length > 0 ? { legacyIndexes } : {}),
+  }
+}
+
+export interface MemoryIndexReconciliationDependencies {
+  query?: typeof queryIndex
+  submitRefresh?: (input: {
+    username: string
+    source: 'system'
+    force?: boolean
+    metadata?: Record<string, any>
+  }) => Promise<{ id: string }>
+}
+
+/**
+ * Query one profile's canonical index. Missing, legacy, corrupt, or incompatible
+ * indexes are admitted to the existing Work Coordinator before the search fails
+ * visibly; callers never receive an empty result that disguises index failure.
+ */
+export async function queryIndexWithReconciliation(
+  query: string,
+  options: MemoryIndexQueryOptions & { username: string; reconciliationSource: string },
+  dependencies: MemoryIndexReconciliationDependencies = {},
+): Promise<Array<{ item: VectorIndexItem; score: number }>> {
+  const username = options.username.trim()
+  const reconciliationSource = options.reconciliationSource.trim()
+  if (!username) throw new Error('Semantic memory search requires a profile username')
+  if (!reconciliationSource) throw new Error('Semantic memory search requires a reconciliation source')
+
+  try {
+    return await (dependencies.query ?? queryIndex)(query, options)
+  } catch (error) {
+    if (!(error instanceof MemoryIndexUnavailableError)
+        && !(error instanceof MemoryIndexIncompatibleError)) {
+      throw error
+    }
+
+    let task
+    try {
+      const submitRefresh = dependencies.submitRefresh
+        ?? (await import('./queue/work-submission.js')).submitMemoryIndexRefresh
+      task = await submitRefresh({
+        username,
+        source: 'system',
+        force: error instanceof MemoryIndexIncompatibleError,
+        metadata: { producer: reconciliationSource, reason: error.code },
+      })
+    } catch (submissionError) {
+      throw new Error(
+        `${error.message} Reconciliation could not be queued: ${(submissionError as Error).message}`,
+        { cause: error },
+      )
+    }
+    throw new MemoryIndexReconciliationQueuedError(error.message, task.id, { cause: error })
   }
 }
 
@@ -573,7 +720,7 @@ export function decideMemoryIndexRefresh(
   now = Date.now(),
 ): { refresh: boolean; reason: MemoryIndexRefreshResult['reason'] } {
   if (options.force) return { refresh: true, reason: 'forced' }
-  if (!status.exists) return { refresh: true, reason: 'missing' }
+  if (!status.exists) return { refresh: true, reason: status.reason ?? 'missing' }
 
   const maxAgeHours = options.maxAgeHours ?? 24
   if (!Number.isFinite(maxAgeHours) || maxAgeHours < 0) {
@@ -692,16 +839,11 @@ export async function appendEventToIndex(event: {
   entities?: string[]
   path?: string
 }, options: { model?: string; username?: string } = {}): Promise<boolean> {
-  let idx = loadIndex(options.model, options.username)
+  const idx = loadIndex(options.model, options.username)
   if (!idx) {
-    console.log(`[vector-index] No index found for ${options.username || 'current user'}; building the base index before appending ${event.id}`)
-    await buildMemoryIndex({ username: options.username })
-    idx = loadIndex(options.model, options.username)
-    if (!idx) return false
-
-    // The full build scans episodic memory, so it normally includes the event
-    // that caused this bootstrap. Avoid writing a duplicate entry.
-    if (idx.data.some(item => item.id === event.id)) return true
+    const status = getIndexStatus(options.model, options.username)
+    if (status.exists) throw new Error('Semantic memory index changed while it was being loaded; retry the append')
+    throw new MemoryIndexUnavailableError(status)
   }
 
   if (idx.data.some(item => item.id === event.id)) return true
@@ -742,18 +884,7 @@ export async function appendEventToIndex(event: {
     || embedding.provider !== idx.meta.provider
     || (idx.meta.dimensions && embedding.dimensions !== idx.meta.dimensions)
   ) {
-    console.log('[vector-index] Embedding route changed; rebuilding before incremental append')
-    await buildMemoryIndex({ username: options.username })
-    idx = loadIndex(options.model, options.username)
-    if (!idx) return false
-    if (idx.data.some(item => item.id === event.id)) return true
-    if (
-      embedding.model !== idx.meta.model
-      || embedding.provider !== idx.meta.provider
-      || (idx.meta.dimensions && embedding.dimensions !== idx.meta.dimensions)
-    ) {
-      throw new Error('The configured embedding model still does not match the requested index')
-    }
+    throw new MemoryIndexIncompatibleError()
   }
   const vector = embedding.embeddings
   idx.data.push({

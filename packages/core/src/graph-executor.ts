@@ -25,7 +25,7 @@ const LLM_NODE_TYPES = new Set([
   'curator_llm', 'response_llm', 'planner_llm', 'decision_llm',
   'unified_decision_llm', 'big_brother_reviewer', 'big_brother_decision', 'llm',
   'claude_full_task', 'orchestrator_llm', 'persona_llm', 'response_synthesizer',
-  'movement_generator',
+  'movement_generator', 'llm_enricher',
 ]);
 
 /**
@@ -477,15 +477,20 @@ async function executeNodeByType(
 
       if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, timeout: ${timeoutMs}ms`);
 
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
+        timeoutHandle = setTimeout(() => {
           reject(new Error(`TIMEOUT: Node ${node.id} (${nodeType}) exceeded ${timeoutMs / 1000} second execution limit`));
         }, timeoutMs);
       });
 
       const executionPromise = executor(inputs, context, effectiveProperties);
-
-      const result = await Promise.race([executionPromise, timeoutPromise]);
+      let result: unknown;
+      try {
+        result = await Promise.race([executionPromise, timeoutPromise]);
+      } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }
 
       const duration = Date.now() - startTime;
       if (process.env.DEBUG_GRAPH) console.log(`[EXEC_END] Node ${node.id} (${nodeType}) completed in ${duration}ms`);

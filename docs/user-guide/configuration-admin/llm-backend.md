@@ -1,10 +1,15 @@
 # LLM Backend Configuration
 
-MetaHuman routes model requests through the backend owner in `packages/core/src/llm-backend.ts`. The supported execution targets are Ollama, vLLM, and a configured remote server.
+MetaHuman routes model requests through the deployment backend owner and model
+provider bridge. Supported target families include Ollama, vLLM, the maintained
+local-model service, configured remote providers, and automatic selection.
 
 ## Configuration owner
 
-`etc/llm-backend.json` is the system seed. Profile-aware configuration is resolved by the core configuration and storage owners. Prefer the Backend Settings UI or the CLI instead of creating provider-specific configuration files.
+`etc/llm-backend.json` is machine-wide deployment configuration, not a
+profile-specific file. Model-role assignments and provider records are resolved
+through the model registry and provider bridge. Prefer Backend Settings or the
+CLI instead of creating provider-specific routing files.
 
 Important fields include:
 
@@ -20,12 +25,22 @@ Do not store credentials in this tracked seed file. Use the credential owner exp
 
 ```bash
 ./bin/mh backend status
-./bin/mh backend list
+./bin/mh backend detect
+./bin/mh backend start
 ./bin/mh backend switch ollama
 ./bin/mh backend switch vllm
 ```
 
 The switch command updates the canonical configuration. Do not run parallel router implementations or edit call sites to bypass it.
+
+## Image-capable requests
+
+Images travel through the same model-role, backend, and provider path as text.
+There is no separate vision backend setting. When a role-selected model is
+explicitly text-only, the router may use the configured orchestrator-role model;
+the final model and provider adapter must support image input or the request
+fails with a visible error. Configure image capability in the model catalog
+instead of adding a second backend or a call-site-specific override.
 
 ## Ollama
 
@@ -34,8 +49,8 @@ Start Ollama using the installation's normal service mechanism or `ollama serve`
 ```bash
 ./bin/mh ollama status
 ./bin/mh ollama list
-./bin/mh ollama pull <model>
-./bin/mh ollama info <model>
+./bin/mh ollama pull MODEL
+./bin/mh ollama info MODEL
 ```
 
 The model named by `ollama.defaultModel` must be installed. Role-specific model selection remains owned by the model catalog/router; changing a single call site is not a supported routing mechanism.
@@ -65,4 +80,4 @@ Configure the server URL and credentials in Backend Settings. Test the connectio
 - **Remote connection fails:** verify the URL, credentials, TLS, and remote health endpoint.
 - **A role uses an unexpected model:** inspect the model catalog and role routing; do not patch the consumer.
 
-See [Configuration Files](./configuration-files.md) and [Troubleshooting](../reference/troubleshooting.md).
+See [Configuration Files](/user-guide#configuration-files) and [Troubleshooting](/user-guide#troubleshooting).

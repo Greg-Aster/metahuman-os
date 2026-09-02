@@ -339,7 +339,7 @@ async function main() {
   const agentRegistry = path.join(ROOT, 'packages', 'core', 'src', 'agent-monitor-registry.ts');
   const agentResolver = path.join(ROOT, 'packages', 'core', 'src', 'agent-executable-resolver.ts');
   const cli = path.join(ROOT, 'packages', 'cli', 'src', 'main.ts');
-  const bootstrap = path.join(ROOT, 'brain', 'scripts', '_bootstrap.ts');
+  const bootstrap = path.join(ROOT, 'packages', 'core', 'src', 'agent-bootstrap.ts');
   const environmentBridgeAgent = path.join(ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts');
   const runtimeMode = path.join(ROOT, 'packages', 'core', 'src', 'runtime-mode.ts');
   checks.push(check(

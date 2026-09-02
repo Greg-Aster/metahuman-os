@@ -623,6 +623,15 @@ export class TriggerManager extends EventEmitter {
         state.nextRun = undefined;
         continue;
       }
+      if (this.autonomyMode !== 'semi') {
+        this.suppress(
+          agentId,
+          state,
+          this.autonomyMode === 'reactive' ? 'mode:reactive' : 'mode:not-allowed',
+          admissionKey,
+        );
+        continue;
+      }
       const taskId = this.fireTrigger(agentId, 'event', false, ['--baseline'], {
         username,
         admissionKey,

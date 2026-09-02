@@ -10,7 +10,7 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { streamResponse, badRequestResponse } from '../types.js';
 import {
-  getPersonaContext,
+  getConfirmedPreferences,
   getActiveFacet,
   loadPersonaWithFacet,
   withUserContext,
@@ -27,7 +27,7 @@ import {
 } from '../../graph-runtime.js';
 import { loadCognitiveMode, canWriteMemory as modeAllowsMemoryWrites } from '../../cognitive-mode.js';
 import { recordSystemActivity } from '../../system-activity.js';
-import { submitConversationEntry, submitInnerDialogue } from '../../buffer-admission.js';
+import { submitInnerDialogue } from '../../buffer-admission.js';
 import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
 import { getNodeExecutor } from '../../nodes/index.js';
 import { addScratchpadEntryToFolder, loadDesire, saveDesireManifest } from '../../agency/storage.js';
@@ -58,7 +58,8 @@ interface GraphPipelineParams {
   replyToDesireId?: string;
   replyToDesireTitle?: string;
   desireContext?: any;
-  userMessageAdmitted?: boolean;
+  memoryIdempotencyKey?: string;
+  memoryTimestamp?: string;
   ttsGeneration?: number;
 }
 
@@ -67,10 +68,6 @@ interface GraphPipelineParams {
 // ============================================================================
 
 const histories: Map<string, ConversationMessage[]> = new Map();
-const bufferMeta: Record<Mode, { lastSummarizedIndex: number | null }> = {
-  inner: { lastSummarizedIndex: null },
-  conversation: { lastSummarizedIndex: null }
-};
 
 // Pre-warm executors flag
 let executorsReady = false;
@@ -139,8 +136,6 @@ function buildSystemPrompt(mode: Mode, includePersonaSummary = true): string {
         return '';
       }
 
-      const personaCache = getPersonaContext();
-
       const communicationStyle =
         (persona.personality?.communicationStyle as { tone?: string | string[] } | undefined) ?? {};
       const tone = communicationStyle.tone;
@@ -149,6 +144,22 @@ function buildSystemPrompt(mode: Mode, includePersonaSummary = true): string {
       const values = Array.isArray(persona.values?.core)
         ? persona.values.core.map((v: any) => v.value || v).filter(Boolean)
         : [];
+
+      const source = persona as Record<string, any>;
+      const interests = Array.isArray(source.personality?.interests)
+        ? source.personality.interests.filter((value: unknown): value is string => typeof value === 'string')
+        : [];
+      const focus = Array.isArray(source.context?.currentFocus)
+        ? source.context.currentFocus.filter((value: unknown): value is string => typeof value === 'string')
+        : [];
+      const preferences = getConfirmedPreferences().map(preference =>
+        preference.userModification || preference.behavior || preference.description
+      );
+      const learnedContext = [
+        interests.length > 0 ? `Stable interests: ${interests.join(', ')}` : '',
+        focus.length > 0 ? `Current focus: ${focus.join(', ')}` : '',
+        preferences.length > 0 ? `Confirmed preferences: ${preferences.join(', ')}` : '',
+      ].filter(Boolean).join('\n');
 
       systemPrompt = `
 You are ${persona.identity.name}, an autonomous digital personality extension.
@@ -159,7 +170,7 @@ Your personality is defined by these traits:
 - Communication Style: ${toneText}.
 - Values: ${values.join(', ') || 'Not specified'}.
 
-${personaCache ? `Long-term context:\n${personaCache}\n` : ''}
+${learnedContext ? `Learned context:\n${learnedContext}\n` : ''}
 You are having a ${mode}.
       `.trim();
     } catch (error) {
@@ -177,15 +188,19 @@ You are having a ${mode}.
   return systemPrompt;
 }
 
-function initializeChat(mode: Mode, sessionId: string, includePersonaSummary = true): void {
-  const systemPrompt = buildSystemPrompt(mode, includePersonaSummary);
+async function initializeChat(
+  mode: Mode,
+  sessionId: string,
+  user: { userId: string; username: string; role: string; activeProfile?: string },
+  includePersonaSummary = true,
+): Promise<void> {
+  const systemPrompt = await withUserContext(user, () => buildSystemPrompt(mode, includePersonaSummary));
   const history = getHistory(mode, sessionId);
   history.length = 0;
   // Only add system prompt if not empty (inactive persona = LoRA-only mode)
   if (systemPrompt) {
     history.push({ role: 'system', content: systemPrompt });
   }
-  bufferMeta[mode].lastSummarizedIndex = null;
 }
 
 // ============================================================================
@@ -193,7 +208,7 @@ function initializeChat(mode: Mode, sessionId: string, includePersonaSummary = t
 // ============================================================================
 
 async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerator<string> {
-  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent, replyToDesireId, replyToDesireTitle, desireContext, userMessageAdmitted, ttsGeneration } = params;
+  const { mode, message, sessionId, cognitiveMode, userContext, conversationHistory, contextPackage, contextInfo, allowMemoryWrites, useOperator, yoloMode, replyToQuestionId, replyToContent, replyToDesireId, replyToDesireTitle, desireContext, memoryIdempotencyKey, memoryTimestamp, ttsGeneration } = params;
 
   const push = (type: string, data: any) => {
     return sseData(type, data);
@@ -243,9 +258,9 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     const contextData = {
       sessionId,
       userMessage: message,
+      conversationInput: mode === 'conversation' ? message : '',
       mode,
       composeTarget: mode,
-      userMessageAdmitted: userMessageAdmitted === true,
       cognitiveMode,
       userId: userContext?.userId || 'anonymous',
       username: userContext?.username,
@@ -257,6 +272,9 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       contextPackage,
       contextInfo,
       allowMemoryWrites,
+      recordPersonaMemory: Boolean(userContext?.username && userContext.username !== 'anonymous'),
+      idempotencyKey: memoryIdempotencyKey,
+      memoryTimestamp,
       useOperator,
       yoloMode,
       timeoutMs,
@@ -453,9 +471,8 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
           },
         },
         {
-          allowMemoryWrites,
-          captureMemory: allowMemoryWrites,
-          memoryContent: `Unvoiced user thought: ${message.trim()}\n\nInner response: ${responseText.trim()}`,
+          idempotencyKey: memoryIdempotencyKey,
+          memoryTimestamp,
           sessionId,
         },
       );
@@ -566,7 +583,11 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   // Initialize chat if needed
   const history = getHistory(mode, sessionId);
   if (newSession || history.length === 0) {
-    initializeChat(mode, sessionId);
+    await initializeChat(mode, sessionId, {
+      userId: user.userId || 'anonymous',
+      username: user.username || 'anonymous',
+      role: user.role || 'anonymous',
+    });
     if (!message) {
       return { status: 200, data: { response: 'Chat session initialized.' } };
     }
@@ -577,6 +598,8 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   }
 
   const trimmedMessage = message.trim();
+  const memoryTimestamp = new Date().toISOString();
+  const memoryIdempotencyKey = `persona-chat:${sessionId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
   const inheritedTTSGeneration = typeof req.metadata?.ttsGeneration === 'number'
     ? req.metadata.ttsGeneration
     : undefined;
@@ -684,10 +707,9 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     }
   }
 
-  // Admit the user's input before model execution so it survives graph failure.
-  // The admission workflow still routes the write through the designated node.
-  let userMessageAdmitted = false;
-  if (isAuthenticated && user.username) {
+  // Inner compose remains a separate private feed. Conversation turns are
+  // admitted by the selected conversational graph alongside its response.
+  if (mode === 'inner' && isAuthenticated && user.username) {
     const userMessageMeta: Record<string, unknown> = {};
     if (replyToDesireId) userMessageMeta.replyToDesireId = replyToDesireId;
     if (replyToDesireTitle) userMessageMeta.replyToDesireTitle = replyToDesireTitle;
@@ -695,33 +717,24 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     if (replyToContent) userMessageMeta.replyToContent = replyToContent;
 
     try {
-      userMessageAdmitted = mode === 'inner'
-        ? await submitInnerDialogue(user.username, {
-            role: 'thought',
-            content: trimmedMessage,
-            meta: {
-              type: 'user_thought',
-              source: 'user',
-              dialogueSource: 'user-thought',
-              sessionId,
-              ...userMessageMeta,
-            },
-          }, { captureMemory: false, sessionId })
-        : await submitConversationEntry(user.username, {
-            role: 'user',
-            content: trimmedMessage,
-            meta: {
-              sessionId,
-              ...userMessageMeta,
-            },
-          }, { sessionId });
-      if (!userMessageAdmitted) {
-        throw new Error(`${mode} input was not admitted by its buffer node`);
+      const innerInputAdmitted = await submitInnerDialogue(user.username, {
+        role: 'thought',
+        content: trimmedMessage,
+        meta: {
+          type: 'user_thought',
+          source: 'user',
+          dialogueSource: 'user-thought',
+          sessionId,
+          ...userMessageMeta,
+        },
+      }, { idempotencyKey: memoryIdempotencyKey, memoryTimestamp, sessionId });
+      if (!innerInputAdmitted) {
+        throw new Error('Inner input was not admitted by its buffer node');
       }
-      console.log(`[persona-chat] ✅ ${mode} input admitted through buffer graph with metadata:`, Object.keys(userMessageMeta));
+      console.log('[persona-chat] ✅ Inner input admitted through its buffer graph with metadata:', Object.keys(userMessageMeta));
     } catch (e) {
-      console.warn(`[persona-chat] ⚠️ Buffer admission failed:`, e);
-      return { status: 500, error: `Could not persist ${mode} input before generation` };
+      console.warn('[persona-chat] ⚠️ Inner Buffer admission failed:', e);
+      return { status: 500, error: 'Could not persist inner input before generation' };
     }
   }
 
@@ -743,7 +756,8 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     replyToDesireId,
     replyToDesireTitle,
     desireContext,
-    userMessageAdmitted,
+    memoryIdempotencyKey,
+    memoryTimestamp,
     ttsGeneration,
   });
 

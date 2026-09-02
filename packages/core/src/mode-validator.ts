@@ -1,7 +1,7 @@
 /**
  * Mode Validator - Ensure no mode contamination in training data
  *
- * Validates that dual/emulation/agent modes maintain proper separation
+ * Validates that dual/emulation/agent/environment modes maintain proper separation
  * and that formatting rules are correctly applied.
  */
 
@@ -37,6 +37,7 @@ export interface QualityMetrics {
     dual: number;
     emulation: number;
     agent: number;
+    environment: number;
   };
 }
 
@@ -191,6 +192,15 @@ function validateAgentMode(sample: FormattedSample): ValidationError[] {
   return errors;
 }
 
+/** Environment training uses the same conversational shape as emulation. */
+function validateEnvironmentMode(sample: FormattedSample): ValidationError[] {
+  return validateEmulationMode({ ...sample, mode: 'emulation' }).map(error => ({
+    ...error,
+    mode: 'environment',
+    message: error.message.replace(/Emulation/g, 'Environment'),
+  }))
+}
+
 /**
  * Validate formatted samples for mode contamination
  */
@@ -211,6 +221,9 @@ export function validateModeContamination(samples: FormattedSample[]): Validatio
       case 'agent':
         sampleErrors = validateAgentMode(sample);
         break;
+      case 'environment':
+        sampleErrors = validateEnvironmentMode(sample);
+        break;
       default:
         errors.push({
           sampleId: sample.metadata.original_id,
@@ -224,7 +237,7 @@ export function validateModeContamination(samples: FormattedSample[]): Validatio
   }
 
   // Check mode distribution
-  const modeCount: Record<CognitiveMode, number> = { dual: 0, emulation: 0, agent: 0 };
+  const modeCount: Record<CognitiveMode, number> = { dual: 0, emulation: 0, agent: 0, environment: 0 };
   for (const sample of samples) {
     if (sample.mode in modeCount) {
       modeCount[sample.mode]++;
@@ -252,7 +265,7 @@ export function validateModeContamination(samples: FormattedSample[]): Validatio
 export function calculateQualityMetrics(samples: CuratedSample[]): QualityMetrics {
   const lengths: number[] = [];
   let fillerCount = 0;
-  const modeCount: Record<CognitiveMode, number> = { dual: 0, emulation: 0, agent: 0 };
+  const modeCount: Record<CognitiveMode, number> = { dual: 0, emulation: 0, agent: 0, environment: 0 };
 
   for (const sample of samples) {
     // Count words in assistant text
@@ -291,6 +304,7 @@ export function calculateQualityMetrics(samples: CuratedSample[]): QualityMetric
       dual: Math.round((modeCount.dual / total) * 1000) / 10,
       emulation: Math.round((modeCount.emulation / total) * 1000) / 10,
       agent: Math.round((modeCount.agent / total) * 1000) / 10,
+      environment: Math.round((modeCount.environment / total) * 1000) / 10,
     },
   };
 }

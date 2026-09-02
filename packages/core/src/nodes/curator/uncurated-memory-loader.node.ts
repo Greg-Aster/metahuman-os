@@ -7,7 +7,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { getProfilePaths } from '../../paths.js';
-import type { EpisodicMemory } from './contracts.js';
+import { parseStoredCuratedMemory, type EpisodicMemory } from './contracts.js';
+import { curatedRecordFilename } from './curated-store.js';
+import { assembleCuratorSources } from './source-assembler.js';
 
 const execute: NodeExecutor = async (_inputs, context, properties) => {
   const requestedLimit = Number(properties?.limit ?? 50);
@@ -22,6 +24,7 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
 
   const profilePaths = getProfilePaths(context.userId);
   const episodicPath = path.join(profilePaths.memory, 'episodic');
+  const curatedPath = path.join(profilePaths.memory, 'curated', 'conversations');
   const candidates: (EpisodicMemory & { path: string })[] = [];
   const errors: string[] = [];
 
@@ -29,6 +32,8 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
     return {
       memories: [],
       count: 0,
+      sourceCount: 0,
+      deferredCount: 0,
       hasMore: false,
     };
   }
@@ -38,8 +43,6 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
       .sort((left, right) => left.name.localeCompare(right.name));
 
     for (const entry of entries) {
-      if (candidates.length > limit) break;
-
       const fullPath = path.join(dir, entry.name);
 
       if (entry.isDirectory()) {
@@ -49,7 +52,28 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
           const content = fs.readFileSync(fullPath, 'utf-8');
           const memory = JSON.parse(content) as EpisodicMemory;
 
-          if (memory.metadata?.curated) continue;
+          if (memory.metadata?.curated) {
+            const configuredFile = typeof memory.metadata.curatorRecordFile === 'string'
+              ? path.basename(memory.metadata.curatorRecordFile)
+              : undefined;
+            const recordId = typeof memory.metadata.curatorRecordId === 'string'
+              ? memory.metadata.curatorRecordId
+              : memory.id;
+            const recordFile = configuredFile || curatedRecordFilename({
+              id: recordId,
+              originalTimestamp: memory.timestamp,
+            });
+            const recordPath = path.join(curatedPath, recordFile);
+            try {
+              parseStoredCuratedMemory(
+                JSON.parse(fs.readFileSync(recordPath, 'utf8')),
+                `Curator record ${recordFile}`,
+              );
+              continue;
+            } catch {
+              // Missing or invalid durable records are explicitly re-curated.
+            }
+          }
           if (memory.metadata?.reinforcementSignal === -1) continue;
           if (memory.tags?.includes('feedback')) continue;
           if (typeof memory.id !== 'string' || !memory.id.trim()) {
@@ -79,10 +103,17 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
     throw new Error(`Curator found ${errors.length} invalid episodic memory file(s): ${errors.join('; ')}`);
   }
 
+  const assembled = assembleCuratorSources(candidates);
+  const memories = assembled.memories.slice(0, limit);
   return {
-    memories: candidates.slice(0, limit),
-    count: Math.min(candidates.length, limit),
-    hasMore: candidates.length > limit,
+    memories,
+    count: memories.length,
+    sourceCount: memories.reduce(
+      (count, memory) => count + (memory.sourcePaths?.length || 1),
+      0,
+    ),
+    deferredCount: assembled.deferredPaths.length,
+    hasMore: assembled.memories.length > limit,
   };
 };
 
@@ -94,6 +125,8 @@ export const UncuratedMemoryLoaderNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'memories', type: 'array', description: 'Uncurated memories' },
     { name: 'count', type: 'number' },
+    { name: 'sourceCount', type: 'number' },
+    { name: 'deferredCount', type: 'number' },
     { name: 'hasMore', type: 'boolean' },
   ],
   properties: {

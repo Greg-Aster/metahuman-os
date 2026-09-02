@@ -114,7 +114,10 @@ test('a closed Observer planner gate does not call the model', async () => {
 });
 
 test('planner context exposes a strict delegation contract and correlated-evidence gate', async () => {
-  const current = robotObservation();
+  const current: any = robotObservation();
+  current.capabilities.robotCommandDescriptions = {
+    walk: 'walk forward using the requested step count',
+  };
   const ready = await robotOperatorContextBuilderNode.execute({
     instruction: 'Author one high-level interest.',
     observation: current,
@@ -124,6 +127,7 @@ test('planner context exposes a strict delegation contract and correlated-eviden
   assert.equal(ready.stimulusReady, true);
   assert.deepEqual(ready.jsonSchema.required, ['observed', 'instruction', 'reason']);
   assert.equal(ready.jsonSchema.additionalProperties, false);
+  assert.doesNotMatch(JSON.stringify(ready.messages), /requested step count/);
 
   const initial = await robotOperatorContextBuilderNode.execute({
     instruction: 'Author one high-level interest after a fresh image arrives.',
@@ -174,7 +178,6 @@ test('Robot Operator context consolidates separate instructions, conversation, i
       objective: 'Choose what to pursue from the current stimulus.',
       phase: 'new',
       step: 0,
-      maxSteps: 8,
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
     },
@@ -205,6 +208,7 @@ test('Robot Operator context consolidates separate instructions, conversation, i
   const userContent = result.messages[2]?.content as Array<{ type: string; text?: string }>;
   assert.equal(Array.isArray(userContent), true);
   assert.equal(userContent.length, 2);
+  assert.match(String(userContent[0]?.text), /^The attached image is what you currently see\./);
   assert.doesNotMatch(String(userContent[0]?.text), /curious about how the light/);
   assert.doesNotMatch(String(userContent[0]?.text), /blue ball belongs/i);
   assert.doesNotMatch(String(userContent[0]?.text), /data:image\/jpeg;base64/);
@@ -233,7 +237,6 @@ test('Robot Operator context separates correlated task narrative from older conv
     objective: 'Investigate the object near the charging station.',
     phase: 'evaluating_evidence',
     step: 1,
-    maxSteps: 8,
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'visual_observation',
   };
@@ -326,6 +329,17 @@ test('Boredom Autonomy context carries trigger, separate inner history, delegate
   observation.metadata.autonomousStimulus = 'boredom-reflection';
   observation.metadata.robotObserver.requestedBy = 'boredom-reflection';
   observation.metadata.robotOperatorMemories = ['The striped ball once led to a playful bow.'];
+  observation.capabilities.robotCommandDescriptions = {
+    walk: 'walk forward using the requested step count',
+    wave: 'perform a waving gesture',
+    stop: 'stop the current body motion',
+  };
+  observation.metadata.robotOperatorDecision = {
+    observed: 'The recent context connects the striped ball with playful movement.',
+    instruction: 'Let one concrete remembered detail inspire what happens next.',
+    reason: 'The active desire and remembered ball make a playful consequence meaningful now.',
+    decidedAt: '2026-08-03T12:00:00.000Z',
+  };
   observation.metadata.actionContext = {
     actionId: 'action-1',
     status: 'completed',
@@ -368,6 +382,26 @@ test('Boredom Autonomy context carries trigger, separate inner history, delegate
         },
       },
     ],
+    robotStatus: {
+      updatedAt: '2026-08-03T11:59:00.000Z',
+      body: {
+        battery: { voltage: 7.4 },
+        motion: { available: true, activity: 'idle' },
+      },
+      lastAction: { command: 'wave', status: 'completed' },
+      situation: {
+        currentGoal: 'Find the striped ball.',
+        currentIntent: 'Continue the search from the last verified action.',
+      },
+      agency: {
+        activeDesires: [{
+          id: 'desire-1',
+          title: 'Play with the striped ball',
+          reason: 'A current active desire makes the remembered ball relevant.',
+          strength: 0.8,
+        }],
+      },
+    },
   }, {}, {});
 
   assert.equal(result.valid, true);
@@ -377,12 +411,26 @@ test('Boredom Autonomy context carries trigger, separate inner history, delegate
   assert.equal(result.context.historicalLatestActionIncluded, false);
   assert.equal(result.context.stimulus.verifiedCurrentAction, null);
   assert.equal(result.context.memoryContextCount, 1);
+  assert.equal(result.context.robotStatusIncluded, true);
+  assert.equal(result.context.plannerDecisionIncluded, true);
   assert.equal(result.context.stimulusInstruction, 'Let one concrete remembered detail inspire what happens next.');
   const serialized = JSON.stringify(result.messages);
   assert.equal(serialized.match(/striped ball once led to a playful bow/g)?.length, 1);
   assert.equal(serialized.match(/soft light makes slow movements feel right/g)?.length, 1);
   assert.equal(serialized.match(/concrete remembered detail inspire/g)?.length, 1);
+  assert.match(serialized, /boredom_planner_decision/);
+  assert.match(serialized, /active desire and remembered ball/);
+  assert.match(serialized, /walk forward using the requested step count/);
+  assert.doesNotMatch(serialized, /autonomyTriggerInstruction/);
   const supporting = JSON.parse(String(result.messages[1]?.content));
+  assert.equal(
+    supporting.robotOperatorContext.robotStatus.state.agency.activeDesires[0].title,
+    'Play with the striped ball',
+  );
+  assert.equal(
+    supporting.robotOperatorContext.robotStatus.state.situation.currentGoal,
+    'Find the striped ball.',
+  );
   assert.deepEqual(
     supporting.robotOperatorContext.verifiedActionHistory.entries[0],
     {
@@ -410,7 +458,11 @@ test('Boredom Autonomy context carries trigger, separate inner history, delegate
     branch.properties.type.enum.includes('robotCommand')
   ));
   assert.deepEqual(commandBranch.properties.command.enum, ['walk', 'wave', 'stop']);
-  const consequenceBranches = (result.jsonSchema as any).allOf[0].anyOf;
+  const consequenceBranches = (result.jsonSchema as any).allOf.find((constraint: any) => (
+    constraint.anyOf?.some((branch: any) => (
+      branch.properties?.taskDecision?.properties?.requiredCompletionBasis?.enum?.[0] === 'response'
+    ))
+  )).anyOf;
   const physicalBranch = consequenceBranches.find((branch: any) => (
     branch.properties?.actions?.minItems === 1
   ));
@@ -418,7 +470,7 @@ test('Boredom Autonomy context carries trigger, separate inner history, delegate
     branch.properties?.taskDecision?.properties?.requiredCompletionBasis?.enum?.[0] === 'response'
   ));
   assert.equal(physicalBranch.properties.taskDecision.required.includes('actionPurpose'), false);
-  assert.equal(responseBranch.properties.response.minLength, 1);
+  assert.equal('minLength' in responseBranch.properties.response, false);
 });
 
 test('Boredom Autonomy keeps prior action context without treating it as current episode evidence', async () => {
@@ -651,7 +703,7 @@ test('Robot Operator dispatch does not reapply trigger mode after the graph deci
   assert.equal(queued, true);
 });
 
-test('three boredom planners feed one editable iterative executor', () => {
+test('three boredom planners feed one editable iterative executor with reusable Robot Status', () => {
   const graphs = Object.fromEntries([
     'boredom-observer',
     'boredom-movement',
@@ -701,6 +753,7 @@ test('three boredom planners feed one editable iterative executor', () => {
 
   const observer = graphs['boredom-observer'];
   const observerBridge = observer.nodes.find((node: any) => node.id === 'capture-image');
+  const observerPrompt = observer.nodes.find((node: any) => node.id === 'planner-policy')?.data?.properties?.message ?? '';
   assert.deepEqual(observerBridge?.data?.properties?.allowedActions, ['captureImage']);
   assert.equal(observerBridge?.data?.properties?.feedbackGraph, 'boredom-observer');
   assert.equal(observer.nodes.filter((node: any) => node.data?.nodeType === 'gateway').length, 2);
@@ -720,11 +773,20 @@ test('three boredom planners feed one editable iterative executor', () => {
     observer.nodes.find((node: any) => node.id === 'capture-gate')?.data?.properties?.invertCondition,
     true,
   );
+  assert.match(observerPrompt, /missing evidence, not evidence of hidden activity/i);
+  assert.match(observerPrompt, /claim only sensing modalities explicitly present/i);
+  assert.doesNotMatch(observerPrompt, /do not reopen the same physical search/i);
 
   const movement = graphs['boredom-movement'];
   assert.equal(movement.nodes.some((node: any) => node.data?.nodeType === 'environment_image_input'), false);
   const movementPrompt = movement.nodes.find((node: any) => node.id === 'planner-policy')?.data?.properties?.message ?? '';
-  assert.match(movementPrompt, /form one embodied intention/i);
+  assert.match(movementPrompt, /decide one contextually meaningful embodied intention/i);
+  assert.match(movementPrompt, /recent verified actions/i);
+  assert.match(movementPrompt, /contextually meaningful embodied intention/i);
+  assert.match(movementPrompt, /only to break a genuine tie/i);
+  assert.match(movementPrompt, /never choose novelty or difference for its own sake/i);
+  assert.doesNotMatch(movementPrompt, /one physical consequence/i);
+  assert.doesNotMatch(movementPrompt, /posture-confirmation move/i);
   assert.match(movementPrompt, /do not select a technical command/i);
   assert.doesNotMatch(movementPrompt, /stretch|dance|turn_left|turn_right|remain still/i);
 
@@ -746,6 +808,7 @@ test('three boredom planners feed one editable iterative executor', () => {
   const services = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/services.json'), 'utf8'));
   const service = services.services['robot-operator'];
   assert.equal('graph' in service, false);
+  assert.equal(service.robotStatusGraph, 'robot-status');
   assert.equal(service.boredomObserverGraph, 'boredom-observer');
   assert.equal(service.boredomMovementGraph, 'boredom-movement');
   assert.equal(service.boredomReflectionGraph, 'boredom-reflection');
@@ -760,6 +823,7 @@ test('three boredom planners feed one editable iterative executor', () => {
   for (const required of [
     'environment_observation',
     'environment_image_input',
+    'robot_status',
     'conversation_history',
     'persona_loader',
     'persona_formatter',
@@ -785,14 +849,30 @@ test('three boredom planners feed one editable iterative executor', () => {
     .map((node: any) => node.data?.properties?.mode)
     .sort();
   assert.deepEqual(historyModes, ['conversation', 'inner', 'robot']);
+  assert.ok(autonomy.edges.some((edge: any) => (
+    edge.source === 'robot-status'
+    && edge.target === 'autonomy-context'
+    && edge.targetHandle === 'robotStatus'
+  )));
   const selector = autonomy.nodes.find((node: any) => node.id === 'autonomy-selector');
-  assert.equal(selector?.data?.properties?.maxTokens, 384);
+  assert.equal(selector?.data?.properties?.maxTokens, 2048);
   const executivePrompt = autonomy.nodes.find((node: any) => node.id === 'executive-policy')?.data?.properties?.message ?? '';
   const promptWords = executivePrompt.trim().split(/\s+/).length;
   assert.ok(promptWords >= 150 && promptWords <= 250, `executive prompt must stay compact; got ${promptWords} words`);
-  assert.match(executivePrompt, /planner-authored intention/i);
+  assert.match(executivePrompt, /planner's desired effect is authoritative intent/i);
+  assert.match(executivePrompt, /complete plannerDecision/i);
+  assert.match(executivePrompt, /observed, instruction, and reason/i);
+  assert.match(executivePrompt, /robotCommandDescriptions/i);
+  assert.match(executivePrompt, /including punctuation-only names/i);
+  assert.match(executivePrompt, /verifiedActionHistory/i);
+  assert.match(executivePrompt, /contextual fit comes first/i);
   assert.match(executivePrompt, /interpret its correlated result/i);
   assert.match(executivePrompt, /Action completion is evidence, not automatic episode completion/i);
+  assert.match(executivePrompt, /do not impose a fixed action count or deterministic stop/i);
+  assert.match(executivePrompt, /Outward response is always optional/i);
+  assert.match(executivePrompt, /leave response empty when speaking adds nothing/i);
+  assert.match(executivePrompt, /one or two concise sentences/i);
+  assert.match(executivePrompt, /not proof of hidden activity, heat, or an unsupported sensor reading/i);
   assert.match(executivePrompt, /Do not replace the intention with a generic idle task/i);
   assert.ok(autonomy.edges.some((edge: any) => (
     edge.source === 'autonomy-selector'
@@ -803,6 +883,12 @@ test('three boredom planners feed one editable iterative executor', () => {
     edge.source === 'task-state-prepare'
     && edge.target === 'autonomy-context'
     && edge.targetHandle === 'taskState'
+  )));
+  assert.ok(autonomy.edges.some((edge: any) => (
+    edge.source === 'task-state-prepare'
+    && edge.sourceHandle === 'movementRequest'
+    && edge.target === 'movement-generator'
+    && edge.targetHandle === 'preparedMovementRequest'
   )));
   assert.ok(autonomy.edges.some((edge: any) => (
     edge.source === 'task-state-reduce'

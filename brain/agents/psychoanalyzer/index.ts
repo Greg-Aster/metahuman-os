@@ -17,8 +17,7 @@ export const meta: AgentMeta = {
   description: 'Reviews memories to extract personality insights and update persona',
   usesLLM: true,
   priority: 'low',
-  defaultInterval: 86400, // 24 hours (daily)
-  tags: ['psychoanalyzer', 'llm', 'persona', 'background', 'analysis'],
+  tags: ['psychoanalyzer', 'llm', 'persona', 'analysis'],
 };
 
 /**
@@ -35,13 +34,15 @@ export default agent;
 export {
   runCycle,
   runPsychoanalysis,
+  executePsychoanalysis,
   loadConfig,
   selectMemories,
-  analyzeMemories,
-  updatePersona,
+  analyzePersonaEvidence,
+  parsePsychoanalyzerArgs,
   type PsychoanalyzerConfig,
   type PsychoanalyzerOptions,
   type PsychoanalyzerResult,
   type UserPsychoanalyzerStats,
-  type AnalysisResult,
+  type PsychoanalyzerMemory,
+  type PsychoanalyzerTarget,
 } from './core.js';

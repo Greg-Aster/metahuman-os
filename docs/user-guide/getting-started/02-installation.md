@@ -1,129 +1,173 @@
 # Installation
 
-Install MetaHuman OS on your Linux server.
+This chapter installs the maintained Linux-first MetaHuman OS server. If you are
+using an installation managed by someone else, continue to
+[Setup and First Login](/user-guide#03-setup-and-login).
 
-> **Note:** If you're connecting to an existing server (remote or mobile), skip to [Setup & Login](03-setup-and-login.md).
+## Requirements
 
----
+Required:
 
-## Prerequisites
+- Linux
+- Git
+- Node.js `>=22.3.0 <23`
+- pnpm `>=10.15.1 <11`
 
-### Required
-- **Node.js 22.3+ (22.x)** — JavaScript runtime (the repository includes an `.nvmrc`)
-- **pnpm** — Package manager (`npm install -g pnpm`)
-- **Git** — Version control
+The repository includes `.nvmrc`, and installation rejects unsupported Node
+versions. Disk, memory, CPU, and GPU requirements depend on the models and
+optional services you choose.
 
-### Required for AI Features
-- **Ollama** or **vLLM** — Local LLM backend (choose one)
-- At least 8GB RAM (16GB+ recommended for larger models)
+Optional:
 
-### Optional (for Training & Voice)
-- **Python 3** — Required by the relevant isolated setup command
-- **NVIDIA GPU** — Required for local training (or use RunPod cloud)
+- Ollama, vLLM, the local-model service, or a configured remote model backend
+- Python environments required by particular training or voice providers
+- An NVIDIA GPU for supported local training or larger local inference
+- `cloudflared` for the maintained tunnel workflow
+- PM2 for background supervision of the canonical production launcher
 
----
-
-## 1. Clone the Repository
+## 1. Clone the repository
 
 ```bash
 git clone https://github.com/Greg-Aster/metahuman-os.git
 cd metahuman-os
 ```
 
----
+If the repository already exists, use that installation instead of cloning a
+second runtime.
 
-## 2. Install an LLM Backend (Optional but Recommended)
+## 2. Select the supported Node and pnpm versions
 
-MetaHuman needs an LLM backend for AI capabilities. Install **Ollama** (recommended for most users):
+With NVM:
 
 ```bash
-curl -fsSL https://ollama.com/install.sh | sh
+nvm install
+nvm use
+corepack enable
+corepack prepare pnpm@10.15.1 --activate
 ```
 
-Ollama runs as a background service and auto-starts on boot.
+Confirm the runtime:
 
-> **Alternative backends:** For large models (30B+) or high-throughput scenarios, see [LLM Backend Configuration](../configuration-admin/llm-backend.md) for vLLM setup.
->
-> **Remote users:** If connecting to a remote server that already has an LLM backend, skip this step.
+```bash
+node --version
+pnpm --version
+pnpm check:node
+```
 
----
+## 3. Install workspace dependencies
 
-## 3. Install, Build, and Start MetaHuman OS
-
-Setup and startup are separate. Install dependencies and build the production
-Site explicitly:
+Run from the repository root:
 
 ```bash
 pnpm install
+```
+
+This installs the pnpm workspace and runs the maintained post-install setup. It
+does not download every optional model, voice provider, or training environment.
+
+## 4. Build the web application
+
+```bash
 pnpm --dir apps/site build
 ```
 
-The startup owner validates Node, starts configured services, and launches the
-prebuilt Site. It does not install packages or build source.
+A successful build proves that the current Site source compiled. It does not
+prove that model, voice, tunnel, sync, or environment services are configured.
 
-### Option A: Simple Start (Recommended)
+## 5. Start production
 
 ```bash
 ./start.sh
 ```
 
-### Option B: PM2 (Production)
+`start.sh` is the production startup owner. It validates Node, prevents a
+second overlapping launcher, starts configured background services, and runs
+the prebuilt Site in the foreground.
 
-For production deployments with auto-restart and monitoring:
+Open `http://127.0.0.1:4321` on the server. The installation may use another
+address only when its exposure configuration says so.
+
+To stop the foreground launcher, press Ctrl+C. To stop repository-scoped
+services explicitly:
+
+```bash
+./stop.sh
+```
+
+## Development mode
+
+For Site development with hot reload:
+
+```bash
+pnpm dev
+```
+
+The development command starts the Site dev server, not the complete production
+service stack. Start optional background services separately when the feature
+under test requires them:
+
+```bash
+./bin/start-services --background
+```
+
+Do not run development and production web servers on the same configured port.
+
+## Optional background supervision
+
+PM2 is optional. Once installed, it supervises the same `start.sh` path as one
+forked process:
 
 ```bash
 ./bin/start-pm2
 ```
 
-PM2 provides:
-- Auto-restart on crash
-- Centralized logging (`pm2 logs`)
-- Monitoring dashboard (`pm2 monit`)
+Stop that supervised process with:
 
-PM2 supervises the same `start.sh` path as one forked process; it does not start
-a parallel service stack.
-
-To enable auto-start on system boot:
 ```bash
-pm2 startup
-pm2 save
+./bin/stop-pm2
 ```
 
-### Option C: Development Mode
+Do not combine PM2 with another independently started MetaHuman production
+launcher.
 
-For development with hot-reload:
+## Verify the installation
 
-```bash
-pnpm --dir apps/site dev
-```
-
----
-
-## 4. Verify Installation
-
-After starting, verify everything is working:
+Check the web listener and canonical CLI:
 
 ```bash
-# Check web server is running
-curl http://localhost:4321
-
-# Check Ollama connection (if using Ollama)
-./bin/mh ollama status
-
-# Check system status
+curl -I http://127.0.0.1:4321
 ./bin/mh status
+./bin/mh backend status
 ```
 
-The web interface should be accessible at **http://localhost:4321**
+Then verify in the web interface:
 
----
+- The authentication screen loads.
+- After login, Server Status reports the selected backend honestly.
+- The Queue panel is visible.
+- Optional services show stopped, missing, or unavailable instead of fabricated
+  success when they are not installed.
 
-## Troubleshooting
+Use `logs/server.log` and `logs/run/` for launcher diagnostics. These are
+local runtime logs and must not be committed.
 
-Having issues? See [Troubleshooting](../reference/troubleshooting.md) for common problems and solutions.
+## Updating an existing installation
 
----
+Do not treat `git pull` as a complete update. Source changes may require new
+dependencies and a rebuilt Site. Use the owner-controlled update workflow in
+System settings when available, or stop the installation and deliberately run:
 
-## Next Steps
+```bash
+git pull --ff-only
+pnpm install
+pnpm --dir apps/site build
+./start.sh
+```
 
-Installation complete! Continue to [Setup & Login](03-setup-and-login.md) to create your account and download a model.
+Review local changes before pulling. Never overwrite profile data or a dirty
+worktree to force an update.
+
+## Next step
+
+Continue to [Setup and First Login](/user-guide#03-setup-and-login). For startup failures,
+see [Troubleshooting](/user-guide#troubleshooting).

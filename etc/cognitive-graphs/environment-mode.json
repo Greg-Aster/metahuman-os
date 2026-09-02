@@ -4,7 +4,7 @@
   "name": "Environment Mode",
   "description": "Single-owner Environment workflow. One LLM interprets new input or external evidence; typed task state closes exact action results, admits one next action, and prevents silent failures.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-05",
+  "last_modified": "2026-09-02",
   "nodes": [
     {
       "id": "2",
@@ -50,6 +50,23 @@
         "nodeType": "conversation_history",
         "properties": {
           "limit": 20
+        }
+      }
+    },
+    {
+      "id": "robot-status",
+      "type": "contextNode",
+      "position": {
+        "x": 650,
+        "y": -30
+      },
+      "width": 250,
+      "height": 110,
+      "data": {
+        "label": "Robot Status",
+        "nodeType": "robot_status",
+        "properties": {
+          "historyLimit": 3
         }
       }
     },
@@ -150,7 +167,7 @@
         "label": "Build Environment Context",
         "nodeType": "environment_context_builder",
         "properties": {
-          "systemPrompt": "ENVIRONMENT ACTION SELECTOR\nTreat currentInstruction as authoritative. Use activePersona for voice and judgment. History and memories are background, never current results or proof. Use only attached sensory evidence and currentEnvironment for physical claims; without a current image, do not claim what the camera sees.\n\nA direct user statement or answer is current user_input. Respond normally and mark it complete without action or visual proof unless the user asks to verify, inspect, or act.\n\nReturn strict JSON with exactly response, actions, movementRequest, and taskDecision. response is the robot's outward reaction. Select at most one action or movementRequest. taskDecision includes outcome, reason, objectiveComplete, continuationPolicy, and requiredCompletionBasis. Physical work also needs motionClass.\n\nFor a supported physical request, return one safe advertised action now; prose is not execution. Prefer an exact advertised robotCommand. Use movementRequest only for off-script body_local motion when robotMotionPlan is available. Never combine movements or claim an action already happened. If no capability can advance the request safely, say so.\n\nA conditional visual search or stopping condition is bounded multi-step work. Set continuationPolicy to bounded, requiredCompletionBasis to visual_observation, and visualEvidenceMode to single. Use comparison only for an explicit before/after claim. Select one action, inspect only fresh correlated evidence, then continue or complete before the safety limit. An unexecuted action uses outcome act and objectiveComplete false. Preserve taskState. Use only current capabilities and capabilityRules. For autonomy, produce a persona-grounded response, bounded action, or both; with a fresh image, include concise observationSummary.",
+          "systemPrompt": "ENVIRONMENT ACTION SELECTOR\nTreat currentInstruction as authoritative; use activePersona for judgment. currentEnvironment contains current physical state and capabilities. Robot Status, history, and memories are context, not current proof; use them for semantic continuity.\n\nReturn JSON with response, actions, movementRequest, and taskDecision. Make one semantic routing decision: response-only, one advertised action, or one movementRequest. actions and movementRequest are exclusive. response is optional, never execution, and one or two concise sentences.\n\nConversation may remain response-only. Expressive action is optional when meaningful; add no filler motion.\n\nFor physical or sensing intent, choose an advertised action when its description performs the current step, even if the objective needs later steps; reassess after feedback. Use movementRequest only when the current movement itself is uncovered. Compare descriptions, never names; preserve specified body parts, direction, timing, and holds.\n\nChoose taskDecision and evidence that establish the objective. A terminal action result proves execution; a visual observation proves only visible facts. Continue from fresh correlated evidence, but neither invent extra steps nor impose a fixed action count.\n\nPreserve taskState, capabilities, and capabilityRules. Never claim beyond current evidence. For autonomy, choose a persona-grounded response, action, or both; summarize fresh visual evidence concisely.",
           "recentHistoryLimit": 4
         }
       }
@@ -167,9 +184,10 @@
       "data": {
         "label": "Environment Action Selector",
         "nodeType": "model_router",
+        "comment": "Semantic Environment decision point. It chooses a conversation-only response, one advertised action, or one body-local movement request and proposes task continuation or completion. It does not execute or authorize physical work; Parse Environment Action, Environment Task State, and Environment Bridge Out own validation, lifecycle, and dispatch.",
         "properties": {
           "role": "environmentActionSelector",
-          "maxTokens": 384,
+          "maxTokens": 2048,
           "temperature": 0.1,
           "format": "json"
         }
@@ -267,7 +285,7 @@
         "nodeType": "movement_generator",
         "properties": {
           "role": "orchestrator",
-          "maxTokens": 1536,
+          "maxTokens": 4096,
           "temperature": 0.2
         }
       }
@@ -332,7 +350,7 @@
       "width": 250,
       "height": 110,
       "data": {
-        "label": "Memory Capture",
+        "label": "Conversation Memory Saver",
         "nodeType": "memory_capture",
         "properties": {}
       }
@@ -511,6 +529,18 @@
       }
     },
     {
+      "id": "e-robot-status-context-3-robotStatus",
+      "source": "robot-status",
+      "target": "3",
+      "sourceHandle": "context",
+      "targetHandle": "robotStatus",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Reusable Robot Status supports self-context but is not current physical proof"
+      }
+    },
+    {
       "id": "e-task-state-prepare-visuals-11-visuals",
       "source": "task-state-prepare",
       "target": "11",
@@ -619,18 +649,6 @@
       }
     },
     {
-      "id": "e-task-state-prepare-precomputedResponse-4-precomputedResponse",
-      "source": "task-state-prepare",
-      "target": "4",
-      "sourceHandle": "precomputedResponse",
-      "targetHandle": "precomputedResponse",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Bypass inference only for exact deterministic action-result closure"
-      }
-    },
-    {
       "id": "e-3-jsonSchema-4-jsonSchema",
       "source": "3",
       "target": "4",
@@ -712,6 +730,30 @@
       "data": {
         "type": "object",
         "comment": "Generate body-local motion only when requested"
+      }
+    },
+    {
+      "id": "e-task-state-prepare-movementRequest-3-preparedMovementRequest",
+      "source": "task-state-prepare",
+      "target": "3",
+      "sourceHandle": "movementRequest",
+      "targetHandle": "preparedMovementRequest",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Skip redundant semantic selection while the authorized request enters Movement Generator"
+      }
+    },
+    {
+      "id": "e-task-state-prepare-movementRequest-movement-generator-preparedMovementRequest",
+      "source": "task-state-prepare",
+      "target": "movement-generator",
+      "sourceHandle": "movementRequest",
+      "targetHandle": "preparedMovementRequest",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "comment": "Resume the exact request after correlated standing preparation"
       }
     },
     {
@@ -967,27 +1009,15 @@
       }
     },
     {
-      "id": "e-conversation-history-history-conversation-buffer-conversationHistory",
-      "source": "conversation-history",
-      "target": "conversation-buffer",
-      "sourceHandle": "history",
-      "targetHandle": "conversationHistory",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Canonical conversation history"
-      }
-    },
-    {
-      "id": "e-10-instruction-conversation-buffer-userMessage",
+      "id": "e-10-conversationInput-conversation-buffer-userMessage",
       "source": "10",
       "target": "conversation-buffer",
-      "sourceHandle": "instruction",
+      "sourceHandle": "conversationInput",
       "targetHandle": "userMessage",
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Current user input when not already admitted"
+        "comment": "Only fresh player-authored text enters the Conversation Buffer"
       }
     },
     {
@@ -1039,27 +1069,15 @@
       }
     },
     {
-      "id": "e-10-instruction-memory-capture-userMessage",
-      "source": "10",
+      "id": "e-conversation-buffer-entries-memory-capture-entries",
+      "source": "conversation-buffer",
       "target": "memory-capture",
-      "sourceHandle": "instruction",
-      "targetHandle": "userMessage",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Current Environment input"
-      }
-    },
-    {
-      "id": "e-8-conversationResponse-memory-capture-assistantResponse",
-      "source": "8",
-      "target": "memory-capture",
-      "sourceHandle": "conversationResponse",
-      "targetHandle": "assistantResponse",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Final Environment response"
+        "type": "array",
+        "comment": "Buffer-admitted Environment conversation entries"
       }
     },
     {

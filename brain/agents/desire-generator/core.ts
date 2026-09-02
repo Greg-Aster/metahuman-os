@@ -28,7 +28,6 @@ import {
   acquireLock,
   getTargetUser,
   withUserContext,
-  captureEvent,
   submitInnerReflection,
   loadPersonaCore,
   listActiveTasks,
@@ -1290,26 +1289,21 @@ export async function generateDesiresForUser(username: string): Promise<number> 
 
     const innerDialogue = `💭 Agency Review:\n\n${parts.join('\n')}\n\nDesires grow through repeated reinforcement from experiences and fade without it.`;
 
-    captureEvent(innerDialogue, {
-      type: 'inner_dialogue',
-      tags: ['agency', 'desire-generation', 'inner'],
-      metadata: {
-        agency: true,
-        desiresGenerated: created,
-        desiresReinforced: nurtureResult.reinforced,
-        desiresDecayed: nurtureResult.decayed,
-        desiresAbandoned: nurtureResult.abandoned,
-        desiresActivated: activatedCount,
-        goalsProposed: nurtureResult.goalsProposed,
-        sources: [...new Set(uniqueCandidates.map(c => c.source))],
-      },
-    });
-
-    // Also append to live chat buffer for immediate display in Inner Dialogue tab
+    // The admission graph owns both the rolling buffer entry and its matching
+    // long-term memory; the agent only supplies semantic metadata.
     await submitInnerReflection(username, innerDialogue, {
       dialogueSource: 'agency-system',
       displayColor: '#10b981', // Emerald for agency
       type: 'desire_generation',
+      tags: ['agency', 'desire-generation', 'inner'],
+      agency: true,
+      desiresGenerated: created,
+      desiresReinforced: nurtureResult.reinforced,
+      desiresDecayed: nurtureResult.decayed,
+      desiresAbandoned: nurtureResult.abandoned,
+      desiresActivated: activatedCount,
+      goalsProposed: nurtureResult.goalsProposed,
+      sources: [...new Set(uniqueCandidates.map(c => c.source))],
     });
   }
 

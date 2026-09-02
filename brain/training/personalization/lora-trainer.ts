@@ -1,0 +1,1798 @@
+/**
+ * LoRA Trainer Agent (Remote Orchestrator)
+ * This agent orchestrates the entire remote training lifecycle on RunPod.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn, execSync } from 'node:child_process';
+import { ROOT, audit, ProgressTracker, getProfilePaths } from '@metahuman/core';
+import { DEFAULT_TRAINING_MODEL } from '@metahuman/core/model-defaults';
+import {
+  loadS3ConfigFromEnv,
+  uploadDirectoryToS3,
+  uploadFileToS3,
+  type S3Config,
+} from '@metahuman/core/s3-upload';
+
+// Load environment variables from .env file
+const environmentPath = path.join(ROOT, '.env');
+if (fs.existsSync(environmentPath)) process.loadEnvFile(environmentPath);
+
+const ensureDirSync = (directory: string): void => {
+  fs.mkdirSync(directory, { recursive: true });
+};
+
+const RUNPOD_API_BASE = 'https://api.runpod.io/graphql';
+
+interface RunRemoteTrainingOptions {
+  DATE_STR: string;
+  RUN_LABEL: string;
+  run_id?: string | null;
+  WORK_LOCAL: string;
+  OUT_ROOT: string;
+  FINAL_ADAPTER_DIR: string;
+  RAW_DATA_FILE: string;
+  CLEAN_DATA_FILE: string;
+  CONFIG_FILE: string;
+  SUMMARY_FILE: string;
+  samples_used: number;
+  username: string; // Username for profile access
+}
+
+interface RunRemoteTrainingResult {
+  pod_id: string | null;
+  ssh_user: string | null;
+  ssh_host: string | null;
+  training_success: boolean;
+  terminated: boolean;
+  upload_verification?: string;
+  gguf_path?: string;
+  ollama_model?: string;
+  ollama_loaded?: boolean;
+  s3_url?: string;
+  s3_key?: string;
+  error?: string;
+}
+
+// The training launcher owns the single persisted console log under logs/run.
+// Writing here would create a competing per-run log, so the trainer emits to
+// stdout and lets the launcher capture the complete process stream.
+function log(message: string) {
+  console.log(`[lora-trainer] ${message}`);
+}
+
+async function sshExecNoPty(ssh_user: string, ssh_host: string, ssh_key_path: string, remoteCmd: string, ssh_port?: number | null): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve) => {
+    const args: string[] = [
+      '-T',
+      '-vv',  // Verbose SSH debugging
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',  // 10 second timeout
+      '-o', 'ServerAliveInterval=30',  // Send keepalive every 30 seconds
+      '-o', 'ServerAliveCountMax=999',  // Allow 999 missed keepalives (8+ hours)
+      '-o', 'TCPKeepAlive=yes',  // Enable TCP keepalive
+    ];
+    if (ssh_port) {
+      args.push('-p', String(ssh_port));
+    }
+    args.push('-i', ssh_key_path, `${ssh_user}@${ssh_host}`, remoteCmd);
+    const ssh = spawn('ssh', args);
+
+    let stdout = '';
+    let stderr = '';
+
+    ssh.stdout.on('data', (data) => { stdout += data.toString(); });
+    ssh.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    ssh.on('close', (exitCode) => {
+      resolve({ stdout, stderr, exitCode: exitCode || 0 });
+    });
+
+    ssh.on('error', (err) => {
+      console.error('SSH command failed to start:', err);
+      resolve({ stdout: '', stderr: err.message, exitCode: -1 });
+    });
+  });
+}
+
+// Streaming version that writes stdout directly to a file (for large outputs like tar+base64)
+async function sshExecToFile(ssh_user: string, ssh_host: string, ssh_key_path: string, remoteCmd: string, outputFilePath: string, ssh_port?: number | null): Promise<{ stderr: string; exitCode: number }> {
+  return new Promise((resolve) => {
+    const args: string[] = [
+      '-T',
+      '-vv',  // Verbose SSH debugging
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',
+      '-o', 'ServerAliveInterval=30',
+      '-o', 'ServerAliveCountMax=999',
+      '-o', 'TCPKeepAlive=yes',
+    ];
+    if (ssh_port) {
+      args.push('-p', String(ssh_port));
+    }
+    args.push('-i', ssh_key_path, `${ssh_user}@${ssh_host}`, remoteCmd);
+    const ssh = spawn('ssh', args);
+
+    const fileStream = fs.createWriteStream(outputFilePath);
+    let stderr = '';
+
+    // Stream stdout directly to file (avoids string length limits)
+    ssh.stdout.pipe(fileStream);
+    ssh.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    ssh.on('close', (exitCode) => {
+      fileStream.end();
+      resolve({ stderr, exitCode: exitCode || 0 });
+    });
+
+    ssh.on('error', (err) => {
+      console.error('SSH command failed to start:', err);
+      fileStream.end();
+      resolve({ stderr: err.message, exitCode: -1 });
+    });
+  });
+}
+
+async function sshUploadFileBase64(localPath: string, remotePath: string, ssh_user: string, ssh_host: string, ssh_key_path: string, ssh_port?: number | null): Promise<void> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    log(`Uploading ${path.basename(localPath)} to ${remotePath} (attempt ${attempt}/3)...`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const portPart = ssh_port ? `-p ${ssh_port}` : '';
+        const command = `cat "${localPath}" | base64 -w 0 | ssh -T -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes ${portPart} -i "${ssh_key_path}" ${ssh_user}@${ssh_host} "base64 -d > \"${remotePath}\""`;
+        const child = spawn('bash', ['-c', command]);
+
+        let stderr = '';
+        child.stderr?.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        child.on('close', (code) => {
+          if (code === 0) {
+            log(`Upload of ${path.basename(localPath)} successful.`);
+            resolve();
+          } else {
+            const errorMsg = `File upload failed with exit code ${code}${stderr ? `, stderr: ${stderr.substring(0, 200)}` : ''}`;
+            log(errorMsg);
+            reject(new Error(errorMsg));
+          }
+        });
+        child.on('error', (err) => {
+          log(`Upload process error: ${err.message}`);
+          reject(err);
+        });
+      });
+      return; // Success
+    } catch (error) {
+      log(`Upload attempt ${attempt} failed: ${(error as Error).message}`);
+      if (attempt < 3) {
+        log(`Waiting 5 seconds before retry...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      } else {
+        throw new Error(`Upload permanently failed for ${localPath} after 3 attempts. Last error: ${(error as Error).message}`);
+      }
+    }
+  }
+}
+
+async function callRunPodAPI(apiKey: string, query: string) {
+    log(`Sending API request: ${query}`);
+    try {
+        const response = await fetch(RUNPOD_API_BASE, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ query }),
+        });
+        const responseText = await response.text();
+        log(`API Response (${response.status}): ${responseText}`);
+
+        if (!response.ok) {
+            throw new Error(`RunPod API Error (${response.status}): ${responseText}`);
+        }
+        return JSON.parse(responseText);
+    } catch (error) {
+        log(`API Error: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+    }
+}
+
+// Try to discover an SSH login string (e.g., "user@host") from the GraphQL API
+async function discoverGatewayLogin(runpodApiKey: string, pod_id: string): Promise<{ user: string; host: string } | null> {
+  // First try the known field directly (may fail on older schemas)
+  const primaryQuery = `
+    query GetPodSsh {
+      pod(input: { podId: \"${pod_id}\" }) {
+        id
+        runtime { sshCommand }
+      }
+    }
+  `;
+  try {
+    const data = await callRunPodAPI(runpodApiKey, primaryQuery);
+    const cmd = data?.data?.pod?.runtime?.sshCommand as string | undefined;
+    if (cmd && typeof cmd === 'string') {
+      const m = cmd.match(/([\w.-]+)@([\w.-]+)/);
+      if (m) return { user: m[1], host: m[2] };
+    }
+  } catch (e) {
+    log(`Primary sshCommand probe failed: ${(e as Error).message}`);
+  }
+
+  // Introspect schema to find any string field on PodRuntime containing "ssh"
+  const introspection = `
+    query IntrospectRuntime {
+      __type(name: \"PodRuntime\") {
+        fields { name type { kind name ofType { kind name } } }
+      }
+    }
+  `;
+  try {
+    const meta = await callRunPodAPI(runpodApiKey, introspection);
+    const fields = meta?.data?.__type?.fields || [];
+    const stringFields = fields.filter((f: any) => {
+      const t = f.type;
+      const kind = t?.kind;
+      const name = t?.name;
+      const ofKind = t?.ofType?.kind;
+      const ofName = t?.ofType?.name;
+      const isStringScalar = (kind === 'SCALAR' && name === 'String') || (kind === 'NON_NULL' && ofKind === 'SCALAR' && ofName === 'String');
+      return isStringScalar && /ssh/i.test(f.name);
+    }).map((f: any) => f.name as string);
+
+    for (const field of stringFields) {
+      const q = `
+        query ProbeField {
+          pod(input: { podId: \"${pod_id}\" }) { id runtime { ${field} } }
+        }
+      `;
+      try {
+        const resp = await callRunPodAPI(runpodApiKey, q);
+        const val = resp?.data?.pod?.runtime?.[field];
+        if (typeof val === 'string') {
+          const m = val.match(/([\w.-]+)@([\w.-]+)/);
+          if (m) {
+            log(`Discovered SSH via runtime.${field}`);
+            return { user: m[1], host: m[2] };
+          }
+        }
+      } catch (e) {
+        log(`Probe for runtime.${field} failed: ${(e as Error).message}`);
+      }
+    }
+  } catch (e) {
+    log(`Introspection query failed: ${(e as Error).message}`);
+  }
+
+  // As a last attempt, introspect Pod itself for any string fields with 'ssh'
+  const podTypeIntro = `
+    query IntrospectPod {
+      __type(name: \"Pod\") {
+        fields { name type { kind name ofType { kind name } } }
+      }
+    }
+  `;
+  try {
+    const meta = await callRunPodAPI(runpodApiKey, podTypeIntro);
+    const fields = meta?.data?.__type?.fields || [];
+    const stringFields = fields.filter((f: any) => {
+      const t = f.type;
+      const kind = t?.kind;
+      const name = t?.name;
+      const ofKind = t?.ofType?.kind;
+      const ofName = t?.ofType?.name;
+      const isStringScalar = (kind === 'SCALAR' && name === 'String') || (kind === 'NON_NULL' && ofKind === 'SCALAR' && ofName === 'String');
+      return isStringScalar && /ssh/i.test(f.name);
+    }).map((f: any) => f.name as string);
+
+    for (const field of stringFields) {
+      const q = `
+        query ProbePodField {
+          pod(input: { podId: \"${pod_id}\" }) { id ${field} }
+        }
+      `;
+      try {
+        const resp = await callRunPodAPI(runpodApiKey, q);
+        const val = resp?.data?.pod?.[field];
+        if (typeof val === 'string') {
+          const m = val.match(/([\w.-]+)@([\w.-]+)/);
+          if (m) {
+            log(`Discovered SSH via pod.${field}`);
+            return { user: m[1], host: m[2] };
+          }
+        }
+      } catch (e) {
+        log(`Probe for pod.${field} failed: ${(e as Error).message}`);
+      }
+    }
+  } catch (e) {
+    log(`Pod type introspection failed: ${(e as Error).message}`);
+  }
+
+  return null;
+}
+
+async function sshScpDownload(
+  ssh_user: string,
+  ssh_host: string,
+  ssh_key_path: string,
+  remotePath: string,
+  localPath: string,
+  ssh_port?: number | null,
+  recursive: boolean = false
+): Promise<{ exitCode: number; stderr: string }> {
+  return new Promise((resolve) => {
+    const portArg = ssh_port ? ['-P', String(ssh_port)] : [];
+    const recursiveArg = recursive ? ['-r'] : [];
+    const args = [
+      ...recursiveArg,
+      ...portArg,
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-i', ssh_key_path,
+      `${ssh_user}@${ssh_host}:${remotePath}`,
+      localPath,
+    ];
+
+    log(`Starting SCP download: scp ${args.join(' ')}`);
+    const scp = spawn('scp', args);
+
+    let stderr = '';
+    scp.stderr.on('data', (data) => {
+      stderr += data.toString();
+      console.error(`[scp] stderr: ${data.toString()}`);
+    });
+
+    scp.stdout.on('data', (data) => {
+        console.log(`[scp] stdout: ${data.toString()}`);
+    });
+
+    scp.on('close', (exitCode) => {
+      if (exitCode === 0) {
+        log(`SCP download successful for ${remotePath}`);
+      } else {
+        log(`SCP download failed for ${remotePath} with exit code ${exitCode}. Stderr: ${stderr}`);
+      }
+      resolve({ exitCode: exitCode || 0, stderr });
+    });
+
+    scp.on('error', (err) => {
+      log(`SCP command failed to start: ${err.message}`);
+      resolve({ exitCode: -1, stderr: err.message });
+    });
+  });
+}
+
+/**
+ * Download using rsync instead of scp - supports resume and excludes patterns
+ */
+async function rsyncDownload(
+  ssh_user: string,
+  ssh_host: string,
+  ssh_key_path: string,
+  remotePath: string,
+  localPath: string,
+  ssh_port?: number | null,
+  excludePatterns: string[] = []
+): Promise<{ exitCode: number; stderr: string }> {
+  return new Promise((resolve) => {
+    const sshCmd = ssh_port
+      ? `ssh -p ${ssh_port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${ssh_key_path}`
+      : `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${ssh_key_path}`;
+
+    const excludeArgs = excludePatterns.map(p => `--exclude=${p}`).join(' ');
+    const cmd = `rsync -avz --partial --progress ${excludeArgs} -e "${sshCmd}" ${ssh_user}@${ssh_host}:${remotePath}/ ${localPath}/`;
+
+    log(`Starting rsync download: ${cmd}`);
+    const rsync = spawn('bash', ['-c', cmd]);
+
+    let stderr = '';
+    rsync.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    rsync.stdout.on('data', (data) => {
+      const output = data.toString();
+      if (output.includes('%') || output.includes('to-chk')) {
+        process.stdout.write(output);
+      }
+    });
+
+    rsync.on('close', (exitCode) => {
+      if (exitCode === 0) {
+        log(`Rsync download successful for ${remotePath}`);
+      } else {
+        log(`Rsync failed for ${remotePath} with exit code ${exitCode}. Stderr: ${stderr}`);
+      }
+      resolve({ exitCode: exitCode || 0, stderr });
+    });
+
+    rsync.on('error', (err) => {
+      log(`Rsync command failed to start: ${err.message}`);
+      resolve({ exitCode: -1, stderr: err.message });
+    });
+  });
+}
+
+/**
+ * Monitor download progress by watching file size growth
+ * Returns a cancel function to stop monitoring
+ */
+function monitorDownloadProgress(
+  localPath: string,
+  expectedSizeGB: number,
+  tracker: ProgressTracker,
+  intervalMs: number = 3000
+): () => void {
+  let cancelled = false;
+  let lastSize = 0;
+  let lastTime = Date.now();
+
+  const checkProgress = () => {
+    if (cancelled) return;
+
+    try {
+      if (fs.existsSync(localPath)) {
+        const stats = fs.statSync(localPath);
+        const currentSizeGB = stats.size / (1024 ** 3);
+        const currentTime = Date.now();
+
+        // Calculate speed
+        const elapsedSec = (currentTime - lastTime) / 1000;
+        const downloadedSinceLastCheck = stats.size - lastSize;
+        const speedMBps = elapsedSec > 0 ? (downloadedSinceLastCheck / (1024 * 1024)) / elapsedSec : 0;
+
+        // Calculate ETA
+        const remainingGB = expectedSizeGB - currentSizeGB;
+        const etaMinutes = speedMBps > 0 ? (remainingGB * 1024) / speedMBps / 60 : 0;
+
+        // Calculate percentage
+        const percent = Math.min(99, Math.round((currentSizeGB / expectedSizeGB) * 100));
+
+        // Update tracker and log
+        const progressMsg = `${currentSizeGB.toFixed(2)}/${expectedSizeGB.toFixed(2)} GB (${speedMBps.toFixed(1)} MB/s, ~${etaMinutes.toFixed(1)} min remaining)`;
+        tracker.updateStage('adapter_download', percent * 0.5, `Downloading GGUF: ${progressMsg}`);
+        log(`Download progress: ${progressMsg}`);
+        console.log(`📥 Download: ${progressMsg}`);
+
+        lastSize = stats.size;
+        lastTime = currentTime;
+      }
+    } catch (e) {
+      // File might not exist yet, ignore
+    }
+
+    if (!cancelled) {
+      setTimeout(checkProgress, intervalMs);
+    }
+  };
+
+  // Start monitoring after a short delay
+  setTimeout(checkProgress, 1000);
+
+  return () => {
+    cancelled = true;
+  };
+}
+
+export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise<RunRemoteTrainingResult> {
+  // Initialize progress tracker
+  const stages = [
+    'initialization',
+    'pod_creation',
+    'ssh_connection',
+    'file_upload',
+    'training',
+    'adapter_download',
+    'pod_termination'
+  ];
+  const tracker = new ProgressTracker(`lora-training-${opts.RUN_LABEL}`, stages, opts.WORK_LOCAL);
+
+  console.log('\n🚀 ====== REMOTE LORA TRAINING STARTED ======');
+  console.log(`📅 Date: ${opts.DATE_STR}`);
+  console.log(`🏷️  Run label: ${opts.RUN_LABEL}`);
+  console.log(`📁 Work directory: ${opts.WORK_LOCAL}`);
+  console.log(`📊 Progress status file: ${tracker.getStatusFilePath()}\n`);
+
+  log('=== Starting new training run ===');
+  log(`Date: ${opts.DATE_STR}`);
+  log(`Run label: ${opts.RUN_LABEL}`);
+  log(`Work directory: ${opts.WORK_LOCAL}`);
+
+  tracker.startStage('initialization', 'Reading configuration');
+
+  // Honor environment toggles for connection discovery
+  const NO_GATEWAY = String(process.env.RUNPOD_NO_GATEWAY || '').trim() === '1';
+  const DIRECT_SSH_USER = String(process.env.RUNPOD_DIRECT_SSH_USER || '').trim() || null;
+  if (NO_GATEWAY) {
+    log('RUNPOD_NO_GATEWAY=1 set; skipping gateway schema probes.');
+  }
+  if (DIRECT_SSH_USER) {
+    log(`RUNPOD_DIRECT_SSH_USER=${DIRECT_SSH_USER}; will prefer this user for direct SSH.`);
+  }
+
+  // Read config file (base model and training mode)
+  let base_model: string;
+  let cfg: any;
+  try {
+    cfg = JSON.parse(fs.readFileSync(opts.CONFIG_FILE, 'utf-8'));
+    base_model = cfg.base_model;
+  } catch (error) {
+    log(`Failed to read base model from config: ${(error as Error).message}`);
+    base_model = DEFAULT_TRAINING_MODEL;
+    cfg = { base_model, training_mode: 'lora' };
+  }
+
+  // The requested target owns the output format. Runtime state must not change
+  // the artifact selected by the training request.
+  const targetBackend = cfg.trainingTarget === 'vllm' ? 'vllm' : 'ollama';
+  const isVllmBackend = targetBackend === 'vllm';
+  if (isVllmBackend) {
+    log('vLLM backend detected - disabling GGUF conversion (safetensors mode)');
+    cfg.gguf_conversion = { enabled: false };
+    // Write updated config back to file
+    fs.writeFileSync(opts.CONFIG_FILE, JSON.stringify(cfg, null, 2));
+  }
+
+  tracker.setMetadata({ base_model, samples: opts.samples_used, backend: targetBackend });
+  tracker.completeStage('initialization');
+
+  const summary: any = {
+    date: opts.DATE_STR,
+    run_label: opts.RUN_LABEL,
+    run_id: opts.run_id || null,
+    samples_used: opts.samples_used,
+    base_model: base_model,
+    pod_id: null,
+    ssh_user: null,
+    ssh_host: null,
+    ssh_key_path: null,
+    connection_mode: 'gateway-no-scp-no-pty',
+    adapter_path: opts.FINAL_ADAPTER_DIR,
+    upload_verification: null,
+    terminated: false,
+    training_success: false,
+  };
+
+  const runpodApiKey = process.env.RUNPOD_API_KEY;
+  if (!runpodApiKey) {
+    tracker.fail('RUNPOD_API_KEY not set');
+    throw new Error('RUNPOD_API_KEY is not set in the environment.');
+  }
+
+  // 3.1. Create the pod
+  console.log('\n📦 Stage 1/6: Creating RunPod instance...');
+  let pod_id: string | null = null;
+  const envTemplateId = process.env.RUNPOD_TEMPLATE_ID;
+  if (envTemplateId) {
+    log(`Using RUNPOD_TEMPLATE_ID=${envTemplateId}`);
+  }
+
+  // GPU selection: A100 80GB for full fine-tuning, env var (5090) for LoRA
+  const trainingMode = cfg.training_mode || 'lora';
+  let gpuType: string;
+
+  if (trainingMode === 'full_finetune' || trainingMode === 'full') {
+    // Full fine-tuning requires 80GB+ VRAM (gradients + optimizer states)
+    gpuType = process.env.RUNPOD_GPU_TYPE_FULL || "NVIDIA A100 80GB PCIe";
+    log(`FULL FINE-TUNING mode: Using ${gpuType} (80GB VRAM required)`);
+  } else {
+    // LoRA training works on smaller GPUs
+    gpuType = process.env.RUNPOD_GPU_TYPE || "NVIDIA GeForce RTX 4090";
+    log(`LoRA mode: Using ${gpuType}`);
+  }
+
+  log(`Selected GPU type: ${gpuType}`);
+
+  tracker.startStage('pod_creation', `Requesting ${gpuType}`);
+
+  for (const cloudType of ['COMMUNITY', 'SECURE']) {
+    log(`Attempting to deploy pod on ${cloudType} cloud...`);
+    console.log(`📦 Trying ${cloudType} cloud...`);
+    const mutation = `
+      mutation CreatePod {
+        podFindAndDeployOnDemand(
+          input: {
+            templateId: "${envTemplateId || 'metahuman-runpod-trainer'}",
+            gpuTypeId: "${gpuType}",
+            cloudType: ${cloudType},
+            gpuCount: 1,
+            minVcpuCount: 15,
+            minMemoryInGb: 46,
+            volumeInGb: 306,
+            containerDiskInGb: 40
+          }
+        ) {
+          id
+          runtime {
+            ports {
+              ip
+              isIpPublic
+              privatePort
+              publicPort
+            }
+          }
+        }
+      }`;
+    try {
+      const data = await callRunPodAPI(runpodApiKey, mutation);
+      if (data.data?.podFindAndDeployOnDemand?.id) {
+        pod_id = data.data.podFindAndDeployOnDemand.id;
+        log(`Pod created successfully on ${cloudType} cloud. Pod ID: ${pod_id}`);
+        console.log(`✅ Pod created: ${pod_id}`);
+        tracker.setMetadata({ pod_id });
+        tracker.completeStage('pod_creation');
+        summary.pod_id = pod_id;
+        break;
+      } else {
+        log(`No pod ID returned for ${cloudType}: ${JSON.stringify(data)}`);
+      }
+    } catch (error) {
+      log(`Failed to deploy on ${cloudType}: ${(error as Error).message}`);
+    }
+  }
+
+  if (!pod_id) {
+    console.error('❌ Failed to create pod on any cloud');
+    tracker.failStage('pod_creation', 'No pods available');
+    tracker.fail('Pod creation failed');
+    fs.writeFileSync(opts.SUMMARY_FILE, JSON.stringify(summary, null, 2));
+    return { ...summary, training_success: false, terminated: false };
+  }
+
+  // 3.2. Get SSH connection info
+  console.log('\n🔌 Stage 2/6: Establishing SSH connection...');
+  log('Waiting for pod to become RUNNING...');
+  tracker.startStage('ssh_connection', 'Waiting for container to start');
+
+  let ssh_user: string | null = null;
+  let ssh_host: string | null = null;
+  let ssh_key_path: string | null = null;
+  let ssh_port: number | null = null;
+  const ENV_SSH_KEY_PATH = (process.env.RUNPOD_SSH_KEY_PATH || '').trim() || null;
+
+  try {
+    // Poll until runtime is available; avoid querying unsupported fields
+    let sshCommand: string | null = null;
+    let lastRuntimePorts: any[] | null = null;
+    for (let i = 0; i < 120; i++) { // up to ~10 minutes for Docker image download/extraction
+      log(`Waiting for pod ssh gateway... (Attempt ${i + 1}/120)`);
+
+      // Update progress every 10 attempts
+      if (i % 10 === 0 && i > 0) {
+        const progress = Math.min(90, Math.round((i / 120) * 100));
+        tracker.updateStage('ssh_connection', progress, `Attempt ${i}/120 - Docker image loading...`);
+        console.log(`🔌 SSH connection attempt ${i}/120... (container starting)`);
+      }
+      const podQuery = `
+        query GetPodStatus {
+          pod(input: { podId: \"${pod_id}\" }) {
+            id
+            runtime {
+              ports {
+                ip
+                isIpPublic
+                privatePort
+                publicPort
+                type
+              }
+            }
+          }
+        }`;
+      try {
+        const podData = await callRunPodAPI(runpodApiKey, podQuery);
+        const runtimeInfo = podData?.data?.pod?.runtime || null;
+        // Capture latest ports and attempt discovery via separate probes
+        if (runtimeInfo && Array.isArray(runtimeInfo.ports)) {
+          lastRuntimePorts = runtimeInfo.ports as any[];
+          try {
+            log(`runtime.ports: ${JSON.stringify(lastRuntimePorts)}`);
+          } catch {}
+          // If we're in NO_GATEWAY mode and we see a public mapping, we can stop polling early
+          if (NO_GATEWAY) {
+            const hasPublic = lastRuntimePorts.some((p: any) => p && p.isIpPublic);
+            if (hasPublic) {
+              log('Public port mapping detected and NO_GATEWAY=1; proceeding without gateway discovery.');
+              break;
+            }
+          }
+        }
+        if (runtimeInfo && !NO_GATEWAY) {
+          const discovered = await discoverGatewayLogin(runpodApiKey, pod_id!);
+          if (discovered) {
+            sshCommand = `${discovered.user}@${discovered.host}`;
+            log(`Discovered SSH via schema probes: ${sshCommand}`);
+            break;
+          }
+        }
+      } catch (error) {
+        log(`Ignoring GraphQL error during polling: ${(error as Error).message}`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+
+    const connectionFile = path.join(opts.WORK_LOCAL, 'connection.json');
+
+    // Load any existing manual overrides from connection.json
+    let existingConn: any = null;
+    if (fs.existsSync(connectionFile)) {
+      try {
+        existingConn = JSON.parse(fs.readFileSync(connectionFile, 'utf-8'));
+      } catch {
+        existingConn = null;
+      }
+    }
+
+    // Preferred: Parse ssh_user and ssh_host from sshCommand if available
+    if (sshCommand) {
+      try {
+        const m = sshCommand.match(/([\w.-]+)@([\w.-]+)/);
+        if (m) {
+          ssh_user = m[1];
+          ssh_host = m[2];
+        }
+      } catch {}
+    }
+
+    // Fallback: allow manual override from connection.json when API doesn't expose sshCommand
+    if (!ssh_user && existingConn && typeof existingConn.ssh_user === 'string') {
+      ssh_user = existingConn.ssh_user;
+    }
+    if (!ssh_host && existingConn && typeof existingConn.ssh_host === 'string') {
+      ssh_host = existingConn.ssh_host;
+    }
+
+    // Load/override ssh_key_path from existing file, env, or sensible default (do this EARLY)
+    if (!ssh_key_path && existingConn && typeof existingConn.ssh_key_path === 'string') {
+      ssh_key_path = existingConn.ssh_key_path as string;
+    }
+    if (!ssh_key_path && ENV_SSH_KEY_PATH) {
+      ssh_key_path = ENV_SSH_KEY_PATH;
+      log(`Using ssh key from RUNPOD_SSH_KEY_PATH env: ${ssh_key_path}`);
+    }
+    if (!ssh_key_path) {
+      const defaultKey = path.join(process.env.HOME || '', '.ssh', 'id_ed25519');
+      if (defaultKey && fs.existsSync(defaultKey)) {
+        ssh_key_path = defaultKey;
+        log(`Using default SSH key path: ${ssh_key_path}`);
+      }
+    }
+
+    // Direct IP/port fallback: use runtime.ports to find a public SSH endpoint
+    // When NO_GATEWAY=1, always prefer runtime ports over stale connection.json
+    if ((NO_GATEWAY || !ssh_user || !ssh_host) && lastRuntimePorts && lastRuntimePorts.length > 0) {
+      const sshPortMapping = lastRuntimePorts.find((p: any) => p.isIpPublic && p.privatePort === 22 && p.type && String(p.type).toLowerCase() === 'tcp')
+        || lastRuntimePorts.find((p: any) => p.isIpPublic && (p.privatePort === 22 || p.publicPort === 22))
+        || lastRuntimePorts.find((p: any) => p.isIpPublic && p.type && String(p.type).toLowerCase().includes('tcp'))
+        || lastRuntimePorts.find((p: any) => p.isIpPublic);
+      if (sshPortMapping) {
+        ssh_host = sshPortMapping.ip;
+        ssh_port = sshPortMapping.publicPort || 22;
+        const keyPathCandidate = existingConn?.ssh_key_path || ssh_key_path || '';
+        log(`Key path candidate: ${keyPathCandidate || '(empty)'}`);
+        let probeSucceeded = false;
+        // If a direct SSH user is provided, try it first and prefer it
+        const candidates = DIRECT_SSH_USER ? [DIRECT_SSH_USER] : ['root', 'unsloth'];
+        log(`SSH probe candidates: ${candidates.join(', ')}`);
+        for (const u of candidates) {
+          if (!keyPathCandidate) {
+            log(`Skipping SSH probe - no key path available`);
+            break;
+          }
+          // Retry up to ~10 minutes to allow Docker image download + sshd to start
+          // Large images (8GB+) can take 5-10 minutes to download on first pull
+          const maxAttempts = 120; // 120 attempts × 5 seconds = 10 minutes
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const probe = await sshExecNoPty(u, ssh_host!, keyPathCandidate, 'true', ssh_port);
+            if (probe.exitCode === 0) {
+              ssh_user = u;
+              probeSucceeded = true;
+              log(`Direct SSH handshake succeeded as ${u}@${ssh_host}:${ssh_port} (attempt ${attempt})`);
+              break;
+            } else {
+              log(`Probe as ${u}@${ssh_host}:${ssh_port} failed (exit ${probe.exitCode}) attempt ${attempt}/${maxAttempts}`);
+              if (attempt === 1 || attempt % 12 === 0) {
+                // Log verbose details every minute
+                if (probe.stderr) log(`SSH stderr: ${probe.stderr.substring(0, 500)}`);
+                if (probe.stdout) log(`SSH stdout: ${probe.stdout.substring(0, 500)}`);
+                const sshCmd = `ssh -vv -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=10 -i ${keyPathCandidate} -p ${ssh_port} ${u}@${ssh_host} 'true'`;
+                log(`Manual test command: ${sshCmd}`);
+                log(`Still waiting for container to fully start (Docker image download may be in progress)...`);
+              }
+              await new Promise(r => setTimeout(r, 5000));
+            }
+          }
+          if (probeSucceeded) break;
+        }
+        if (!probeSucceeded) {
+          throw new Error(`Direct SSH handshake failed for all candidate users (${candidates.join(', ')}). Ensure sshd is running, your SSH_PUBLIC_KEY is installed in the template, and port ${ssh_port} is open on ${ssh_host}.`);
+        }
+      }
+    }
+
+    // Default host if not provided
+    if (!ssh_host) ssh_host = 'ssh.runpod.io';
+
+    if (!ssh_user || !ssh_host) {
+      throw new Error(
+        'RunPod GraphQL did not expose sshCommand and no manual ssh_user/ssh_host found. ' +
+        `Please create ${connectionFile} with {"ssh_user":"<value>", "ssh_host":"ssh.runpod.io", "ssh_key_path":"~/.ssh/id_ed25519"}`
+      );
+    }
+
+    // Validate ssh_key_path presence
+    if (!ssh_key_path) {
+      throw new Error(
+        `connection.json is missing ssh_key_path. Please create ${connectionFile} with at least {"ssh_key_path": "~/.ssh/id_ed25519"}`
+      );
+    }
+
+    // Expand ~ to HOME if present
+    if (ssh_key_path.startsWith('~')) {
+      const home = process.env.HOME || '';
+      ssh_key_path = path.join(home, ssh_key_path.slice(2));
+    }
+
+    if (!fs.existsSync(ssh_key_path)) {
+      throw new Error(`ssh_key_path does not exist: ${ssh_key_path}`);
+    }
+
+    // Write fresh connection.json for this run
+    const finalConnDetails = {
+      ssh_user,
+      ssh_host,
+      ssh_key_path,
+    };
+    fs.writeFileSync(connectionFile, JSON.stringify(finalConnDetails, null, 2));
+    log(`Wrote fresh connection.json for this pod: ${connectionFile}`);
+
+    summary.ssh_user = ssh_user;
+    summary.ssh_host = ssh_host;
+    summary.ssh_key_path = ssh_key_path;
+    if (ssh_port) {
+      summary.connection_mode = 'direct-ssh-no-pty';
+      log(`Using direct SSH mode: ${ssh_user}@${ssh_host}:${ssh_port}`);
+      console.log(`✅ SSH connected: ${ssh_user}@${ssh_host}:${ssh_port}`);
+    } else {
+      summary.connection_mode = 'gateway-no-scp-no-pty';
+      log(`Using gateway SSH mode: ${ssh_user}@${ssh_host}`);
+      console.log(`✅ SSH connected: ${ssh_user}@${ssh_host}`);
+    }
+    tracker.completeStage('ssh_connection');
+    console.log('✅ Stage 2/6: SSH connection established\n');
+
+    // 2.1. Wait for pod environment to be fully ready
+    console.log('⏸️  Verifying pod environment is ready...');
+    log('Checking for Python, pip, and workspace setup');
+
+    let retries = 0;
+    const maxRetries = 6; // 6 retries * 10 seconds = 1 minute
+    let envReady = false;
+
+    while (retries < maxRetries && !envReady) {
+      try {
+        const checkResult = await sshExecNoPty(
+          ssh_user!,
+          ssh_host!,
+          ssh_key_path!,
+          'python3 --version && pip --version && ls /workspace && echo "ENV_READY"',
+          ssh_port
+        );
+
+        if (checkResult.stdout.includes('ENV_READY')) {
+          console.log('✅ Pod environment is ready');
+          log(`Environment check passed: ${checkResult.stdout}`);
+          envReady = true;
+        } else {
+          log(`Environment not ready yet (attempt ${retries + 1}/${maxRetries})`);
+          retries++;
+          await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+      } catch (error) {
+        log(`Environment check failed (attempt ${retries + 1}/${maxRetries}): ${(error as Error).message}`);
+        retries++;
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      }
+    }
+
+    if (!envReady) {
+      console.warn('⚠️  Pod environment may not be fully ready, proceeding with upload...');
+      log('WARNING: Environment checks did not pass, proceeding anyway');
+    }
+
+    // 3.3. Upload dataset + config + fixed training script using base64-over-ssh
+    console.log('\n📤 Stage 3/6: Uploading training data to pod...');
+    log(`Uploading curated training files via base64-over-ssh (samples: ${opts.samples_used})...`);
+    tracker.startStage('file_upload', 'Uploading 3 files');
+
+    // Ensure target directories exist with proper permissions
+    const mkdirResult = await sshExecNoPty(ssh_user!, ssh_host!, ssh_key_path!, 'mkdir -p /workspace/input && chmod 755 /workspace/input && ls -la /workspace/', ssh_port);
+    log(`Directory creation result: ${mkdirResult.stdout}`);
+
+    await sshUploadFileBase64(opts.CLEAN_DATA_FILE, '/workspace/input/unsloth_dataset.jsonl', ssh_user!, ssh_host!, ssh_key_path!, ssh_port);
+    tracker.updateStage('file_upload', 25, `Uploaded dataset (${opts.samples_used} samples)`);
+    console.log(`📤 Uploaded: dataset.jsonl (${opts.samples_used} samples)`);
+
+    await sshUploadFileBase64(opts.CONFIG_FILE, '/workspace/input/config.json', ssh_user!, ssh_host!, ssh_key_path!, ssh_port);
+    tracker.updateStage('file_upload', 50, 'Uploaded config.json');
+    console.log('📤 Uploaded: config.json');
+
+    // Upload persona data for training context when the shared training-data
+    // composition policy includes it.
+    const profilePaths = getProfilePaths(opts.username);
+    const personaPath = path.join(profilePaths.persona, 'core.json');
+    const includePersona = process.env.METAHUMAN_INCLUDE_PERSONA !== '0';
+
+    if (!includePersona) {
+      log('Persona context disabled by training-data composition policy');
+      console.log('ℹ️  Persona context disabled for this training run');
+    } else if (fs.existsSync(personaPath)) {
+      await sshUploadFileBase64(personaPath, '/workspace/input/persona.json', ssh_user!, ssh_host!, ssh_key_path!, ssh_port);
+      tracker.updateStage('file_upload', 75, 'Uploaded persona.json');
+      console.log('📤 Uploaded: persona.json');
+      log('Uploaded persona data for training context');
+    } else {
+      log('WARNING: persona/core.json not found, training without persona context');
+      console.warn('⚠️  No persona.json found - training without persona context');
+    }
+
+    // Determine which training script to upload based on config
+    let trainingScriptName: string;
+    let trainingScriptPath: string;
+    const trainingMode = cfg.training_mode || 'lora';
+
+    if (trainingMode === 'full_finetune' || trainingMode === 'full') {
+      trainingScriptName = 'train_full_finetune.py';
+      trainingScriptPath = path.join(ROOT, 'docker', 'runpod-trainer', 'train_full_finetune.py');
+      log('FULL FINE-TUNING mode detected');
+    } else {
+      trainingScriptName = 'train_unsloth.py';
+      trainingScriptPath = path.join(ROOT, 'docker', 'runpod-trainer', 'train_unsloth.py');
+      log('LoRA training mode detected');
+    }
+
+    // Upload training script (overrides the one baked into v3 image)
+    log(`Uploading training script from: ${trainingScriptPath}`);
+    await sshUploadFileBase64(trainingScriptPath, `/workspace/${trainingScriptName}`, ssh_user!, ssh_host!, ssh_key_path!, ssh_port);
+
+    // Verify upload by checking file size and line count
+    const verifyResult = await sshExecNoPty(ssh_user!, ssh_host!, ssh_key_path!, `wc -l /workspace/${trainingScriptName} && ls -lh /workspace/${trainingScriptName}`, ssh_port);
+    log(`Training script verification: ${verifyResult.stdout.trim()}`);
+
+    // Also remove any Python bytecode cache that might interfere
+    await sshExecNoPty(ssh_user!, ssh_host!, ssh_key_path!, 'rm -rf /workspace/__pycache__ /workspace/*.pyc', ssh_port);
+
+    tracker.completeStage('file_upload');
+    console.log(`📤 Uploaded: ${trainingScriptName}`);
+    console.log('✅ Stage 3/6: Upload complete\n');
+
+    // Verify and generate upload.ok on the pod
+    const verificationResult = await sshExecNoPty(ssh_user!, ssh_host!, ssh_key_path!, 'ls -lh /workspace/input && wc -l /workspace/input/unsloth_dataset.jsonl && sha256sum /workspace/input/config.json > /workspace/input/upload.ok && cat /workspace/input/upload.ok', ssh_port);
+    const outputLines = verificationResult.stdout.split('\n');
+    // Find the sha256sum line in the output
+    const sha256Line = outputLines.find(line => line.includes('config.json') && line.includes('workspace/input/config.json'));
+    if (sha256Line) {
+      summary.upload_verification = sha256Line.trim();
+      log(`Upload verification: ${summary.upload_verification}`);
+    } else {
+      log(`Could not find SHA256 verification in output: ${verificationResult.stdout}`);
+    }
+
+    // 3.4. Run training remotely with real-time progress streaming
+    if (trainingMode === 'full_finetune' || trainingMode === 'full') {
+      console.log('\n🔥 Stage 4/6: Full fine-tuning model...');
+      console.log('⏱️  Expected duration: 2-6 hours for 30B model\n');
+    } else {
+      console.log('\n🔥 Stage 4/6: Training LoRA adapter...');
+      console.log('⏱️  Expected duration: 30-60 minutes for 30B model\n');
+    }
+    log(`Executing remote training script: ${trainingScriptName}`);
+    tracker.startStage('training', 'Model loading and setup');
+
+    // Stream training output in real-time to show progress
+    const trainResult = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
+      const args: string[] = [
+        '-T',
+        '-vv',
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'BatchMode=yes',
+        '-o', 'ConnectTimeout=10',
+        '-o', 'ServerAliveInterval=30',
+        '-o', 'ServerAliveCountMax=999',
+        '-o', 'TCPKeepAlive=yes',
+      ];
+      if (ssh_port) args.push('-p', String(ssh_port));
+
+      // Use venv if available (LoRA templates), otherwise use system Python (A100 templates)
+      const pythonCommand = trainingMode === 'full_finetune' || trainingMode === 'full'
+        ? `python3 /workspace/${trainingScriptName}`  // A100: Use system Python
+        : `source /workspace/unsloth-venv/bin/activate && python /workspace/${trainingScriptName}`;  // LoRA: Use venv
+
+      args.push('-i', ssh_key_path!, `${ssh_user}@${ssh_host}`, pythonCommand);
+
+      const ssh = spawn('ssh', args);
+      let stdout = '';
+      let stderr = '';
+      let lastProgress = 0;
+      let lastLogTime = Date.now();
+
+      ssh.stdout.on('data', (data) => {
+        const text = data.toString();
+        stdout += text;
+
+        // Stream all output to console for detailed logging
+        // Split by lines and log each line to preserve formatting
+        const lines = text.split('\n').filter((line: string) => line.trim());
+        for (const line of lines) {
+          console.log(line);
+        }
+
+        // Parse progress bar: "65%|██████▌ | 17/26 [27:32<11:45, 78.36s/it]"
+        const progressMatch = text.match(/(\d+)%\|.*?\| (\d+)\/(\d+)/);
+        if (progressMatch) {
+          const [_, percent, current, total] = progressMatch;
+          const progress = parseInt(percent);
+
+          // Update progress tracker every 1% or 10 seconds (reduced from 5%/30s)
+          if (progress > lastProgress || Date.now() - lastLogTime > 10000) {
+            lastProgress = progress;
+            lastLogTime = Date.now();
+            tracker.updateStage('training', progress, `Step ${current}/${total}`);
+          }
+        }
+
+        // Parse loss metrics: "{'loss': 2.4506, ...}"
+        const lossMatch = text.match(/['"']loss['"']:\s*([\d.]+)/);
+        if (lossMatch && Date.now() - lastLogTime > 10000) {
+          lastLogTime = Date.now();
+        }
+      });
+
+      ssh.stderr.on('data', (data) => {
+        const text = data.toString();
+        stderr += text;
+        // Stream stderr to console for detailed logging
+        const lines = text.split('\n').filter((line: string) => line.trim());
+        for (const line of lines) {
+          console.error(line);
+        }
+      });
+
+      ssh.on('close', (exitCode) => {
+        resolve({ stdout, stderr, exitCode: exitCode || 0 });
+      });
+
+      ssh.on('error', (err) => {
+        console.error('SSH training command failed to start:', err);
+        resolve({ stdout: '', stderr: err.message, exitCode: -1 });
+      });
+    });
+
+    log(`Training exit code: ${trainResult.exitCode}`);
+
+    // Save full training output to file
+    const trainingOutputFile = path.join(opts.WORK_LOCAL, 'training_output.txt');
+    fs.writeFileSync(trainingOutputFile, `=== STDOUT ===\n${trainResult.stdout}\n\n=== STDERR ===\n${trainResult.stderr}\n`);
+    log(`Full training output saved to: ${trainingOutputFile}`);
+
+    // Log summary to console
+    if (trainResult.stderr) log(`Training stderr (last 2000 chars): ${trainResult.stderr.substring(Math.max(0, trainResult.stderr.length - 2000))}`);
+    if (trainResult.stdout) log(`Training stdout (last 2000 chars): ${trainResult.stdout.substring(Math.max(0, trainResult.stdout.length - 2000))}`);
+
+    if (trainResult.exitCode !== 0) {
+      log('Remote training script failed.');
+      console.error(`\n${'='.repeat(60)}`);
+      console.error(`❌ TRAINING FAILED - Exit code ${trainResult.exitCode}`);
+      console.error(`${'='.repeat(60)}\n`);
+
+      // Extract and display the actual error
+      const combinedOutput = trainResult.stderr + '\n' + trainResult.stdout;
+      const errorPatterns = [
+        /Error:\s*(.+)/gi,
+        /Exception:\s*(.+)/gi,
+        /CUDA out of memory/gi,
+        /RuntimeError:\s*(.+)/gi,
+        /ValueError:\s*(.+)/gi,
+        /torch\.cuda\.OutOfMemoryError/gi,
+        /Traceback.*\n([\s\S]*?)(?=\n\n|\Z)/g,
+      ];
+
+      let foundErrors: string[] = [];
+      for (const pattern of errorPatterns) {
+        const matches = combinedOutput.matchAll(pattern);
+        for (const match of matches) {
+          foundErrors.push(match[0].trim());
+        }
+      }
+
+      if (foundErrors.length > 0) {
+        console.error('📋 Detected errors:');
+        console.error('-'.repeat(40));
+        // Show unique errors only
+        const uniqueErrors = [...new Set(foundErrors)];
+        for (const err of uniqueErrors.slice(0, 10)) {
+          console.error(`  • ${err.substring(0, 500)}`);
+        }
+        console.error('-'.repeat(40));
+      }
+
+      // Show last 50 lines of stderr if available
+      if (trainResult.stderr) {
+        const stderrLines = trainResult.stderr.split('\n').slice(-50);
+        console.error('\n📜 Last 50 lines of stderr:');
+        console.error('-'.repeat(40));
+        console.error(stderrLines.join('\n'));
+        console.error('-'.repeat(40));
+      }
+
+      // Save failure summary to easy-to-find file
+      const failureFile = path.join(opts.WORK_LOCAL, 'TRAINING_FAILED.txt');
+      fs.writeFileSync(failureFile, [
+        `TRAINING FAILED AT: ${new Date().toISOString()}`,
+        `EXIT CODE: ${trainResult.exitCode}`,
+        ``,
+        `=== DETECTED ERRORS ===`,
+        foundErrors.join('\n\n'),
+        ``,
+        `=== FULL STDERR ===`,
+        trainResult.stderr,
+        ``,
+        `=== FULL STDOUT ===`,
+        trainResult.stdout,
+      ].join('\n'));
+      console.error(`\n📁 Full failure log saved to: ${failureFile}`);
+      console.error(`📁 Training output saved to: ${trainingOutputFile}\n`);
+
+      tracker.failStage('training', `Exit code ${trainResult.exitCode}`);
+      summary.training_success = false;
+      summary.error = foundErrors.length > 0 ? foundErrors[0] : `Exit code ${trainResult.exitCode}`;
+    } else {
+      console.log('✅ Stage 4/6: Training complete\n');
+      tracker.completeStage('training');
+      summary.training_success = true;
+    }
+
+    // 3.5. Download trained model (mode-specific paths)
+    // trainingMode is already declared earlier (line 763)
+    const isFullFineTune = trainingMode === 'full_finetune' || trainingMode === 'full';
+
+    if (isFullFineTune) {
+        // Full fine-tuning: download safetensors model directory
+        console.log('\n📥 Stage 5/6: Downloading full fine-tuned model...');
+        console.log('⏱️  This will download the safetensors model (~28GB)\n');
+        log('Downloading full fine-tuned model from /workspace/output/model/...');
+        tracker.startStage('adapter_download', 'Downloading safetensors model');
+
+        if (summary.training_success) {
+          // Check if S3 is configured for fast upload instead of download
+          // Can be disabled via METAHUMAN_DISABLE_S3 environment variable
+          const s3Disabled = process.env.METAHUMAN_DISABLE_S3 === '1';
+          const s3Config = s3Disabled ? null : loadS3ConfigFromEnv();
+
+          if (s3Disabled) {
+            console.log('ℹ️ S3 upload disabled by user preference, using direct download...');
+            log('S3 upload disabled via METAHUMAN_DISABLE_S3 flag');
+          }
+
+          if (s3Config) {
+            // S3 Path: Upload model to S3 for fast termination
+            console.log('☁️ S3 configured - uploading model to RunPod S3...');
+            console.log('⏱️  This will upload the model (~2-3 minutes) then terminate the pod immediately\n');
+            log('Uploading model to S3 storage...');
+            tracker.startStage('s3_upload', 'Uploading to S3');
+
+            // Install AWS CLI on the pod and upload directly from there
+            const s3Key = `${opts.username}/${opts.RUN_LABEL}/model`;
+            const uploadScript = `
+#!/bin/bash
+set -e
+
+# Install AWS CLI if not present
+if ! command -v aws &> /dev/null; then
+  echo "Installing AWS CLI..."
+  curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  unzip -q awscliv2.zip
+  ./aws/install
+fi
+
+# Configure AWS credentials
+export AWS_ACCESS_KEY_ID="${s3Config.accessKeyId}"
+export AWS_SECRET_ACCESS_KEY="${s3Config.secretAccessKey}"
+export AWS_ENDPOINT_URL="${s3Config.endpoint}"
+export AWS_DEFAULT_REGION="${s3Config.region || 'us-east-1'}"
+
+# Upload model directory to S3 (excluding checkpoints to save 24GB)
+echo "Uploading model to s3://${s3Config.bucket}/${s3Key}/"
+aws s3 sync /workspace/output/model s3://${s3Config.bucket}/${s3Key}/ \\
+  --exclude "checkpoint-*" \\
+  --exclude "*.pt" \\
+  --exclude "*.pth" \\
+  --exclude "optimizer.pt" \\
+  --exclude "scheduler.pt" \\
+  --exclude "rng_state.pth" \\
+  --endpoint-url "${s3Config.endpoint}"
+
+echo "Upload complete!"
+`;
+
+            // Write upload script to temp file
+            const uploadScriptPath = path.join(opts.WORK_LOCAL, 'upload_to_s3.sh');
+            fs.writeFileSync(uploadScriptPath, uploadScript);
+
+            try {
+              // Copy script to pod using base64 upload
+              await sshUploadFileBase64(
+                uploadScriptPath,
+                '/tmp/upload_to_s3.sh',
+                ssh_user!, ssh_host!, ssh_key_path!,
+                ssh_port
+              );
+              log('Upload script copied to pod');
+
+              // Execute upload script on pod
+              const uploadResult = await sshExecNoPty(
+                ssh_user!, ssh_host!, ssh_key_path!,
+                'chmod +x /tmp/upload_to_s3.sh && /tmp/upload_to_s3.sh',
+                ssh_port
+              );
+
+              if (uploadResult.exitCode === 0) {
+                const s3Url = `${s3Config.endpoint}/${s3Config.bucket}/${s3Key}/`;
+                log(`Model uploaded to S3: ${s3Url}`);
+                console.log(`✅ Model uploaded to S3!`);
+                console.log(`📍 S3 Location: ${s3Url}`);
+                console.log('💡 Download later with: aws s3 sync <s3-url> <local-path>');
+                tracker.completeStage('s3_upload');
+
+                summary.s3_url = s3Url;
+                summary.s3_key = s3Key;
+              } else {
+                log(`S3 upload failed with exit code ${uploadResult.exitCode}, falling back to rsync...`);
+                console.error('❌ S3 upload failed, falling back to rsync download...');
+                console.error(`stderr: ${uploadResult.stderr}`);
+                tracker.failStage('s3_upload', `Upload failed: ${uploadResult.exitCode}`);
+
+                // FALLBACK: Download via rsync since S3 failed
+                console.log('📥 Fallback: Downloading model via rsync...');
+                ensureDirSync(opts.FINAL_ADAPTER_DIR);
+                const fallbackResult = await rsyncDownload(
+                  ssh_user!, ssh_host!, ssh_key_path!,
+                  '/workspace/output/model',
+                  opts.FINAL_ADAPTER_DIR,
+                  ssh_port,
+                  ['checkpoint-*', '*.pt', '*.pth', 'optimizer.pt', 'scheduler.pt', 'rng_state.pth']
+                );
+                if (fallbackResult.exitCode === 0) {
+                  console.log('✅ Fallback rsync download successful!');
+                  log('Fallback rsync download completed successfully');
+                } else {
+                  console.error('❌ Fallback rsync also failed!');
+                  log(`Fallback rsync failed: ${fallbackResult.exitCode}`);
+                }
+              }
+            } catch (error) {
+              log(`S3 upload error: ${(error as Error).message}, falling back to rsync...`);
+              console.error('❌ S3 upload error:', (error as Error).message);
+              tracker.failStage('s3_upload', (error as Error).message);
+
+              // FALLBACK: Download via rsync since S3 errored
+              console.log('📥 Fallback: Downloading model via rsync...');
+              ensureDirSync(opts.FINAL_ADAPTER_DIR);
+              try {
+                const fallbackResult = await rsyncDownload(
+                  ssh_user!, ssh_host!, ssh_key_path!,
+                  '/workspace/output/model',
+                  opts.FINAL_ADAPTER_DIR,
+                  ssh_port,
+                  ['checkpoint-*', '*.pt', '*.pth', 'optimizer.pt', 'scheduler.pt', 'rng_state.pth']
+                );
+                if (fallbackResult.exitCode === 0) {
+                  console.log('✅ Fallback rsync download successful!');
+                  log('Fallback rsync download completed successfully');
+                } else {
+                  console.error('❌ Fallback rsync also failed!');
+                  log(`Fallback rsync failed: ${fallbackResult.exitCode}`);
+                }
+              } catch (rsyncError) {
+                console.error('❌ Fallback rsync error:', (rsyncError as Error).message);
+                log(`Fallback rsync error: ${(rsyncError as Error).message}`);
+              }
+            }
+          } else {
+            // Fallback: Direct download if S3 not configured
+            console.log('📥 Downloading model via rsync (excluding 24GB of checkpoints)...');
+            ensureDirSync(opts.FINAL_ADAPTER_DIR);
+
+            const modelDownloadResult = await rsyncDownload(
+              ssh_user!, ssh_host!, ssh_key_path!,
+              '/workspace/output/model', // Full model directory
+              opts.FINAL_ADAPTER_DIR, // Download directly to final dir
+              ssh_port,
+              ['checkpoint-*', '*.pt', '*.pth', 'optimizer.pt', 'scheduler.pt', 'rng_state.pth']
+            );
+
+            if (modelDownloadResult.exitCode === 0) {
+              // Download succeeded - pod will be terminated in finally block to stop all billing
+              log('Full model downloaded (checkpoints excluded).');
+              console.log('✅ Download complete (saved 24GB by excluding checkpoints).');
+              tracker.completeStage('adapter_download');
+
+            // Convert to GGUF locally if enabled in config
+            const ggufConfig = cfg.gguf_conversion;
+            if (ggufConfig && ggufConfig.enabled) {
+              console.log('\n🔧 Stage 6/7: Converting to GGUF locally...');
+              console.log(`⏱️  Converting to ${ggufConfig.quantization_type} quantization (may take 10-20 minutes)\n`);
+              log('Starting local GGUF conversion using llama.cpp...');
+              tracker.startStage('gguf_conversion', `Converting to ${ggufConfig.quantization_type}`);
+
+              try {
+                // Paths
+                const llamaCppPath = path.join(ROOT, 'vendor', 'llama.cpp');
+                const convertScript = path.join(llamaCppPath, 'convert_hf_to_gguf.py');
+                const quantizeBinary = path.join(llamaCppPath, 'llama-quantize');
+                const modelParentDir = path.dirname(opts.FINAL_ADAPTER_DIR);
+                const f16Path = path.join(modelParentDir, `model-f16.gguf`);
+                const quantizedPath = path.join(modelParentDir, `model-${ggufConfig.quantization_type}.gguf`);
+
+                // Ensure llama.cpp exists
+                if (!fs.existsSync(llamaCppPath)) {
+                  console.log('📦 llama.cpp not found, cloning...');
+                  log('Cloning llama.cpp repository...');
+                  const vendorDir = path.join(ROOT, 'vendor');
+                  ensureDirSync(vendorDir);
+                  execSync(`git clone https://github.com/ggml-org/llama.cpp.git "${llamaCppPath}"`, {
+                    stdio: 'inherit',
+                    cwd: vendorDir,
+                  });
+                  console.log('✓ llama.cpp cloned');
+                }
+
+                if (!fs.existsSync(quantizeBinary)) {
+                  console.log('🔨 Building llama.cpp binaries...');
+                  log('Building llama.cpp binaries...');
+                  execSync('make -j$(nproc)', { cwd: llamaCppPath, stdio: 'inherit' });
+                  console.log('✓ llama.cpp built');
+                }
+
+                // Step 1: Convert to F16 GGUF
+                console.log('📝 Step 1/2: Converting to FP16 GGUF...');
+                log(`Converting ${opts.FINAL_ADAPTER_DIR} to F16 GGUF...`);
+
+                const venvPython = path.join(ROOT, 'venv', 'bin', 'python3');
+                const pythonCmd = fs.existsSync(venvPython) ? venvPython : 'python3';
+
+                execSync(`${pythonCmd} "${convertScript}" "${opts.FINAL_ADAPTER_DIR}" --outtype f16 --outfile "${f16Path}"`, {
+                  stdio: 'inherit',
+                  cwd: llamaCppPath,
+                  env: { ...process.env, PYTHONPATH: llamaCppPath },
+                });
+
+                const f16SizeGB = (fs.statSync(f16Path).size / (1024 ** 3)).toFixed(2);
+                console.log(`✓ F16 GGUF created (${f16SizeGB}GB)`);
+                log(`F16 GGUF created: ${f16Path} (${f16SizeGB}GB)`);
+                tracker.updateStage('gguf_conversion', 50, 'F16 conversion complete, quantizing...');
+
+                // Step 2: Quantize to target format
+                console.log(`📦 Step 2/2: Quantizing to ${ggufConfig.quantization_type}...`);
+                log(`Quantizing to ${ggufConfig.quantization_type}...`);
+
+                execSync(`"${quantizeBinary}" "${f16Path}" "${quantizedPath}" ${ggufConfig.quantization_type}`, {
+                  stdio: 'inherit',
+                  cwd: llamaCppPath,
+                });
+
+                const quantSizeGB = (fs.statSync(quantizedPath).size / (1024 ** 3)).toFixed(2);
+                console.log(`✓ Quantized GGUF created (${quantSizeGB}GB)`);
+                log(`Quantized GGUF: ${quantizedPath} (${quantSizeGB}GB)`);
+
+                // Clean up intermediate F16 file
+                console.log('🧹 Cleaning up intermediate F16 file...');
+                fs.unlinkSync(f16Path);
+
+                console.log(`\n✅ GGUF conversion complete!`);
+                console.log(`📁 Safetensors: ${opts.FINAL_ADAPTER_DIR} (for future training)`);
+                console.log(`📁 GGUF: ${quantizedPath} (for Ollama)`);
+                console.log(`💾 Size: ${quantSizeGB}GB (${ggufConfig.quantization_type})\n`);
+
+                log(`GGUF conversion complete: ${quantizedPath}`);
+                tracker.completeStage('gguf_conversion');
+
+                summary.gguf_path = quantizedPath;
+              } catch (error) {
+                console.error(`⚠️ GGUF conversion failed: ${(error as Error).message}`);
+                log(`GGUF conversion failed: ${(error as Error).message}`);
+                tracker.failStage('gguf_conversion', (error as Error).message);
+                // Don't fail the entire pipeline - safetensors model is still usable
+              }
+            } else {
+              console.log('ℹ️ GGUF conversion disabled in config, skipping');
+              log('GGUF conversion disabled or not configured');
+            }
+          } else {
+            log(`Model download failed with exit code ${modelDownloadResult.exitCode}`);
+            console.error('❌ Model download failed.');
+            tracker.failStage('adapter_download', `Model download failed: ${modelDownloadResult.exitCode}`);
+          }
+        }
+        } else {
+          log('Skipping model download due to training failure.');
+          console.log('⚠️ Skipping model download due to training failure.');
+        }
+    } else {
+        // LoRA training: download GGUF + adapter artifacts
+        // For vLLM, we only need safetensors - skip GGUF download
+        if (isVllmBackend) {
+            console.log('\n📥 Stage 5/6: Downloading trained adapter (vLLM safetensors mode)...');
+            console.log('⏱️  Downloading adapter artifacts only (~2GB) - GGUF not needed for vLLM\n');
+            log('vLLM mode: Downloading safetensors adapter only (skipping GGUF)...');
+            tracker.startStage('adapter_download', 'Downloading safetensors adapter');
+        } else {
+            console.log('\n📥 Stage 5/6: Downloading trained model...');
+            console.log('⏱️  This will download both the merged GGUF (~20GB) and adapter artifacts (~2GB)\n');
+            log('Downloading merged GGUF and adapter artifacts...');
+            tracker.startStage('adapter_download', 'Downloading merged GGUF');
+        }
+
+        // Download the merged GGUF (only for Ollama, not for vLLM)
+        if (summary.training_success && !isVllmBackend) {
+            console.log('📥 Part 1/2: Downloading merged GGUF model via SCP...');
+            const finalGGUFPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
+            ensureDirSync(path.dirname(finalGGUFPath));
+
+            // Start progress monitor for the configured Qwen 3.5 conversion.
+            const expectedSizeGB = 9.0; // Approximate expected GGUF size
+            const cancelProgressMonitor = monitorDownloadProgress(
+                finalGGUFPath,
+                expectedSizeGB,
+                tracker,
+                3000 // Update every 3 seconds
+            );
+
+            const ggufDownloadResult = await sshScpDownload(
+                ssh_user!, ssh_host!, ssh_key_path!,
+                '/workspace/final_merged_model.gguf',
+                finalGGUFPath,
+                ssh_port
+            );
+
+            // Stop progress monitor
+            cancelProgressMonitor();
+
+            if (ggufDownloadResult.exitCode !== 0) {
+                log(`Merged GGUF download failed with exit code ${ggufDownloadResult.exitCode}`);
+                console.error(`❌ GGUF download via SCP failed.`);
+                tracker.failStage('adapter_download', `GGUF SCP failed: ${ggufDownloadResult.exitCode}`);
+            } else {
+                const sizeGB = (fs.statSync(finalGGUFPath).size / (1024 ** 3)).toFixed(2);
+                log(`Merged GGUF downloaded successfully to ${finalGGUFPath} (${sizeGB}GB)`);
+                console.log(`✅ Merged GGUF saved successfully via SCP (${sizeGB}GB)`);
+                tracker.updateStage('adapter_download', 50, 'GGUF ready, downloading adapter artifacts...');
+            }
+        } else if (!summary.training_success) {
+            log('Skipping GGUF download due to training failure.');
+            console.log('⚠️ Skipping GGUF download due to training failure.');
+        }
+
+        // Second, download the adapter artifacts (primary for vLLM, archival for Ollama)
+        if (isVllmBackend) {
+            console.log('\n📥 Downloading safetensors adapter via SCP (primary vLLM artifact)...');
+        } else {
+            console.log('\n📥 Part 2/2: Downloading adapter artifacts for archival via SCP...');
+        }
+        ensureDirSync(opts.FINAL_ADAPTER_DIR);
+
+        // Create a temporary directory for downloading the adapter contents
+        const tempAdapterDir = path.join(opts.WORK_LOCAL, 'temp_adapter_download');
+        ensureDirSync(tempAdapterDir);
+
+        const adapterDownloadResult = await sshScpDownload(
+            ssh_user!, ssh_host!, ssh_key_path!,
+            '/workspace/output/adapter', // Download from volume disk (not container disk)
+            tempAdapterDir,
+            ssh_port,
+            true // Recursive
+        );
+
+        if (adapterDownloadResult.exitCode === 0) {
+            // Move contents from tempAdapterDir/adapter to FINAL_ADAPTER_DIR
+            // Use recursive copy+delete instead of rename to support cross-filesystem moves
+            const downloadedAdapterPath = path.join(tempAdapterDir, 'adapter');
+            if (fs.existsSync(downloadedAdapterPath)) {
+                fs.readdirSync(downloadedAdapterPath).forEach(file => {
+                    const srcPath = path.join(downloadedAdapterPath, file);
+                    const destPath = path.join(opts.FINAL_ADAPTER_DIR, file);
+                    const stat = fs.statSync(srcPath);
+                    if (stat.isDirectory()) {
+                        // Recursively copy directories
+                        fs.cpSync(srcPath, destPath, { recursive: true });
+                    } else {
+                        fs.copyFileSync(srcPath, destPath);
+                    }
+                });
+                fs.rmSync(tempAdapterDir, { recursive: true, force: true });
+                log('Adapter artifacts moved to final directory.');
+                if (isVllmBackend) {
+                    console.log('✅ Safetensors adapter downloaded successfully (ready for vLLM).');
+                    tracker.completeStage('adapter_download');
+                } else {
+                    console.log('✅ Adapter artifacts downloaded and moved successfully.');
+                }
+            } else {
+                log('Downloaded adapter directory not found in temp location.');
+            }
+        } else {
+            log(`Adapter artifacts download failed with exit code ${adapterDownloadResult.exitCode}`);
+            console.error(`❌ Adapter artifacts download failed.`);
+        }
+    }
+
+    // Download the upload.ok file separately
+    const uploadOkPath = path.join(opts.FINAL_ADAPTER_DIR, 'upload.ok');
+    const uploadOkDownloadResult = await sshScpDownload(
+        ssh_user!, ssh_host!, ssh_key_path!,
+        '/workspace/input/upload.ok',
+        uploadOkPath,
+        ssh_port
+    );
+    if (uploadOkDownloadResult.exitCode === 0) {
+        log('upload.ok file downloaded successfully.');
+    } else {
+        log('Failed to download upload.ok file.');
+    }
+
+    // Read upload.ok if we didn't get the verification earlier
+    if (!summary.upload_verification) {
+      const uploadOkPath = path.join(opts.FINAL_ADAPTER_DIR, 'upload.ok');
+      if (fs.existsSync(uploadOkPath)) {
+        const uploadOkContent = fs.readFileSync(uploadOkPath, 'utf-8');
+        const sha256Line = uploadOkContent.split('\n').find(line => line.includes('config.json'));
+        if (sha256Line) {
+          summary.upload_verification = sha256Line.trim();
+        }
+      }
+    }
+
+  } catch (error) {
+    console.error(`\n❌ ====== TRAINING FAILED ======`);
+    console.error(`Error: ${(error as Error).message}\n`);
+    log(`An error occurred: ${(error as Error).message}`);
+    tracker.fail((error as Error).message);
+    summary.training_success = false;
+    summary.error = (error as Error).message;
+  } finally {
+    // 3.6. Terminate the pod
+    if (pod_id) {
+      console.log('\n🛑 Stage 6/6: Terminating pod...');
+      tracker.startStage('pod_termination', `Stopping pod ${pod_id}`);
+      log(`Terminating pod ${pod_id}...`);
+      const terminateMutation = `
+        mutation TerminatePod {
+          podTerminate(input: { podId: \"${pod_id}\" })
+        }`;
+      try {
+        await callRunPodAPI(runpodApiKey, terminateMutation);
+        summary.terminated = true;
+        log('Pod termination request sent successfully.');
+        console.log(`✅ Pod ${pod_id} terminated`);
+        tracker.completeStage('pod_termination');
+      } catch (error) {
+        log(`Failed to terminate pod: ${(error as Error).message}`);
+        console.error(`⚠️  Failed to terminate pod: ${(error as Error).message}`);
+        summary.terminated = false;
+      }
+    }
+
+    // ROBUSTNESS: Create Modelfile even if training_success is false, as long as GGUF exists
+    // This handles cases where training succeeded but post-processing failed
+    if (!summary.training_success) {
+      try {
+        const pathMatch = opts.FINAL_ADAPTER_DIR.match(/profiles\/([^/]+)\//);
+        const username = pathMatch ? pathMatch[1] : 'user';
+        const dateStr = path.basename(path.dirname(opts.FINAL_ADAPTER_DIR));
+        const runId = path.basename(opts.FINAL_ADAPTER_DIR);
+        const isFullFineTune = trainingMode === 'full_finetune' || trainingMode === 'full';
+
+        let ggufPath: string;
+        if (isFullFineTune) {
+          const modelParentDir = path.dirname(opts.FINAL_ADAPTER_DIR);
+          ggufPath = path.join(modelParentDir, `model-Q6_K.gguf`);
+        } else {
+          ggufPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
+        }
+
+        // Only create Modelfile if GGUF actually exists (training may have produced output despite error)
+        if (fs.existsSync(ggufPath)) {
+          console.log('\n⚠️  Training marked as failed, but GGUF file exists - creating Modelfile anyway');
+          log(`Found GGUF at ${ggufPath} despite training_success=false, creating Modelfile`);
+
+          const usernameCapitalized = username.charAt(0).toUpperCase() + username.slice(1);
+          const modelfileContent = `# MetaHuman OS ${isFullFineTune ? 'Full Fine-Tuned' : 'LoRA Adapter'} Model - ${username} - ${dateStr}
+# Training run: ${runId}
+# Note: Training had errors but model file was created
+FROM ${ggufPath}
+
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+{{ .Response }}<|im_end|>
+"""
+
+SYSTEM You are ${usernameCapitalized}'s digital personality extension. Speak naturally in first person as ${usernameCapitalized}.`;
+
+          const modelfilePath = path.join(path.dirname(ggufPath), 'Modelfile');
+          fs.writeFileSync(modelfilePath, modelfileContent);
+          console.log(`✅ Created Modelfile at ${modelfilePath}`);
+          log(`Created fallback Modelfile at ${modelfilePath}`);
+
+          // Attempt to load into Ollama (best effort)
+          try {
+            const modelName = isFullFineTune ? `${username}-finetune-${dateStr}` : `${username}-${dateStr}`;
+            console.log(`🦙 Attempting to load model into Ollama: ${modelName}`);
+            log(`Running: ollama create ${modelName} -f ${modelfilePath}`);
+
+            const { execSync } = await import('node:child_process');
+            execSync(`ollama create ${modelName} -f "${modelfilePath}"`, {
+              stdio: 'pipe',
+              encoding: 'utf-8',
+              timeout: 300000,
+            });
+
+            console.log(`✅ Model loaded into Ollama despite training errors`);
+            log(`Successfully loaded ${modelName} into Ollama`);
+          } catch (ollamaError) {
+            console.warn(`⚠️  Failed to load model into Ollama: ${(ollamaError as Error).message}`);
+            log(`Ollama load failed: ${(ollamaError as Error).message}`);
+          }
+        }
+      } catch (fallbackError) {
+        // Don't fail the entire process if fallback Modelfile creation fails
+        log(`Fallback Modelfile creation failed: ${(fallbackError as Error).message}`);
+        console.warn(`⚠️  Could not create fallback Modelfile: ${(fallbackError as Error).message}`);
+      }
+    }
+
+    // Final completion message
+    if (summary.training_success) {
+      tracker.complete(`Training successful - adapter saved to ${opts.FINAL_ADAPTER_DIR}`);
+      console.log('\n🎉 ====== TRAINING COMPLETED SUCCESSFULLY ======');
+      console.log(`📁 Adapter location: ${opts.FINAL_ADAPTER_DIR}`);
+      console.log(`📊 Progress log: ${tracker.getStatusFilePath()}`);
+      console.log(`📝 Training output: ${path.join(opts.WORK_LOCAL, 'training_output.txt')}\n`);
+
+      // 3.6.1 Load model into Ollama automatically (skip for vLLM)
+      if (isVllmBackend) {
+        console.log('\n📦 vLLM Mode: Skipping Ollama load (use vLLM LoRA API to load adapter)');
+        log('vLLM backend detected - skipping Ollama model creation');
+        console.log(`📁 Safetensors adapter ready at: ${opts.FINAL_ADAPTER_DIR}`);
+        console.log('💡 Use vLLM LoRA API: POST /api/lora/load with adapter path');
+        tracker.startStage('ollama_load', 'Skipped (vLLM mode)');
+        tracker.completeStage('ollama_load');
+        summary.ollama_loaded = false;
+        summary.vllm_adapter_path = opts.FINAL_ADAPTER_DIR;
+      } else {
+        console.log('\n🦙 Stage 7/7: Loading model into Ollama...');
+        log('Creating Ollama model from GGUF...');
+        tracker.startStage('ollama_load', 'Creating Ollama model');
+
+      try {
+        // Extract username from path (e.g., profiles/greggles/out/...)
+        const pathMatch = opts.FINAL_ADAPTER_DIR.match(/profiles\/([^/]+)\//);
+        const username = pathMatch ? pathMatch[1] : 'user';
+
+        // Determine GGUF path and model name based on training type
+        let ggufPath: string;
+        let modelName: string;
+        const dateStr = path.basename(path.dirname(opts.FINAL_ADAPTER_DIR));  // e.g., "2025-11-22"
+        const runId = path.basename(opts.FINAL_ADAPTER_DIR);                   // e.g., "2025-11-22-065730-98d59b"
+        const isFullFineTune = trainingMode === 'full_finetune' || trainingMode === 'full';
+
+        if (isFullFineTune) {
+          // Full fine-tune: use Q6_K quantized model
+          const modelParentDir = path.dirname(opts.FINAL_ADAPTER_DIR);
+          ggufPath = path.join(modelParentDir, `model-Q6_K.gguf`);
+          modelName = `${username}-finetune-${dateStr}`;
+
+          if (!fs.existsSync(ggufPath)) {
+            // Fallback to safetensors directory if Q6_K not found (conversion might have failed)
+            console.log(`⚠️ Q6_K model not found at ${ggufPath}, skipping Ollama load`);
+            log(`Q6_K model not found, skipping Ollama load`);
+            tracker.failStage('ollama_load', 'Q6_K model not found');
+            throw new Error('Q6_K model not found');
+          }
+        } else {
+          // LoRA training: use merged adapter GGUF
+          ggufPath = path.join(path.dirname(opts.FINAL_ADAPTER_DIR), 'adapter.gguf');
+          modelName = `${username}-${dateStr}`;
+
+          if (!fs.existsSync(ggufPath)) {
+            console.log(`⚠️ Adapter GGUF not found at ${ggufPath}, skipping Ollama load`);
+            log(`Adapter GGUF not found, skipping Ollama load`);
+            tracker.failStage('ollama_load', 'Adapter GGUF not found');
+            throw new Error('Adapter GGUF not found');
+          }
+        }
+
+        // Create Modelfile
+        const usernameCapitalized = username.charAt(0).toUpperCase() + username.slice(1);
+        const modelfileContent = `# MetaHuman OS ${isFullFineTune ? 'Full Fine-Tuned' : 'LoRA Adapter'} Model - ${username} - ${dateStr}
+# Training run: ${runId}
+FROM ${ggufPath}
+
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+{{ .Response }}<|im_end|>
+"""
+
+SYSTEM You are ${usernameCapitalized}'s digital personality extension. Speak naturally in first person as ${usernameCapitalized}.`;
+
+        const modelfilePath = path.join(path.dirname(ggufPath), 'Modelfile');
+        fs.writeFileSync(modelfilePath, modelfileContent);
+        log(`Created Modelfile at ${modelfilePath}`);
+
+        // Load model into Ollama
+        console.log(`🦙 Creating Ollama model: ${modelName}`);
+        console.log(`📁 From GGUF: ${ggufPath}`);
+        log(`Running: ollama create ${modelName} -f ${modelfilePath}`);
+
+        const ollamaResult = execSync(`ollama create ${modelName} -f "${modelfilePath}"`, {
+          stdio: 'pipe',
+          encoding: 'utf-8',
+          timeout: 300000,  // 5 minute timeout
+        });
+
+        console.log(`✅ Ollama model created: ${modelName}`);
+        log(`Ollama model created successfully: ${modelName}`);
+        log(`Ollama output: ${ollamaResult}`);
+        tracker.completeStage('ollama_load');
+
+        summary.ollama_model = modelName;
+        summary.ollama_loaded = true;
+
+        console.log('\n🎊 Model is now available in Ollama!');
+        console.log(`   Run: ollama run ${modelName}\n`);
+
+      } catch (error) {
+        console.error(`⚠️ Failed to load model into Ollama: ${(error as Error).message}`);
+        log(`Ollama load failed: ${(error as Error).message}`);
+        tracker.failStage('ollama_load', (error as Error).message);
+        summary.ollama_loaded = false;
+        // Don't fail the entire training - model files are still usable
+      }
+      } // end of else (Ollama branch)
+    }
+
+    // 3.7. Write final summary
+    fs.writeFileSync(opts.SUMMARY_FILE, JSON.stringify(summary, null, 2));
+
+    // 3.8. Auto-cleanup: Archive old training runs
+    try {
+      const pathMatch = opts.FINAL_ADAPTER_DIR.match(/profiles\/([^/]+)\//);
+      const username = pathMatch ? pathMatch[1] : null;
+
+      if (username) {
+        const { autoCleanupTrainingRuns, cleanupOldWorkDirectories } = await import('@metahuman/core');
+        const isFullFineTune = trainingMode === 'full_finetune' || trainingMode === 'full';
+        await autoCleanupTrainingRuns(username, opts.RUN_LABEL, isFullFineTune);
+        cleanupOldWorkDirectories(username);
+      }
+    } catch (err) {
+      console.warn('[lora-trainer] Auto-cleanup failed (non-critical):', (err as Error).message);
+      log(`Auto-cleanup failed: ${(err as Error).message}`);
+    }
+  }
+
+  return summary;
+}

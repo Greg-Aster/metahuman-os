@@ -9,23 +9,26 @@ Every protected request is associated with an authenticated session. Roles are:
 
 - **Owner:** system administration and all owner-authorized operations.
 - **Standard:** writable access to the user's own profile, subject to policy.
-- **Guest:** authenticated read-only access.
-- **Temporary guest session:** public-profile viewing through the isolated guest
-  profile.
+- **Guest:** authenticated read-only access. A one-hour temporary guest session
+  uses this role for public-profile viewing through the isolated guest profile;
+  it is not a fourth role.
 
 Public auth/bootstrap routes are explicitly registered. A route is not public
 merely because it lacks data in one code path.
 
 ## Cognitive modes
 
-Cognitive mode adds behavioral restrictions; it does not replace role checks.
+Cognitive mode adds behavioral restrictions; it does not replace role checks:
 
-| Mode | Write behavior |
-| --- | --- |
-| Dual | Normal owner/standard policy applies |
-| Agent | Task-oriented writes allowed by policy |
-| Emulation | Read-only conversation and persona use |
-| Environment | Environment graph and bridge policy applies |
+- **Dual** applies normal owner/standard policy and the full supported memory
+  event set.
+- **Agent** permits task-oriented writes and command/outcome memory events by
+  policy.
+- **Emulation** blocks new long-term memory capture, Operator work, proactive
+  work, and training. It does not revoke every unrelated owner/standard profile
+  or configuration permission.
+- **Environment** applies its conversation-memory and bounded Environment
+  Bridge policy.
 
 Guests remain read-only regardless of the selected presentation. High-security
 state restricts the system to Emulation; wetware-deceased state disables Dual.
@@ -58,7 +61,7 @@ session requirement. Before exposing the site:
 4. run the repository security-route validator;
 5. test owner and guest access from a separate browser session.
 
-See [Authentication](authentication.md) and [Deployment](deployment.md).
+See [Authentication](/user-guide#authentication) and [Deployment](/user-guide#deployment).
 
 ## Special system states
 

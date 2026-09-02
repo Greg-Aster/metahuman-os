@@ -263,7 +263,7 @@ export function syncTunnelExposure(enabled: boolean): TunnelExposureState {
 
 /**
  * Auto-start tunnel if enabled in config
- * Call this from the dev server startup
+ * Called by the full-system background-service launcher
  */
 export function autoStartTunnel(): void {
   const config = loadCloudflareConfig();

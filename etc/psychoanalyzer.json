@@ -1,75 +1,45 @@
 {
-  "version": "1.0.0",
-  "description": "Psychoanalyzer agent configuration - reviews memories and updates persona incrementally",
+  "version": "2.0.0",
+  "description": "Psychoanalyzer configuration for evidence-backed persona learning",
   "enabled": true,
-  "schedule": {
-    "mode": "manual",
-    "interval": null,
-    "nextRun": null,
-    "note": "Run manually via CLI: ./bin/mh agent run psychoanalyzer"
-  },
   "memorySelection": {
-    "strategy": "weighted_random",
+    "strategy": "priority_recent",
     "daysBack": 30,
     "maxMemories": 30,
     "minMemories": 5,
     "excludeTypes": ["audit", "system", "inner_dialogue", "reflection", "reflection_summary", "dream", "curiosity_question", "summary"],
     "priorityTags": ["insight", "goal", "value", "decision"],
-    "userInputOnly": true,
-    "note": "Chunked processing allows more memories (30) since each section is analyzed separately with lower token usage."
+    "userInputOnly": true
   },
   "analysis": {
     "model": "psychotherapist",
     "temperature": 0.3,
-    "focusAreas": [
-      "values_evolution",
-      "goals_progress",
-      "communication_patterns",
-      "interests_changes",
-      "decision_heuristics",
-      "personality_shifts"
-    ],
-    "confidenceThreshold": 0.6,
-    "note": "Only update persona if confidence is above threshold"
+    "maxTokens": 2200,
+    "confidenceThreshold": 0.7
   },
   "updateStrategy": {
-    "mode": "incremental",
     "preserveUserEdits": true,
-    "mergeStrategy": "merge",
     "fields": {
-      "identity": false,
       "personality.traits": true,
       "personality.communicationStyle": true,
       "personality.interests": true,
-      "personality.aesthetic": true,
       "values.core": true,
       "goals": true,
+      "context.domains": true,
       "context.currentFocus": true,
       "context.projects": true,
       "decisionHeuristics": true,
       "writingStyle.motifs": true
-    },
-    "note": "Fields marked true can be auto-updated. Identity is protected."
+    }
   },
   "reconciliation": {
-    "enabled": true,
     "removeStaleGoals": true,
     "removeStaleInterests": true,
-    "updateGoalStatuses": true,
     "removeContradictedValues": true,
-    "removeUnusedHeuristics": true,
-    "note": "Reconciliation keeps persona fresh by removing outdated content. LLM identifies stale items based on recent conversations."
+    "removeUnusedHeuristics": true
   },
   "insights": {
     "enabled": true,
-    "filePath": "persona/insights.json",
-    "maxEntries": 100,
-    "note": "Tracks persona changes over time - additions and removals logged with timestamps"
-  },
-  "notifications": {
-    "createMemory": true,
-    "memoryType": "inner_dialogue",
-    "title": "🧠 Persona Updated by Psychoanalyzer",
-    "includeChangeSummary": true
+    "maxEntries": 100
   }
 }

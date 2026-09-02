@@ -26,19 +26,21 @@
       "startOnSystemBoot": true,
       "autoRestart": true,
       "maxRetries": 3,
+      "robotStatusInactivityThreshold": 300,
+      "robotStatusJitterMs": 60000,
       "boredomObserverInactivityThreshold": 300,
       "boredomObserverJitterMs": 60000,
       "boredomMovementInactivityThreshold": 600,
       "boredomMovementJitterMs": 120000,
       "boredomReflectionInactivityThreshold": 900,
       "boredomReflectionJitterMs": 180000,
-      "maxCycleSteps": 8,
+      "robotStatusGraph": "robot-status",
       "boredomObserverGraph": "boredom-observer",
       "boredomMovementGraph": "boredom-movement",
       "boredomReflectionGraph": "boredom-reflection",
       "autonomyGraph": "boredom-autonomy",
       "environmentGraph": "environment",
-      "comment": "Robot-autonomy scheduler and admission owner. Semi mode uses independent idle timers; full mode rotates continuously across the three named child planners between cooldowns. Each child graph authors one contextual intention; Boredom Autonomy executes and revises it from correlated results."
+      "comment": "Robot-autonomy scheduler and admission owner. Semi mode uses independent idle timers; full mode rotates continuously across Robot Status and the three named boredom planners between cooldowns. Robot Status refreshes reusable situational context; each boredom graph authors one contextual intention and Boredom Autonomy executes and revises it from correlated results."
     },
     "maintenance-service": {
       "id": "maintenance-service",

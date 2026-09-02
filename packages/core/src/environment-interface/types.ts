@@ -25,14 +25,6 @@ export const ENVIRONMENT_MOTION_CLASSES = [
 
 export type EnvironmentMotionClass = typeof ENVIRONMENT_MOTION_CLASSES[number];
 
-export interface EnvironmentMotionControlState {
-  version: 1;
-  cycleId?: string;
-  lastPlanId?: string;
-  lastVisualFrameId?: string;
-  lastVisualFrameTimestamp?: string;
-}
-
 /**
  * Monotonic action/camera handoff timestamps contributed by their owning
  * process. Missing stages stay absent rather than being inferred by another
@@ -143,6 +135,27 @@ export type EnvironmentMotionPlanJoint =
   | 'L3'
   | 'L4';
 
+/**
+ * The last logical pose established by a correlated completed command.
+ * This is commanded-state evidence, not servo feedback or physical proof.
+ */
+export type EnvironmentCommandedPoseState = {
+  version: 1;
+  jointMapVersion: 1;
+  sourceActionId: string;
+  updatedAt: string;
+  bodyEpoch?: string;
+} & (
+  | {
+      kind: 'reference';
+      reference: 'stand' | 'neutral';
+    }
+  | {
+      kind: 'joints';
+      joints: Record<EnvironmentMotionPlanJoint, number>;
+    }
+);
+
 export interface EnvironmentMotionPlanTarget {
   joint: EnvironmentMotionPlanJoint;
   degrees: number;
@@ -156,6 +169,8 @@ export interface EnvironmentMotionPlanFrame {
 export interface EnvironmentCapabilities {
   actions: EnvironmentActionType[];
   robotCommands?: string[];
+  /** Adapter-owned physical meaning for each advertised exact robot command. */
+  robotCommandDescriptions?: Record<string, string>;
   /** Motion references the adapter can truthfully execute. */
   motionClasses?: EnvironmentMotionClass[];
   text?: boolean;

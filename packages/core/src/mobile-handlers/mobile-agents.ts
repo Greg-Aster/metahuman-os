@@ -1,13 +1,15 @@
 /** In-process mobile executors attached to the sole work coordinator. */
 
-import path from 'node:path';
 import { ensureQueueSystemStarted, getQueueSystem } from '../queue/queue-system.js';
 import { claimWorkCoordinatorOwnership } from '../queue/work-submission.js';
 
 export interface MobileAgentContext {
   username?: string;
-  profileRoot: string;
   dataDir: string;
+  taskId: string;
+  createdAt: string;
+  args: string[];
+  options: Record<string, unknown>;
   signal?: AbortSignal;
 }
 
@@ -30,10 +32,18 @@ export async function initializeMobileAgents(
   for (const agent of agents) {
     const handlerId = agent.handler || `agent.${agent.id}`;
     system.engine.registerHandler(handlerId, async (task, context) => {
+      const taskOptions = task.input.options;
       await agent.run({
         username: task.username || username,
-        profileRoot: path.join(dataDir, 'profiles', task.username || username || 'default'),
         dataDir,
+        taskId: task.id,
+        createdAt: task.createdAt,
+        args: Array.isArray(task.input.args)
+          ? task.input.args.filter((value): value is string => typeof value === 'string')
+          : [],
+        options: taskOptions && typeof taskOptions === 'object' && !Array.isArray(taskOptions)
+          ? { ...taskOptions as Record<string, unknown> }
+          : {},
         signal: context.signal,
       });
       return { agentId: agent.id };

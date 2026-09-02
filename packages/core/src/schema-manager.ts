@@ -23,7 +23,7 @@ export interface ModelSchema {
   notes?: string;
 }
 
-export type CognitiveMode = 'dual' | 'emulation' | 'agent';
+export type CognitiveMode = 'dual' | 'emulation' | 'agent' | 'environment';
 
 export interface TrainingSampleMetadata {
   original_id: string;

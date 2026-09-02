@@ -101,7 +101,10 @@ export function evaluateQuestionAdmission(input: {
  *
  * SECURITY: All memory access is user-specific via context.userId
  */
-export async function generateUserQuestion(username: string): Promise<CuriosityQuestionOutcome> {
+export async function generateUserQuestion(
+  username: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<CuriosityQuestionOutcome> {
   console.log(`[curiosity-service] Processing user: ${username}`);
 
   const config = loadCuriosityConfig(username);
@@ -141,7 +144,7 @@ export async function generateUserQuestion(username: string): Promise<CuriosityQ
   };
 
   console.log(`[curiosity-service] Executing curiosity workflow for user: ${username}`);
-  const graphResult = await runGraph({ graph, context: graphContext });
+  const graphResult = await runGraph({ graph, context: graphContext, signal: options.signal });
   if (graphResult.status === 'failed') {
     const failures = listFailedNodes(graphResult);
     const details = failures.map(failure => `${failure.nodeId}: ${failure.error}`).join('; ');
@@ -296,35 +299,27 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
     if ((input.args?.length ?? 0) > 0 || Object.keys(input.options || {}).length > 0) {
       throw new Error('Curiosity Service does not accept agent arguments or options');
     }
-    if (ctx.username) {
-      const outcome = await withUserContext(
-        { userId: ctx.username, username: ctx.username, role: 'owner' },
-        async () => generateUserQuestion(ctx.username)
-      );
-      const generated = outcome.status === 'generated';
-
-      return {
-        success: true,
-        data: {
-          questionsAsked: generated ? 1 : 0,
-          questionsSkipped: generated ? 0 : 1,
-          userCount: 1,
-          outcome,
-          errors: [],
-        },
-        duration: Date.now() - startTime,
-        itemsProcessed: generated ? 1 : 0,
-      };
+    const targetUser = getTargetUser({ username: ctx.username });
+    if (!targetUser) {
+      throw new Error(`No authenticated user found for Curiosity Service profile ${ctx.username}`);
     }
-
-    const result = await runCycle();
+    const outcome = await withUserContext(
+      targetUser,
+      async () => generateUserQuestion(targetUser.username, { signal: ctx.signal })
+    );
+    const generated = outcome.status === 'generated';
 
     return {
-      success: result.success,
-      data: result,
-      error: result.errors.length > 0 ? result.errors.join('; ') : undefined,
+      success: true,
+      data: {
+        questionsAsked: generated ? 1 : 0,
+        questionsSkipped: generated ? 0 : 1,
+        userCount: 1,
+        outcome,
+        errors: [],
+      },
       duration: Date.now() - startTime,
-      itemsProcessed: result.questionsAsked,
+      itemsProcessed: generated ? 1 : 0,
     };
   } catch (error) {
     return {

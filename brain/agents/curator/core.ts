@@ -11,10 +11,10 @@ import path from 'node:path';
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import {
   audit,
-  captureEvent,
   getTargetUser,
   listFailedNodes,
   runGraph,
+  submitInnerReflection,
   systemPaths,
   validateSvelteFlowGraph,
   withUserContext,
@@ -234,23 +234,33 @@ export async function runCuratorForUser(
         if (!loader || !llm || !saver || !marker) throw new Error('Curator graph did not complete its canonical output path');
 
         const attempted = numericOutput(llm.count, 'attempted count');
+        const sourceAttempted = numericOutput(llm.sourceCount ?? llm.count, 'source attempted count');
         const accepted = numericOutput(llm.acceptedCount, 'accepted count');
         const rejected = numericOutput(llm.rejectedCount, 'rejected count');
         const failed = numericOutput(llm.failedCount, 'failed count');
         const saved = numericOutput(saver.savedCount, 'saved count');
         const newlyMarked = numericOutput(marker.markedCount, 'marked count');
         const alreadyMarked = numericOutput(marker.alreadyMarkedCount, 'already-marked count');
-        const marked = newlyMarked + alreadyMarked;
+        const committed = newlyMarked + alreadyMarked;
+        const sourceNewlyMarked = numericOutput(
+          marker.sourceMarkedCount ?? marker.markedCount,
+          'source marked count',
+        );
+        const sourceAlreadyMarked = numericOutput(
+          marker.sourceAlreadyMarkedCount ?? marker.alreadyMarkedCount,
+          'source already-marked count',
+        );
+        const marked = sourceNewlyMarked + sourceAlreadyMarked;
 
         if (failed !== 0) throw new Error(`Curator graph completed with ${failed} failed memory record(s)`);
-        if (attempted !== accepted + rejected || saved !== attempted || marked !== attempted) {
+        if (attempted !== accepted + rejected || saved !== attempted || committed !== attempted) {
           throw new Error(
-            `Curator commit mismatch: attempted=${attempted}, accepted=${accepted}, rejected=${rejected}, saved=${saved}, marked=${marked}`,
+            `Curator commit mismatch: attempted=${attempted}, accepted=${accepted}, rejected=${rejected}, saved=${saved}, committed=${committed}`,
           );
         }
 
         const stats: UserCuratorStats = {
-          memoriesAttempted: attempted,
+          memoriesAttempted: sourceAttempted,
           memoriesProcessed: marked,
           accepted,
           rejected,
@@ -261,15 +271,16 @@ export async function runCuratorForUser(
         };
 
         if (marked > 0) {
-          try {
-            captureEvent(`📚 Curated ${marked} ${marked === 1 ? 'memory' : 'memories'} (${accepted} accepted, ${rejected} rejected).`, {
-              type: 'inner_dialogue',
-              tags: ['curator', 'training-data', 'background-task'],
-              metadata: { curator: { ...stats, timestamp: new Date().toISOString() } },
-            });
-          } catch (error) {
-            console.warn(`${LOG_PREFIX} Curator committed successfully, but its notification failed: ${(error as Error).message}`);
-          }
+          await submitInnerReflection(
+            username,
+            `📚 Curated ${marked} ${marked === 1 ? 'memory' : 'memories'} (${accepted} accepted, ${rejected} rejected).`,
+            {
+              type: 'curator_summary',
+              tags: ['curator', 'training-data', 'background-task', 'inner'],
+              dialogueSource: 'curator',
+              curator: { ...stats, timestamp: new Date().toISOString() },
+            },
+          );
         }
 
         return stats;

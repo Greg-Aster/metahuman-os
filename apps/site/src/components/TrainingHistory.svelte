@@ -6,10 +6,11 @@
     id: string;
     startTime: string;
     endTime?: string;
-    status: 'running' | 'completed' | 'failed' | 'cancelled';
+    status: 'running' | 'completed' | 'failed' | 'cancelled' | 'incomplete';
     pid?: number;
     method: 'local-lora' | 'remote-lora' | 'fine-tune' | 'full-cycle';
     logFile: string;
+    username?: string;
     dataset?: string;
     baseModel?: string;
     duration?: string;
@@ -237,6 +238,7 @@
       case 'completed': return '#10b981';
       case 'failed': return '#ef4444';
       case 'cancelled': return '#f59e0b';
+      case 'incomplete': return '#6b7280';
       default: return '#6b7280';
     }
   }
@@ -247,6 +249,7 @@
       case 'completed': return '✅';
       case 'failed': return '❌';
       case 'cancelled': return '🛑';
+      case 'incomplete': return '⚠️';
       default: return '❓';
     }
   }
@@ -419,6 +422,12 @@
                   <span class="font-medium text-gray-500">Method:</span>
                   <span class="text-gray-900 dark:text-gray-100">{run.method || 'N/A'}</span>
                 </div>
+                {#if run.username}
+                  <div class="flex gap-2 text-sm">
+                    <span class="font-medium text-gray-500">Profile:</span>
+                    <span class="text-gray-900 dark:text-gray-100">{run.username}</span>
+                  </div>
+                {/if}
                 {#if run.duration}
                   <div class="flex gap-2 text-sm">
                     <span class="font-medium text-gray-500">Duration:</span>

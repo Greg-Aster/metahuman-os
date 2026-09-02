@@ -9,22 +9,16 @@
  *   npx tsx brain/agents/dreamer/cli.ts [options]
  *
  * Options:
- *   --force        Run even if sleep system is disabled
- *   --single-user  Process only the default user
+ *   --force  Run even if the target profile's sleep system is disabled
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';
-import { runCycle, type DreamerOptions } from './core.js';
+import { parseDreamerArgs, runCycle } from './core.js';
 
 async function main() {
   initGlobalLogger('dreamer');
 
-  // Parse arguments
-  const args = process.argv.slice(2);
-  const options: DreamerOptions = {
-    forceRun: args.includes('--force'),
-    singleUser: args.includes('--single-user'),
-  };
+  const options = parseDreamerArgs(process.argv.slice(2));
 
   console.log('[dreamer] Starting with options:', options);
 

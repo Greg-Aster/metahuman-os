@@ -13,18 +13,19 @@ export const ModelRouterNode: NodeDefinition = defineNode({
   name: 'Model Router',
   category: 'model',
   inputs: [
-    { name: 'messages', type: 'array', description: 'Messages to send' },
-    { name: 'role', type: 'string', optional: true, description: 'Model role' },
-    { name: 'jsonSchema', type: 'object', optional: true, description: 'Capability-bound structured output contract' },
-    { name: 'precomputedResponse', type: 'string', optional: true, description: 'Exact deterministic result that bypasses model inference' },
+    { name: 'messages', type: 'array', description: 'Complete provider message array supplied by the upstream prompt/context owner' },
+    { name: 'role', type: 'string', optional: true, description: 'Optional runtime role override; a connection takes precedence over Model Role' },
+    { name: 'jsonSchema', type: 'object', optional: true, description: 'Upstream structured-output contract applied only in JSON mode' },
+    { name: 'precomputedResponse', type: 'string', optional: true, description: 'Exact deterministic output that bypasses model inference when connected' },
   ],
   outputs: [
-    { name: 'response', type: 'llm_response', description: 'Model response' },
+    { name: 'response', type: 'llm_response', description: 'Normalized model text; downstream nodes own parsing, validation, and effects' },
   ],
   properties: {
     role: 'persona',
     maxTokens: 2048,
     temperature: 0.7,
+    repeatPenalty: 1.15,
     format: 'text',
   },
   propertySchemas: {
@@ -32,12 +33,21 @@ export const ModelRouterNode: NodeDefinition = defineNode({
       type: 'select',
       default: 'persona',
       label: 'Model Role',
-      options: ['persona', 'environmentActionSelector', 'orchestrator', 'fallback', 'coder'],
+      description: 'Routing role resolved through the active profile and cognitive-mode model mapping. A connected role input overrides this setting.',
+      options: [
+        { value: 'persona', label: 'Persona' },
+        { value: 'environmentActionSelector', label: 'Environment Action Selector' },
+        { value: 'orchestrator', label: 'Orchestrator' },
+        { value: 'fallback', label: 'Fallback' },
+        { value: 'coder', label: 'Coder' },
+      ],
     },
     maxTokens: {
       type: 'slider',
       default: 2048,
       label: 'Max Tokens',
+      description: 'Maximum completion length. A limit that is too small can truncate structured output before it becomes valid JSON.',
+      advanced: true,
       min: 256,
       max: 4096,
       step: 256,
@@ -46,18 +56,34 @@ export const ModelRouterNode: NodeDefinition = defineNode({
       type: 'slider',
       default: 0.7,
       label: 'Temperature',
+      description: 'Sampling randomness. Lower values make routing and structured decisions more repeatable.',
+      advanced: true,
       min: 0,
       max: 1,
       step: 0.1,
+    },
+    repeatPenalty: {
+      type: 'number',
+      default: 1.15,
+      label: 'Repeat Penalty',
+      description: 'Provider repetition penalty. A value of 1 is neutral where the selected provider supports it.',
+      advanced: true,
+      min: 0,
+      max: 2,
+      step: 0.05,
     },
     format: {
       type: 'select',
       default: 'text',
       label: 'Response Format',
-      options: ['text', 'json'],
+      description: 'JSON mode applies a connected JSON Schema. Text mode ignores the schema input.',
+      options: [
+        { value: 'text', label: 'Text' },
+        { value: 'json', label: 'JSON' },
+      ],
     },
   },
-  description: 'Routes request to appropriate model',
+  description: 'Calls the profile-resolved model for the configured role using connected messages. It returns model output only; downstream nodes own validation and effects.',
 
   execute: async (inputs, context, properties) => {
     const precomputedResponse = typeof inputs.precomputedResponse === 'string'
@@ -86,9 +112,9 @@ export const ModelRouterNode: NodeDefinition = defineNode({
         userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
-          maxTokens: properties?.maxTokens || 2048,
-          repeatPenalty: properties?.repeatPenalty || 1.15,
-          temperature: properties?.temperature || 0.7,
+          maxTokens: properties?.maxTokens ?? 2048,
+          repeatPenalty: properties?.repeatPenalty ?? 1.15,
+          temperature: properties?.temperature ?? 0.7,
           format: properties?.format === 'json' ? 'json' : undefined,
           jsonSchema: properties?.format === 'json'
             ? jsonSchema ?? (role === 'environmentActionSelector'

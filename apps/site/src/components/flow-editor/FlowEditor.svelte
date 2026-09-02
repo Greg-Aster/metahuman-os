@@ -279,6 +279,20 @@
   }
 
   /**
+   * Select a node from an external inspector link.
+   * Selection is editor UI state and is not persisted with the graph.
+   */
+  export function selectNode(nodeId: string) {
+    if (!nodes.some((node) => node.id === nodeId)) return;
+
+    nodes = nodes.map((node) => ({
+      ...node,
+      selected: node.id === nodeId,
+    }));
+    onSelectionChange?.(nodes.find((node) => node.id === nodeId) || null);
+  }
+
+  /**
    * Update execution state for a node
    */
   export function setNodeExecutionState(

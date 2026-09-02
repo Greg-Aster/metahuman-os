@@ -99,6 +99,18 @@ export interface ReadResult {
   error?: string
 }
 
+function writeAtomically(filePath: string, data: Buffer | string, encoding?: BufferEncoding): void {
+  const temporary = `${filePath}.tmp.${process.pid}.${Date.now()}`
+  try {
+    if (Buffer.isBuffer(data)) fs.writeFileSync(temporary, data)
+    else fs.writeFileSync(temporary, data, encoding ?? 'utf8')
+    fs.renameSync(temporary, filePath)
+  } catch (error) {
+    try { fs.unlinkSync(temporary) } catch {}
+    throw error
+  }
+}
+
 function resolveUsername(username?: string): string | null {
   if (username) {
     return username
@@ -278,15 +290,11 @@ export async function writeFile(request: WriteRequest): Promise<WriteResult> {
       const dataBuffer = Buffer.isBuffer(data) ? data : Buffer.from(data, encoding)
       const encrypted = encrypt(dataBuffer, key)
       const encryptedPath = filePath + ENCRYPTED_EXTENSION
-      fs.writeFileSync(encryptedPath, JSON.stringify(encrypted), 'utf8')
+      writeAtomically(encryptedPath, JSON.stringify(encrypted), 'utf8')
       filePath = encryptedPath
       bytesWritten = dataBuffer.length
     } else {
-      if (Buffer.isBuffer(data)) {
-        fs.writeFileSync(filePath, data)
-      } else {
-        fs.writeFileSync(filePath, data, encoding)
-      }
+      writeAtomically(filePath, data, encoding)
       bytesWritten = Buffer.isBuffer(data) ? data.length : Buffer.byteLength(data, encoding)
     }
 
@@ -421,6 +429,7 @@ export function exists(request: StorageRequest): boolean {
  */
 export async function deleteFile(request: StorageRequest): Promise<WriteResult> {
   const { username } = request
+  const resolvedUsername = resolveUsername(username)
   const pathResponse = resolvePath(request)
 
   if (!pathResponse.success) {
@@ -433,14 +442,22 @@ export async function deleteFile(request: StorageRequest): Promise<WriteResult> 
   const filePath = pathResponse.path!
 
   try {
-    if (!fs.existsSync(filePath)) {
+    if (resolvedUsername) {
+      const readyStatus = isProfileReady(resolvedUsername)
+      if (!readyStatus.ready) return { success: false, error: readyStatus.error }
+    }
+    const candidates = resolvedUsername && isAesEncryptionEnabled(resolvedUsername)
+      ? [filePath + ENCRYPTED_EXTENSION, filePath]
+      : [filePath]
+    const existing = candidates.filter(candidate => fs.existsSync(candidate))
+    if (existing.length === 0) {
       return {
         success: true,
         path: filePath,
       }
     }
 
-    fs.unlinkSync(filePath)
+    for (const candidate of existing) fs.unlinkSync(candidate)
 
     audit({
       level: 'info',
@@ -449,7 +466,7 @@ export async function deleteFile(request: StorageRequest): Promise<WriteResult> 
       details: {
         username,
         category: request.category,
-        path: filePath,
+        path: existing,
       },
       actor: username,
     })

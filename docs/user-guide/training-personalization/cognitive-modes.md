@@ -6,15 +6,22 @@ select a separate hidden pipeline or LoRA adapter.
 
 ## Modes
 
-| Mode | Intended use | Memory policy | Proactive work | Operator path |
-| --- | --- | --- | --- | --- |
-| **Dual Consciousness** | Normal long-term personal operation | Full writes | Enabled | Available to the owner |
-| **Agent** | Direct command-oriented assistance | Commands and outcomes | Disabled | Available to the owner |
-| **Emulation** | Stable read-only persona conversation | Read-only | Disabled | Disabled |
-| **Environment** | Games, simulators, and robots | Conversation records | Environment-specific | Uses the Environment bridge, not Active Operator |
+- **Dual Consciousness** is normal long-term personal operation. Its memory
+  policy permits the full supported event set, proactive work is enabled, and
+  the Operator path is available to owner and standard accounts.
+- **Agent** favors direct command-oriented assistance. Its memory policy admits
+  command and outcome events, proactive work is disabled, and the Operator path
+  remains available to owner and standard accounts.
+- **Emulation** provides stable persona conversation without new long-term
+  memory capture. Proactive work, Operator execution, and training are disabled.
+- **Environment** is for games, simulators, and robots. Conversation records may
+  be retained by policy, proactive work is environment-specific, and semantic
+  actions use the Environment Bridge rather than Active Operator.
 
-Unauthenticated users are forced to Emulation behavior and cannot write profile
-memory. Guest profiles may also lock the saved mode.
+Cognitive mode and account authorization are distinct. Owner and standard
+accounts may retain other profile or configuration permissions in Emulation;
+the mode does not make every API read-only. Guest accounts are read-only and
+locked to Emulation, and changing the visible mode cannot bypass that policy.
 
 ## Live Execution
 
@@ -35,8 +42,8 @@ The mode definitions in Core own these defaults:
   training-trigger eligibility.
 - **Agent:** recording disabled by default, proactive agents disabled, and
   command-only memory policy.
-- **Emulation:** recording, proactive agents, and training disabled; memory is
-  read-only.
+- **Emulation:** recording, proactive agents, Operator work, and training are
+  disabled; the memory policy rejects new long-term capture.
 - **Environment:** proactive agents and normal training disabled; conversation
   memory remains available while actions go through the bounded Environment
   workflow.
@@ -68,7 +75,8 @@ validation, locking, trust coupling, and audit records stay consistent.
 - Choose **Dual** when you want normal memory growth and scheduled personal
   workflows.
 - Choose **Agent** for explicit tasks with less background autonomy.
-- Choose **Emulation** when the profile must remain read-only.
+- Choose **Emulation** when you want persona conversation without new long-term
+  memory capture. Use a guest account when the whole session must be read-only.
 - Choose **Environment** only when an external adapter is connected and you want
   bounded observation/action turns.
 

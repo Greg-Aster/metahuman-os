@@ -1,0 +1,132 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Robot Status",
+  "description": "Builds one bounded situational snapshot from canonical robot, conversation, and Agency sources, then publishes a concise System Buffer event.",
+  "cognitiveMode": "environment",
+  "last_modified": "2026-08-27",
+  "nodes": [
+    {
+      "id": "instructions",
+      "type": "inputNode",
+      "position": { "x": 40, "y": 20 },
+      "data": {
+        "label": "Robot Status Instructions",
+        "nodeType": "text_input",
+        "properties": {
+          "message": "You maintain Ainekio's compact situational status. Review the supplied current Bridge facts, including explicit battery voltage, motion availability, and activity, verified Robot Buffer action result, recent conversation, active Agency desires, and previous bounded status. Return only the requested JSON object. Describe the environment only to the degree supported by current facts or clearly marked narrative context. Infer the current goal and intent from unfinished recent work and conversation; preserve a still-relevant goal, but do not turn an already completed action into an active goal. Use previous status for continuity while describing current conditions; carry a historical condition forward only when current deterministic facts show it remains active. Active desires may influence attention without becoming proof that an action is underway. Record uncertainty instead of inventing missing battery, motion, body, visual, user, or completion facts. Keep every field concise and useful to later robot decisions. Do not select or execute an action and do not include workflow commentary.",
+          "inputKey": ""
+        }
+      }
+    },
+    {
+      "id": "environment-status",
+      "type": "environmentNode",
+      "position": { "x": 40, "y": 250 },
+      "data": {
+        "label": "Environment, Motion, and Robot Telemetry",
+        "nodeType": "environment_bridge_status",
+        "properties": {}
+      }
+    },
+    {
+      "id": "conversation-history",
+      "type": "contextNode",
+      "position": { "x": 40, "y": 470 },
+      "data": {
+        "label": "Recent Conversation",
+        "nodeType": "conversation_history",
+        "properties": { "mode": "conversation", "limit": 10 }
+      }
+    },
+    {
+      "id": "robot-history",
+      "type": "contextNode",
+      "position": { "x": 40, "y": 650 },
+      "data": {
+        "label": "Verified Robot History",
+        "nodeType": "conversation_history",
+        "properties": { "mode": "robot", "limit": 20 }
+      }
+    },
+    {
+      "id": "active-desires",
+      "type": "contextNode",
+      "position": { "x": 40, "y": 830 },
+      "data": {
+        "label": "Active Agency Desires",
+        "nodeType": "active_desires",
+        "properties": { "limit": 5 }
+      }
+    },
+    {
+      "id": "previous-status",
+      "type": "contextNode",
+      "position": { "x": 340, "y": 830 },
+      "data": {
+        "label": "Previous Robot Status",
+        "nodeType": "robot_status",
+        "properties": { "historyLimit": 3 }
+      }
+    },
+    {
+      "id": "context-builder",
+      "type": "contextNode",
+      "position": { "x": 570, "y": 300 },
+      "data": {
+        "label": "Build Bounded Robot Status Context",
+        "nodeType": "robot_status_context_builder",
+        "properties": {}
+      }
+    },
+    {
+      "id": "status-model",
+      "type": "llmNode",
+      "position": { "x": 930, "y": 300 },
+      "data": {
+        "label": "Infer Current Situation",
+        "nodeType": "model_router",
+        "properties": {
+          "role": "orchestrator",
+          "maxTokens": 768,
+          "temperature": 0.2,
+          "format": "json"
+        }
+      }
+    },
+    {
+      "id": "status-writer",
+      "type": "outputNode",
+      "position": { "x": 1240, "y": 300 },
+      "data": {
+        "label": "Save Robot Status JSON",
+        "nodeType": "robot_status_writer",
+        "properties": {}
+      }
+    },
+    {
+      "id": "system-buffer",
+      "type": "outputNode",
+      "position": { "x": 1550, "y": 300 },
+      "data": {
+        "label": "Publish to System Feed",
+        "nodeType": "system_buffer",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": [
+    { "id": "e-instructions-context", "source": "instructions", "target": "context-builder", "sourceHandle": "text", "targetHandle": "instruction", "type": "default", "data": { "type": "string" } },
+    { "id": "e-environment-summary-context", "source": "environment-status", "target": "context-builder", "sourceHandle": "summary", "targetHandle": "environmentSummary", "type": "default", "data": { "type": "object" } },
+    { "id": "e-telemetry-context", "source": "environment-status", "target": "context-builder", "sourceHandle": "robotTelemetry", "targetHandle": "robotTelemetry", "type": "default", "data": { "type": "array" } },
+    { "id": "e-conversation-context", "source": "conversation-history", "target": "context-builder", "sourceHandle": "history", "targetHandle": "conversationHistory", "type": "default", "data": { "type": "array" } },
+    { "id": "e-robot-history-context", "source": "robot-history", "target": "context-builder", "sourceHandle": "history", "targetHandle": "robotHistory", "type": "default", "data": { "type": "array" } },
+    { "id": "e-desires-context", "source": "active-desires", "target": "context-builder", "sourceHandle": "desires", "targetHandle": "activeDesires", "type": "default", "data": { "type": "array" } },
+    { "id": "e-previous-status-context", "source": "previous-status", "target": "context-builder", "sourceHandle": "historyContext", "targetHandle": "previousStatus", "type": "default", "data": { "type": "object" } },
+    { "id": "e-context-model", "source": "context-builder", "target": "status-model", "sourceHandle": "messages", "targetHandle": "messages", "type": "default", "data": { "type": "array" } },
+    { "id": "e-schema-model", "source": "context-builder", "target": "status-model", "sourceHandle": "jsonSchema", "targetHandle": "jsonSchema", "type": "default", "data": { "type": "object" } },
+    { "id": "e-model-writer", "source": "status-model", "target": "status-writer", "sourceHandle": "response", "targetHandle": "response", "type": "default", "data": { "type": "llm_response" } },
+    { "id": "e-facts-writer", "source": "context-builder", "target": "status-writer", "sourceHandle": "sourceFacts", "targetHandle": "sourceFacts", "type": "default", "data": { "type": "object" } },
+    { "id": "e-writer-system", "source": "status-writer", "target": "system-buffer", "sourceHandle": "event", "targetHandle": "event", "type": "default", "data": { "type": "message" } }
+  ]
+}

@@ -140,24 +140,53 @@ export class ExecutionEngine {
     });
 
     this.registerHandler('vector.append-event', async (task) => {
-      const { appendEventToIndex } = await import('../vector-index.js');
-      const indexed = await withTaskUserContext(task, () => appendEventToIndex({
-        id: task.input.id,
-        timestamp: task.input.timestamp,
-        content: task.input.content,
-        type: task.input.type,
-        tags: task.input.tags,
-        entities: task.input.entities,
-        path: task.input.path,
-      }, { username: task.username }));
-      return { eventId: task.input.id, indexed };
+      const {
+        appendEventToIndex,
+        MemoryIndexIncompatibleError,
+        MemoryIndexUnavailableError,
+      } = await import('../vector-index.js');
+      try {
+        const indexed = await withTaskUserContext(task, () => appendEventToIndex({
+          id: task.input.id,
+          timestamp: task.input.timestamp,
+          content: task.input.content,
+          type: task.input.type,
+          tags: task.input.tags,
+          entities: task.input.entities,
+          path: task.input.path,
+        }, { username: task.username }));
+        return { eventId: task.input.id, indexed };
+      } catch (error) {
+        if (!(error instanceof MemoryIndexUnavailableError)
+            && !(error instanceof MemoryIndexIncompatibleError)) {
+          throw error;
+        }
+        const { submitMemoryIndexRefresh } = await import('./work-submission.js');
+        const reconciliation = await submitMemoryIndexRefresh({
+          username: task.username,
+          source: 'system',
+          force: error instanceof MemoryIndexIncompatibleError,
+          metadata: { producer: 'vector-append-event', reason: error.code },
+        });
+        return {
+          eventId: task.input.id,
+          indexed: false,
+          reconciliationQueued: true,
+          reconciliationTaskId: reconciliation.id,
+          reason: error.message,
+        };
+      }
     });
 
     this.registerHandler('vector.semantic-search', async (task) => {
-      const { queryIndex } = await import('../vector-index.js');
-      return withTaskUserContext(task, () => queryIndex(
+      const { queryIndexWithReconciliation } = await import('../vector-index.js');
+      return withTaskUserContext(task, () => queryIndexWithReconciliation(
         task.input.query,
-        { topK: task.input.limit || 10, username: task.username },
+        {
+          topK: task.input.limit || 10,
+          username: task.username,
+          reconciliationSource: task.metadata?.producer || 'vector-semantic-search',
+        },
       ));
     });
 
@@ -240,6 +269,13 @@ export class ExecutionEngine {
       const originatingInstruction = typeof observation.metadata?.originatingInstruction === 'string'
         ? observation.metadata.originatingInstruction.trim()
         : '';
+      const conversationInput = originatingInstruction
+        ? ''
+        : (observation.text ?? [])
+            .filter((event: any) => event?.source === 'player')
+            .map((event: any) => typeof event?.text === 'string' ? event.text.trim() : '')
+            .filter(Boolean)
+            .join('\n');
       const taskInstruction = originatingInstruction || text || (robotObserver
         ? ''
         : observation.visual || observation.visuals?.length
@@ -254,10 +290,10 @@ export class ExecutionEngine {
           context: {
             sessionId: observation.sessionId,
             userMessage: text,
-            // A returned action result reuses an already-admitted user request.
-            // Mark instruction-only environment passes so the graph can reason
-            // with that request without writing a duplicate visible user turn.
-            userMessageAdmitted: Boolean(originatingInstruction || !text),
+            // Only fresh player-authored text is a Conversation Buffer input.
+            // Task continuations still receive their instruction for reasoning,
+            // but leave the graph's user-message handle empty.
+            conversationInput,
             userId: user.id,
             username: user.username,
             cognitiveMode: 'environment',
@@ -293,6 +329,7 @@ export class ExecutionEngine {
       };
     });
     for (const handler of [
+      'workflow.robot-status',
       'workflow.boredom-observer',
       'workflow.boredom-movement',
       'workflow.boredom-reflection',
@@ -525,6 +562,7 @@ export class ExecutionEngine {
           NODE_PATH: buildAgentNodePath(),
           MH_TRIGGER_USERNAME: task.username,
           MH_TASK_ID: task.id,
+          MH_TASK_CREATED_AT: task.createdAt,
           MH_TASK_PAYLOAD: JSON.stringify(task.input),
         },
         stdio: ['ignore', 'pipe', 'pipe'],

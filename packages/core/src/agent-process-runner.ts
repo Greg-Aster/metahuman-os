@@ -105,7 +105,7 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
       };
     }
 
-    const bootstrapPath = path.join(systemPaths.brain, 'scripts', '_bootstrap.ts');
+    const bootstrapPath = path.join(ROOT, 'packages', 'core', 'src', 'agent-bootstrap.ts');
     const agentPath = resolveAgentExecutablePath(agentName);
     if (!agentPath) {
       return failedStart(agentName, source, 'Agent file not found');

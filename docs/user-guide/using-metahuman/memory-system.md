@@ -1,192 +1,97 @@
-# Memory System
+# Memory
 
-The memory system is the core of MetaHuman OS. It stores conversations, observations, tasks, and supporting artifacts as human-readable JSON so your data stays local and inspectable.
+MetaHuman OS keeps durable memory per resolved profile. Episodic records, task records, processed artifacts, and the semantic index have different purposes; chat buffers are not a substitute for durable capture.
 
-## Where Memories Live
+## Open the Memory Surface
 
-**⚠️ CRITICAL: Profile paths vary by user configuration**
+Select **Persona** in the left sidebar, then **Memory**. The available views are:
 
-Memories are stored per user, but the actual location depends on custom profile storage settings.
+- **Episodic** — captured events and conversations.
+- **Reflections** — retained reflective output.
+- **Tasks** — profile task records.
+- **Curated** — training-suitable records produced by curation.
+- **Inbox Imports** — files staged for the generic inbox ingestor.
+- **Audio** — completed transcripts and organized audio-derived records.
+- **Dreams** — retained dream output.
+- **Curiosity** — curiosity questions and research records.
+- **Functions** — draft or verified reusable workflows.
 
-### Default Location
+The data shown depends on the active profile and the account's access.
 
-```
-profiles/<username>/memory/
-```
+## Capture a Memory
 
-### Custom Profile Storage
-
-**Many users have custom profile locations** for encrypted drives, external storage, or network mounts:
-
-```
-/media/user/STACK/metahuman-profiles/<username>/memory/        # Encrypted drive
-/mnt/external/profiles/<username>/memory/                       # External storage
-/media/nas/metahuman/<username>/memory/                         # Network storage
-```
-
-### Finding Your Actual Profile Location
-
-**Never assume the default location.** Always use the profile resolution API:
+Use explicit capture for information that should become a durable episodic record:
 
 ```bash
-# Check your actual profile path
-./bin/mh profile path
-
-# Or via API
-import { getProfilePaths } from '@metahuman/core';
-const paths = getProfilePaths('username');
-console.log(paths.root);  // Shows actual location
+./bin/mh --user USERNAME capture "The design review moved to Thursday"
 ```
 
-**For developers:**
-```typescript
-import { getProfilePaths } from '@metahuman/core';
+Omit `--user` only when the CLI can resolve one unambiguous authenticated
+profile.
 
-// CORRECT: Use getProfilePaths()
-const profilePaths = getProfilePaths(username);
-const memoryPath = profilePaths.episodic;
+Do not assume that visible chat history has become durable memory unless the owning workflow explicitly captured it.
 
-// WRONG: Never hardcode paths
-const memoryPath = `profiles/${username}/memory/episodic/`;  // ❌ Will fail for custom storage
-```
+## Search Memory
 
-### Why This Matters
+The simplest command is:
 
-Users configure custom profile storage via `persona/users.json`:
-```json
-{
-  "username": "user",
-  "metadata": {
-    "profileStorage": {
-      "path": "/media/user/STACK/metahuman-profiles/user",
-      "type": "encrypted",
-      "fallbackBehavior": "error"
-    }
-  }
-}
-```
-
-If you hardcode `profiles/<username>/`, you'll:
-- ❌ Read wrong/missing data
-- ❌ Write to wrong location
-- ❌ Bypass encrypted storage
-- ❌ Miss user's actual memories
-
-**Storage Types:**
-- `internal` - Default location in repo
-- `external` - USB drive, network mount, or external location
-- `encrypted` - LUKS, VeraCrypt, or AES-256 encrypted storage
-
-See [Accounts & Security](../configuration-admin/accounts-security.md#custom-profile-storage) for full details.
-
-## Memory Categories
-
-Not every install uses every category, but common folders include:
-
-- `episodic/` — Conversations and observations captured over time
-- `tasks/` — Task records used by the task system
-- `semantic/` / `procedural/` — Higher-level memory stores (used by agents/tools)
-- `preferences/` — Long-lived preferences and settings derived from interactions
-- `index/` — Embeddings index used for semantic search
-- `audio/` — Audio inbox, transcripts, and archive
-- `functions/` — Draft and verified multi-step workflows
-
-## Capturing Memories
-
-### Automatic (Chat)
-All chat conversations are captured automatically from the web UI and CLI chat.
-
-### Manual Capture (CLI)
 ```bash
-./bin/mh capture "Met with Sarah about the ML project timeline"
+./bin/mh --user USERNAME remember "design review"
 ```
 
-### File Ingestion (CLI)
+When a compatible semantic index is ready, `remember` uses it. If semantic search fails or no usable index exists, the CLI reports that condition and uses its separate keyword search.
+
+For a direct semantic query:
+
 ```bash
-./bin/mh ingest /path/to/notes/
-./bin/mh agent run ingestor
+./bin/mh --user USERNAME index query "what changed about the design review?"
 ```
 
-### Audio Ingestion (CLI)
+Search results are evidence that matching records were retrieved, not that every relevant memory exists or that an answer inferred from them is correct.
+
+## Build or Repair the Search Index
+
+The Memory controls show whether the active profile's index is **Ready**, **Missing**, **Legacy**, or **Corrupt**. Use **Queue rebuild** to submit a profile-scoped rebuild through the Work Coordinator. The same operation is available from the CLI:
+
 ```bash
-./bin/mh audio ingest /path/to/recordings/
-./bin/mh agent run transcriber
-./bin/mh agent run audio-organizer
+./bin/mh --user USERNAME index build
 ```
 
-## Searching Memories
+The command queues work; it does not wait for the rebuild to finish. Check Queue for the terminal result, then refresh the Memory index status. The configured embeddings backend and profile storage must be available while the job runs. Encrypted profiles are read through the existing profile and encryption owners rather than through a plaintext side path.
 
-### Keyword Search
+## Import Text Files
+
+Stage a supported file or a directory's first-level files in the active profile inbox:
+
 ```bash
-./bin/mh remember "design review"
+./bin/mh --user USERNAME ingest /path/to/notes.md
+./bin/mh --user USERNAME agent run ingestor
 ```
 
-### Semantic Search (Embeddings Index)
-```bash
-./bin/mh --user <username> index build
-./bin/mh index query "when did I meet with Sarah?"
-```
+The generic Inbox Ingestor accepts UTF-8 `.txt`, `.md`, and `.json` files within its configured file-size and chunk limits. It is installed but not scheduled by default. You can also run it from **System → Agent Catalog** after placing files in the profile inbox.
 
-`index build` queues the rebuild through the running MetaHuman Work Coordinator;
-the configured embedding service must be available when the job executes.
+PDF and DOCX documents are not generic inbox formats. Route them through the maintained document-ingestion feature when that interface is configured.
 
-`mh remember` automatically uses semantic search if an index exists for the current user.
+Repeated ingestion uses the memory owner's retry and deduplication contract. Inspect the job's per-file and per-chunk outcome if a run partially succeeds or fails; do not assume that copying a file to the inbox means it was captured or archived.
 
-## Memory System Architecture
+## Organize and Curate
 
-**Core Implementation**: `packages/core/src/memory.ts` (1,359 lines)
+The Memory controls provide manual runs for two separate functions:
 
-MetaHuman's memory system includes 12 specialized modules:
+- **Memory Organizer** enriches existing memories with tags and entities to improve retrieval.
+- **Training Curator** evaluates records for training suitability and prepares clean training material.
 
-### Core Memory Functions
--  `memory.ts` - Main memory operations (capture, search, retrieve)
-- `memory-validation.ts` - Schema validation and integrity checks
-- `memory-cleanup.ts` - Pruning and archival
-- `memory-policy.ts` - Access control and retention policies
-- `memory-content-filter.ts` - Content filtering and safety
-- `memory-metrics-cache.ts` - Performance metrics and caching
+These jobs submit through Trigger Manager and the Work Coordinator. A successful submission means the job was admitted; inspect Queue or Agent Monitor for completion.
 
-### Advanced Memory Features
-- `intelligent-memory-retrieval.ts` - Smart semantic search with relevance ranking
-- `function-memory.ts` - Remember function calls and tool usage
-- `vector-index.ts` - Vector embeddings for semantic search
-- `queue/execution-engine.ts` - Coordinator-owned `vector.append-event` index executor
-- `embeddings.ts` - Generate vector embeddings via Ollama
-- `context-builder.ts` - Build conversation context from memories
+## Profile Storage
 
-### Memory Operations
+Never construct a profile path from a username. Profiles can use internal, external, or encrypted storage, and the configured storage owner resolves the real location. Use the web UI and CLI for normal operations. Owners who need storage administration should follow [Accounts and Security](/user-guide#accounts-security).
 
-**Create Memory** (via CLI or chat):
-```bash
-./bin/mh capture "Met with Sarah about the ML project"
-```
+Memory, indexes, inbox files, transcripts, and derived artifacts are private runtime data. Do not commit them to the repository.
 
-**Search Memories**:
-```bash
-./bin/mh remember "ML project"
-```
+## Related Guides
 
-**Search Methods**:
-1. **Semantic Search** (if index exists) - Vector similarity matching
-2. **Keyword Search** (fallback) - Text pattern matching
-3. **Tag Search** - Filter by tags added by organizer agent
-
-## Background Agents
-
-Several agents enrich and manage memory behind the scenes. Common examples:
-- `organizer` (tags/entities and metadata enrichment)
-- `transcriber` (audio transcription)
-- `audio-organizer` (turns transcripts into structured memories)
-
-Use these commands to inspect and control agents:
-```bash
-./bin/mh agent list
-./bin/mh agent status
-./bin/mh agent run <name>
-```
-
-## Next Steps
-
-- [Task Management](task-management.md) for task-specific memory
-- [Voice Features](voice-features.md) for audio workflows
-- [Architecture](../advanced-features/architecture.md) for memory system details
+- [Tasks and Projects](/user-guide#task-management)
+- [Voice Training and Audio Data](/user-guide#voice-training)
+- [AI Training](/user-guide#ai-training)
+- [Accounts and Security](/user-guide#accounts-security)

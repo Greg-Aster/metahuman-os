@@ -16,6 +16,11 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import {
+  canWriteMemory as modeAllowsMemoryWrites,
+  loadCognitiveMode,
+  type CognitiveModeId,
+} from '../../cognitive-mode.js';
+import {
   cognitiveGraphPath,
   extractGraphOutput,
   getFirstFailedNode,
@@ -26,6 +31,7 @@ import {
   type CachedGraphEntry,
 } from '../../graph-runtime.js';
 import type { SvelteFlowGraph } from '../../cognitive-graph-schema.js';
+import type { NodeExecutionContext } from '../../nodes/types.js';
 import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
 import { curiosityQuestionStore } from '../../curiosity-questions.js';
 
@@ -67,6 +73,27 @@ export interface ResponsePipelineResult {
   failedNode?: string | null;
   failedNodes?: Array<{ nodeId: string; error: string }>;
   executionTimeMs?: number;
+}
+
+export function buildResponsePipelineExecutionContext(
+  request: ResponsePipelineRequest,
+  username: string,
+  cognitiveMode: CognitiveModeId,
+): NodeExecutionContext {
+  return {
+    sessionId: request.sessionId || `response-${Date.now()}`,
+    userMessage: request.message.trim(),
+    userId: username,
+    username,
+    cardType: request.cardType,
+    cardData: request.cardData,
+    responseBufferId: request.responseBufferId,
+    cognitiveMode,
+    allowMemoryWrites: modeAllowsMemoryWrites(cognitiveMode),
+    recordPersonaMemory: true,
+    environment: 'server',
+    ttsGeneration: request.ttsGeneration,
+  };
 }
 
 // ============================================================================
@@ -217,19 +244,11 @@ export async function handleResponsePipeline(
 
     // Step 4: Build execution context
     logStep(4, 'Building execution context');
-    const executionContext = {
-      sessionId: sessionId || `response-${Date.now()}`,
-      userMessage: message.trim(),
-      userId: username,
+    const executionContext = buildResponsePipelineExecutionContext(
+      { message, cardType, cardData, responseBufferId, sessionId, ttsGeneration },
       username,
-      cardType,
-      cardData,
-      responseBufferId,
-      cognitiveMode: 'response_pipeline',
-      allowMemoryWrites: true,
-      environment: 'server',
-      ttsGeneration,
-    };
+      loadCognitiveMode().currentMode,
+    );
 
     logStep(4, 'Context built', {
       sessionId: executionContext.sessionId,
@@ -401,19 +420,11 @@ export function streamResponsePipeline(
         push('progress', { step: 'loaded', message: 'Pipeline loaded, processing...' });
 
         // Build context
-        const executionContext = {
-          sessionId: sessionId || `response-${Date.now()}`,
-          userMessage: message.trim(),
-          userId: username,
+        const executionContext = buildResponsePipelineExecutionContext(
+          { message, cardType, cardData, responseBufferId, sessionId, ttsGeneration },
           username,
-          cardType,
-          cardData,
-          responseBufferId,
-          cognitiveMode: 'response_pipeline',
-          allowMemoryWrites: true,
-          environment: 'server',
-          ttsGeneration,
-        };
+          loadCognitiveMode().currentMode,
+        );
 
         const startedAt = Date.now();
 

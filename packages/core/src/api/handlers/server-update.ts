@@ -1,381 +1,372 @@
 /**
- * Server Update API Handler
+ * Owner-authorized server update transport.
  *
- * GET - Check for available updates (git fetch + compare)
- * POST - Perform update (git pull + restart)
- *
- * Works for web server (desktop) deployments using git.
+ * GET checks the configured upstream without converting transport failures into
+ * an "up to date" result. POST permits one fast-forward update at a time and
+ * reports success only after dependencies and the production build complete.
  */
 
-import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { successResponse } from '../types.js';
-import { exec, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
-import { existsSync, readFileSync } from 'node:fs';
-import path from 'node:path';
-import { systemPaths } from '../../paths.js';
+import { execFile, spawn } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+import { promisify } from 'node:util'
 
-const execAsync = promisify(exec);
+import { systemPaths } from '../../paths.js'
+import type { UnifiedRequest, UnifiedResponse } from '../types.js'
+import { successResponse } from '../types.js'
 
-// Dynamic import for audit
-let audit: typeof import('../../audit.js').audit | null = null;
+const execFileAsync = promisify(execFile)
+const COMMAND_BUFFER_LIMIT = 10 * 1024 * 1024
+
+let audit: typeof import('../../audit.js').audit | null = null
+let updateInProgress = false
 
 async function ensureAudit(): Promise<void> {
   if (!audit) {
-    const module = await import('../../audit.js');
-    audit = module.audit;
+    const module = await import('../../audit.js')
+    audit = module.audit
   }
+}
+
+export interface ServerUpdateDependencies {
+  gitDirectoryExists(): boolean
+  getPackageVersion(): string
+  runGit(args: string[]): Promise<string>
+  runPnpm(args: string[], timeoutMs: number): Promise<string>
+}
+
+async function runCommand(command: string, args: string[], timeoutMs: number): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync(command, args, {
+      cwd: systemPaths.root,
+      encoding: 'utf8',
+      maxBuffer: COMMAND_BUFFER_LIMIT,
+      timeout: timeoutMs,
+    })
+    return String(stdout).trim()
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`${command} ${args.join(' ')} failed: ${detail}`)
+  }
+}
+
+function readPackageVersion(): string {
+  const packagePath = path.join(systemPaths.root, 'package.json')
+  const parsed = JSON.parse(readFileSync(packagePath, 'utf8')) as { version?: unknown }
+  if (typeof parsed.version !== 'string' || parsed.version.trim().length === 0) {
+    throw new Error('Root package.json must contain a non-empty version')
+  }
+  return parsed.version.trim()
+}
+
+const DEFAULT_DEPENDENCIES: ServerUpdateDependencies = {
+  gitDirectoryExists: () => existsSync(path.join(systemPaths.root, '.git')),
+  getPackageVersion: readPackageVersion,
+  runGit: args => runCommand('git', args, 30_000),
+  runPnpm: (args, timeoutMs) => runCommand('pnpm', args, timeoutMs),
 }
 
 interface GitStatus {
-  currentCommit: string;
-  currentBranch: string;
-  remoteCommit: string | null;
-  ahead: number;
-  behind: number;
-  hasChanges: boolean;
-  lastFetchTime: string | null;
+  currentCommit: string
+  currentBranch: string
+  upstream: string
+  remoteCommit: string
+  ahead: number
+  behind: number
+  hasChanges: boolean
 }
 
 interface UpdateInfo {
-  updateAvailable: boolean;
-  currentVersion: string;
-  latestVersion: string | null;
-  commitsAhead: number;
-  commitsBehind: number;
-  changesSummary: string[];
-  canUpdate: boolean;
-  reason?: string;
+  updateAvailable: boolean
+  currentVersion: string
+  latestVersion: string
+  commitsAhead: number
+  commitsBehind: number
+  changesSummary: string[]
+  canUpdate: boolean
+  reason?: string
 }
 
-/**
- * Run a git command in the project root
- */
-async function runGitCommand(command: string): Promise<string> {
-  try {
-    const { stdout } = await execAsync(`git ${command}`, {
-      cwd: systemPaths.root,
-      timeout: 30000,
-    });
-    return stdout.trim();
-  } catch (error: any) {
-    throw new Error(`Git command failed: ${error.message}`);
+function parseAheadBehind(raw: string): { ahead: number; behind: number } {
+  const parts = raw.trim().split(/\s+/)
+  if (parts.length !== 2 || parts.some(part => !/^\d+$/.test(part))) {
+    throw new Error(`Git returned an invalid ahead/behind count: ${raw}`)
   }
+  return { ahead: Number(parts[0]), behind: Number(parts[1]) }
 }
 
-/**
- * Get current git status
- */
-async function getGitStatus(): Promise<GitStatus> {
-  const currentCommit = await runGitCommand('rev-parse HEAD');
-  const currentBranch = await runGitCommand('rev-parse --abbrev-ref HEAD');
-
-  // Check for local changes
-  const status = await runGitCommand('status --porcelain');
-  const hasChanges = status.length > 0;
-
-  // Get remote tracking branch
-  let remoteCommit: string | null = null;
-  let ahead = 0;
-  let behind = 0;
-
-  try {
-    // Fetch to get latest remote info (with timeout)
-    await runGitCommand('fetch --quiet');
-
-    const remoteBranch = `origin/${currentBranch}`;
-    remoteCommit = await runGitCommand(`rev-parse ${remoteBranch}`);
-
-    // Count commits ahead/behind
-    const aheadBehind = await runGitCommand(`rev-list --left-right --count HEAD...${remoteBranch}`);
-    const [aheadStr, behindStr] = aheadBehind.split(/\s+/);
-    ahead = parseInt(aheadStr, 10) || 0;
-    behind = parseInt(behindStr, 10) || 0;
-  } catch {
-    // No remote tracking or fetch failed
+async function getGitStatus(dependencies: ServerUpdateDependencies): Promise<GitStatus> {
+  const currentCommit = await dependencies.runGit(['rev-parse', 'HEAD'])
+  const currentBranch = await dependencies.runGit(['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (currentBranch === 'HEAD') {
+    throw new Error('Server updates require a checked-out branch, not detached HEAD')
   }
+
+  const upstream = await dependencies.runGit([
+    'rev-parse',
+    '--abbrev-ref',
+    '--symbolic-full-name',
+    '@{upstream}',
+  ])
+  const hasChanges = (await dependencies.runGit(['status', '--porcelain'])).length > 0
+
+  await dependencies.runGit(['fetch', '--quiet'])
+  const remoteCommit = await dependencies.runGit(['rev-parse', upstream])
+  const { ahead, behind } = parseAheadBehind(
+    await dependencies.runGit(['rev-list', '--left-right', '--count', `HEAD...${upstream}`]),
+  )
 
   return {
     currentCommit,
     currentBranch,
+    upstream,
     remoteCommit,
     ahead,
     behind,
     hasChanges,
-    lastFetchTime: new Date().toISOString(),
-  };
-}
-
-/**
- * Get version from package.json
- */
-function getPackageVersion(): string {
-  try {
-    const packagePath = path.join(systemPaths.root, 'package.json');
-    if (existsSync(packagePath)) {
-      const pkg = JSON.parse(readFileSync(packagePath, 'utf-8'));
-      return pkg.version || '0.0.0';
-    }
-  } catch {
-    // Ignore errors
   }
-  return '0.0.0';
 }
 
-/**
- * GET /api/server-update - Check for available updates
- */
-export async function handleGetServerUpdate(req: UnifiedRequest): Promise<UnifiedResponse> {
-  await ensureAudit();
+async function getChangesSummary(
+  dependencies: ServerUpdateDependencies,
+  gitStatus: GitStatus,
+): Promise<string[]> {
+  if (gitStatus.behind === 0) return []
+  const logs = await dependencies.runGit([
+    'log',
+    '--oneline',
+    `HEAD..${gitStatus.upstream}`,
+    '-10',
+  ])
+  return logs.split('\n').map(line => line.trim()).filter(Boolean)
+}
+
+function containsDependencyChanges(changedFiles: string[]): boolean {
+  return changedFiles.some(file => file === 'pnpm-lock.yaml' || file.endsWith('/package.json') || file === 'package.json')
+}
+
+function actorFor(req: UnifiedRequest): string {
+  return req.user?.username || 'system'
+}
+
+export async function handleGetServerUpdate(
+  req: UnifiedRequest,
+  dependencies: ServerUpdateDependencies = DEFAULT_DEPENDENCIES,
+): Promise<UnifiedResponse> {
+  await ensureAudit()
 
   try {
-    // Check if this is a git repository
-    const gitDir = path.join(systemPaths.root, '.git');
-    if (!existsSync(gitDir)) {
+    if (!dependencies.gitDirectoryExists()) {
       return successResponse({
         updateAvailable: false,
-        currentVersion: getPackageVersion(),
+        currentVersion: dependencies.getPackageVersion(),
         latestVersion: null,
         commitsAhead: 0,
         commitsBehind: 0,
         changesSummary: [],
         canUpdate: false,
-        reason: 'Not a git repository - updates must be done manually',
-      } as UpdateInfo);
+        reason: 'Not a git repository - updates must be performed by the installation owner',
+      })
     }
 
-    const gitStatus = await getGitStatus();
-
-    // Get commit summaries for pending updates
-    const changesSummary: string[] = [];
-    if (gitStatus.behind > 0) {
-      try {
-        const logs = await runGitCommand(
-          `log --oneline HEAD..origin/${gitStatus.currentBranch} -10`
-        );
-        changesSummary.push(...logs.split('\n').filter(Boolean));
-      } catch {
-        // Ignore errors getting commit summaries
-      }
-    }
-
+    const gitStatus = await getGitStatus(dependencies)
+    const hasDiverged = gitStatus.ahead > 0 && gitStatus.behind > 0
     const response: UpdateInfo = {
       updateAvailable: gitStatus.behind > 0,
-      currentVersion: `${getPackageVersion()} (${gitStatus.currentCommit.substring(0, 7)})`,
-      latestVersion: gitStatus.remoteCommit
-        ? `${gitStatus.remoteCommit.substring(0, 7)}`
-        : null,
+      currentVersion: `${dependencies.getPackageVersion()} (${gitStatus.currentCommit.slice(0, 7)})`,
+      latestVersion: gitStatus.remoteCommit.slice(0, 7),
       commitsAhead: gitStatus.ahead,
       commitsBehind: gitStatus.behind,
-      changesSummary,
-      canUpdate: !gitStatus.hasChanges && gitStatus.behind > 0,
+      changesSummary: await getChangesSummary(dependencies, gitStatus),
+      canUpdate: !gitStatus.hasChanges && gitStatus.behind > 0 && gitStatus.ahead === 0,
       reason: gitStatus.hasChanges
         ? 'Local changes detected - commit or stash before updating'
+        : hasDiverged
+          ? 'Local branch has diverged from its upstream - resolve the branch before updating'
         : gitStatus.behind === 0
-          ? 'Already up to date'
+          ? gitStatus.ahead > 0
+            ? 'Local branch is ahead of its upstream'
+            : 'Already up to date'
           : undefined,
-    };
-
-    if (audit) {
-      audit({
-        event: 'server_update_check',
-        category: 'system',
-        level: 'info',
-        actor: req.user?.username || 'system',
-        details: {
-          updateAvailable: response.updateAvailable,
-          commitsBehind: response.commitsBehind,
-        },
-      });
     }
 
-    return successResponse(response);
+    audit?.({
+      event: 'server_update_check',
+      category: 'system',
+      level: 'info',
+      actor: actorFor(req),
+      details: {
+        updateAvailable: response.updateAvailable,
+        commitsBehind: response.commitsBehind,
+      },
+    })
+
+    return successResponse(response)
   } catch (error) {
-    console.error('[server-update] Check failed:', error);
-    return {
-      status: 500,
-      error: (error as Error).message || 'Failed to check for updates',
-    };
+    const message = error instanceof Error ? error.message : 'Failed to check for updates'
+    console.error('[server-update] Check failed:', error)
+    audit?.({
+      event: 'server_update_check_failed',
+      category: 'system',
+      level: 'error',
+      actor: actorFor(req),
+      details: { error: message },
+    })
+    return { status: 500, error: message }
   }
 }
 
-/**
- * POST /api/server-update - Perform update (git pull)
- */
-export async function handlePostServerUpdate(req: UnifiedRequest): Promise<UnifiedResponse> {
-  await ensureAudit();
+async function performServerUpdate(
+  req: UnifiedRequest,
+  dependencies: ServerUpdateDependencies,
+): Promise<UnifiedResponse> {
+  let repositoryUpdated = false
 
   try {
-    // Check if this is a git repository
-    const gitDir = path.join(systemPaths.root, '.git');
-    if (!existsSync(gitDir)) {
-      return {
-        status: 400,
-        error: 'Not a git repository - updates must be done manually',
-      };
+    if (!dependencies.gitDirectoryExists()) {
+      return { status: 400, error: 'Not a git repository - updates must be performed by the installation owner' }
     }
 
-    const gitStatus = await getGitStatus();
-
-    // Don't update if there are local changes
+    const gitStatus = await getGitStatus(dependencies)
     if (gitStatus.hasChanges) {
-      return {
-        status: 400,
-        error: 'Local changes detected - commit or stash before updating',
-      };
+      return { status: 400, error: 'Local changes detected - commit or stash before updating' }
     }
-
-    // Don't update if already up to date
+    if (gitStatus.ahead > 0 && gitStatus.behind > 0) {
+      return { status: 409, error: 'Local branch has diverged from its upstream - resolve the branch before updating' }
+    }
     if (gitStatus.behind === 0) {
       return successResponse({
         success: true,
         message: 'Already up to date',
         restarting: false,
-      });
+        restartRequired: false,
+      })
     }
 
-    if (audit) {
-      audit({
-        event: 'server_update_started',
-        category: 'system',
-        level: 'warn',
-        actor: req.user?.username || 'system',
-        details: {
-          fromCommit: gitStatus.currentCommit.substring(0, 7),
-          commitsBehind: gitStatus.behind,
-        },
-      });
-    }
+    audit?.({
+      event: 'server_update_started',
+      category: 'system',
+      level: 'warn',
+      actor: actorFor(req),
+      details: {
+        fromCommit: gitStatus.currentCommit.slice(0, 7),
+        commitsBehind: gitStatus.behind,
+      },
+    })
 
-    // Perform git pull
-    const pullOutput = await runGitCommand('pull --ff-only');
+    const pullOutput = await dependencies.runGit(['pull', '--ff-only'])
+    repositoryUpdated = true
 
-    // Check if dependencies need updating
-    let needsPnpmInstall = false;
-    try {
-      const changedFiles = await runGitCommand(
-        `diff --name-only ${gitStatus.currentCommit}..HEAD`
-      );
-      needsPnpmInstall = changedFiles.includes('package.json') ||
-        changedFiles.includes('pnpm-lock.yaml');
-    } catch {
-      // Assume we need to install just in case
-      needsPnpmInstall = true;
-    }
+    const changedFiles = (await dependencies.runGit([
+      'diff',
+      '--name-only',
+      `${gitStatus.currentCommit}..HEAD`,
+    ])).split('\n').map(file => file.trim()).filter(Boolean)
+    const needsPnpmInstall = containsDependencyChanges(changedFiles)
 
-    // Run pnpm install if needed
     if (needsPnpmInstall) {
-      try {
-        await execAsync('pnpm install', {
-          cwd: systemPaths.root,
-          timeout: 120000,
-        });
-      } catch (e) {
-        console.warn('[server-update] pnpm install warning:', e);
-      }
+      await dependencies.runPnpm(['install'], 120_000)
     }
+    await dependencies.runPnpm(['build'], 15 * 60_000)
 
-    if (audit) {
-      audit({
-        event: 'server_update_completed',
-        category: 'system',
-        level: 'info',
-        actor: req.user?.username || 'system',
-        details: {
-          pullOutput: pullOutput.substring(0, 500),
-          needsPnpmInstall,
-        },
-      });
-    }
+    const newCommit = await dependencies.runGit(['rev-parse', 'HEAD'])
+    audit?.({
+      event: 'server_update_completed',
+      category: 'system',
+      level: 'info',
+      actor: actorFor(req),
+      details: {
+        fromCommit: gitStatus.currentCommit.slice(0, 7),
+        toCommit: newCommit.slice(0, 7),
+        needsPnpmInstall,
+      },
+    })
 
-    const newCommit = await runGitCommand('rev-parse HEAD');
-
-    // Return success - restart should be handled separately
     return successResponse({
       success: true,
-      message: 'Update successful',
-      previousCommit: gitStatus.currentCommit.substring(0, 7),
-      newCommit: newCommit.substring(0, 7),
+      message: 'Update built successfully',
+      previousCommit: gitStatus.currentCommit.slice(0, 7),
+      newCommit: newCommit.slice(0, 7),
       pullOutput,
       needsPnpmInstall,
       restarting: false,
-      restartMessage: 'Please restart the server to apply changes: ./start.sh',
-    });
+      restartRequired: true,
+      restartMessage: 'Restart the server to activate the validated build',
+    })
   } catch (error) {
-    console.error('[server-update] Update failed:', error);
-
-    if (audit) {
-      audit({
-        event: 'server_update_failed',
-        category: 'system',
-        level: 'error',
-        actor: req.user?.username || 'system',
-        details: {
-          error: (error as Error).message,
-        },
-      });
-    }
-
+    const message = error instanceof Error ? error.message : 'Update failed'
+    console.error('[server-update] Update failed:', error)
+    audit?.({
+      event: 'server_update_failed',
+      category: 'system',
+      level: 'error',
+      actor: actorFor(req),
+      details: { error: message, repositoryUpdated },
+    })
     return {
       status: 500,
-      error: (error as Error).message || 'Update failed',
-    };
+      error: message,
+      data: { repositoryUpdated },
+    }
+  }
+}
+
+export async function handlePostServerUpdate(
+  req: UnifiedRequest,
+  dependencies: ServerUpdateDependencies = DEFAULT_DEPENDENCIES,
+): Promise<UnifiedResponse> {
+  await ensureAudit()
+  if (updateInProgress) {
+    return { status: 409, error: 'A server update is already in progress' }
+  }
+
+  updateInProgress = true
+  try {
+    return await performServerUpdate(req, dependencies)
+  } finally {
+    updateInProgress = false
   }
 }
 
 /**
- * POST /api/server-update/restart - Restart the server
- *
- * This spawns a detached restart script that:
- * 1. Waits for current process to exit
- * 2. Starts new server process
+ * Restart through the canonical repository launcher after the current process
+ * has exited and released its startup lock.
  */
 export async function handleRestartServer(req: UnifiedRequest): Promise<UnifiedResponse> {
-  await ensureAudit();
+  await ensureAudit()
 
-  if (audit) {
-    audit({
-      event: 'server_restart_requested',
-      category: 'system',
-      level: 'warn',
-      actor: req.user?.username || 'system',
-      details: {},
-    });
-  }
-
-  // Create a simple restart script
-  const restartScript = `
-    sleep 2
-    cd "${systemPaths.root}"
-    ./start.sh
-  `;
+  audit?.({
+    event: 'server_restart_requested',
+    category: 'system',
+    level: 'warn',
+    actor: actorFor(req),
+    details: {},
+  })
 
   try {
-    // Spawn detached process to restart
-    const child = spawn('bash', ['-c', restartScript], {
+    const child = spawn('bash', ['-c', 'sleep 2; exec ./start.sh'], {
+      cwd: systemPaths.root,
       detached: true,
       stdio: 'ignore',
-    });
-    child.unref();
+    })
+    child.unref()
 
-    // Send response before exiting
     const response = successResponse({
       success: true,
       message: 'Server will restart in 2 seconds',
-    });
+    })
 
-    // Schedule exit after response is sent
     setTimeout(() => {
-      console.log('[server-update] Exiting for restart...');
-      process.exit(0);
-    }, 500);
+      console.log('[server-update] Exiting for restart...')
+      process.exit(0)
+    }, 500)
 
-    return response;
+    return response
   } catch (error) {
-    console.error('[server-update] Restart failed:', error);
+    console.error('[server-update] Restart failed:', error)
     return {
       status: 500,
-      error: (error as Error).message || 'Failed to initiate restart',
-    };
+      error: error instanceof Error ? error.message : 'Failed to initiate restart',
+    }
   }
 }

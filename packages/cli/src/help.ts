@@ -35,7 +35,6 @@ Agents and models:
   backend <command>   Inspect or switch the active backend
 
 Audio and voice:
-  audio <command>         Ingest or inspect audio
   voice <command>         Inspect samples and export training data
   voice-server <command>  Manage shared Kokoro/Whisper services
   kokoro <command>        Manage Kokoro

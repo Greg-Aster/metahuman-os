@@ -1,467 +1,473 @@
-/**
- * Organizer Agent — Core Logic
- *
- * Automatically processes and enriches memories:
- * - Scans episodic memories for unprocessed entries
- * - Uses LLM to extract tags and entities
- * - Updates memory files with enriched metadata
- * - Logs all operations to audit trail
- *
- * This module can be used both:
- * - CLI: via cli.ts wrapper
- * - Mobile: imported directly and run in-process
- */
+/** Canonical finite Organizer agent orchestration. */
 
-import fs from 'node:fs';
-import path from 'node:path';
 import {
-  storageClient,
   audit,
-  auditAction,
-  callLLM,
-  type RouterMessage,
-  getTargetUser,
+  cognitiveGraphPath,
+  getUserByUsername,
+  listFailedNodes,
+  loadGraphFile,
+  requireGraphNodeOutput,
+  runGraph,
+  scanEpisodicMemoryRecords,
   withUserContext,
-  extractMemoryContent,
-  parseThinkingBlocks,
-} from '@metahuman/core';
-import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
+  type CachedGraphEntry,
+  type EpisodicEvent,
+  type EpisodicMemoryRecord,
+  type EpisodicMemoryScanOutcome,
+  type GraphExecutionState,
+  type SafeUser,
+  type SvelteFlowGraph,
+} from '@metahuman/core'
+import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime'
 
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface EpisodicMemory {
-  id: string;
-  timestamp: string;
-  content: string;
-  type?: string;
-  entities?: string[];
-  tags?: string[];
-  importance?: number;
-  links?: Array<{ type: string; target: string }>;
-  metadata?: {
-    processed?: boolean;
-    processedAt?: string;
-    model?: string;
-  };
-}
-
-export interface AnalysisResult {
-  tags: string[];
-  entities: string[];
-}
+const DEFAULT_LIMIT = 20
+const MAX_LIMIT = 500
+const DEFAULT_MAX_BATCHES = 100
+const MAX_BATCHES = 1000
+const graphCache: Record<string, CachedGraphEntry | null> = {}
 
 export interface OrganizerOptions {
+  username: string;
   limit?: number;
-  singleUser?: boolean;
-  reprocess?: boolean; // Clear existing tags/entities and regenerate from user content
+  reprocess?: boolean;
+  all?: boolean;
+  maxBatches?: number;
+  signal?: AbortSignal;
+}
+
+export interface ParsedOrganizerOptions {
+  username?: string;
+  limit?: number;
+  reprocess?: boolean;
+  all?: boolean;
+  maxBatches?: number;
+}
+
+export type OrganizerMemoryStatus = 'updated' | 'skipped' | 'failed'
+
+export interface OrganizerMemoryOutcome {
+  relativePath: string;
+  status: OrganizerMemoryStatus;
+  encrypted?: boolean;
+  error?: string;
 }
 
 export interface OrganizerResult {
   success: boolean;
+  username: string;
+  totalConsidered: number;
   totalProcessed: number;
-  userCount: number;
+  totalSkipped: number;
+  totalFailed: number;
+  userCount: 1;
+  outcomes: OrganizerMemoryOutcome[];
   errors: string[];
 }
 
-// ============================================================================
-// Memory Analysis
-// ============================================================================
+interface LoadedOrganizerGraph {
+  graph: SvelteFlowGraph;
+  source: string;
+}
 
-/**
- * Analyze memory content using LLM
- */
-export async function analyzeMemoryContent(content: string): Promise<AnalysisResult> {
-  console.log(`[organizer] Analyzing: "${content.substring(0, 50)}..."`);
+export interface OrganizerDependencies {
+  resolveUser(username: string): SafeUser | null;
+  scanMemories(username: string): Iterable<EpisodicMemoryScanOutcome>;
+  loadGraph(): Promise<LoadedOrganizerGraph>;
+  executeGraph(params: {
+    graph: SvelteFlowGraph;
+    context: Record<string, unknown>;
+    signal?: AbortSignal;
+  }): Promise<GraphExecutionState>;
+  now(): string;
+}
 
-  const messages: RouterMessage[] = [
-    {
-      role: 'system',
-      content: 'You are an expert text analysis agent. Extract key tags and named entities from text. Respond with ONLY valid JSON: {"tags": ["tag1", "tag2"], "entities": ["entity1", "entity2"]}',
+const defaultDependencies: OrganizerDependencies = {
+  resolveUser: getUserByUsername,
+  scanMemories: username => scanEpisodicMemoryRecords(username),
+  async loadGraph() {
+    const loaded = await loadGraphFile(cognitiveGraphPath('organizer-agent.json'), {
+      cache: graphCache,
+      cacheKey: 'organizer-agent',
+      logPrefix: '[organizer]',
+    })
+    if (!loaded) throw new Error('Organizer graph is missing or invalid')
+    return loaded
+  },
+  executeGraph: runGraph,
+  now: () => new Date().toISOString(),
+}
+
+function positiveInteger(value: unknown, label: string, maximum = MAX_LIMIT): number {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && /^\d+$/.test(value.trim())
+      ? Number(value)
+      : Number.NaN
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) {
+    throw new Error(`${label} must be an integer between 1 and ${maximum}`)
+  }
+  return parsed
+}
+
+function requiredValue(args: string[], index: number, flag: string): string {
+  const value = args[index + 1]
+  if (!value || value.startsWith('--')) throw new Error(`${flag} requires a value`)
+  return value
+}
+
+export function parseOrganizerArgs(
+  args: string[],
+  environmentUsername?: string,
+): ParsedOrganizerOptions {
+  const parsed: ParsedOrganizerOptions = {}
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
+    if (argument === '--reprocess') {
+      parsed.reprocess = true
+      continue
+    }
+    if (argument === '--all') {
+      parsed.all = true
+      continue
+    }
+    if (argument === '--limit') {
+      parsed.limit = positiveInteger(requiredValue(args, index, argument), 'Organizer limit')
+      index += 1
+      continue
+    }
+    if (argument.startsWith('--limit=')) {
+      parsed.limit = positiveInteger(argument.slice('--limit='.length), 'Organizer limit')
+      continue
+    }
+    if (argument === '--max-batches') {
+      parsed.maxBatches = positiveInteger(requiredValue(args, index, argument), 'Organizer max batches', MAX_BATCHES)
+      index += 1
+      continue
+    }
+    if (argument.startsWith('--max-batches=')) {
+      parsed.maxBatches = positiveInteger(argument.slice('--max-batches='.length), 'Organizer max batches', MAX_BATCHES)
+      continue
+    }
+    if (argument === '--username') {
+      parsed.username = requiredValue(args, index, argument).trim()
+      index += 1
+      continue
+    }
+    if (argument.startsWith('--username=')) {
+      parsed.username = argument.slice('--username='.length).trim()
+      if (!parsed.username) throw new Error('--username requires a value')
+      continue
+    }
+    throw new Error(`Unknown Organizer argument: ${argument}`)
+  }
+
+  const triggeredUsername = environmentUsername?.trim()
+  if (triggeredUsername && parsed.username && triggeredUsername !== parsed.username) {
+    throw new Error('Organizer username conflicts with the triggering user')
+  }
+  if (triggeredUsername) parsed.username = triggeredUsername
+  return parsed
+}
+
+export function normalizeOrganizerOptions(options: OrganizerOptions): Required<
+  Pick<OrganizerOptions, 'username' | 'limit' | 'reprocess' | 'all' | 'maxBatches'>
+> & Pick<OrganizerOptions, 'signal'> {
+  const username = options.username?.trim()
+  if (!username) throw new Error('Organizer requires a resolved username')
+  if (typeof options.reprocess !== 'undefined' && typeof options.reprocess !== 'boolean') {
+    throw new Error('Organizer reprocess must be a boolean')
+  }
+  if (options.all === true && options.reprocess === true) {
+    throw new Error('Organizer cannot combine --all with --reprocess')
+  }
+  return {
+    username,
+    limit: typeof options.limit === 'undefined'
+      ? DEFAULT_LIMIT
+      : positiveInteger(options.limit, 'Organizer limit'),
+    reprocess: options.reprocess === true,
+    all: options.all === true,
+    maxBatches: typeof options.maxBatches === 'undefined'
+      ? DEFAULT_MAX_BATCHES
+      : positiveInteger(options.maxBatches, 'Organizer max batches', MAX_BATCHES),
+    signal: options.signal,
+  }
+}
+
+function needsEnrichment(event: EpisodicEvent, reprocess: boolean): boolean {
+  if (reprocess) return true
+  return event.metadata?.processed !== true
+}
+
+function cancellationError(): DOMException {
+  return new DOMException('Organizer execution cancelled', 'AbortError')
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw cancellationError()
+}
+
+function isCancellation(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
+function memoryContext(record: EpisodicMemoryRecord): Record<string, unknown> {
+  return {
+    ...record.event,
+    relativePath: record.relativePath,
+    encrypted: record.encrypted,
+  }
+}
+
+async function executeMemory(
+  graph: SvelteFlowGraph,
+  user: SafeUser,
+  record: EpisodicMemoryRecord,
+  options: ReturnType<typeof normalizeOrganizerOptions>,
+  dependencies: OrganizerDependencies,
+): Promise<OrganizerMemoryOutcome> {
+  throwIfAborted(options.signal)
+  const graphState = await dependencies.executeGraph({
+    graph,
+    context: {
+      username: user.username,
+      userId: user.id,
+      cognitiveMode: 'agent',
+      environment: 'server',
+      organizerMemory: memoryContext(record),
+      organizerReprocess: options.reprocess,
+      organizerTimestamp: dependencies.now(),
+      abortSignal: options.signal,
     },
-    {
-      role: 'user',
-      content: `Analyze this text and extract tags (topics, themes, categories) and entities (people, places, tools, concepts):\n\n${content}`,
-    },
-  ];
+    signal: options.signal,
+  })
+  throwIfAborted(options.signal)
 
-  try {
-    const response = await callLLM({
-      role: 'curator',
-      messages,
-      options: { temperature: 0.3 },
-      keepAlive: '0', // Unload immediately for background agent
-    });
+  const failedNodes = listFailedNodes(graphState)
+  if (graphState.status !== 'completed' || failedNodes.length > 0) {
+    const details = failedNodes.map(node => `${node.nodeId}: ${node.error}`).join('; ')
+    throw new Error(details || `Organizer graph ended with status ${graphState.status}`)
+  }
 
-    // Strip <think> blocks before parsing JSON (Qwen3 reasoning mode support)
-    const { stripped } = parseThinkingBlocks(response.content);
-    const result = JSON.parse(stripped) as AnalysisResult;
-
-    console.log(`[organizer] Found ${result.tags?.length || 0} tags, ${result.entities?.length || 0} entities`);
-
-    auditAction({
-      skill: 'organizer:analyze',
-      inputs: { contentLength: content.length },
-      success: true,
-      output: {
-        tags: result.tags,
-        entities: result.entities,
-        modelId: response.modelId,
-        latencyMs: response.latencyMs,
-      },
-    });
-
-    return {
-      tags: result.tags || [],
-      entities: result.entities || [],
-    };
-  } catch (error) {
-    console.error('[organizer] Analysis failed:', (error as Error).message);
-
-    auditAction({
-      skill: 'organizer:analyze',
-      inputs: { contentLength: content.length },
-      success: false,
-      error: (error as Error).message,
-    });
-
-    return { tags: [], entities: [] };
+  const saved = requireGraphNodeOutput(graphState, 'memory_saver')
+  if (saved.success !== true || saved.relativePath !== record.relativePath) {
+    throw new Error(`Organizer graph did not persist the selected memory: ${record.relativePath}`)
+  }
+  if (saved.outcome !== 'updated' && saved.outcome !== 'skipped') {
+    throw new Error(`Organizer graph returned an invalid outcome for ${record.relativePath}`)
+  }
+  return {
+    relativePath: record.relativePath,
+    status: saved.outcome,
+    encrypted: saved.encrypted === true,
   }
 }
 
-// ============================================================================
-// Memory Discovery
-// ============================================================================
-
-/**
- * Find memories to process in the episodic directory
- * @param username - Username to resolve the correct profile storage location
- * @param limit - Optional limit on number of memories to return
- * @param reprocess - If true, return ALL memories (ignoring processed flag) for regeneration
- */
-export function findUnprocessedMemories(username: string, limit?: number, reprocess?: boolean): string[] {
-  const result = storageClient.resolvePath({ username, category: 'memory', subcategory: 'episodic' });
-  console.log(`[organizer] Resolved episodic path for ${username}: ${result.path}`);
-  if (!result.success || !result.path) {
-    console.error('[organizer] Cannot resolve episodic path');
-    return [];
+export async function runOrganizer(
+  input: OrganizerOptions,
+  dependencies: OrganizerDependencies = defaultDependencies,
+): Promise<OrganizerResult> {
+  const options = normalizeOrganizerOptions(input)
+  const user = dependencies.resolveUser(options.username)
+  if (!user || user.username !== options.username) {
+    throw new Error(`Organizer user does not exist: ${options.username}`)
   }
 
-  const episodicDir = result.path;
-  const files: string[] = [];
-
-  const walk = (dir: string) => {
-    if (!fs.existsSync(dir)) return;
-    if (limit && files.length >= limit) return;
-
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (limit && files.length >= limit) break;
-
-      const fullPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        walk(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith('.json')) {
-        try {
-          const content = fs.readFileSync(fullPath, 'utf8');
-          const memory: EpisodicMemory = JSON.parse(content);
-
-          // Generic/system tags that don't count as "meaningful" semantic tags
-          const GENERIC_TAGS = new Set(['ingested', 'inbox', 'ai', 'curated', 'audio', 'transcript']);
-
-          // Check if memory has only generic tags (no semantic enrichment)
-          const hasOnlyGenericTags = memory.tags && memory.tags.length > 0 &&
-            memory.tags.every(tag => GENERIC_TAGS.has(tag.toLowerCase()));
-
-          // Memory needs processing if:
-          // 1. Reprocess flag is set (regenerate all), OR
-          // 2. Not already processed AND (has no tags OR only generic tags) AND has no entities
-          const needsProcessing = reprocess || (
-            !memory.metadata?.processed &&
-            (!memory.tags || memory.tags.length === 0 || hasOnlyGenericTags) &&
-            (!memory.entities || memory.entities.length === 0)
-          );
-
-          if (needsProcessing) {
-            files.push(fullPath);
-          }
-        } catch (e) {
-          console.error(`[organizer] Error reading ${fullPath}:`, (e as Error).message);
-        }
-      }
-    }
-  };
-
-  walk(episodicDir);
-  return files;
-}
-
-// ============================================================================
-// Memory Processing
-// ============================================================================
-
-/**
- * Normalize entities to strings
- */
-function normalizeEntities(entities: any[] | undefined): string[] {
-  if (!entities) return [];
-  return entities.map((e: any) => {
-    if (typeof e === 'string') return e;
-    if (e && typeof e === 'object') {
-      if (typeof (e as any).name === 'string') return (e as any).name;
-      if (typeof (e as any).entity === 'string') return (e as any).entity;
-      const firstString = Object.values(e).find(v => typeof v === 'string');
-      if (typeof firstString === 'string') return firstString;
-    }
-    try { return JSON.stringify(e); } catch { return String(e); }
-  });
-}
-
-/**
- * Process a single memory file
- * @param filepath - Path to the memory JSON file
- * @param reprocess - If true, clear existing tags/entities and regenerate from user content
- */
-export async function processMemory(filepath: string, reprocess?: boolean): Promise<boolean> {
-  try {
-    const content = fs.readFileSync(filepath, 'utf8');
-    const memory: EpisodicMemory = JSON.parse(content);
-
-    // When reprocessing, clear existing LLM-generated tags/entities
-    // Preserve only generic system tags (ingested, inbox, etc.)
-    if (reprocess) {
-      const GENERIC_TAGS = new Set(['ingested', 'inbox', 'ai', 'curated', 'audio', 'transcript']);
-      memory.tags = (memory.tags || []).filter(tag => GENERIC_TAGS.has(tag.toLowerCase()));
-      memory.entities = [];
-      console.log(`[organizer] Reprocessing ${path.basename(filepath)} - cleared LLM-generated tags/entities`);
-    } else {
-      // Normalize existing entities
-      memory.entities = normalizeEntities(memory.entities);
-    }
-
-    // Extract user-only content for analysis (excludes LLM responses)
-    const userContent = extractMemoryContent(memory, 'user');
-    if (!userContent) {
-      console.log(`[organizer] Skipped ${path.basename(filepath)} (no user content)`);
-      // Mark as processed so we don't retry
-      memory.metadata = { ...memory.metadata, processed: true, processedAt: new Date().toISOString() };
-      fs.writeFileSync(filepath, JSON.stringify(memory, null, 2));
-      return false;
-    }
-
-    // Analyze only user content - tags/entities reflect what the USER said, not LLM
-    const analysis = await analyzeMemoryContent(userContent);
-
-    if (analysis.tags.length > 0 || analysis.entities.length > 0) {
-      // Update memory with new tags/entities
-      memory.tags = [...(memory.tags || []), ...analysis.tags].filter(
-        (tag, index, self) => self.indexOf(tag) === index
-      );
-      const mergedEntities = [...(memory.entities || []), ...analysis.entities];
-      memory.entities = normalizeEntities(mergedEntities).filter(
-        (entity, index, self) => self.indexOf(entity) === index
-      );
-
-      // Mark as processed
-      memory.metadata = {
-        ...memory.metadata,
-        processed: true,
-        processedAt: new Date().toISOString(),
-        model: 'organizer',
-      };
-
-      fs.writeFileSync(filepath, JSON.stringify(memory, null, 2));
-      console.log(`[organizer] Updated ${path.basename(filepath)}`);
-      return true;
-    } else {
-      console.log(`[organizer] Skipped ${path.basename(filepath)} (no results from LLM)`);
-      return false;
-    }
-  } catch (error) {
-    console.error(`[organizer] Failed to process ${path.basename(filepath)}:`, (error as Error).message);
-    return false;
+  const result: OrganizerResult = {
+    success: false,
+    username: user.username,
+    totalConsidered: 0,
+    totalProcessed: 0,
+    totalSkipped: 0,
+    totalFailed: 0,
+    userCount: 1,
+    outcomes: [],
+    errors: [],
   }
-}
-
-/**
- * Process memories for a single user
- */
-export async function processUserMemories(
-  username: string,
-  options: OrganizerOptions = {}
-): Promise<number> {
-  console.log(`[organizer] Processing user: ${username}${options.reprocess ? ' (REPROCESS MODE)' : ''}`);
-
-  try {
-    const memories = findUnprocessedMemories(username, options.limit, options.reprocess);
-
-    if (memories.length > 0) {
-      console.log(`[organizer]   Found ${memories.length} memories to ${options.reprocess ? 'reprocess' : 'process'}`);
-
-      let processed = 0;
-      for (const filepath of memories) {
-        const success = await processMemory(filepath, options.reprocess);
-        if (success) processed++;
-      }
-
-      console.log(`[organizer]   Completed ${username}: ${processed}/${memories.length}`);
-      return processed;
-    } else {
-      console.log(`[organizer]   No new memories for ${username}`);
-      return 0;
-    }
-  } catch (error) {
-    console.error(`[organizer]   Error processing ${username}:`, (error as Error).message);
-    throw error;
-  }
-}
-
-// ============================================================================
-// Main Cycle
-// ============================================================================
-
-/**
- * Run a full organizer cycle (multi-user)
- */
-export async function runCycle(options: OrganizerOptions = {}): Promise<OrganizerResult> {
-  console.log('[organizer] Starting cycle...');
 
   audit({
     level: 'info',
     category: 'action',
     event: 'agent_cycle_started',
-    details: { agent: 'organizer', mode: options.singleUser ? 'single-user' : 'multi-user' },
+    details: { agent: 'organizer', username: user.username, limit: options.limit },
     actor: 'agent',
-  });
-
-  const result: OrganizerResult = {
-    success: false,
-    totalProcessed: 0,
-    userCount: 0,
-    errors: [],
-  };
+  })
 
   try {
-    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
-    const activeUser = getTargetUser();
+    await withUserContext(
+      { userId: user.id, username: user.username, role: user.role },
+      async () => {
+        const loaded = await dependencies.loadGraph()
+        const selected: EpisodicMemoryRecord[] = []
 
-    if (!activeUser) {
-      console.log('[organizer] No active users found. Skipping cycle.');
-      audit({
-        level: 'info',
-        category: 'action',
-        event: 'agent_cycle_skipped',
-        details: { agent: 'organizer', reason: 'no_active_users' },
-        actor: 'agent',
-      });
-      result.success = true;
-      return result;
-    }
+        for (const outcome of dependencies.scanMemories(user.username)) {
+          throwIfAborted(options.signal)
+          if (outcome.status === 'failed') {
+            result.outcomes.push({
+              relativePath: outcome.relativePath,
+              status: 'failed',
+              error: outcome.error,
+            })
+            result.errors.push(`${outcome.relativePath}: ${outcome.error}`)
+            continue
+          }
+          if (!needsEnrichment(outcome.record.event, options.reprocess)) continue
+          selected.push(outcome.record)
+          if (selected.length >= options.limit) break
+        }
 
-    console.log(`[organizer] Processing user: ${activeUser.username}`);
-    result.userCount = 1;
-
-    try {
-      const processed = await withUserContext(
-        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
-        async () => processUserMemories(activeUser.username, options)
-      );
-      result.totalProcessed += processed;
-    } catch (error) {
-      const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
-      console.error(`[organizer] Failed: ${errorMsg}`);
-      result.errors.push(errorMsg);
-    }
-
-    console.log(`[organizer] Cycle finished. Processed ${result.totalProcessed} memories for user ${activeUser.username}.`);
-
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'agent_cycle_completed',
-      details: {
-        agent: 'organizer',
-        mode: options.singleUser ? 'single-user' : 'single-active-user',
-        totalProcessed: result.totalProcessed,
-        username: activeUser.username,
+        result.totalConsidered = selected.length
+        for (const record of selected) {
+          try {
+            result.outcomes.push(await executeMemory(
+              loaded.graph,
+              user,
+              record,
+              options,
+              dependencies,
+            ))
+          } catch (error) {
+            if (isCancellation(error)) throw error
+            const message = (error as Error).message
+            result.outcomes.push({
+              relativePath: record.relativePath,
+              status: 'failed',
+              encrypted: record.encrypted,
+              error: message,
+            })
+            result.errors.push(`${record.relativePath}: ${message}`)
+          }
+        }
       },
-      actor: 'agent',
-    });
-
-    result.success = result.errors.length === 0;
-    return result;
+    )
   } catch (error) {
-    const errorMsg = (error as Error).message;
-    console.error('[organizer] Cycle error:', errorMsg);
-
-    audit({
-      level: 'error',
-      category: 'action',
-      event: 'agent_cycle_failed',
-      details: { agent: 'organizer', error: errorMsg },
-      actor: 'agent',
-    });
-
-    result.errors.push(errorMsg);
-    return result;
+    if (isCancellation(error)) throw error
+    const message = (error as Error).message
+    result.errors.push(message)
   }
+
+  result.totalProcessed = result.outcomes.filter(outcome => outcome.status === 'updated').length
+  result.totalSkipped = result.outcomes.filter(outcome => outcome.status === 'skipped').length
+  result.totalFailed = result.outcomes.filter(outcome => outcome.status === 'failed').length
+  result.success = result.errors.length === 0
+
+  audit({
+    level: result.success ? 'info' : 'error',
+    category: 'action',
+    event: result.success ? 'agent_cycle_completed' : 'agent_cycle_failed',
+    details: {
+      agent: 'organizer',
+      username: user.username,
+      graph: 'organizer-agent.json',
+      considered: result.totalConsidered,
+      updated: result.totalProcessed,
+      skipped: result.totalSkipped,
+      failed: result.totalFailed,
+    },
+    actor: 'agent',
+  })
+  return result
 }
 
-// ============================================================================
-// Agent Runtime Interface
-// ============================================================================
-
-/**
- * Run function for agent-runtime
- */
-export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
-  const startTime = Date.now();
-  const args = input.args || [];
-  const opts = input.options || {};
-
-  const options: OrganizerOptions = {
-    limit: opts.limit as number | undefined,
-    singleUser: args.includes('--single-user') || opts.singleUser === true,
-  };
-
-  // Parse limit from args
-  const limitArg = args.find(a => a.startsWith('--limit='));
-  if (limitArg && !options.limit) {
-    options.limit = parseInt(limitArg.split('=')[1], 10);
+/** Drain bounded Organizer batches without moving selection or persistence into the caller. */
+export async function runOrganizerToCompletion(
+  input: OrganizerOptions,
+  dependencies: OrganizerDependencies = defaultDependencies,
+): Promise<OrganizerResult> {
+  const options = normalizeOrganizerOptions({ ...input, all: true })
+  const total: OrganizerResult = {
+    success: true,
+    username: options.username,
+    totalConsidered: 0,
+    totalProcessed: 0,
+    totalSkipped: 0,
+    totalFailed: 0,
+    userCount: 1,
+    outcomes: [],
+    errors: [],
   }
 
-  try {
-    // If running for a specific user context, process just that user
-    if (ctx.username && options.singleUser) {
-      const processed = await withUserContext(
-        { userId: ctx.username, username: ctx.username, role: 'owner' },
-        async () => processUserMemories(ctx.username, options)
-      );
+  for (let batchNumber = 0; batchNumber < options.maxBatches; batchNumber += 1) {
+    throwIfAborted(options.signal)
+    const batch = await runOrganizer({
+      username: options.username,
+      limit: options.limit,
+      reprocess: options.reprocess,
+      signal: options.signal,
+    }, dependencies)
+    total.totalConsidered += batch.totalConsidered
+    total.totalProcessed += batch.totalProcessed
+    total.totalSkipped += batch.totalSkipped
+    total.totalFailed += batch.totalFailed
+    total.outcomes.push(...batch.outcomes)
+    total.errors.push(...batch.errors)
 
-      return {
-        success: true,
-        data: { totalProcessed: processed, userCount: 1, errors: [] },
-        duration: Date.now() - startTime,
-        itemsProcessed: processed,
-      };
+    if (!batch.success) {
+      total.success = false
+      return total
+    }
+    if (batch.totalConsidered < options.limit) return total
+    if (batch.totalProcessed + batch.totalSkipped === 0) {
+      total.success = false
+      total.errors.push('Organizer made no progress while unprocessed memories remained')
+      return total
+    }
+  }
+
+  total.success = false
+  total.errors.push(`Organizer reached the ${options.maxBatches}-batch safety limit while memories remained`)
+  return total
+}
+
+export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
+  const startedAt = Date.now()
+  try {
+    const parsed = parseOrganizerArgs(input.args ?? [], ctx.username)
+    const optionUsername = input.options?.username
+    if (typeof optionUsername !== 'undefined' && optionUsername !== ctx.username) {
+      throw new Error('Organizer structured username conflicts with the triggering user')
+    }
+    const limit = typeof input.options?.limit === 'undefined'
+      ? parsed.limit
+      : positiveInteger(input.options.limit, 'Organizer limit')
+    const reprocess = typeof input.options?.reprocess === 'undefined'
+      ? parsed.reprocess
+      : input.options.reprocess
+    if (typeof reprocess !== 'undefined' && typeof reprocess !== 'boolean') {
+      throw new Error('Organizer reprocess must be a boolean')
     }
 
-    // Otherwise run full cycle
-    const result = await runCycle(options);
-
+    const all = typeof input.options?.all === 'undefined'
+      ? parsed.all
+      : input.options.all
+    if (typeof all !== 'undefined' && typeof all !== 'boolean') {
+      throw new Error('Organizer all must be a boolean')
+    }
+    const maxBatches = typeof input.options?.maxBatches === 'undefined'
+      ? parsed.maxBatches
+      : positiveInteger(input.options.maxBatches, 'Organizer max batches', MAX_BATCHES)
+    const execute = all ? runOrganizerToCompletion : runOrganizer
+    const result = await execute({
+      username: ctx.username,
+      limit,
+      reprocess,
+      all,
+      maxBatches,
+      signal: ctx.signal,
+    })
     return {
       success: result.success,
       data: result,
       error: result.errors.length > 0 ? result.errors.join('; ') : undefined,
-      duration: Date.now() - startTime,
-      itemsProcessed: result.totalProcessed,
-    };
+      duration: Date.now() - startedAt,
+      itemsProcessed: result.totalProcessed + result.totalSkipped,
+    }
   } catch (error) {
     return {
       success: false,
       error: (error as Error).message,
-      duration: Date.now() - startTime,
-    };
+      duration: Date.now() - startedAt,
+    }
   }
 }

@@ -149,8 +149,7 @@
           if (typeof data.generation === 'number') {
             if (data.generation > queueGeneration && activeDeliveryId) {
               queueInterruptedDeliveries.add(activeDeliveryId);
-              ttsApi.stopActiveAudio('interrupted');
-              ttsApi.cancelInFlightTts('interrupted');
+              ttsApi.interruptPlaybackRequest(activeDeliveryId, 'interrupted');
             }
             queueGeneration = Math.max(queueGeneration, data.generation);
           }
@@ -162,9 +161,10 @@
             queueGeneration = Math.max(queueGeneration, data.generation);
           }
           console.log('[tts-queue] Interrupting superseded playback', data.interruption);
-          if (activeDeliveryId) queueInterruptedDeliveries.add(activeDeliveryId);
-          ttsApi.stopActiveAudio('interrupted');
-          ttsApi.cancelInFlightTts('interrupted');
+          if (activeDeliveryId) {
+            queueInterruptedDeliveries.add(activeDeliveryId);
+            ttsApi.interruptPlaybackRequest(activeDeliveryId, 'interrupted');
+          }
           return;
         }
         if (data.type === 'error') {

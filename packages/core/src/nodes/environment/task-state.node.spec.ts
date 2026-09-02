@@ -74,12 +74,143 @@ test('a new instruction does not admit an incidental correlated camera frame', a
   assert.equal(prepared.taskState.phase, 'new');
 });
 
+test('standing preparation preserves and resumes the exact freestyle request', async () => {
+  const prepared = await prepare(observation(), 'Invent a low sideways stretch.');
+  const standing = await environmentTaskStateNode.execute({
+    observation: observation(),
+    instruction: prepared.instruction,
+    taskState: prepared.taskState,
+    movementRequest: {
+      description: 'Invent a low sideways stretch.',
+      motionClass: 'body_local',
+    },
+    generatedActions: [{
+      type: 'robotCommand',
+      command: 'stand',
+      sessionId: 'robot-1',
+      metadata: {
+        motionPreparation: {
+          version: 1,
+          kind: 'stand_before_freestyle',
+          movementRequest: {
+            description: 'Invent a low sideways stretch.',
+            motionClass: 'body_local',
+          },
+        },
+      },
+    }],
+    response: '',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'The off-script body movement should be generated.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+      actionPurpose: 'expression',
+    },
+  }, {
+    userMessage: 'Invent a low sideways stretch.',
+    username: 'greggles',
+  }, { phase: 'reduce' });
+
+  assert.equal(standing.actions[0]?.type, 'robotCommand');
+  assert.equal(standing.actions[0]?.command, 'stand');
+  assert.equal(standing.taskState.continuationPolicy, 'bounded');
+  assert.equal(
+    standing.taskState.pendingMovementRequest?.description,
+    'Invent a low sideways stretch.',
+  );
+  assert.deepEqual(standing.taskState.pendingMovementContract, {
+    continuationPolicy: 'none',
+    requiredCompletionBasis: 'action_result',
+    actionPurpose: 'expression',
+  });
+
+  const terminal = observation({
+    metadata: {
+      actionId: 'standing-preparation',
+      originatingInstruction: standing.taskInstruction,
+    },
+    feedback: [{
+      id: 'standing-preparation-complete',
+      actionId: 'standing-preparation',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'stand completed',
+    }],
+  });
+  const resumed = await prepare(terminal);
+  assert.deepEqual(resumed.movementRequest, {
+    description: 'Invent a low sideways stretch.',
+    motionClass: 'body_local',
+  });
+
+  const planned = await reduce({
+    observation: terminal,
+    instruction: resumed.instruction,
+    taskState: resumed.taskState,
+    generatedActions: [{
+      type: 'robotMotionPlan',
+      sessionId: 'robot-1',
+      metadata: {
+        motionSummary: 'Leaned into a low sideways stretch, then held the resulting pose.',
+      },
+    }],
+    generatedResponse: '',
+    response: 'I cannot verify the gesture from the available evidence.',
+    taskDecision: {
+      outcome: 'act',
+      objectiveComplete: false,
+      reason: 'A redundant selector pass incorrectly requested visual proof.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      motionClass: 'body_local',
+      visualEvidenceMode: 'single',
+    },
+  });
+
+  assert.equal(planned.actions[0]?.type, 'robotMotionPlan');
+  assert.equal(planned.taskState.pendingMovementRequest, undefined);
+  assert.equal(planned.taskState.pendingMovementContract, undefined);
+  assert.equal(planned.taskState.continuationPolicy, 'none');
+  assert.equal(planned.taskState.requiredCompletionBasis, 'action_result');
+  assert.equal(planned.response, '');
+  assert.equal(
+    planned.taskState.selectedAction?.description,
+    'Leaned into a low sideways stretch, then held the resulting pose.',
+  );
+
+  const completedPlan = await prepare(observation({
+    metadata: {
+      actionId: 'freestyle-plan',
+      originatingInstruction: planned.taskInstruction,
+    },
+    feedback: [{
+      id: 'freestyle-plan-complete',
+      actionId: 'freestyle-plan',
+      timestamp: '2026-08-06T03:00:02.000Z',
+      type: 'completed',
+      message: 'motion plan completed',
+      data: { command: 'robotMotionPlan' },
+    }],
+  }));
+  const completionEvent = JSON.parse(String(completedPlan.instruction).replace(
+    /^EnvironmentCompletionEvent:/,
+    '',
+  ));
+  assert.equal(
+    completionEvent.action.description,
+    'Leaned into a low sideways stretch, then held the resulting pose.',
+  );
+});
+
 test('a fresh user task cannot inherit terminal feedback from unrelated work', async () => {
   const stale = observation({
     metadata: {
       actionId: 'old-action',
       correlationId: 'old-autonomy-cycle',
-      originatingInstruction: 'EnvironmentTaskState:{"version":1,"objective":"Walk around","phase":"awaiting_action","step":1,"maxSteps":8,"continuationPolicy":"bounded","requiredCompletionBasis":"action_result"}',
+      originatingInstruction: 'EnvironmentTaskState:{"version":1,"objective":"Walk around","phase":"awaiting_action","step":1,"continuationPolicy":"bounded","requiredCompletionBasis":"action_result"}',
     },
     feedback: [{
       id: 'old-feedback',
@@ -155,11 +286,11 @@ test('direct conversational input keeps the model response outside physical comp
   assert.equal(reduced.response, response);
 });
 
-test('a visual stopping condition is normalized to bounded continuation', async () => {
+test('the LLM decision supplies a visual stopping contract without phrase classification', async () => {
   const initial = await prepare(observation(), 'Turn right until you see the target.');
-  assert.equal(initial.taskState.continuationPolicy, 'bounded');
-  assert.equal(initial.taskState.requiredCompletionBasis, 'visual_observation');
-  assert.equal(initial.taskState.visualEvidenceMode, 'single');
+  assert.equal(initial.taskState.continuationPolicy, 'none');
+  assert.equal(initial.taskState.requiredCompletionBasis, 'response');
+  assert.equal(initial.taskState.visualEvidenceMode, undefined);
   const result = await environmentTaskStateNode.execute({
     observation: observation(),
     instruction: initial.instruction,
@@ -170,10 +301,11 @@ test('a visual stopping condition is normalized to bounded continuation', async 
       outcome: 'act',
       objectiveComplete: false,
       reason: 'The turn advances the requested visual search.',
-      continuationPolicy: 'none',
-      requiredCompletionBasis: 'action_result',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      visualEvidenceMode: 'single',
       motionClass: 'body_local',
-      actionPurpose: 'expression',
+      actionPurpose: 'information_gain',
     },
   }, {
     userMessage: 'Turn right until you see the target.',
@@ -239,7 +371,6 @@ test('autonomy revises its objective inside canonical Environment Task State', a
       objective: 'Use this boredom stimulus as material for autonomous choice.',
       phase: 'new',
       step: 0,
-      maxSteps: 8,
       continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
     },
@@ -457,7 +588,7 @@ test('Boredom Movement requires an initial physical consequence and then yields 
   });
   const returned = await prepare(terminal);
   assert.equal(returned.deterministicComplete, false);
-  assert.equal(returned.precomputedResponse, '');
+  assert.equal('precomputedResponse' in returned, false);
   assert.equal(returned.visuals.at(-1)?.id, 'movement-after');
 
   const reacted = await environmentTaskStateNode.execute({
@@ -681,7 +812,7 @@ test('a bounded visual objective closes only when the selector cites the admitte
   assert.equal(completed.decision.completionEvidence, 'Frame foot-visible visibly contains the requested foot.');
 });
 
-test('an ungrounded visual completion advances the persisted action instead of stopping or replaying the request', async () => {
+test('an ungrounded visual completion follows the next LLM-selected action', async () => {
   clearEnvironmentTaskFrameCache();
   const initial = await prepare(observation(), 'Please wave until you see my hand, then stop');
   const queued = await reduce({
@@ -738,11 +869,9 @@ test('an ungrounded visual completion advances the persisted action instead of s
 
   assert.equal(continued.complete, false);
   assert.equal(continued.actions.length, 1);
-  assert.equal(continued.actions[0]?.command, 'wave');
+  assert.equal(continued.actions[0]?.command, 'turn_right_90');
   assert.equal(continued.taskState.step, 2);
-  assert.match(continued.response, /does not provide grounded evidence/i);
-  assert.doesNotMatch(continued.response, /action is complete/i);
-  assert.notEqual(continued.actions[0]?.command, 'turn_right_90');
+  assert.equal(continued.response, 'The wave action is complete. I will turn to search for the hand.');
 });
 
 test('a bounded exploratory action inspects the correlated result before deciding the objective is complete', async () => {
@@ -787,7 +916,7 @@ test('a bounded exploratory action inspects the correlated result before decidin
 
   const preparedTerminal = await prepare(terminal);
   assert.equal(preparedTerminal.deterministicComplete, false);
-  assert.equal(preparedTerminal.precomputedResponse, '');
+  assert.equal('precomputedResponse' in preparedTerminal, false);
   assert.equal(preparedTerminal.routingAnalysis.needsVision, true);
   assert.equal(preparedTerminal.taskState.phase, 'evaluating_evidence');
   assert.deepEqual(
@@ -795,8 +924,8 @@ test('a bounded exploratory action inspects the correlated result before decidin
     ['room-before', 'room-after'],
   );
   assert.match(String(preparedTerminal.instruction), /Required whole-objective evidence: visual_observation/);
-  assert.match(String(preparedTerminal.instruction), /safety ceiling, not a success condition/);
-  assert.match(String(preparedTerminal.instruction), /Do not continue merely because unseen areas might still exist/);
+  assert.match(String(preparedTerminal.instruction), /decide whether to complete it, preserve it, or revise it with another supported action/);
+  assert.doesNotMatch(String(preparedTerminal.instruction), /safety (?:ceiling|limit)|action budget/i);
 
   const closed = await reduce({
     observation: terminal,
@@ -904,7 +1033,7 @@ test('any autonomous information-gain action preserves a visual contract through
   });
   const returned = await prepare(terminal);
   assert.equal(returned.deterministicComplete, false);
-  assert.equal(returned.precomputedResponse, '');
+  assert.equal('precomputedResponse' in returned, false);
   assert.equal(returned.routingAnalysis.needsVision, true);
   assert.equal(returned.taskState.actionPurpose, 'information_gain');
   assert.equal(returned.taskState.requiredCompletionBasis, 'visual_observation');
@@ -1012,7 +1141,7 @@ test('autonomous action results return to the selector for a meaningful review i
   });
   const returned = await prepare(terminal);
   assert.equal(returned.deterministicComplete, false);
-  assert.equal(returned.precomputedResponse, '');
+  assert.equal('precomputedResponse' in returned, false);
   assert.match(String(returned.instruction), /Review what the verified action changes/);
   assert.match(String(returned.instruction), /does not end an autonomous episode by itself/);
 
@@ -1046,7 +1175,6 @@ test('a substantive response with no next action closes autonomous action feedba
     objective: 'Change perspective and engage with the new view.',
     phase: 'awaiting_action',
     step: 2,
-    maxSteps: 8,
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'action_result',
     selectedAction: { type: 'robotCommand', command: 'curious' },
@@ -1097,13 +1225,207 @@ test('a substantive response with no next action closes autonomous action feedba
   assert.equal(reviewed.decision.blockedReason, '');
 });
 
+test('an open-ended autonomous visual curiosity may continue from correlated evidence', async () => {
+  clearEnvironmentTaskFrameCache();
+  const priorState = 'EnvironmentTaskState:' + JSON.stringify({
+    version: 1,
+    objective: 'Investigate what might be hidden beyond the dark area.',
+    phase: 'awaiting_action',
+    step: 1,
+    continuationPolicy: 'bounded',
+    requiredCompletionBasis: 'visual_observation',
+    motionClass: 'body_local',
+    actionPurpose: 'information_gain',
+    visualEvidenceMode: 'single',
+    selectedAction: { type: 'robotMotionPlan' },
+  });
+  const current = frame('dark-result-frame', 'dark-cycle', 'dark-motion');
+  const terminal = observation({
+    visual: current,
+    visuals: [current],
+    metadata: {
+      actionId: 'dark-motion',
+      correlationId: 'dark-cycle',
+      originatingInstruction: priorState,
+      robotObserver: {
+        cycleId: 'dark-cycle',
+        step: 2,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-observer',
+      },
+    },
+    feedback: [{
+      id: 'dark-motion-feedback',
+      actionId: 'dark-motion',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'motion plan completed',
+    }],
+  });
+  const prepared = await prepare(terminal);
+  const reviewed = await reduce({
+    observation: terminal,
+    instruction: prepared.instruction,
+    taskState: prepared.taskState,
+    frames: prepared.visuals,
+    actions: [{ type: 'robotMotionPlan', sessionId: 'robot-1' }],
+    response: 'The shadows still reveal nothing, so I will adjust my angle again.',
+    taskDecision: {
+      outcome: 'act',
+      objective: 'Investigate what might be hidden beyond the dark area.',
+      objectiveComplete: false,
+      reason: 'Another perspective might reveal more.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      visualEvidenceMode: 'single',
+      motionClass: 'body_local',
+      actionPurpose: 'information_gain',
+    },
+  });
+
+  assert.equal(reviewed.actions[0]?.type, 'robotMotionPlan');
+  assert.equal(reviewed.response, 'The shadows still reveal nothing, so I will adjust my angle again.');
+  assert.equal(reviewed.complete, false);
+  assert.equal(reviewed.taskState.phase, 'awaiting_action');
+  assert.equal(reviewed.decision.blockedReason, undefined);
+});
+
+test('a finite autonomous visual stopping condition may continue from correlated evidence', async () => {
+  clearEnvironmentTaskFrameCache();
+  const priorState = 'EnvironmentTaskState:' + JSON.stringify({
+    version: 1,
+    objective: 'Turn until the bright doorway is visible.',
+    phase: 'awaiting_action',
+    step: 1,
+    continuationPolicy: 'bounded',
+    requiredCompletionBasis: 'visual_observation',
+    motionClass: 'body_local',
+    actionPurpose: 'information_gain',
+    visualEvidenceMode: 'single',
+    selectedAction: { type: 'robotCommand', command: 'turn_right_90' },
+  });
+  const current = frame('doorway-search-frame', 'doorway-cycle', 'doorway-turn');
+  const terminal = observation({
+    visual: current,
+    visuals: [current],
+    metadata: {
+      actionId: 'doorway-turn',
+      correlationId: 'doorway-cycle',
+      originatingInstruction: priorState,
+      robotObserver: {
+        cycleId: 'doorway-cycle',
+        step: 2,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-observer',
+      },
+    },
+    feedback: [{
+      id: 'doorway-turn-feedback',
+      actionId: 'doorway-turn',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'turn completed',
+    }],
+  });
+  const prepared = await prepare(terminal);
+  const reviewed = await reduce({
+    observation: terminal,
+    instruction: prepared.instruction,
+    taskState: prepared.taskState,
+    frames: prepared.visuals,
+    actions: [{ type: 'robotCommand', command: 'turn_right_90', sessionId: 'robot-1' }],
+    response: '',
+    taskDecision: {
+      outcome: 'act',
+      objective: 'Turn until the bright doorway is visible.',
+      objectiveComplete: false,
+      reason: 'The finite visual condition is not present in the current frame.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      visualEvidenceMode: 'single',
+      motionClass: 'body_local',
+      actionPurpose: 'information_gain',
+    },
+  });
+
+  assert.equal(reviewed.actions[0]?.command, 'turn_right_90');
+  assert.equal(reviewed.response, '');
+  assert.equal(reviewed.complete, false);
+  assert.equal(reviewed.decision.blockedReason, undefined);
+});
+
+test('a completed Boredom Movement intention may select a follow-on supported action', async () => {
+  const priorState = 'EnvironmentTaskState:' + JSON.stringify({
+    version: 1,
+    objective: 'Rise into an upright posture.',
+    phase: 'awaiting_action',
+    step: 1,
+    continuationPolicy: 'bounded',
+    requiredCompletionBasis: 'action_result',
+    motionClass: 'body_local',
+    selectedAction: { type: 'robotMotionPlan' },
+  });
+  const terminal = observation({
+    capabilities: {
+      actions: ['robotCommand', 'robotMotionPlan'],
+      robotCommands: ['stand'],
+      motionClasses: ['body_local'],
+      visual: true,
+      movement: true,
+    },
+    metadata: {
+      actionId: 'rise-motion',
+      correlationId: 'rise-cycle',
+      originatingInstruction: priorState,
+      robotObserver: {
+        cycleId: 'rise-cycle',
+        step: 2,
+        triggerSource: 'autonomy',
+        graph: 'boredom-autonomy',
+        requestedBy: 'boredom-movement',
+      },
+    },
+    feedback: [{
+      id: 'rise-motion-feedback',
+      actionId: 'rise-motion',
+      timestamp: '2026-08-06T03:00:01.000Z',
+      type: 'completed',
+      message: 'motion plan completed',
+    }],
+  });
+  const prepared = await prepare(terminal);
+  const reviewed = await reduce({
+    observation: terminal,
+    instruction: prepared.instruction,
+    taskState: prepared.taskState,
+    actions: [{ type: 'robotCommand', command: 'stand', sessionId: 'robot-1' }],
+    response: 'I will now stand to confirm the posture.',
+    taskDecision: {
+      outcome: 'act',
+      objective: 'Rise into an upright posture.',
+      objectiveComplete: false,
+      reason: 'A stand action can confirm the generated movement.',
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'action_result',
+      motionClass: 'body_local',
+    },
+  });
+
+  assert.equal(reviewed.actions[0]?.command, 'stand');
+  assert.equal(reviewed.response, 'I will now stand to confirm the posture.');
+  assert.equal(reviewed.complete, false);
+  assert.equal(reviewed.taskState.phase, 'awaiting_action');
+  assert.equal(reviewed.decision.blockedReason, undefined);
+});
+
 test('autonomy can revise the purpose and evidence contract when feedback motivates another action', async () => {
   const priorState = 'EnvironmentTaskState:' + JSON.stringify({
     version: 1,
     objective: 'Express curiosity about the remembered object.',
     phase: 'awaiting_action',
     step: 1,
-    maxSteps: 8,
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'action_result',
     motionClass: 'body_local',
@@ -1163,7 +1485,6 @@ test('autonomous continuation preserves Task State purpose without requiring the
     objective: 'Express curiosity about the current observation.',
     phase: 'awaiting_action',
     step: 1,
-    maxSteps: 8,
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'action_result',
     actionPurpose: 'expression',
@@ -1349,7 +1670,7 @@ test('an observer bootstrap capture is input evidence, not terminal task feedbac
   }, { phase: 'reduce' });
 
   assert.equal(result.complete, true);
-  assert.equal(result.response, 'The current view does not justify an external response or action.');
+  assert.equal(result.response, '');
   assert.equal(result.decision.terminalFeedback, null);
   assert.equal(result.decision.blockedReason, '');
 });
@@ -1376,7 +1697,7 @@ test('a user-started action remains on the single response path', async () => {
   assert.equal(result.response, 'Waving once.');
 });
 
-test('a generic adapter command label cannot hide matching terminal feedback', async () => {
+test('matching terminal feedback closes lifecycle while leaving speech to the model', async () => {
   const initial = await prepare(observation(), 'Please wave');
   const queued = await reduce({
     observation: observation(),
@@ -1411,9 +1732,55 @@ test('a generic adapter command label cannot hide matching terminal feedback', a
 
   const prepared = await prepare(adapterResult);
   assert.equal(prepared.deterministicComplete, true);
-  assert.match(String(prepared.precomputedResponse), /wave action is complete/);
-  assert.doesNotMatch(String(prepared.precomputedResponse), /Please wave/);
-  assert.doesNotMatch(String(prepared.precomputedResponse), /Objective completed/);
+  assert.equal('precomputedResponse' in prepared, false);
+  assert.match(String(prepared.instruction), /^EnvironmentCompletionEvent:/);
+  assert.match(String(prepared.instruction), /"outwardResponseOptional":true/);
+  const completionEvent = JSON.parse(String(prepared.instruction).replace(
+    /^EnvironmentCompletionEvent:/,
+    '',
+  ));
+  assert.equal(completionEvent.objective, 'Please wave');
+  assert.equal(completionEvent.action.command, 'wave');
+  assert.match(completionEvent.reporting.attribution, /Do not say the user requested/i);
+  assert.match(completionEvent.reporting.response, /outward response is optional/i);
+  assert.doesNotMatch(
+    JSON.stringify(completionEvent.reporting),
+    /camera|external view|first-person|body-mounted/i,
+  );
+
+  const silent = await reduce({
+    observation: adapterResult,
+    instruction: prepared.instruction,
+    taskState: prepared.taskState,
+    response: '',
+    actions: [],
+    taskDecision: {
+      outcome: 'complete',
+      objectiveComplete: true,
+      reason: 'The correlated result closes the requested action.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+    },
+  });
+  assert.equal(silent.complete, true);
+  assert.equal(silent.response, '');
+
+  const spoken = await reduce({
+    observation: adapterResult,
+    instruction: prepared.instruction,
+    taskState: prepared.taskState,
+    response: 'That felt satisfying.',
+    actions: [],
+    taskDecision: {
+      outcome: 'complete',
+      objectiveComplete: true,
+      reason: 'The correlated result closes the requested action.',
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'action_result',
+    },
+  });
+  assert.equal(spoken.complete, true);
+  assert.equal(spoken.response, 'That felt satisfying.');
 });
 
 test('terminal feedback for a different action id cannot close the selected action', async () => {
@@ -1451,10 +1818,10 @@ test('terminal feedback for a different action id cannot close the selected acti
 
   const prepared = await prepare(unrelated);
   assert.equal(prepared.deterministicComplete, false);
-  assert.equal(prepared.precomputedResponse, '');
+  assert.equal('precomputedResponse' in prepared, false);
 });
 
-test('model router returns an exact task-state closure without calling a model', async () => {
+test('model router retains its generic precomputed-response capability for other owners', async () => {
   const exact = '{"response":"","actions":[],"movementRequest":null,"taskDecision":{"outcome":"complete"}}';
   const result = await ModelRouterNode.execute({
     messages: [],
@@ -1497,7 +1864,7 @@ test('failed action_result returns to the same Environment decision and can queu
     }],
   });
   const preparedFailure = await prepare(failed);
-  assert.equal(preparedFailure.precomputedResponse, '');
+  assert.equal('precomputedResponse' in preparedFailure, false);
   assert.match(String(preparedFailure.instruction), /actionId=action-1/);
   assert.match(String(preparedFailure.instruction), /command=wave/);
 
@@ -1561,7 +1928,7 @@ test('external visual change is judged once by the same Environment LLM with ord
     }],
   });
   const evidencePass = await prepare(terminal);
-  assert.equal(evidencePass.precomputedResponse, '');
+  assert.equal('precomputedResponse' in evidencePass, false);
   assert.deepEqual(evidencePass.visuals.map((value: EnvironmentVisualFrame) => value.id), ['before', 'after']);
   assert.match(String(evidencePass.instruction), /chronological order/);
 
@@ -1589,7 +1956,7 @@ test('external visual change is judged once by the same Environment LLM with ord
 
 test('a comparison claim cannot complete from only the current robot camera frame', async () => {
   clearEnvironmentTaskFrameCache();
-  const state = 'EnvironmentTaskState:{"version":1,"objective":"Move closer to the object","phase":"awaiting_action","step":1,"maxSteps":3,"continuationPolicy":"bounded","requiredCompletionBasis":"visual_observation","motionClass":"open_loop_displacement","visualEvidenceMode":"comparison","baselineFrame":{"id":"missing-before","timestamp":"2026-08-06T02:59:59.000Z"},"selectedAction":{"type":"robotCommand","command":"walk_forward"}}';
+  const state = 'EnvironmentTaskState:{"version":1,"objective":"Move closer to the object","phase":"awaiting_action","step":1,"continuationPolicy":"bounded","requiredCompletionBasis":"visual_observation","motionClass":"open_loop_displacement","visualEvidenceMode":"comparison","baselineFrame":{"id":"missing-before","timestamp":"2026-08-06T02:59:59.000Z"},"selectedAction":{"type":"robotCommand","command":"walk_forward"}}';
   const after = frame('only-after', 'cycle-2', 'action-2');
   const terminal = observation({
     visual: after,
@@ -1675,13 +2042,16 @@ test('Environment graph has one semantic LLM and no competing completion or refi
   assert.equal(nodeTypes.filter((type: string) => type === 'environment_task_state').length, 2);
   assert.equal(nodeTypes.filter((type: string) => type === 'persona_loader').length, 1);
   assert.equal(nodeTypes.filter((type: string) => type === 'persona_formatter').length, 1);
-  assert.match(selectorPrompt, /History and memories are background, never current results/);
-  assert.match(selectorPrompt, /direct user statement or answer is current user_input/i);
-  assert.ok(selectorPrompt.trim().split(/\s+/).length <= 250);
-  assert.match(selectorPrompt, /conditional visual search or stopping condition/i);
-  assert.match(selectorPrompt, /continuationPolicy to bounded/);
-  assert.match(selectorPrompt, /requiredCompletionBasis to visual_observation/);
-  assert.match(selectorPrompt, /visualEvidenceMode to single/);
+  assert.match(selectorPrompt, /Robot Status, history, and memories are context, not current proof/i);
+  assert.ok(selectorPrompt.trim().split(/\s+/).length <= 200);
+  assert.match(selectorPrompt, /Make one semantic routing decision/i);
+  assert.match(selectorPrompt, /choose an advertised action when its description performs the current step/i);
+  assert.match(selectorPrompt, /Use movementRequest only when the current movement itself is uncovered/i);
+  assert.match(selectorPrompt, /terminal action result proves execution/i);
+  assert.match(selectorPrompt, /visual observation proves only visible facts/i);
+  assert.match(selectorPrompt, /neither invent extra steps nor impose a fixed action count/i);
+  assert.match(selectorPrompt, /one or two concise sentences/i);
+  assert.doesNotMatch(selectorPrompt, /egocentric|external view|first-person|body-mounted/i);
   assert.ok(graph.edges.some((edge: Record<string, any>) => (
     edge.source === 'persona-formatter'
     && edge.sourceHandle === 'formatted'

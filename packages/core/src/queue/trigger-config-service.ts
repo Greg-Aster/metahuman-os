@@ -100,8 +100,6 @@ const AGENT_PATCH_FIELDS = new Set([
   'pauseCategory',
   'conditions',
   'comment',
-  'contentMode',
-  'contentModeOptions',
 ]);
 
 const CONFIG_FIELDS = new Set([
@@ -143,6 +141,14 @@ function assertTimezone(value: unknown): string {
 function assertClock(value: unknown, field: string): string {
   if (typeof value !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
     throw new Error(`${field} must use 24-hour HH:MM format`);
+  }
+  return value;
+}
+
+function normalizeMemoryContentMode(value: unknown): 'all' | 'user' | 'agent' {
+  if (value === undefined) return 'user';
+  if (value !== 'all' && value !== 'user' && value !== 'agent') {
+    throw new Error('globalSettings.memoryContentMode must be all, user, or agent');
   }
   return value;
 }
@@ -258,6 +264,19 @@ function normalizeConfig(raw: Record<string, any>): TriggerManagerConfig {
   if (globalRaw.pauseAll !== undefined && typeof globalRaw.pauseAll !== 'boolean') {
     throw new Error('globalSettings.pauseAll must be boolean');
   }
+  const memoryContentMode = normalizeMemoryContentMode(globalRaw.memoryContentMode);
+  if (globalRaw.memoryContentModeOptions !== undefined) {
+    if (!globalRaw.memoryContentModeOptions
+        || typeof globalRaw.memoryContentModeOptions !== 'object'
+        || Array.isArray(globalRaw.memoryContentModeOptions)) {
+      throw new Error('globalSettings.memoryContentModeOptions must be an object');
+    }
+    const modeOptions = globalRaw.memoryContentModeOptions as Record<string, unknown>;
+    if (Object.keys(modeOptions).some(mode => !['all', 'user', 'agent'].includes(mode))
+        || ['all', 'user', 'agent'].some(mode => typeof modeOptions[mode] !== 'string')) {
+        throw new Error('globalSettings.memoryContentModeOptions must map all, user, and agent to descriptions');
+    }
+  }
   const timezone = assertTimezone(globalRaw.timezone ?? defaultTimezone());
   if (globalRaw.quietHours !== undefined) {
     if (!globalRaw.quietHours || typeof globalRaw.quietHours !== 'object') throw new Error('globalSettings.quietHours must be an object');
@@ -282,6 +301,7 @@ function normalizeConfig(raw: Record<string, any>): TriggerManagerConfig {
       ...globalRaw,
       pauseAll: globalRaw.pauseAll ?? false,
       timezone,
+      memoryContentMode,
     },
     agents,
   };
@@ -364,7 +384,10 @@ export class TriggerConfigService {
     return value;
   }
 
-  update(patch: TriggerConfigPatch, actor: string): TriggerConfigRead {
+  private prepareUpdate(patch: TriggerConfigPatch): {
+    current: TriggerConfigRead;
+    rawNext: Record<string, unknown>;
+  } {
     validatePatch(patch);
     const current = this.load(false);
     const mergedAgents: Record<string, Record<string, unknown>> = { ...current.config.agents };
@@ -383,11 +406,22 @@ export class TriggerConfigService {
       }
       mergedAgents[agentId] = merged;
     }
-    return this.commit(current, {
+    const rawNext = {
       ...current.config,
       globalSettings: { ...current.config.globalSettings, ...(patch.globalSettings || {}) },
       agents: mergedAgents,
-    }, actor, {
+    };
+    normalizeConfig({ ...rawNext, revision: current.revision + 1 });
+    return { current, rawNext };
+  }
+
+  validateUpdate(patch: TriggerConfigPatch): void {
+    this.prepareUpdate(patch);
+  }
+
+  update(patch: TriggerConfigPatch, actor: string): TriggerConfigRead {
+    const { current, rawNext } = this.prepareUpdate(patch);
+    return this.commit(current, rawNext, actor, {
       operation: 'patch',
       globalFields: Object.keys(patch.globalSettings || {}),
       agents: Object.keys(patch.agents || {}),

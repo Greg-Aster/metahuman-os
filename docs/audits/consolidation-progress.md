@@ -274,7 +274,7 @@ Scope and canonical owners:
 - Robot Operator remains the only boredom timer/admission owner.
 - Work Coordinator remains the only queue and interruption owner.
 - Environment Task State remains the only objective lifecycle, evidence,
-  action-budget, and completion owner.
+  action-lineage, and completion owner.
 - Environment Bridge Out remains transport and one-path conversation routing only.
 
 Finding and repair:
@@ -291,8 +291,10 @@ Finding and repair:
 - Activated the existing strict Environment selector validator at the existing
   Action Parser boundary, so prose and partial JSON cannot authorize work.
 - Removed graph-local Environment-dispatch limits, Robot Observer limit
-  metadata, and the bridge-owned limiter. Robot Operator's `maxCycleSteps`
-  supplies the single action-budget value enforced by Environment Task State.
+  metadata, the bridge-owned limiter, Robot Operator's `maxCycleSteps`, and
+  Task State's step cap. Task State serializes one correlated action per
+  decision pass but imposes no total action count or deterministic autonomy
+  stop.
 - Removed the Movement Generator's duplicate-plan rejection plus its plan-list
   and repetition-counter fields. The existing fresh-frame evidence guard
   remains, but no action-repetition policy blocks a valid generated motion.
@@ -356,6 +358,9 @@ Repair and consolidation:
 - Added the spiky-friend/head-tilt evaluation as test data only. It proves that
   intention prose cannot dispatch a physical action and that an exact advertised
   structured command can; no scene or activity rule entered production policy.
+- Retired the implementation scratchpad on 2026-08-31 after its surviving owner
+  decisions and validation evidence were captured here, in the maintained-surface
+  authority, graph inventory, executable graphs, and focused tests.
 
 Validation:
 
@@ -622,7 +627,7 @@ Validation:
 
 Scope and owner:
 
-- Core calendar, chat, document, photo, and voice-memo connectors own external
+- Core calendar, chat, document, and photo connectors own external
   ingestion.
 - `packages/core/src/memory.ts` owns the episodic capture and serializable metadata
   boundary.
@@ -1041,7 +1046,7 @@ Implementation and cleanup:
   consumes.
 - Moved memory-facing agents to the canonical vector-index and explicit user
   resolvers, normalized agent-runtime entry points and priority vocabulary, and
-  aligned summarizer, digest, transcriber, dreamer, mobile, and drift boundaries.
+  aligned summarizer, digest, dreamer, mobile, and drift boundaries.
 - Consolidated Curiosity admission under Trigger Manager, removed the duplicate
   graph activity node and unused threshold/interval/topic settings, and reduced
   research modes to the implemented local owner.
@@ -1385,7 +1390,7 @@ Final route batches moved into core handlers and thin Astro transport:
 
 - Lizard-brain/event/system service routes: `/api/lizard-brain/logs`, `/api/lizard-brain/trigger-review`, `/api/event-bus-status`.
 - Sync/status/process routes: `/api/memory/sync/[id]`, `/api/template-watch`, `/api/astro-servers`, `/api/process-stream`, `/api/tts-queue-stream`.
-- Voice training/upload routes: `/api/rvc-training`, `/api/sovits-training`, `/api/voice-training`, `/api/audio/upload`, `/api/voice-profile/upload`.
+- Voice training/upload routes: `/api/rvc-training`, `/api/sovits-training`, `/api/voice-training`, `/api/voice-profile/upload`.
 - Big Brother and local process routes: `/api/big-brother-status`, `/api/big-brother/terminal-events`, `/api/node-pipeline`, and `/api/boot`. Claude Code and Codex share the one ttyd-backed Big Brother session owner.
 - Encryption/profile routes: `/api/encryption/setup`, `/api/profile-path/encrypt`, `/api/profile-path/decrypt`.
 - Service control routes: `/api/kokoro-addon`, `/api/kokoro-server`, `/api/rvc-addon`, `/api/rvc-server`, `/api/sovits-server`, `/api/whisper-server`.
@@ -1445,12 +1450,12 @@ The plan is not allowed to expand beyond these finish criteria without a new goa
 
 ## Active Helper-Agent Lanes
 
-- Remote-safety cleanup verification: complete, report in `docs/audits/remote-safety-cleanup.md`.
-- Core/brain architecture refactor: complete for storage ownership, report in `docs/audits/core-brain-boundary.md`.
+- Remote-safety cleanup verification: complete, historical report in `docs/archive/audits/remote-safety-cleanup.md`.
+- Core/brain architecture refactor: complete for storage ownership; its superseded point-in-time report was removed after the boundary was repaired.
 - Web/API consolidation: complete for `voice-settings`, report in implementation notes below.
-- Stale docs authority: complete, report in `docs/audits/stale-docs.md`.
-- Maintained-source audit batches: complete, report in `docs/audits/batch-audit-summary.md`.
-- Guardrail hardening: complete, report in `docs/audits/guardrail-hardening.md`.
+- Stale docs authority: complete, historical report in `docs/archive/audits/stale-docs.md`.
+- Maintained-source audit batches: complete; the obsolete count snapshot was removed in favor of the generated current inventory.
+- Guardrail hardening: complete, historical report in `docs/archive/audits/guardrail-hardening.md`.
 
 ## Final Full-Plan Status
 
@@ -1745,6 +1750,665 @@ Validation:
   `inspect fresh correlated evidence`. That Robot Operator change was not
   altered as part of this Agency repair.
 
+## Robot Status Context Ownership - 2026-08-27
+
+Scope and surviving owners:
+
+- Added one profile-resolved Robot Status JSON snapshot owner in Core. Exact
+  bounded Environment Bridge telemetry, verified Robot Buffer action results,
+  and active Agency desires remain distinct from the one LLM-derived situation.
+- Added one editable Robot Status graph with one model call, one atomic writer,
+  and one System Buffer projection. The existing System Buffer remains the sole
+  System Feed persistence owner; no queue, scheduler, buffer, or Agency store
+  was added.
+- Extended Robot Operator's existing child rotation and independent Semi timers
+  to admit Robot Status. Agent Monitor uses the same owner-aware manual workflow
+  route as the existing boredom children.
+- Added one reusable Robot Status read node to Environment Mode and Boredom
+  Autonomy. The snapshot is supporting context only; current correlated
+  Environment evidence remains the physical-truth owner.
+
+Focused source, graph, catalog, Robot Operator, and consumer validation passed at
+the time of implementation. Manual non-physical workflow runs wrote the bounded
+snapshot and System Buffer event and proved Boredom Autonomy consumption. A
+coordinated current-generation restart, automatic Robot Operator admission, live
+Environment Mode consumption, and physical behavior remained unverified. The
+temporary local Robot Status checklist is not an architecture authority and must
+not replace this durable evidence record.
+
+## Psychoanalyzer Persona-Learning Consolidation - 2026-08-27
+
+Scope and surviving owners:
+
+- Sleep Workflow remains the only automatic persona-review admission owner;
+  manual Agent Catalog execution remains available.
+- Brain Psychoanalyzer owns deterministic memory selection, one psychotherapist
+  request, cancellation checks, per-profile locking, and insights provenance.
+- Core Persona Learning owns the strict evidence/change contract and bounded
+  persona mutation. Core Identity owns atomic persona saves and archives.
+- Preference Learner remains separate and supplies only user-confirmed or
+  user-modified preferences to persona-facing chat context.
+
+Repair and consolidation:
+
+- Replaced Psychoanalyzer's competing legacy and seven-section update paths with
+  one validated proposal path. Every change cites selected memory IDs; identity
+  is not an allowed target; low-confidence and disabled-field changes are not
+  applied; automated removals cannot delete entries without Psychoanalyzer
+  provenance while `preserveUserEdits` is enabled.
+- Replaced random memory sampling with deterministic priority-and-recency order,
+  added completed-input digests for repeat-run idempotency, and made malformed
+  model output, memories, preferences, and configuration explicit failures.
+- Moved persona writes and archives through Core's atomic persistence owner.
+  Unified profile configuration validation now serves both the agent and API;
+  authenticated settings update the selected profile rather than an unrelated
+  system file.
+- Deleted the unregistered Digest agent, its mobile wrapper, Agent Catalog and
+  model-role entries, documentation, and Digest-only persona cache API. Mobile
+  now registers Psychoanalyzer. Chat/context derive durable persona data from
+  persona core plus confirmed preferences.
+
+Validation:
+
+- Focused Persona Learning, Psychoanalyzer config/CLI, Trigger Manager, and Agent
+  Catalog suites: 10/10 pass.
+- Core, Brain, and Site typechecks: pass; Site reports 353 files with zero
+  errors, warnings, or hints.
+- Root production build: pass, including 27/27 cognitive graphs, Agent Monitor
+  69/69, security and ownership guards, Site server build, and included contract
+  suites.
+- Architecture guardrail: zero violations. `./bin/audit check` passes with only
+  the existing large tracked training-corpus warning. Maintained-source dry run
+  validates 1,592 maintained files and 1,324 code files.
+- No live model-backed profile review was run because it would call the selected
+  backend and mutate private persona, archive, and insights data. Runtime model
+  quality and real profile persistence therefore remain unverified.
+
+## Inbox Ingestor Canonical-Owner Repair - 2026-08-27
+
+Scope and surviving owners:
+
+- `brain/agents/ingestor` remains the sole generic profile-inbox worker. Server
+  CLI, Agent Runtime, and mobile execution now enter one `runIngestor` contract;
+  Work Coordinator and TriggerManager ownership are unchanged.
+- Core Memory Capture owns durable producer idempotency. The ingestor supplies a
+  stable source-and-chunk key plus source timestamp so capture and archive
+  retries do not create a second memory path.
+- Inbox Ingestor remains installed but is not registered in the current Trigger
+  Manager configuration. This repair did not silently enable a schedule.
+
+Repair and consolidation:
+
+- Added explicit file and chunk outcomes, failure propagation, per-profile
+  exclusion, deterministic archive names, bounded UTF-8 TXT/Markdown/JSON
+  validation, a 1 MB file ceiling, and bounded chunk and run limits.
+- Replaced legacy `captureEvent` use with detailed capture results and persistent
+  idempotency in the existing memory owner. Removed fabricated owner contexts,
+  duplicated CLI/runtime option parsing, unused `singleUser` behavior, and
+  duplicate interval metadata.
+- Deleted the unregistered `brain/scripts/ai-ingestor.ts` execution path after
+  source, process, cron, and systemd searches found no operational invocation.
+  Deleted both unused `ingestor.json` schemas and their profile/CLI/docs wiring;
+  PDF and DOCX remain owned by Document Ingestor.
+
+Validation:
+
+- Focused Inbox Ingestor and Core Memory idempotency suites: pass (2 files),
+  covering strict options, malformed/binary/unsupported/oversized files,
+  bounded chunks, explicit partial failure, archive retry, repeated invocation,
+  durable capture identity, and real-profile resolution.
+- Core, Brain, CLI, and Site typechecks: pass; Site reports 353 files with zero
+  errors, warnings, or hints. Agent Catalog specification: pass.
+- Root production build: pass, including 27/27 cognitive graphs, Agent Monitor
+  69/69, security and ownership guards, Site server build, and included contract
+  suites. Architecture guardrail remains at zero violations.
+- `./bin/audit check`, maintained-source dry run (1,587 maintained files and
+  1,320 code files), and `git diff --check`: pass. The audit retains only the
+  existing large tracked training-corpus warning.
+- No live profile inbox was processed because that would create and archive
+  private runtime memory. Real scheduled admission and profile mutation remain
+  unverified; the current installation still has no Ingestor trigger entry.
+
+## Inner Curiosity Canonical-Owner Repair - 2026-08-28
+
+Scope and surviving owners:
+
+- `brain/agents/inner-curiosity` remains the distinct finite owner for private,
+  self-directed question generation and answering. Curiosity Service remains
+  the user-question owner, and Curiosity Researcher remains the independent
+  research owner; none of the three were merged.
+- Trigger Manager and Work Coordinator remain the only scheduled admission and
+  execution owners. Their configured hourly Semi-mode schedule is unchanged.
+- Core's bounded curiosity sampler now serves both the Curiosity graph and Inner
+  Curiosity. The existing Inner Buffer graph remains the only Q&A persistence
+  path and Core Memory Capture remains the durable event owner.
+
+Repair and consolidation:
+
+- Replaced the agent's full episodic-memory scan and the Curiosity graph's
+  duplicate weighted sampler with one bounded, profile-scoped Core sampler. It
+  validates limits, rejects oversized or malformed records, excludes generated
+  inner content, bounds prompt content, and reports sampling diagnostics.
+- Unified CLI, Agent Runtime, and mobile execution behind one typed contract
+  that resolves a real profile identity, propagates failures, distinguishes
+  disabled/no-memory skips from generated work, and honors cancellation before
+  persistence. Removed the no-op `singleUser` option and conflicting 20-minute
+  module interval.
+- Added stable coordinator execution identity to process and mobile contexts.
+  Prepared per-profile execution receipts preserve exact Q&A across a partial
+  persistence failure; retries reuse that receipt and pass the same producer
+  idempotency key and timestamp through the existing Inner Buffer and Memory
+  owners. Completed receipts are bounded without deleting pending retries.
+
+Validation:
+
+- Focused Inner Curiosity, bounded sampling, and real Inner Buffer/memory
+  idempotency suites pass (11/11 assertions), covering success, skips,
+  model/index failures, partial persistence, retry, repeated invocation,
+  limits, malformed and oversized records, cancellation, strict options, and
+  identity failure. Curiosity Service (3/3), Agent Catalog, Trigger Manager,
+  and Core Memory idempotency regressions pass.
+- Core, Brain, and Agent Runtime typechecks pass. Root production build passes,
+  including Site diagnostics for 353 files with zero issues, 27/27 cognitive
+  graphs, Agent Monitor 69/69, security and ownership contracts, and Site
+  server/client output. Architecture remains at zero violations; audit check
+  reports only the existing tracked training-corpus size warning.
+- No live model-backed Inner Curiosity cycle was run because it would spend
+  backend inference and write private profile state and memory. Real scheduled
+  admission, model quality, and profile mutation remain unverified.
+
+## Memory Pruner Retirement - 2026-08-28
+
+Root cause and surviving owners:
+
+- The Memory Pruner was dormant destructive code, not a functioning scheduled
+  system. It had no Trigger Manager registration, no recorded runs, no agent
+  logs, and no local `_pruned` output. Its Memory Controls action could not run
+  through the current coordinator path because the agent was unregistered and
+  its CLI required a username the control did not supply.
+- Core Memory Capture remains the canonical durable memory writer, the existing
+  memory inventory remains the Persona Memory read owner, and the vector index
+  remains a search accelerator. No replacement pruner, queue, scheduler, store,
+  archive, or fallback was introduced.
+- The separate targeted memory-corruption repair utility and backup-retention
+  policy remain in their existing owners; neither performs heuristic memory
+  deduplication and neither was changed by this retirement.
+
+Removal and consolidation:
+
+- Deleted the three-file `brain/agents/memory-pruner` implementation and removed
+  its Agent Catalog definition and registerable-agent expectation.
+- Removed its launch/settings card, unused launch arguments and component event
+  wiring, the Persona Memory `Pruned` tab, and the `pruned` API inventory branch.
+- Removed active documentation claims and regenerated the maintained-source
+  inventory through its canonical generator. No profile memory was deleted or
+  moved.
+
+Validation:
+
+- Memory inventory and Agent Catalog focused specifications pass. Core, Brain,
+  and Site typechecks pass; Site reports 353 files with zero diagnostics.
+- The root production build passes, including 27/27 cognitive graphs and 69/69
+  Agent Monitor checks. Architecture remains at zero violations.
+- `./bin/audit check` passes with only the existing tracked training-corpus size
+  warning. Final operational-reference searches find no Memory Pruner source,
+  configuration, registration, launch control, API field, or UI tab.
+- No live profile mutation was run because retirement required no runtime memory
+  changes. Live behavior is therefore unmodified rather than exercised.
+
+## Memory Sync Agent Retirement - 2026-08-29
+
+Root cause and surviving owner:
+
+- `brain/agents/memory-sync` was a registered but unused competing agent. It had
+  zero recorded runs, no agent logs or process, and no configured sync server in
+  the current profiles. Its outbound route did not exist in the current router,
+  and its direct filesystem scan/write path did not support Core's current dated
+  and categorized memory layout.
+- `brain/agents/profile-sync` remains the finite synchronization coordinator
+  used by login and Sync Manager. This retirement did not create a replacement
+  queue, scheduler, store, transport, or fallback.
+- The maintained browser offline-memory queue and Core `/api/memory/sync/*`
+  handlers remain because they have separate current callers. Their eventual
+  consolidation with Profile Sync is a distinct scoped repair, not part of this
+  agent retirement.
+
+Removal and consolidation:
+
+- Deleted the three-file `brain/agents/memory-sync` implementation and removed
+  its Trigger Manager registration, Agent Catalog definition, registered-count
+  expectation, and active agent documentation.
+- Preserved the registered `profile-sync` path and all of its UI/login callers.
+  No profile memory, sync credentials, runtime state, or external server data was
+  written, moved, or deleted by this retirement.
+
+Validation:
+
+- Agent Catalog and Trigger Manager focused contracts pass. Core and Brain
+  typechecks pass. The CLI Agent Catalog lists `profile-sync` and no longer lists
+  the retired Memory Sync agent.
+- The root production build passes, including Site diagnostics for 353 files
+  with zero issues, 27/27 cognitive graphs, and 69/69 Agent Monitor checks.
+  Architecture remains at zero violations.
+- `./bin/audit check` passes with only the existing tracked training-corpus size
+  warning. No live synchronization was attempted because no server is configured
+  and a live run could mutate private profile or remote data.
+
+## Profile Sync Canonical-Owner Repair - 2026-08-29
+
+Root cause and surviving owners:
+
+- The registered Profile Sync agent was the intended finite coordinator, but
+  profile bundle validation, credential/config persistence, and memory transfer
+  were duplicated across Brain, Core API handlers, a large browser executor,
+  login bootstrap, and an IndexedDB credential store. The old Core importer
+  accepted a traversal path, wrote outside the selected profile, and still
+  returned success.
+- `brain/agents/profile-sync` remains the only finite synchronization
+  coordinator. Core now owns the bounded profile bundle, per-profile sync
+  configuration, syncable credential mapping, storage, and memory-capture
+  contracts. Trigger Manager and Unified Queue remain the admission and task
+  lifecycle owners; Astro routes and Site code are transport and UI adapters.
+- The separate browser offline-memory queue remains because it buffers current
+  offline writes and has distinct maintained callers. This repair did not add a
+  queue, scheduler, store, execution path, compatibility shim, or fallback.
+
+Repair and consolidation:
+
+- Added strict version, identity, path, root, format, JSON/base64, duplicate,
+  file-size, file-count, and aggregate-size validation. Imports now return one
+  explicit outcome per file and fail the job on a partial write. Storage writes
+  are atomic and encrypted deletes remove their actual persisted representation.
+- Replaced fabricated owner contexts and global sync state with real profile
+  resolution, strict options, abortable bounded remote requests, stable memory
+  idempotency, explicit page and capture outcomes, and checkpoints written only
+  after all enabled phases complete. A bounded historical pull no longer
+  advances the complete incremental-memory cursor.
+- Routed CLI, Agent Runtime, mobile, login, and Sync Manager through the finite
+  coordinator or the same Core import contract. Removed the browser-side sync
+  executor, IndexedDB password/credential replica, Profile Manager component,
+  global state poller, legacy export/metadata/task/change routes, obsolete
+  options, duplicate parsing, and unsupported sync controls. Sync configuration
+  now has one authenticated per-profile API and never returns its password.
+
+Validation:
+
+- Focused Profile Sync, API transport, Agent Catalog, and Trigger Manager suites
+  pass (18/18), covering traversal, malformed/duplicate/unsupported/oversized
+  input, per-file partial failure, configuration and credential failure,
+  pagination, retry/deduplication, repeated invocation, cancellation, and
+  checkpoint behavior.
+- Core, Brain, and Site typechecks pass; Site reports 349 files with zero
+  diagnostics. The root production build passes, including 27/27 cognitive
+  graphs, 69/69 Agent Monitor checks, security 14/14, ownership contracts, and
+  server/client output.
+- Architecture remains at zero violations; the user-agnostic guard, maintained
+  source dry run (1,575 maintained files and 1,308 code files), `git diff
+  --check`, and `./bin/audit check` pass. The audit retains only the existing
+  tracked training-corpus size warning.
+- No live remote synchronization was run because no agent-readable server is
+  configured and doing so could mutate private local and remote profile data.
+  Remote authentication, network transfer, and live profile effects therefore
+  remain unverified.
+
+## Conversation Summarizer Retirement - 2026-08-29
+
+Scope and owner decision:
+
+- Retired `brain/agents/summarizer` after source, catalog, Trigger Manager,
+  interface, storage, graph, test, documentation, and local-runtime inspection
+  agreed that it was unscheduled and no maintained prompt path consumed its
+  periodic output.
+- Preserved the canonical Conversation, Inner, System, and Robot buffers and the
+  Robot Status workflow. Preserved the separate `summarizer` model role because
+  Specialist Broker still owns explicit on-demand text summarization.
+
+Implementation:
+
+- Deleted the Summarizer CLI, runtime module, Core summary-state store, summary
+  read/trigger APIs, and their Astro adapters. Removed its Agent Catalog definition and
+  replaced Summarizer-specific catalog/Trigger Manager fixtures with generic
+  surviving-agent coverage.
+- Removed the unconsumed context-package summary lookup/cache, Conversation
+  Buffer summary marker fields and writer, summary graph-node branch/schema,
+  unused Persona Chat summary metadata, public exports, focused obsolete tests,
+  and current documentation claims.
+- At that time, kept `conversation-buffer-admission.json` as the admission graph
+  for ordinary conversation entries. The 2026-09-02 Conversation Graph Buffer
+  Ownership Repair below supersedes that decision. Historical runtime summaries
+  and state were not modified.
+
+Validation:
+
+- Agent Catalog, Trigger Manager, buffer ownership, and Conversation Buffer
+  focused suites pass. Core, Brain, and Site typechecks pass; Site reports 347
+  files with zero diagnostics.
+- All 27 cognitive graphs and node defaults pass. Architecture remains at zero
+  violations; `./bin/audit check`, the user-agnostic guard, maintained-source dry
+  run (1,568 maintained files and 1,301 code files), and the production build
+  pass. The audit retains only the existing tracked training-corpus size warning.
+- Final maintained-source reference search retains only the shared on-demand
+  model role and historical audit evidence; no agent, route, state, buffer-marker,
+  execution, or scheduling reference remains. No live runtime was restarted, so
+  post-restart UI absence remains unverified.
+
+## Conversation Graph Buffer Ownership Repair - 2026-09-02
+
+Scope and owner decision:
+
+- Kept `packages/core/src/conversation-buffer.ts` as the rolling storage owner
+  and `conversation_buffer` as its sole graph writer node. Multiple graph
+  instances are intentional; multiple writer implementations are not. Inner
+  Dialogue remains a separate sister system with its own writer and saver.
+- Made each outward conversational graph own its Conversation Buffer instance.
+  Interactive graphs connect user input and response, while Curiosity and
+  Boredom Autonomy connect response only. Reflector remains an Inner Dialogue
+  workflow and does not write Conversation Buffer.
+- Preserved Inner, System, and Robot buffers as separate feeds with distinct
+  roles. `display_buffer` remains read-only and `memory_capture` remains the
+  downstream long-term Persona Memory saver.
+
+Implementation:
+
+- Deleted `conversation-buffer-admission.json`, Persona Chat pre-admission, the
+  `userMessageAdmitted` suppression flag, the public append route, and the
+  conversation/Agency admission wrappers.
+- Removed hidden request-context and conversation-history fallbacks from
+  `conversation_buffer`; persistence now comes only from explicit graph edges.
+- Routed Environment continuations through a distinct fresh-player-text output,
+  preventing task feedback and reused objectives from becoming user messages.
+- Routed conversational TTS from the exact response returned after Conversation
+  Buffer persistence. Inner TTS and Inner Dialogue workflows were kept on their
+  separate `inner_dialogue_buffer` and `inner_dialogue_saver` path.
+- Reclassified non-graph Agency lifecycle notices as System Buffer events rather
+  than fabricating conversational turns.
+
+## Update Ownership Repair - 2026-08-30
+
+Scope and owner decision:
+
+- Confirmed that `brain/agents/update-check` was retired in July 2026 and had
+  no maintained entrypoint, registration, scheduler, process, or UI caller. Its
+  remaining empty directory and stale local state were not an active update
+  system.
+- Kept updates as explicit Installation Owner actions. Mobile release metadata
+  and binaries now have one Core-owned store under `out/releases/mobile`; the
+  React Native release script is its only producer. Server source updates remain
+  behind the owner-guarded Core server-update handler.
+
+Implementation:
+
+- Removed the retired update-state handler and route, the obsolete
+  `/api/app-version` route, the empty legacy agent directory, and stale local
+  update state. Profile Sync and Sync Status no longer contain a competing update
+  checker, installer, polling loop, or update modal.
+- Repaired `/api/mobile/version` and `/api/mobile/download` to use strict release
+  metadata, explicit status failures, exact-version downloads, file-size checks,
+  and the configured remote installation. The existing APK was moved into the
+  canonical ignored release store with its actual size and SHA-256 checksum.
+- Hardened server updating to use argument-safe process execution, require a
+  checked-out branch and upstream, reject concurrent runs, preserve fetch,
+  install, and build failures, and complete a production build before reporting
+  success. Restart remains a separate explicit owner action.
+- Consolidated update presentation in `UpdateManager.svelte`; mobile installation
+  uses the maintained native URL-opening bridge instead of the unimplemented
+  `download-update` message path.
+
+Validation:
+
+- The focused mobile-release, app-info, server-update, and update-ownership suite
+  passes (10/10), including malformed and missing metadata, invalid and unavailable
+  versions, size mismatch, fetch/install/build failure, dirty-tree and diverged-
+  branch refusal, and concurrent invocation.
+- Core, Site, and Mobile typechecks pass; Site reports 345 files with zero
+  diagnostics. The root production build passes, including 28/28 cognitive
+  graphs, 69/69 Agent Monitor checks, security 14/14, ownership contracts, and
+  server/client output.
+- Architecture remains at zero violations; `./bin/audit check`, the maintained
+  source dry run (1,554 maintained files and 1,287 code files), shell syntax,
+  and `git diff --check` pass. The audit retains only the existing tracked
+  training-corpus size warning.
+- No real Git fetch/pull, process restart, remote mobile download, or Android
+  package installation was performed. Those external and device effects remain
+  unverified. The shared binary-response transport still buffers file bodies;
+  streaming large release downloads requires a separately approved public
+  transport-contract change.
+
+## Brain Dependency Consolidation - 2026-08-30
+
+Scope and owner decision:
+
+- Audited every direct `@metahuman/brain` dependency against maintained imports,
+  operational entrypoints, the workspace runtime contract, and the npm registry.
+  No declared package was orphaned, but the maintained training owners used
+  three packages solely for behavior already provided by Node 22.
+- Preserved the existing training and Environment Bridge owners. No replacement
+  loader, HTTP client, filesystem utility, scheduler, or execution path was
+  introduced.
+
+Implementation:
+
+- Replaced `dotenv`, `node-fetch`, and `fs-extra` usage in Brain training with
+  guarded `process.loadEnvFile`, global `fetch`, and recursive `node:fs`
+  directory creation. Removed those three dependencies plus
+  `@types/node-fetch` and `@types/fs-extra` from the Brain package.
+- Updated shared direct declarations to `ws` 8.21.3 and `tsx` 4.23.13 across
+  their workspace owners, updated Core's retained `fs-extra` to 11.4.0, and
+  aligned root, Brain, and Local Model Service Node declarations to the latest
+  Node 22 type line. TypeScript remains on the validated 5.9 line; TypeScript 7
+  is a separate major migration rather than a dependency refresh.
+
+Validation:
+
+- Brain, Core, CLI, Local Model Service, and Site typechecks pass. All 16 focused
+  Environment Bridge tests pass with the updated WebSocket client.
+- The root production build passes, including 28/28 cognitive graphs, 69/69
+  Agent Monitor checks, security 14/14, ownership contracts, and server/client
+  output. Architecture remains at zero violations.
+- The Brain dependency list contains only the two workspace packages, `ws`,
+  Node/WebSocket types, `tsx`, and TypeScript. Final registry comparison retains
+  only the intentional Node 22 and TypeScript 5.9 major-version constraints.
+- No local GPU training, remote RunPod job, model registration, or adapter load
+  was performed; those external effects remain unverified.
+
+## Brain Mobile Entrypoint Consolidation - 2026-08-31
+
+Scope and owner decision:
+
+- Preserved Core's Work Coordinator as the sole queue/execution owner and Brain's
+  two root mobile files as the React Native registration and bundle entrypoints.
+  `brain/package.json` remains the Brain package boundary; its existing
+  `tsconfig.json` requires no competing mobile configuration.
+- Replaced per-agent mobile wrappers with one adapter over each maintained
+  `AgentModule.run()` contract. The authenticated queue task remains the sole
+  profile identity; Sleep Workflow no longer duplicates that identity in CLI
+  arguments.
+
+Implementation:
+
+- Mobile now forwards task arguments, structured options, cancellation, and
+  stable task identity to the canonical agent modules, resolves real profiles,
+  and propagates unsuccessful agent results to the coordinator.
+- React Native initializes registrations from validated session cookies before
+  authenticated API work, serializes repeated/profile-switch transitions, stops
+  on logout or pause, and restores the last authenticated profile on resume.
+  The unused WebView `agent-init`/`agent-stop` path and individual wrapper exports
+  were removed.
+- Narrowed the Brain bundle surface to the three runtime exports actually used:
+  agent initialize/stop and local-model startup. Curiosity Service now resolves
+  its real profile and propagates graph cancellation through its canonical
+  Agent Runtime adapter.
+
+Validation:
+
+- Focused mobile adapter, lifecycle, Curiosity Service, and Sleep Workflow tests
+  pass. Brain, Core, and React Native typechecks pass.
+- The mobile backend bundle builds successfully; the agent handler bundle is
+  5,960.7 KiB, down from the previously generated 7,043 KiB bundle. Architecture
+  and user-agnostic guards, `./bin/audit check`, JavaScript syntax checks, stale-
+  reference searches, and `git diff --check` pass. The audit retains only the
+  existing tracked training-corpus size warning.
+- No Android APK or physical-device lifecycle run was performed; device pause,
+  resume, logout, and queued-agent execution remain unverified outside source and
+  generated-bundle validation.
+
+## Deployment Documentation Consolidation - 2026-08-31
+
+Scope and owner decision:
+
+- Made `docs/user-guide/configuration-admin/deployment.md` the sole current
+  deployment and remote-access documentation owner. Preserved the existing
+  locally managed named-tunnel implementation in `start.sh`, Core, and the
+  Network UI without adding another process manager or deployment path.
+
+Implementation:
+
+- Replaced development-server, manual session-patch, unauthenticated status,
+  systemd, stale pricing, and hypothetical Cloudflare Pages instructions with
+  the built `./start.sh` lifecycle, explicit local-tunnel ownership, current
+  external documentation links, sharing policy, and layered verification.
+- Deleted the duplicate `docs/deployment` guides, including the previously
+  removed RunPod provider/fallback proposal, redirected maintained references,
+  aligned guest-session documentation with the passwordless auth-gate route,
+  and repaired the Network settings documentation link and startup labels.
+
+Validation:
+
+- Local Markdown links pass for all touched current guides. Maintained-source
+  searches find no references to the removed deployment paths or their broken
+  Cloudflare Pages and placeholder GitHub links.
+- `pnpm validate:security-routes` passes 14/14 checks,
+  `pnpm check:architecture` reports zero violations, Site typecheck reports zero
+  diagnostics, and full-worktree `git diff --check` passes.
+- No tunnel, Cloudflare Access policy, external browser session, or remote
+  deployment was started; those runtime and external effects remain unverified.
+
+## Audit Documentation Authority Consolidation - 2026-08-31
+
+Scope and owner decision:
+
+- Kept `docs/audits` as the current remote-safe evidence layer required by the
+  maintained audit protocol. Kept this chronological ledger and the generated
+  maintained-source inventories as the current repository-wide authorities.
+- Kept the TTS and Robot Operator motion-control ledgers as the only active
+  focused work records in this directory. Their status now separates current
+  source ownership from unverified live, external, and physical behavior.
+
+Implementation:
+
+- Moved sixteen completed point-in-time reports to `docs/archive/audits`, where
+  they remain historical evidence but no longer compete with current authority.
+- Deleted the obsolete batch-count summary and Core/Brain boundary snapshot;
+  both were superseded by this ledger, the generated inventory, the zero-
+  violation architecture baseline, and repaired source ownership.
+- Replaced the five-line audit README with a narrow current-authority index,
+  updated surviving inbound links, and sanitized machine-specific paths and
+  saved profile details from the two active evidence ledgers.
+
+Validation:
+
+- Maintained-source inventory regeneration and dry-run agree on 1,569
+  maintained files and 1,326 code files.
+- Stale-path and active-audit privacy searches pass; all sixteen archived
+  reports are visible to Git and excluded from the maintained-source policy.
+- TTS node ownership passes, all six durable-delivery tests pass, and all eight
+  local/robot output-routing tests pass.
+- `pnpm check:architecture` and `./bin/audit check` report zero architecture
+  violations. The audit retains only the existing tracked training-corpus size
+  warning. Full-worktree `git diff --check` passes.
+- No browser audio, provider service, Environment Bridge speech dispatch, robot
+  speaker, camera, or physical motion was exercised during this documentation
+  consolidation.
+
+## Technical Documentation Authority Repair - 2026-08-31
+
+Scope and owner decision:
+
+- Kept `MAINTAINED_SURFACE.md`, `AUDIT_PROTOCOL.md`, and the architecture
+  baseline as the executable repository-policy owners. Kept `ARCHITECTURE.md`
+  and `REFACTOR_BLUEPRINT.md` as the concise ownership and refactor-protocol
+  documents, and kept the Environment performance ledger as dated technical
+  evidence rather than current runtime proof.
+
+Implementation:
+
+- Corrected persistent-process, agent-runtime, Brain, and graph-composition
+  ownership wording. Reframed the completed refactor date as the initial
+  repository baseline while keeping the protocol active for later owner work.
+- Reconciled the maintained-surface review date and documented why tracked root
+  governance is excluded from executable source scanning. Folded the unique Big
+  Brother lifecycle invariants into that authority and deleted the unlinked
+  duplicate session document.
+- Reconciled Environment Mode's current section with the 24-node, 58-edge graph,
+  the Robot Status context input, the surviving model role, and explicit
+  runtime/bridge/physical proof boundaries. Preserved dated measurements and
+  relabeled the cumulative validation record as historical evidence.
+- Moved Terms of Service and Ethical Use Policy from technical architecture into
+  served User Guide appendix chapters. Replaced the inaccurate local-only data
+  promise and unsupported centralized-enforcement claims with the repository's
+  actual local-first, optional-remote-provider, operator-controlled contract.
+  The new chapter IDs satisfy the existing AuthGate hashes without modifying
+  that concurrently edited component.
+
+Validation:
+
+- The actual User Guide handlers return both policy chapters under
+  `21-terms-of-service` and `22-ethical-use-policy`; the guide lists 32 chapters.
+  All touched local Markdown source links resolve.
+- Maintained-source dry run reports 1,568 maintained files and 1,326 code files.
+  All 28 cognitive graphs validate and the live Environment graph count matches
+  the repaired ledger.
+- `pnpm check:architecture` and `./bin/audit check` report zero architecture
+  violations. The audit retains only the existing tracked training-corpus size
+  warning. Full-worktree `git diff --check` passes.
+- No browser navigation, configured remote provider, rebuilt server, Environment
+  Bridge, or physical robot was exercised. The policy text was reconciled with
+  source behavior but was not reviewed as legal advice.
+
+## Implementation-Plan Authority Cleanup - 2026-09-01
+
+Scope and owner decision:
+
+- Kept one active Robot Active Operator product roadmap. Current architecture
+  and validation ownership remains in the tracked technical authorities, live
+  manifests, executable graphs, and canonical runtime owners.
+- Treated completed implementation records as history rather than current
+  authorization. The local `docs/archive` tree remains excluded from maintained
+  source and repository tracking by policy.
+
+Implementation:
+
+- Replaced the 1,027-line Robot Active Operator implementation authority with a
+  lean roadmap that names current owners, separates source/runtime/external/
+  physical evidence, and removes stale pre-authorization language and retired
+  graph/node claims.
+- Moved six completed or superseded records into the ignored local
+  `docs/archive/plans-and-migrations` history area. Their tracked source paths
+  are deleted, and their prior contents remain recoverable through Git history.
+- Deleted the contradictory Vision Model implementation plan after recording
+  its valid invariant in the maintained architecture and User Guide: image input
+  uses the normal model/backend/provider path rather than a parallel vision
+  backend, with explicit capability failure at the final provider path.
+- Replaced the User Guide's completed Work Coordinator plan link with current
+  architecture authorities and documented the live Environment Bridge
+  configuration/status boundary.
+- Refreshed the generated maintained-source inventories to 1,561 files and
+  1,326 code files.
+
+Validation:
+
+- Touched Markdown links resolve and final active-source searches find no stale
+  references to the seven retired plan paths, deleted Vision owner, or stale
+  Robot Operator authority language.
+- All 28 cognitive graphs validate. Focused multimodal provider checks pass,
+  and Agent Monitor validation passes 69/69 checks, including Environment Bridge
+  lifecycle, configuration, status, and singleton ownership.
+- `pnpm check:architecture` and `./bin/audit check` report zero architecture
+  violations. The audit retains only the existing tracked training-corpus size
+  warning.
+- No application server, external adapter, model server, or physical robot was
+  exercised during this documentation cleanup.
+
 ## Current Known Baseline Debt
 
 The architecture baseline now records no active architecture violations. Current baseline count: 0 violations.
@@ -1792,7 +2456,7 @@ These are future scoped goals. They are not open required steps for the complete
 
 1. Keep the zero-violation API route baseline strict; any new Astro API route must use `astroHandler` or document a non-actionable exception with owner and rationale.
 2. Add focused regression tests for the newly migrated service/stream routes before changing their behavior.
-3. Audit oversized UI/client files after route owners are clear: `ChatInterface.svelte`, `AgencyDashboard.svelte`, `useMicrophone.ts`, `CenterContent.svelte`, `TrainingWizard.svelte`, `VoiceTrainingWidget.svelte`, `AuthGate.svelte`, `ProfileLocation.svelte`, `SecuritySettings.svelte`, and `profile-sync.ts`.
+3. Audit oversized UI/client files after route owners are clear: `ChatInterface.svelte`, `AgencyDashboard.svelte`, `useMicrophone.ts`, `CenterContent.svelte`, `TrainingWizard.svelte`, `VoiceTrainingWidget.svelte`, `AuthGate.svelte`, `ProfileLocation.svelte`, and `SecuritySettings.svelte`.
 
 ### Audit Batches
 

@@ -17,7 +17,6 @@ export const meta: AgentMeta = {
   description: 'Converts files in memory/inbox into episodic memories',
   usesLLM: false,
   priority: 'low',
-  defaultInterval: 60, // 1 minute
   tags: ['memory', 'inbox', 'background'],
 };
 
@@ -33,12 +32,8 @@ export default agent;
 
 // Re-export core functions for direct usage
 export {
-  runCycle,
-  ingestUserFiles,
-  ingestFile,
-  resolveInboxPaths,
-  readFileAsText,
-  chunkText,
+  runIngestor,
+  parseIngestorOptions,
   type IngestorOptions,
   type IngestorResult,
 } from './core.js';

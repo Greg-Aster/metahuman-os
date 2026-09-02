@@ -10,6 +10,7 @@ export const ROBOT_OPERATOR_RUNTIME_FILE = path.join(systemPaths.logs, 'run', 'r
 
 export type RobotObserverTriggerSource = 'user' | 'autonomy'
 export type RobotOperatorStimulusAgent =
+  | 'robot-status'
   | 'boredom-observer'
   | 'boredom-movement'
   | 'boredom-reflection'
@@ -18,6 +19,7 @@ export type RobotOperatorCycleRequester =
   | 'environment-perception'
 
 const ROBOT_AUTONOMY_HANDLERS = new Set([
+  'workflow.robot-status',
   'workflow.boredom-observer',
   'workflow.boredom-movement',
   'workflow.boredom-reflection',
@@ -33,13 +35,15 @@ export interface RobotObserverCycleMetadata {
 
 export interface RobotOperatorConfig {
   enabled: boolean
+  robotStatusInactivityThresholdSeconds: number
+  robotStatusJitterMs: number
   boredomObserverInactivityThresholdSeconds: number
   boredomObserverJitterMs: number
   boredomMovementInactivityThresholdSeconds: number
   boredomMovementJitterMs: number
   boredomReflectionInactivityThresholdSeconds: number
   boredomReflectionJitterMs: number
-  maxCycleSteps: number
+  robotStatusGraph: string
   boredomObserverGraph: string
   boredomMovementGraph: string
   boredomReflectionGraph: string
@@ -72,13 +76,15 @@ export interface RobotOperatorRuntimeState {
 
 const DEFAULT_CONFIG: RobotOperatorConfig = {
   enabled: true,
+  robotStatusInactivityThresholdSeconds: 300,
+  robotStatusJitterMs: 60_000,
   boredomObserverInactivityThresholdSeconds: 300,
   boredomObserverJitterMs: 60_000,
   boredomMovementInactivityThresholdSeconds: 600,
   boredomMovementJitterMs: 120_000,
   boredomReflectionInactivityThresholdSeconds: 900,
   boredomReflectionJitterMs: 180_000,
-  maxCycleSteps: 8,
+  robotStatusGraph: 'robot-status',
   boredomObserverGraph: 'boredom-observer',
   boredomMovementGraph: 'boredom-movement',
   boredomReflectionGraph: 'boredom-reflection',
@@ -117,6 +123,18 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
     : undefined
   return {
     enabled: typeof configured.enabled === 'boolean' ? configured.enabled : DEFAULT_CONFIG.enabled,
+    robotStatusInactivityThresholdSeconds: boundedNumber(
+      configured.robotStatusInactivityThreshold,
+      DEFAULT_CONFIG.robotStatusInactivityThresholdSeconds,
+      1,
+      86_400,
+    ),
+    robotStatusJitterMs: boundedNumber(
+      configured.robotStatusJitterMs,
+      DEFAULT_CONFIG.robotStatusJitterMs,
+      0,
+      3_600_000,
+    ),
     boredomObserverInactivityThresholdSeconds: boundedNumber(
       configured.boredomObserverInactivityThreshold ?? configured.inactivityThreshold,
       DEFAULT_CONFIG.boredomObserverInactivityThresholdSeconds,
@@ -153,7 +171,7 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
       0,
       3_600_000,
     ),
-    maxCycleSteps: Math.floor(boundedNumber(configured.maxCycleSteps, DEFAULT_CONFIG.maxCycleSteps, 1, 10)),
+    robotStatusGraph: configuredGraph(configured.robotStatusGraph, DEFAULT_CONFIG.robotStatusGraph),
     boredomObserverGraph: configuredGraph(configured.boredomObserverGraph, DEFAULT_CONFIG.boredomObserverGraph),
     boredomMovementGraph: configuredGraph(configured.boredomMovementGraph, DEFAULT_CONFIG.boredomMovementGraph),
     boredomReflectionGraph: configuredGraph(configured.boredomReflectionGraph, DEFAULT_CONFIG.boredomReflectionGraph),
@@ -178,6 +196,10 @@ export function isBoredomObserverEnabled(): boolean {
   return isConfiguredAgentEnabled('boredom-observer')
 }
 
+export function isRobotStatusEnabled(): boolean {
+  return isConfiguredAgentEnabled('robot-status')
+}
+
 export function isBoredomMovementEnabled(): boolean {
   return isConfiguredAgentEnabled('boredom-movement')
 }
@@ -187,6 +209,7 @@ export function isBoredomReflectionEnabled(): boolean {
 }
 
 export function isRobotOperatorChildEnabled(agent: RobotOperatorStimulusAgent): boolean {
+  if (agent === 'robot-status') return isRobotStatusEnabled()
   if (agent === 'boredom-observer') return isBoredomObserverEnabled()
   if (agent === 'boredom-movement') return isBoredomMovementEnabled()
   return isBoredomReflectionEnabled()
@@ -196,6 +219,7 @@ export function robotOperatorChildGraph(
   config: RobotOperatorConfig,
   agent: RobotOperatorStimulusAgent,
 ): string {
+  if (agent === 'robot-status') return config.robotStatusGraph
   if (agent === 'boredom-observer') return config.boredomObserverGraph
   if (agent === 'boredom-movement') return config.boredomMovementGraph
   return config.boredomReflectionGraph
@@ -263,6 +287,7 @@ export function readRobotOperatorRuntimeState(): RobotOperatorRuntimeState | nul
     if (!['reactive', 'semi', 'full'].includes(parsed.mode)) return null
     if (!['starting', 'armed', 'dormant', 'admitting', 'stopped'].includes(parsed.lifecycle)) return null
     const childIds: RobotOperatorStimulusAgent[] = [
+      'robot-status',
       'boredom-observer',
       'boredom-movement',
       'boredom-reflection',

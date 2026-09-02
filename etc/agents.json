@@ -25,7 +25,7 @@
     "audio-organizer": {
       "id": "audio-organizer",
       "displayName": "Audio Organizer",
-      "description": "Processes the audio inbox into transcripts and memories when explicitly requested.",
+      "description": "Converts existing completed audio transcripts into episodic memories when explicitly requested.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "scheduled-work",
@@ -97,6 +97,27 @@
         "full"
       ],
       "startupPolicy": "skip"
+    },
+    "robot-status": {
+      "id": "robot-status",
+      "displayName": "Robot Status",
+      "description": "Runs the editable Robot Status workflow to update the robot's bounded situational snapshot and publish it to the System Feed.",
+      "enabled": true,
+      "type": "manual",
+      "lifecycle": "workflow",
+      "runtimeOwner": "robot-operator",
+      "handler": "workflow.robot-status",
+      "priority": "low",
+      "agentPath": "coordinator:workflow.robot-status",
+      "usesLLM": true,
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip",
+      "maxRetries": 1,
+      "comment": "Finite Robot Operator child. Its graph gathers canonical status inputs, performs one semantic update, writes the profile Robot Status snapshot, and publishes through System Buffer."
     },
     "boredom-observer": {
       "id": "boredom-observer",
@@ -174,12 +195,6 @@
       "pauseCategory": "background",
       "maxRetries": 1,
       "comment": "70% chance to reflect after 15 min of inactivity - not guaranteed, feels more organic",
-      "contentMode": "user",
-      "contentModeOptions": {
-        "all": "User and AI history - generated dreams, reflections, and inner dialogue are excluded",
-        "user": "User only - reflects on user inputs, excluding verbose AI responses (recommended)",
-        "agent": "Agent only - reflects on AI responses and system outputs; generated inner content is excluded"
-      },
       "lifecycle": "scheduled-work",
       "handler": "agent.reflector",
       "allowedModes": [
@@ -248,7 +263,7 @@
       "agentPath": "psychoanalyzer/cli.ts",
       "usesLLM": true,
       "maxRetries": 1,
-      "comment": "Manual-run agent that reviews recent memories with psychotherapist model and incrementally updates persona. Run via: ./bin/mh agent run psychoanalyzer",
+      "comment": "Sleep/manual finite work that reviews deterministic recent evidence and applies validated persona changes through the canonical Core owner.",
       "lifecycle": "scheduled-work",
       "handler": "agent.psychoanalyzer",
       "allowedModes": [
@@ -339,27 +354,9 @@
       "agentPath": "profile-sync/cli.ts",
       "usesLLM": false,
       "maxRetries": 2,
-      "comment": "Full profile synchronization with remote server. Handles: authentication, profile bundle download (persona/config), credentials sync, memory sync. Fully replaces client-side syncFromRemoteServer. Supports --pull-only, --memories-only, --profile-only, --days=N, --user=<username> flags.",
+      "comment": "Finite pull coordinator. Core owns validated profile transfer, profile-resolved server configuration and credentials; Core Memory owns idempotent memory persistence. Manual UI and login admission use the Work Coordinator. Supports --memories-only, --profile-only, --full, --skip-config, --skip-persona, --days=N, and direct-CLI --user=<username>.",
       "lifecycle": "scheduled-work",
       "handler": "agent.profile-sync",
-      "allowedModes": [
-        "reactive",
-        "semi",
-        "full"
-      ],
-      "startupPolicy": "skip"
-    },
-    "memory-sync": {
-      "id": "memory-sync",
-      "enabled": true,
-      "type": "manual",
-      "priority": "normal",
-      "agentPath": "memory-sync/cli.ts",
-      "usesLLM": false,
-      "maxRetries": 2,
-      "comment": "Syncs memories with remote server. Triggered manually via UI, on login (pull-only), or can be scheduled. Supports --pull-only, --push-only, and --user=<username> flags.",
-      "lifecycle": "scheduled-work",
-      "handler": "agent.memory-sync",
       "allowedModes": [
         "reactive",
         "semi",
@@ -389,7 +386,7 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Disabled by default. When enabled, queues one Mood graph review after every 10 user messages. After 30 minutes without a conversation event, queues the same graph in baseline-reset mode."
+      "comment": "Disabled by default. When enabled, queues one Mood graph review after every 10 user messages. In Semi mode, 30 minutes without a conversation event queues the same graph in baseline-reset mode."
     },
     "daydreamer": {
       "id": "daydreamer",

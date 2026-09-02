@@ -1,363 +1,227 @@
 {
-  "version": "1.0",
+  "version": "2.0",
   "format": "svelte-flow",
   "name": "Train of Thought Workflow",
-  "description": "Recursive reasoning that follows memory associations, allowing one thought to trigger related thoughts until natural conclusion",
+  "description": "Extends one supplied thought or bounded profile-memory seed through related historical memories, then durably admits the resulting reasoning chain",
   "cognitiveMode": "agent",
-  "last_modified": "2025-12-17",
+  "last_modified": "2026-08-29",
   "nodes": [
     {
-      "id": "1",
+      "id": "seed",
       "type": "inputNode",
-      "position": {
-        "x": 50,
-        "y": 200
-      },
-      "data": {
-        "label": "Seed Memory Input",
-        "nodeType": "text_input",
-        "properties": {
-          "inputKey": "seedMemory"
-        }
-      },
-      "width": 180,
-      "height": 80
-    },
-    {
-      "id": "2",
-      "type": "cognitiveNode",
-      "position": {
-        "x": 280,
-        "y": 200
-      },
-      "data": {
-        "label": "Initialize Scratchpad",
-        "nodeType": "scratchpad_initializer",
-        "properties": {
-          "fields": [
-            "thoughts",
-            "keywords",
-            "seenMemoryIds"
-          ]
-        }
-      },
+      "position": { "x": 60, "y": 180 },
       "width": 200,
-      "height": 80
+      "height": 80,
+      "data": {
+        "label": "Thought or Memory Seed",
+        "nodeType": "text_input",
+        "properties": { "inputKey": "seedMemory" }
+      }
     },
     {
-      "id": "3",
+      "id": "generate",
       "type": "cognitiveNode",
-      "position": {
-        "x": 530,
-        "y": 200
-      },
+      "position": { "x": 340, "y": 180 },
+      "width": 220,
+      "height": 110,
       "data": {
-        "label": "Generate Thought",
+        "label": "Generate New Connection",
         "nodeType": "thought_generator",
         "properties": {
           "temperature": 0.75,
           "extractKeywords": true,
+          "maxTokens": 512,
           "timeout": 300000
         }
-      },
+      }
+    },
+    {
+      "id": "evaluate",
+      "type": "cognitiveNode",
+      "position": { "x": 640, "y": 180 },
       "width": 220,
-      "height": 100
-    },
-    {
-      "id": "4",
-      "type": "cognitiveNode",
-      "position": {
-        "x": 800,
-        "y": 200
-      },
+      "height": 100,
       "data": {
-        "label": "Record Thought",
-        "nodeType": "scratchpad_updater",
-        "properties": {
-          "appendTo": "thoughts",
-          "trackField": "seenMemoryIds"
-        }
-      },
-      "width": 200,
-      "height": 100
-    },
-    {
-      "id": "5",
-      "type": "cognitiveNode",
-      "position": {
-        "x": 1050,
-        "y": 200
-      },
-      "data": {
-        "label": "Evaluate: Continue?",
+        "label": "Evaluate Continuation",
         "nodeType": "thought_evaluator",
-        "properties": {
-          "minConfidence": 0.4,
-          "maxIterations": 7
-        }
-      },
-      "width": 220,
-      "height": 100
+        "properties": { "minConfidence": 0.4, "maxIterations": 4 }
+      }
     },
     {
-      "id": "6",
+      "id": "search",
       "type": "cognitiveNode",
-      "position": {
-        "x": 800,
-        "y": 380
-      },
+      "position": { "x": 920, "y": 180 },
+      "width": 230,
+      "height": 110,
       "data": {
-        "label": "Search Related Memories",
+        "label": "Find Related Memories",
         "nodeType": "loop_memory_search",
-        "properties": {
-          "maxResults": 3,
-          "excludeSeen": true
-        }
-      },
-      "width": 220,
-      "height": 100
+        "properties": { "maxResults": 3, "excludeSeen": true }
+      }
     },
     {
-      "id": "7",
+      "id": "route",
       "type": "routerNode",
-      "position": {
-        "x": 1050,
-        "y": 380
-      },
-      "data": {
-        "label": "Continue or Exit",
-        "nodeType": "conditional_router",
-        "properties": {
-          "conditionField": "shouldExit"
-        }
-      },
+      "position": { "x": 1210, "y": 180 },
       "width": 220,
-      "height": 100
+      "height": 100,
+      "data": {
+        "label": "Continue or Aggregate",
+        "nodeType": "conditional_router",
+        "properties": {}
+      }
     },
     {
-      "id": "8",
+      "id": "aggregate",
       "type": "cognitiveNode",
-      "position": {
-        "x": 1350,
-        "y": 200
-      },
+      "position": { "x": 1510, "y": 180 },
+      "width": 230,
+      "height": 110,
       "data": {
-        "label": "Aggregate Thoughts",
+        "label": "Aggregate Thought Chain",
         "nodeType": "thought_aggregator",
         "properties": {
           "summaryStyle": "narrative",
           "maxLength": 200,
+          "maxTokens": 800,
           "timeout": 300000
         }
-      },
-      "width": 220,
-      "height": 100
+      }
     },
     {
-      "id": "9",
+      "id": "persist",
       "type": "outputNode",
-      "position": {
-        "x": 1620,
-        "y": 200
-      },
+      "position": { "x": 1810, "y": 180 },
+      "width": 230,
+      "height": 100,
       "data": {
-        "label": "Save Thought Chain",
+        "label": "Admit Inner Reasoning",
         "nodeType": "inner_dialogue_buffer",
         "properties": {
-          "tags": [
-            "train-of-thought",
-            "reflection",
-            "inner"
-          ]
+          "tags": ["train-of-thought", "associative", "inner"],
+          "dialogueSource": "train-of-thought",
+          "displayColor": "#8b5cf6",
+          "role": "reasoning"
         }
-      },
-      "width": 200,
-      "height": 80
+      }
     },
     {
-      "id": "10",
-      "type": "outputNode",
-      "position": {
-        "x": 1620,
-        "y": 320
-      },
+      "id": "memory",
+      "type": "cognitiveNode",
+      "position": { "x": 2100, "y": 180 },
+      "width": 240,
+      "height": 100,
       "data": {
-        "label": "Audit Completion",
+        "label": "Save Inner Reasoning Memory",
+        "nodeType": "inner_dialogue_saver",
+        "properties": {}
+      }
+    },
+    {
+      "id": "audit",
+      "type": "outputNode",
+      "position": { "x": 2390, "y": 180 },
+      "width": 190,
+      "height": 80,
+      "data": {
+        "label": "Audit Persisted Chain",
         "nodeType": "audit_logger",
         "properties": {
-          "category": "decision",
-          "event": "train_of_thought_complete"
+          "category": "agent",
+          "event": "train_of_thought_persisted",
+          "level": "info"
         }
-      },
-      "width": 180,
-      "height": 60
+      }
     }
   ],
   "edges": [
     {
-      "id": "e-1-text-2-slot_0",
-      "source": "1",
-      "target": "2",
-      "sourceHandle": "text",
-      "targetHandle": "slot_0",
-      "data": {
-        "type": "string",
-        "comment": "Seed Memory → Initialize Scratchpad"
-      }
-    },
-    {
-      "id": "e-2-scratchpad-3-context",
-      "source": "2",
-      "target": "3",
-      "sourceHandle": "scratchpad",
-      "targetHandle": "context",
-      "data": {
-        "type": "object",
-        "comment": "Scratchpad → Thought Generator"
-      }
-    },
-    {
-      "id": "e-1-text-3-seedMemory",
-      "source": "1",
-      "target": "3",
+      "id": "e-seed-generate",
+      "source": "seed",
+      "target": "generate",
       "sourceHandle": "text",
       "targetHandle": "seedMemory",
-      "data": {
-        "type": "string",
-        "comment": "Seed Memory → Thought Generator (context)"
-      }
+      "data": { "type": "string", "comment": "Explicit upstream result or bounded sampled memory" }
     },
     {
-      "id": "e-3-result-4-iterationState",
-      "source": "3",
-      "target": "4",
-      "sourceHandle": "result",
-      "targetHandle": "iterationState",
-      "data": {
-        "type": "object",
-        "comment": "Thought → Record in Scratchpad"
-      }
+      "id": "e-generate-evaluate",
+      "source": "generate",
+      "target": "evaluate",
+      "sourceHandle": "thoughtData",
+      "targetHandle": "thoughtData",
+      "data": { "type": "object", "comment": "New thought and accumulated chain state" }
     },
     {
-      "id": "e-3-result-5-thought",
-      "source": "3",
-      "target": "5",
-      "sourceHandle": "result",
-      "targetHandle": "thought",
-      "data": {
-        "type": "object",
-        "comment": "Thought Generator → Evaluator (current thought)"
-      }
-    },
-    {
-      "id": "e-4-scratchpad-5-history",
-      "source": "4",
-      "target": "5",
-      "sourceHandle": "scratchpad",
-      "targetHandle": "history",
-      "data": {
-        "type": "object",
-        "comment": "Updated Scratchpad → Evaluator (history)"
-      }
-    },
-    {
-      "id": "e-5-evaluation-6-searchTerms",
-      "source": "5",
-      "target": "6",
+      "id": "e-evaluate-search",
+      "source": "evaluate",
+      "target": "search",
       "sourceHandle": "evaluation",
-      "targetHandle": "searchTerms",
-      "data": {
-        "type": "array",
-        "comment": "Search Terms → Memory Search"
-      }
+      "targetHandle": "evaluation",
+      "data": { "type": "object", "comment": "Continuation decision and search terms" }
     },
     {
-      "id": "e-4-scratchpad-6-seenIds",
-      "source": "4",
-      "target": "6",
-      "sourceHandle": "scratchpad",
-      "targetHandle": "seenIds",
-      "data": {
-        "type": "array",
-        "comment": "Seen Memory IDs → Memory Search (exclude)"
-      }
-    },
-    {
-      "id": "e-5-evaluation-7-condition",
-      "source": "5",
-      "target": "7",
-      "sourceHandle": "evaluation",
+      "id": "e-search-route-condition",
+      "source": "search",
+      "target": "route",
+      "sourceHandle": "shouldExit",
       "targetHandle": "condition",
-      "data": {
-        "type": "boolean",
-        "comment": "shouldContinue → Router"
-      }
+      "data": { "type": "boolean", "comment": "Exit when complete or no new related memory exists" }
     },
     {
-      "id": "e-6-result-7-falseData",
-      "source": "6",
-      "target": "7",
-      "sourceHandle": "result",
-      "targetHandle": "falseData",
-      "data": {
-        "type": "object",
-        "comment": "New memories → Router slot 2 (for back-edge when looping)"
-      }
-    },
-    {
-      "id": "e-5-evaluation-7-trueData",
-      "source": "5",
-      "target": "7",
-      "sourceHandle": "evaluation",
+      "id": "e-search-route-exit",
+      "source": "search",
+      "target": "route",
+      "sourceHandle": "exitData",
       "targetHandle": "trueData",
-      "data": {
-        "type": "object",
-        "comment": "Evaluator (with thoughts) → Router slot 1 (for aggregator when exiting)"
-      }
+      "data": { "type": "object", "comment": "Completed chain for aggregation" }
     },
     {
-      "id": "e-7-loopOutput-3-context",
-      "source": "7",
-      "target": "3",
-      "sourceHandle": "loopOutput",
+      "id": "e-search-route-loop",
+      "source": "search",
+      "target": "route",
+      "sourceHandle": "context",
+      "targetHandle": "falseData",
+      "data": { "type": "object", "comment": "Related memories for the next thought" }
+    },
+    {
+      "id": "e-route-generate",
+      "source": "route",
+      "target": "generate",
+      "sourceHandle": "routedData",
       "targetHandle": "context",
-      "data": {
-        "type": "object",
-        "comment": "Loop back with new memory → Thought Generator [BACK-EDGE]"
-      }
+      "data": { "type": "object", "comment": "Continue from related memories [BACK-EDGE]" }
     },
     {
-      "id": "e-7-exitOutput-8-scratchpad",
-      "source": "7",
-      "target": "8",
-      "sourceHandle": "exitOutput",
-      "targetHandle": "scratchpad",
-      "data": {
-        "type": "object",
-        "comment": "Exit Loop → Aggregate Thoughts"
-      }
+      "id": "e-route-aggregate",
+      "source": "route",
+      "target": "aggregate",
+      "sourceHandle": "routedData",
+      "targetHandle": "thoughtData",
+      "data": { "type": "object", "comment": "Aggregate only after the router exits" }
     },
     {
-      "id": "e-8-result-9-text",
-      "source": "8",
-      "target": "9",
+      "id": "e-aggregate-persist",
+      "source": "aggregate",
+      "target": "persist",
       "sourceHandle": "result",
       "targetHandle": "text",
-      "data": {
-        "type": "string",
-        "comment": "Consolidated Chain → Save"
-      }
+      "data": { "type": "string", "comment": "Durably admit the complete reasoning chain" }
     },
     {
-      "id": "e-8-result-10-eventType",
-      "source": "8",
-      "target": "10",
-      "sourceHandle": "result",
-      "targetHandle": "eventType",
-      "data": {
-        "type": "object",
-        "comment": "Aggregation Result → Audit"
-      }
+      "id": "e-persist-memory",
+      "source": "persist",
+      "target": "memory",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "data": { "type": "array", "comment": "Only admitted reasoning enters long-term Persona Memory" }
+    },
+    {
+      "id": "e-memory-audit",
+      "source": "memory",
+      "target": "audit",
+      "sourceHandle": "saved",
+      "targetHandle": "status",
+      "data": { "type": "boolean", "comment": "Audit only confirmed long-term persistence without copying private content" }
     }
   ]
 }

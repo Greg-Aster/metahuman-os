@@ -171,7 +171,7 @@
               <label class="text-xs text-gray-500">Event pattern<input class="form-input mt-1 w-full" value={trigger.eventPattern || ''} disabled={!!saving} on:change={event => saveAgent(trigger, 'eventPattern', event.currentTarget.value)} /></label>
               <label class="text-xs text-gray-500">Admit every N matching events<input class="form-input mt-1 w-full" type="number" min="1" max="10000" value={trigger.eventCountThreshold || 1} disabled={!!saving} on:change={event => saveAgent(trigger, 'eventCountThreshold', numberValue(event))} /></label>
               <label class="text-xs text-gray-500">Monotonic event count field<input class="form-input mt-1 w-full" value={trigger.eventCountField || ''} placeholder="count" disabled={!!saving} on:change={event => saveAgent(trigger, 'eventCountField', event.currentTarget.value || null)} /></label>
-              <label class="text-xs text-gray-500">Idle baseline/reset seconds<input class="form-input mt-1 w-full" type="number" min="0" max="31536000" value={trigger.idleResetSeconds || 0} disabled={!!saving} on:change={event => saveAgent(trigger, 'idleResetSeconds', numberValue(event) || null)} /></label>
+              <label class="text-xs text-gray-500">Semi-mode idle baseline/reset seconds<input class="form-input mt-1 w-full" type="number" min="0" max="31536000" value={trigger.idleResetSeconds || 0} disabled={!!saving} on:change={event => saveAgent(trigger, 'idleResetSeconds', numberValue(event) || null)} /></label>
             {:else}
               <div class="rounded bg-gray-50 p-2 text-xs text-gray-500 dark:bg-gray-900">Manual triggers run only from an explicit user or API action.</div>
             {/if}

@@ -219,6 +219,9 @@ export async function handleTriggerAgent(req: UnifiedRequest): Promise<UnifiedRe
   if (authError) return authError;
   const agentId = req.params?.agentId || req.params?.id || req.body?.agentId;
   if (!agentId) return failure('Missing agentId', 400);
+  if (req.user.role !== 'owner' && agentId !== 'profile-sync') {
+    return failure('Only the owner may trigger this agent', 403);
+  }
   const args = Array.isArray(req.body?.args)
     ? req.body.args.filter((value: unknown): value is string => typeof value === 'string')
     : [];

@@ -173,8 +173,8 @@ assert.match(
 );
 assert.match(
   queueConsumer,
-  /data\.type === 'interrupt'[\s\S]*?stopActiveAudio\('interrupted'\)/,
-  'server-owned supersession must immediately stop the browser playback actuator',
+  /data\.type === 'interrupt'[\s\S]*?activeDeliveryId[\s\S]*?interruptPlaybackRequest\(activeDeliveryId, 'interrupted'\)/,
+  'server-owned supersession must stop only the correlated queue playback request',
 );
 assert.match(
   unifiedQueueHandler,

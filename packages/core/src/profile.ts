@@ -174,18 +174,6 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
         vocabularyLevel: 'balanced mix of technical and everyday language',
         preferredPronouns: '',
         humor: '',
-        // Drift tracking fields (populated by psychoanalyzer)
-        driftAccuracy: null as number | null,
-        lastDriftAnalysis: null as string | null,
-        toneGuidelines: [] as string[],
-        avoidPatterns: [] as string[],
-        adoptPatterns: [] as string[],
-        driftAdjustments: [] as Array<{
-          dimension: string;
-          current: string;
-          target: string;
-          action: string;
-        }>,
       },
       cadence: {
         modes: [
@@ -647,24 +635,6 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   await writeJsonIfMissing(path.join(etcDir, 'sleep.json'), sleep);
 
-  // audio.json - Audio processing configuration
-  const audio = {
-    enabled: false,
-    model: 'piper',
-    voice: 'en_US-lessac-medium',
-  };
-
-  await writeJsonIfMissing(path.join(etcDir, 'audio.json'), audio);
-
-  // ingestor.json - File ingestion configuration
-  const ingestor = {
-    enabled: true,
-    pollIntervalSeconds: 60,
-    supportedFormats: ['.txt', '.md', '.json', '.pdf', '.docx'],
-  };
-
-  await writeJsonIfMissing(path.join(etcDir, 'ingestor.json'), ingestor);
-
   // autonomy.json - Autonomy settings
   const autonomy = {
     trustLevel: 'suggest',
@@ -780,29 +750,19 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
       },
     },
     agents: {
-      reflector: {
-        id: 'reflector',
-        enabled: false,
-        type: 'interval',
-        priority: 'normal',
-        agentPath: 'reflector/cli.ts',
-        usesLLM: true,
-        interval: 900,
-        startupPolicy: 'skip',
-        maxRetries: 3,
-        comment: 'Disabled in favor of activity-based reflections via boredom-maintenance',
-      },
       organizer: {
         id: 'organizer',
         enabled: true,
-        type: 'activity',
+        type: 'manual',
         priority: 'high',
         agentPath: 'organizer/cli.ts',
         usesLLM: true,
-        inactivityThreshold: 600,
         startupPolicy: 'skip',
         maxRetries: 3,
-        comment: 'Runs after 10 minutes of inactivity to avoid competing with user for VRAM',
+        lifecycle: 'scheduled-work',
+        handler: 'agent.organizer',
+        allowedModes: ['reactive', 'semi', 'full'],
+        comment: 'Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.',
       },
       curator: {
         id: 'curator',
@@ -829,17 +789,6 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         startupPolicy: 'skip',
         maxRetries: 1,
         comment: 'Queues bounded dream and persona-review children through the work coordinator.',
-      },
-      'boredom-maintenance': {
-        id: 'boredom-maintenance',
-        enabled: true,
-        type: 'activity',
-        priority: 'low',
-        agentPath: 'reflector/cli.ts',
-        usesLLM: true,
-        inactivityThreshold: 900,
-        startupPolicy: 'skip',
-        maxRetries: 1,
       },
       curiosity: {
         id: 'curiosity',
@@ -1479,8 +1428,6 @@ export async function initializeGuestProfile(): Promise<void> {
       'boredom.json',
       'sleep.json',
       'voice.json',
-      'audio.json',
-      'ingestor.json',
       'agents.json',
       'logging.json', // Optional: per-user logging preferences
     ];
@@ -1785,8 +1732,6 @@ export async function copyPersonaToGuest(sourceUsername: string): Promise<void> 
       'boredom.json',
       'sleep.json',
       'voice.json',
-      'audio.json',
-      'ingestor.json',
       'agents.json',
       'logging.json',
     ];

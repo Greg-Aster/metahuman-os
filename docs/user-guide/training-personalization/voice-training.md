@@ -4,12 +4,15 @@ MetaHuman keeps recordings and trained artifacts in the active user profile. The
 
 ## Supported workflows
 
-| Provider | Maintained workflow | Source audio |
-| --- | --- | --- |
-| Piper | Select installed voices; no in-app model trainer | None |
-| Kokoro | Select built-in or imported voicepacks; no custom trainer | None |
-| GPT-SoVITS | Record or select reference audio for zero-shot synthesis | One clean reference clip |
-| RVC | Curate a dataset, train a model, and use it for voice conversion | At least 50 exported samples and 10 minutes |
+- **Piper:** select an installed voice. MetaHuman has no in-app Piper model
+  trainer and does not require source audio for selection.
+- **Kokoro:** select a built-in or imported voicepack. MetaHuman has no custom
+  Kokoro trainer and does not require source audio for selection.
+- **GPT-SoVITS:** record or select one clean reference clip for zero-shot
+  synthesis. This does not train a new model.
+- **RVC:** curate a dataset, train a model, and use it for voice conversion. The
+  maintained readiness gate requires at least 50 exported samples, at least 600
+  seconds of audio, and average sample quality of at least `0.7`.
 
 The application does not claim to train Piper or Kokoro models. Importing an existing Kokoro voicepack is different from training one.
 
@@ -31,7 +34,8 @@ After preparing the reference, enable GPT-SoVITS under Voice Settings and use th
 ## RVC model training
 
 1. Choose RVC in Voice Clone Training.
-2. Collect at least 50 samples totaling at least 10 minutes.
+2. Collect at least 50 samples totaling at least 10 minutes, with average sample
+   quality of at least `0.7`.
 3. Copy selected samples or use **Export best samples**.
 4. Select the epoch count, checkpoint interval, batch size, and device.
 5. Start training and follow the status and logs shown in the same panel.
@@ -52,10 +56,12 @@ Run `./bin/mh rvc` for all supported options.
 The storage router resolves these logical profile locations:
 
 - collected recordings: the profile voice-training area;
-- RVC exported samples: `out/voices/rvc/<speaker>`;
-- RVC models: `out/voices/rvc-models/<speaker>`;
-- GPT-SoVITS references: `out/voices/sovits/<speaker>`;
-- status and logs: profile-aware runtime log paths.
+- RVC exported samples: `out/voices/rvc/SPEAKER`;
+- RVC models: `out/voices/rvc-models/SPEAKER`;
+- GPT-SoVITS references: `out/voices/sovits/SPEAKER`;
+- status and logs: machine runtime files under
+  `logs/run/rvc-training-SPEAKER.json` and
+  `logs/run/rvc-training-SPEAKER.log`.
 
 Use the UI and public core/CLI operations to manage these artifacts. Avoid hand-maintained parallel datasets.
 
@@ -67,4 +73,4 @@ Use the UI and public core/CLI operations to manage these artifacts. Avoid hand-
 - **Voice quality is poor:** replace noisy samples instead of compensating with more epochs.
 - **Synthesis falls back to Piper:** verify the selected model or reference artifact exists for the active profile.
 
-See [Voice Features](../using-metahuman/voice-features.md) for runtime configuration and [Troubleshooting](../reference/troubleshooting.md) for system diagnostics.
+See [Voice Features](/user-guide#voice-features) for runtime configuration and [Troubleshooting](/user-guide#troubleshooting) for system diagnostics.

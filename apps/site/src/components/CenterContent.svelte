@@ -85,12 +85,6 @@
         case 'MemoryControls':
           module = await import('./MemoryControls.svelte');
           break;
-        case 'AudioUpload':
-          module = await import('./AudioUpload.svelte');
-          break;
-        case 'AudioRecorder':
-          module = await import('./AudioRecorder.svelte');
-          break;
         case 'VoiceTrainingWidget':
           module = await import('./VoiceTrainingWidget.svelte');
           break;
@@ -109,8 +103,8 @@
         case 'TrainingHistory':
           module = await import('./TrainingHistory.svelte');
           break;
-        case 'OvernightLearnings':
-          module = await import('./OvernightLearnings.svelte');
+        case 'AutomaticTraining':
+          module = await import('./AutomaticTraining.svelte');
           break;
         case 'SystemSettings':
           module = await import('./SystemSettings.svelte');
@@ -174,7 +168,7 @@
       throw error;
     }
 
-    const component = module.default;
+    const component = module.default as unknown as typeof SvelteComponent;
     componentCache.set(name, component);
     if (typeof window !== 'undefined') {
       window.sessionStorage.removeItem(`mh-component-reload-${name}`);
@@ -203,7 +197,6 @@ let aiIngestorMemories: EventItem[] = []
 let audioTranscriptMemories: EventItem[] = []
 let dreamMemories: EventItem[] = [];
 let reflectionMemories: EventItem[] = [];
-let prunedMemories: EventItem[] = [];
 let curiosityQuestionsTab: Array<{ id: string; question: string; status: string; askedAt: string; relPath: string; seedMemories?: string[]; resolvedAt?: string; answeredAt?: string; skippedAt?: string }> = []
 let functionMemories: Array<{
   id: string
@@ -224,9 +217,9 @@ let currentPage = 1
 const itemsPerPage = 50
 
 let personaTab: 'editor' | 'memory' | 'generator' = 'editor'
-let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' | 'pruned' = 'episodic'
-let voiceTab: 'upload' | 'training' | 'settings' = 'upload'
-let trainingTab: 'wizard' | 'datasets' | 'monitor' = 'wizard'
+let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
+let voiceTab: 'training' | 'settings' = 'training'
+let trainingTab: 'wizard' | 'automatic' | 'datasets' | 'monitor' = 'wizard'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
 
 
@@ -286,7 +279,6 @@ async function loadEvents() {
       const dreams = Array.isArray(data.dreams) ? data.dreams : [];
       const aiIngestor = Array.isArray(data.aiIngestor) ? data.aiIngestor : [];
       const audio = Array.isArray(data.audio) ? data.audio : [];
-      const pruned = Array.isArray(data.pruned) ? data.pruned : [];
       tasksTab = Array.isArray(data.tasks) ? data.tasks : [];
       curatedTab = Array.isArray(data.curated) ? data.curated : [];
       curiosityQuestionsTab = Array.isArray(data.curiosityQuestions) ? data.curiosityQuestions : [];
@@ -296,8 +288,6 @@ async function loadEvents() {
       dreamMemories = dreams;
       aiIngestorMemories = aiIngestor;
       audioTranscriptMemories = audio;
-      prunedMemories = pruned;
-
       const visibleItems = [
         ...events,
         ...reflectionMemories,
@@ -353,7 +343,7 @@ $: if ($activeView !== 'persona') {
 }
 
 $: if ($activeView !== 'voice') {
-  voiceTab = 'upload';
+  voiceTab = 'training';
 }
 
 $: if ($activeView !== 'training') {
@@ -397,11 +387,6 @@ $: filteredDreams = filterMemories(dreamMemories, searchQuery);
 $: paginatedDreams = paginate(filteredDreams, currentPage, itemsPerPage);
 $: totalDreamPages = Math.ceil(filteredDreams.length / itemsPerPage);
 
-// Filtered and paginated pruned
-$: filteredPruned = filterMemories(prunedMemories, searchQuery);
-$: paginatedPruned = paginate(filteredPruned, currentPage, itemsPerPage);
-$: totalPrunedPages = Math.ceil(filteredPruned.length / itemsPerPage);
-
 // Filtered and paginated AI ingestor
 $: filteredAiIngestor = filterMemories(aiIngestorMemories, searchQuery);
 $: paginatedAiIngestor = paginate(filteredAiIngestor, currentPage, itemsPerPage);
@@ -418,7 +403,6 @@ $: currentTotalPages = (() => {
     case 'episodic': return totalEpisodicPages;
     case 'reflections': return totalReflectionPages;
     case 'dreams': return totalDreamPages;
-    case 'pruned': return totalPrunedPages;
     case 'ai-ingestor': return totalAiIngestorPages;
     case 'audio': return totalAudioPages;
     default: return 1;
@@ -430,7 +414,6 @@ $: currentTotalItems = (() => {
     case 'episodic': return filteredEvents.length;
     case 'reflections': return filteredReflections.length;
     case 'dreams': return filteredDreams.length;
-    case 'pruned': return filteredPruned.length;
     case 'ai-ingestor': return filteredAiIngestor.length;
     case 'audio': return filteredAudio.length;
     default: return 0;
@@ -584,13 +567,12 @@ async function loadMemoryContent(relPath: string) {
         void loadComponent('ApprovalQueue');
         break;
       case 'voice':
-        void loadComponent('AudioUpload');
-        void loadComponent('AudioRecorder');
         void loadComponent('VoiceTrainingWidget');
         void loadComponent('VoiceSettings');
         break;
       case 'training':
         void loadComponent('TrainingWizard');
+        void loadComponent('AutomaticTraining');
         void loadComponent('TrainingHistory');
         void loadComponent('TrainingMonitor');
         break;
@@ -703,28 +685,14 @@ async function loadMemoryContent(relPath: string) {
     <div class="view-container">
       <div class="view-header">
         <h2 class="view-title">🎤 Voice</h2>
-        <p class="view-subtitle">Audio upload, transcription & voice training</p>
+        <p class="view-subtitle">Voice training and speech settings</p>
       </div>
       <div class="view-content">
         <div class="tab-group">
-          <button class="tab-button {voiceTab === 'upload' ? 'active' : ''}" on:click={() => voiceTab = 'upload'}>Upload & Transcribe</button>
           <button class="tab-button {voiceTab === 'training' ? 'active' : ''}" on:click={() => { voiceTab = 'training'; loadVoiceProvider(); }}>Voice Clone Training</button>
           <button class="tab-button {voiceTab === 'settings' ? 'active' : ''}" on:click={() => voiceTab = 'settings'}>Voice Settings</button>
         </div>
-        {#if voiceTab === 'upload'}
-          <div class="grid grid-cols-2 gap-4">
-            {#await loadComponent('AudioUpload')}
-              <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading...</div>
-            {:then Component}
-              <svelte:component this={Component} />
-            {/await}
-            {#await loadComponent('AudioRecorder')}
-              <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading...</div>
-            {:then Component}
-              <svelte:component this={Component} />
-            {/await}
-          </div>
-        {:else if voiceTab === 'training'}
+        {#if voiceTab === 'training'}
           {#await loadComponent('VoiceTrainingWidget')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading voice training...</div>
           {:then Component}
@@ -748,12 +716,19 @@ async function loadMemoryContent(relPath: string) {
       <div class="view-content">
         <div class="tab-group">
           <button class="tab-button {trainingTab === 'wizard' ? 'active' : ''}" on:click={() => trainingTab = 'wizard'}>🧙 Training Wizard</button>
+          <button class="tab-button {trainingTab === 'automatic' ? 'active' : ''}" on:click={() => trainingTab = 'automatic'}>⚙️ Automatic Training</button>
           <button class="tab-button {trainingTab === 'datasets' ? 'active' : ''}" on:click={() => trainingTab = 'datasets'}>📜 Training History</button>
           <button class="tab-button {trainingTab === 'monitor' ? 'active' : ''}" on:click={() => trainingTab = 'monitor'}>📡 Training Monitor</button>
         </div>
         {#if trainingTab === 'wizard'}
           {#await loadComponent('TrainingWizard')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading training wizard...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
+        {:else if trainingTab === 'automatic'}
+          {#await loadComponent('AutomaticTraining')}
+            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading automatic training settings...</div>
           {:then Component}
             <svelte:component this={Component} />
           {/await}
@@ -797,7 +772,7 @@ async function loadMemoryContent(relPath: string) {
             {#await loadComponent('MemoryControls')}
               <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading memory controls...</div>
             {:then Component}
-              <svelte:component this={Component} on:captured={loadEvents} />
+              <svelte:component this={Component} />
             {/await}
           </div>
           <div class="tab-group">
@@ -805,12 +780,11 @@ async function loadMemoryContent(relPath: string) {
             <button class="tab-button {memoryTab==='reflections' ? 'active' : ''}" on:click={() => memoryTab='reflections'}>Reflections</button>
             <button class="tab-button {memoryTab==='tasks' ? 'active' : ''}" on:click={() => memoryTab='tasks'}>Tasks</button>
             <button class="tab-button {memoryTab==='curated' ? 'active' : ''}" on:click={() => memoryTab='curated'}>Curated</button>
-            <button class="tab-button {memoryTab==='ai-ingestor' ? 'active' : ''}" on:click={() => memoryTab='ai-ingestor'}>AI Ingestor</button>
+            <button class="tab-button {memoryTab==='ai-ingestor' ? 'active' : ''}" on:click={() => memoryTab='ai-ingestor'}>Inbox Imports</button>
             <button class="tab-button {memoryTab==='audio' ? 'active' : ''}" on:click={() => memoryTab='audio'}>Audio</button>
             <button class="tab-button {memoryTab==='dreams' ? 'active' : ''}" on:click={() => memoryTab='dreams'}>Dreams 💭</button>
             <button class="tab-button {memoryTab==='curiosity' ? 'active' : ''}" on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
             <button class="tab-button {memoryTab==='functions' ? 'active' : ''}" on:click={() => memoryTab='functions'}>Functions 🔧</button>
-            <button class="tab-button {memoryTab==='pruned' ? 'active' : ''}" on:click={() => memoryTab='pruned'}>Pruned 🗑️</button>
           </div>
 
           <!-- Search and Pagination Controls -->
@@ -1111,10 +1085,10 @@ async function loadMemoryContent(relPath: string) {
             {#if aiIngestorMemories.length === 0}
               <div class="empty-state">
                 <div class="empty-icon">🤖</div>
-                <div class="empty-title">No AI Ingestor memories</div>
+                <div class="empty-title">No inbox imports</div>
                 <div class="empty-description">
-                  AI Ingestor memories are created when files are processed through the AI Ingestor agent.
-                  Run the ingestor to create AI-processed memories from inbox files.
+                  Imported memories are created when supported text files are processed through the Inbox Ingestor agent.
+                  Run Inbox Ingestor from the Agent Catalog after placing files in the profile inbox.
                 </div>
               </div>
             {:else}
@@ -1415,45 +1389,6 @@ async function loadMemoryContent(relPath: string) {
               </div>
             {/if}
           </div>
-        {:else if memoryTab === 'pruned'}
-          <div class="events-list">
-            {#if prunedMemories.length === 0}
-              <div class="empty-state">
-                <div class="empty-icon">🗑️</div>
-                <div class="empty-title">No pruned memories</div>
-                <div class="empty-description">
-                  Pruned memories will appear here after running the Memory Pruner agent.
-                  Use the "Run Pruner" button in the Memory Controls section above.
-                </div>
-              </div>
-            {:else}
-              {#each paginatedPruned as event}
-                <div class="event-card pruned-card">
-                  <div class="event-card-header">
-                    <div class="event-card-time">
-                      {new Date(event.timestamp).toLocaleString()}
-                    </div>
-                    <div class="validation-controls">
-                      <button class="val-btn edit" title="View pruned memory" on:click|stopPropagation={() => openMemoryEditor(event.relPath, 'Pruned Memory')}>
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  <div class="event-body">{event.content}</div>
-                  {#if event.tags && event.tags.length > 0}
-                    <div class="event-tags">
-                      {#each event.tags.slice(0, 5) as tag}
-                        <span class="tag">{tag}</span>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
-              {/each}
-            {/if}
-          </div>
         {/if}
         {:else if personaTab === 'generator'}
           {#await loadComponent('PersonaGenerator')}
@@ -1649,10 +1584,6 @@ async function loadMemoryContent(relPath: string) {
 
   .dream-card {
     @apply border-l-4 border-l-yellow-500 dark:border-l-yellow-400;
-  }
-
-  .pruned-card {
-    @apply border-l-[3px] border-l-gray-400 dark:border-l-gray-500 opacity-85;
   }
 
   /* Tags and links */

@@ -10,65 +10,38 @@
  * - 'all': Everything (both user and AI content)
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
-import { ROOT } from './paths.js';
-import { storageClient } from './storage-client.js';
+import { getTriggerConfigService } from './queue/trigger-config-service.js';
 
 export type ContentMode = 'all' | 'user' | 'agent';
 
-// Cached content mode setting (per-process)
-let cachedContentMode: ContentMode | null = null;
+let cachedMode: { revision: number; mode: ContentMode } | null = null;
+
+function readConfiguredContentMode(): ContentMode {
+  const loaded = getTriggerConfigService().load(false);
+  if (cachedMode?.revision === loaded.revision) return cachedMode.mode;
+  const mode = loaded.config.globalSettings.memoryContentMode;
+  if (mode !== 'all' && mode !== 'user' && mode !== 'agent') {
+    throw new Error('globalSettings.memoryContentMode must be all, user, or agent');
+  }
+  cachedMode = { revision: loaded.revision, mode };
+  return mode;
+}
 
 /**
- * Load the content mode setting from agents.json
- * Priority: globalSettings.memoryContentMode > default 'user'
+ * Load the content mode from the canonical Trigger Manager configuration.
  */
 export async function loadMemoryContentMode(): Promise<ContentMode> {
-  if (cachedContentMode) return cachedContentMode;
-
-  try {
-    // Try user profile first, fall back to system config
-    const profileResult = storageClient.resolvePath({ category: 'config' as any, subcategory: 'agents' });
-    let agentsPath = profileResult.success && profileResult.path
-      ? profileResult.path
-      : path.join(ROOT, 'etc', 'agents.json');
-
-    // Ensure we have the full path
-    if (!agentsPath.endsWith('.json')) {
-      agentsPath = path.join(agentsPath, 'agents.json');
-    }
-
-    const raw = fs.readFileSync(agentsPath, 'utf-8');
-    const config = JSON.parse(raw);
-
-    // Check global setting first
-    const mode = config.globalSettings?.memoryContentMode || 'user';
-
-    if (['all', 'user', 'agent'].includes(mode)) {
-      cachedContentMode = mode as ContentMode;
-      return cachedContentMode;
-    }
-  } catch (err) {
-    console.warn('[memory-content-filter] Could not load contentMode from config, using default:', err);
-  }
-
-  cachedContentMode = 'user';
-  return cachedContentMode;
+  return readConfiguredContentMode();
 }
 
-/**
- * Clear cached content mode (call when config changes)
- */
+/** Clear the revision-aware content-mode cache after configuration changes. */
 export function clearMemoryContentModeCache(): void {
-  cachedContentMode = null;
+  cachedMode = null;
 }
 
-/**
- * Synchronous version - returns cached value or default
- */
+/** Synchronous access for existing Core consumers. */
 export function getMemoryContentModeSync(): ContentMode {
-  return cachedContentMode || 'user';
+  return readConfiguredContentMode();
 }
 
 /**
@@ -83,6 +56,10 @@ export function extractMemoryContent(memory: any, mode: ContentMode): string | n
   const type = memory.type || memory.metadata?.type;
   const content = memory.content || '';
   const response = memory.response || '';
+  const conversationRole = type === 'conversation'
+    && (memory.metadata?.role === 'user' || memory.metadata?.role === 'assistant')
+    ? memory.metadata.role
+    : null;
 
   // Handle based on content mode
   switch (mode) {
@@ -97,6 +74,8 @@ export function extractMemoryContent(memory: any, mode: ContentMode): string | n
         return content;
       }
       if (type === 'conversation') {
+        if (conversationRole === 'assistant') return content;
+        if (conversationRole === 'user') return null;
         // Extract only the AI response
         if (response) return response;
         if (content.includes('\n\nAssistant:')) {
@@ -125,6 +104,8 @@ export function extractMemoryContent(memory: any, mode: ContentMode): string | n
 
       // For conversations, extract only the user portion
       if (type === 'conversation') {
+        if (conversationRole === 'user') return content;
+        if (conversationRole === 'assistant') return null;
         // Try to detect and strip AI response - check all patterns
         // Patterns are flexible to handle various newline formats (\n, \r\n, multiple spaces)
         const assistantPatterns = [

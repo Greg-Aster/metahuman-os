@@ -272,7 +272,7 @@
         "y": 150
       },
       "data": {
-        "label": "Memory Capture",
+        "label": "Conversation Memory Saver",
         "nodeType": "memory_capture",
         "properties": {}
       }
@@ -575,17 +575,10 @@
     },
     {
       "id": "e35",
-      "source": "31",
+      "source": "26",
       "target": "21",
-      "sourceHandle": "stripped",
-      "targetHandle": "assistantResponse"
-    },
-    {
-      "id": "e36",
-      "source": "1",
-      "target": "21",
-      "sourceHandle": "message",
-      "targetHandle": "userMessage"
+      "sourceHandle": "entries",
+      "targetHandle": "entries"
     },
     {
       "id": "e37",
@@ -595,17 +588,17 @@
       "targetHandle": "response"
     },
     {
-      "id": "e38",
-      "source": "7",
+      "id": "e36",
+      "source": "1",
       "target": "26",
-      "sourceHandle": "history",
-      "targetHandle": "conversationHistory"
+      "sourceHandle": "message",
+      "targetHandle": "userMessage"
     },
     {
       "id": "e39",
-      "source": "31",
+      "source": "26",
       "target": "36",
-      "sourceHandle": "stripped",
+      "sourceHandle": "response",
       "targetHandle": "conversation"
     },
     {

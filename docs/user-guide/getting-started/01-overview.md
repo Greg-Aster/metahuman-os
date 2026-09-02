@@ -1,96 +1,128 @@
-# Overview & Philosophy
+# Overview
 
-> **What is MetaHuman OS?**
+MetaHuman OS is a local-first application for persistent AI conversation,
+profile-scoped memory, persona configuration, tasks, cognitive workflows,
+background agents, voice, model routing, training, and optional external
+environment control.
 
-MetaHuman OS is an autonomous digital personality extension operating system that mirrors your identity, memories, goals, and personality. It's not an assistant—it's a parallel intelligence that operates 24/7 as a seamless extension of yourself.
+It is not one continuously running autonomous mind and it is not limited to one
+LLM provider. Features run only when their owner is configured, admitted, and
+available. Local data can be sent to a configured remote model, sync server,
+cloud training provider, tunnel, or environment adapter when you enable that
+path.
 
----
+## What you can do
 
-## What Makes MetaHuman Different
+- Talk through the Chat interface using an editable cognitive graph.
+- Keep conversation, inner-dialogue, system, and robot activity in separate
+  buffers.
+- Capture, browse, edit, search, ingest, organize, and semantically index
+  profile-scoped memories.
+- Create projects and tasks and inspect their lifecycle.
+- Edit a persona directly or build one through the guided Persona Generator.
+- Review and control desires, plans, approvals, and outcome reviews through
+  Agency.
+- Configure Ollama, vLLM, the local-model service, or a supported remote model
+  path.
+- Use speech-to-text, text-to-speech, voice conversion, and voice-training
+  workflows when their providers are installed.
+- Inspect queued work, finite agents, persistent services, triggers, approvals,
+  sleep stages, and Active Operator mode.
+- Edit cognitive graphs and inspect execution traces.
+- Connect one configured Environment Bridge to a game, simulator, robot, or
+  another adapter.
 
-### 1. Autonomous Operation
-MetaHuman runs continuously in the background, enriching memories, generating reflections, and learning from your interactions without constant supervision.
+## Main application areas
 
-### 2. Memory-Centric Architecture
-Every interaction, observation, and thought is stored as structured episodic memory, creating a lifetime timeline that informs all responses.
+The left sidebar is the primary navigation:
 
-### 3. Progressive Trust Model
-The system adapts its autonomy level based on your comfort—from observation-only to full autonomous operation within defined boundaries.
+- **Chat** contains conversation and buffer views.
+- **Dashboard** contains Overview, Tasks, Approvals, Active Operator, Sleep,
+  Agent Catalog, and Trigger Manager.
+- **Projects** contains the project and task workspace.
+- **Agency** contains desires, planning, execution, and outcome review.
+- **Persona** contains the Persona Editor, memory views, and Persona Generator.
+- **Voice** contains voice-clone training and voice settings.
+- **AI Training** contains the training wizard, history, and monitor.
+- **System** contains chat settings, general settings, backend controls,
+  security, storage, network, addons, Agent Catalog, and Trigger Manager.
 
-### 4. Local-First Privacy
-All data and AI processing happens on your infrastructure. You control where your memories live and who has access.
+The right sidebar contains the shared work Queue, owner-visible Agent Monitor,
+and Server Status. It does not create separate execution or service owners.
 
----
+## Accounts and data boundaries
 
-## Core Philosophy
+Every request runs in an authenticated profile context.
 
-**Memory as Foundation**: MetaHuman treats memory as the primary substrate of intelligence. Everything stems from your accumulated experiences.
+- The first registered account becomes the installation owner.
+- Standard accounts can work within their own profile.
+- A guest session is authenticated, temporary, and read-only.
+- Profile paths are resolved by the storage owner and may use the default
+  profile directory or configured encrypted/custom storage.
+- Memories, persona data, tasks, buffers, credentials, logs, model artifacts,
+  and generated output are installation data, not application source.
 
-**Transparency**: Every decision, action, and reasoning process is logged and auditable. No black boxes.
+Do not edit profile paths by hand or copy one user's files into another profile.
+Use the web controls, CLI, or profile-sync workflow described in this guide.
 
-**Bounded Autonomy**: The system operates within explicitly defined trust boundaries that you configure.
+## Models and optional services
 
-**Continuous Learning**: MetaHuman trains on your conversations, evolving its personality and knowledge to match yours. (..."I want the me that is inside you"...🤖🤖🤖)
+Conversation and agent features require an available configured LLM backend.
+MetaHuman supports multiple backend families; Ollama is not mandatory.
 
----
+Other features have separate dependencies:
 
-## Key Capabilities
+- Semantic search requires the maintained embedding service and a compatible
+  per-profile index.
+- Site speech recognition requires the managed Whisper service. The maintained
+  React Native shell may instead use device-native speech recognition when the
+  platform provides it.
+- Speech playback requires a configured TTS provider and an active delivery
+  consumer.
+- Voice cloning and AI training require their own tools, models, storage, and
+  often substantial GPU resources.
+- Remote access requires an explicitly configured exposure mode, allowed hosts,
+  origins, and authentication.
+- Environment actions require an authenticated external adapter and truthful
+  capability advertisement.
 
-- **Natural Conversation**: Chat with your digital extension using cognitive modes (Dual Consciousness, Agent, Emulation)
-- **Memory Management**: Capture observations, browse timeline, search semantically
-- **Voice Interaction**: Clone your voice, speak to the system, get vocal responses
-- **Autonomous Agents**: 25 background agents enrich memories, generate reflections, train models
-- **Visual Workflows**: Node-based cognitive graphs for complex reasoning patterns
-- **LoRA Training**: Continuous personalization through fine-tuning
+A green source or build check does not establish that these runtime dependencies
+are healthy.
 
----
+## Cognitive and autonomy modes
 
-## Who Is This For?
+Conversation mode and autonomy mode are separate controls.
 
-- **Knowledge Workers**: Augment your memory and reasoning capabilities
-- **Creatives**: Explore ideas through reflective dialogue
-- **Researchers**: Organize and synthesize vast amounts of information
-- **Self-Quantifiers**: Track your thoughts, goals, and personal growth
-- **AI Enthusiasts**: Experiment with local LLMs and personality training
+Cognitive modes select the graph used for a turn:
 
----
+- **Dual** supports the full conversation and memory-oriented workflow.
+- **Agent** favors direct task-oriented assistance.
+- **Emulation** uses the configured persona without writing new long-term
+  memory.
+- **Environment** adds observation and bounded semantic-action handling.
 
-## System Requirements
+Active Operator modes control automatic work admission:
 
-- **Linux** is the maintained server environment
-- **Node.js 22.3+ (22.x)**, **pnpm**, and **Python 3** for the main server scripts
-- **GPU optional** — required only for local model training
-- **CPU/VRAM requirements** vary based on your LLM backend choice
-- **Disk space** varies based on models and memory storage
+- **Reactive** responds to user, system, approval, and environment events.
+- **Semi** also permits configured scheduled and idle work.
+- **Full** adds bounded policy proposals without bypassing the shared queue.
 
----
+See [Cognitive Modes](/user-guide#cognitive-modes) and
+[Autonomous Work](/user-guide#autonomous-agents) before enabling
+broader automation.
 
-## Deployment Methods
+## Recommended first journey
 
-MetaHuman OS can run in several configurations:
+1. Install and start the server.
+2. Create the owner account and save the recovery codes.
+3. Complete or deliberately skip onboarding.
+4. Confirm one LLM backend and its selected models are available.
+5. Send a chat turn and inspect its visible result.
+6. Capture one explicit memory and verify it under Persona → Memory.
+7. Create one task under **Dashboard → Tasks** and, if useful, create a project
+   under **Projects**.
+8. Inspect the Queue and Server Status before enabling scheduled work.
+9. Configure optional voice, training, remote access, or environment features
+   only when needed.
 
-### Local Server (Full Installation)
-Run everything on your own Linux machine. You control the LLM backend (Ollama or vLLM), all data stays local, and you get full autonomous agent capabilities.
-
-**Best for:** Power users, privacy-focused setups, development
-**→ Continue to [Installation](02-installation.md)**
-
-### Remote Server
-Connect to a MetaHuman server running elsewhere (your home server, cloud instance, etc.). The mobile app or web browser connects to the remote server for LLM and storage.
-
-**Best for:** Using MetaHuman from multiple devices, accessing from mobile
-**→ Skip to [Setup & Login](03-setup-and-login.md)**
-
-### Mobile App
-The Android app can run standalone (with local models) or connect to a remote server. If connecting to an existing server, you don't need to install anything else.
-
-**Best for:** On-the-go access, mobile-first users
-**→ Skip to [Setup & Login](03-setup-and-login.md)**
-
----
-
-## Next Steps
-
-Choose your path:
-- **Installing a server?** → [Installation](02-installation.md)
-- **Connecting to an existing server?** → [Setup & Login](03-setup-and-login.md)
+Continue to [Installation](/user-guide#02-installation).

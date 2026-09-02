@@ -197,7 +197,7 @@
         "y": 200
       },
       "data": {
-        "label": "Memory Capture",
+        "label": "Conversation Memory Saver",
         "nodeType": "memory_capture",
         "properties": {}
       },
@@ -317,6 +317,21 @@
       },
       "width": 180,
       "height": 60
+    },
+    {
+      "id": "32",
+      "type": "outputNode",
+      "position": {
+        "x": 2160,
+        "y": 200
+      },
+      "data": {
+        "label": "Conversation Buffer",
+        "nodeType": "conversation_buffer",
+        "properties": {}
+      },
+      "width": 200,
+      "height": 80
     },
     {
       "id": "tts-out",
@@ -502,23 +517,13 @@
       }
     },
     {
-      "id": "e-1-message-12-userMessage",
+      "id": "e-1-message-32-userMessage",
       "source": "1",
-      "target": "12",
+      "target": "32",
       "sourceHandle": "message",
       "targetHandle": "userMessage",
       "data": {
         "type": "string"
-      }
-    },
-    {
-      "id": "e-3-cognitiveMode-12-cognitiveMode",
-      "source": "3",
-      "target": "12",
-      "sourceHandle": "cognitiveMode",
-      "targetHandle": "cognitiveMode",
-      "data": {
-        "type": "cognitiveMode"
       }
     },
     {
@@ -543,14 +548,25 @@
       }
     },
     {
-      "id": "e-31-stripped-12-assistantResponse",
+      "id": "e-31-stripped-32-response",
       "source": "31",
-      "target": "12",
+      "target": "32",
       "sourceHandle": "stripped",
-      "targetHandle": "assistantResponse",
+      "targetHandle": "response",
       "data": {
         "type": "string",
-        "comment": "Stripped response → Memory Capture (no <think> blocks)"
+        "comment": "Stripped response → Conversation Buffer"
+      }
+    },
+    {
+      "id": "e-32-entries-12-entries",
+      "source": "32",
+      "target": "12",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "data": {
+        "type": "array",
+        "comment": "Buffer-admitted entries → Conversation Memory Saver"
       }
     },
     {
@@ -596,14 +612,14 @@
       }
     },
     {
-      "id": "e-16-response-tts-conversation",
-      "source": "16",
+      "id": "e-32-response-tts-conversation",
+      "source": "32",
       "target": "tts-out",
       "sourceHandle": "response",
       "targetHandle": "conversation",
       "data": {
         "type": "string",
-        "comment": "Thinking Stripper output → TTS Output (speaks conversation response)"
+        "comment": "Speak the exact response retained by the Conversation Buffer"
       }
     }
   ]

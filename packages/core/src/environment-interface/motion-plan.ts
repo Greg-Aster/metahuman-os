@@ -1,4 +1,6 @@
 import type {
+  EnvironmentAction,
+  EnvironmentCommandedPoseState,
   EnvironmentMotionPlanFrame,
   EnvironmentMotionPlanJoint,
 } from './types.js';
@@ -24,6 +26,98 @@ export const ENVIRONMENT_MOTION_PLAN_END_POSES = [
 
 const jointNames = new Set<string>(ENVIRONMENT_MOTION_PLAN_JOINTS);
 const endPoses = new Set<string>(ENVIRONMENT_MOTION_PLAN_END_POSES);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function normalizeEnvironmentCommandedPose(
+  value: unknown,
+): EnvironmentCommandedPoseState | null {
+  if (!isRecord(value) || value.version !== 1 || value.jointMapVersion !== 1) return null;
+  const sourceActionId = typeof value.sourceActionId === 'string' ? value.sourceActionId.trim() : '';
+  const updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt.trim() : '';
+  const bodyEpoch = typeof value.bodyEpoch === 'string' ? value.bodyEpoch.trim() : undefined;
+  if (!sourceActionId || !updatedAt || Number.isNaN(Date.parse(updatedAt))) return null;
+  const base = {
+    version: 1 as const,
+    jointMapVersion: 1 as const,
+    sourceActionId,
+    updatedAt,
+    ...(bodyEpoch ? { bodyEpoch } : {}),
+  };
+  if (value.kind === 'reference' && (value.reference === 'stand' || value.reference === 'neutral')) {
+    return { ...base, kind: 'reference', reference: value.reference };
+  }
+  if (value.kind !== 'joints' || !isRecord(value.joints)) return null;
+  const candidateJoints = value.joints;
+  const joints = Object.fromEntries(ENVIRONMENT_MOTION_PLAN_JOINTS.map(joint => {
+    const degrees = candidateJoints[joint];
+    return [joint, typeof degrees === 'number' && Number.isFinite(degrees) && degrees >= 0 && degrees <= 180
+      ? degrees
+      : Number.NaN];
+  })) as Record<EnvironmentMotionPlanJoint, number>;
+  if (Object.values(joints).some(degrees => !Number.isFinite(degrees))) return null;
+  return { ...base, kind: 'joints', joints };
+}
+
+function commandedPoseBase(
+  action: Partial<EnvironmentAction>,
+  updatedAt: string,
+  bodyEpoch?: string,
+): Pick<EnvironmentCommandedPoseState, 'version' | 'jointMapVersion' | 'sourceActionId' | 'updatedAt' | 'bodyEpoch'> | null {
+  const sourceActionId = typeof action.id === 'string' ? action.id.trim() : '';
+  if (!sourceActionId || Number.isNaN(Date.parse(updatedAt))) return null;
+  return {
+    version: 1,
+    jointMapVersion: 1,
+    sourceActionId,
+    updatedAt,
+    ...(bodyEpoch ? { bodyEpoch } : {}),
+  };
+}
+
+/**
+ * Resolve only pose outcomes guaranteed by the shared action contract.
+ * `undefined` preserves the prior estimate; `null` invalidates it.
+ */
+export function commandedPoseAfterCompletedAction(
+  action: Partial<EnvironmentAction>,
+  updatedAt: string,
+  bodyEpoch?: string,
+): EnvironmentCommandedPoseState | null | undefined {
+  if (action.type === 'captureImage' || action.type === 'sendText' || action.type === 'speak') {
+    return undefined;
+  }
+  const base = commandedPoseBase(action, updatedAt, bodyEpoch);
+  if (!base) return null;
+  if (action.type === 'robotCommand') {
+    const command = action.command?.trim().toLowerCase();
+    if (command === 'stand' || command === 'neutral') {
+      return { ...base, kind: 'reference', reference: command };
+    }
+    return null;
+  }
+  if (action.type !== 'robotMotionPlan') return null;
+
+  try {
+    const plan = normalizeEnvironmentMotionPlanFields(action);
+    if (plan.endPose === 'stand' || plan.endPose === 'neutral') {
+      return { ...base, kind: 'reference', reference: plan.endPose };
+    }
+    const finalFrame = plan.frames.at(-1);
+    if (!finalFrame) return null;
+    return {
+      ...base,
+      kind: 'joints',
+      joints: Object.fromEntries(
+        finalFrame.targets.map(target => [target.joint, target.degrees]),
+      ) as Record<EnvironmentMotionPlanJoint, number>,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function exactKeys(
   value: Record<string, unknown>,

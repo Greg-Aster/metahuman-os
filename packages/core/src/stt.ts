@@ -3,11 +3,9 @@
  * Converts audio to text using Whisper (faster-whisper)
  */
 
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from './path-builder.js';
-import { transcribe as transcribeFlexible } from './transcription.js';
 import { audit } from './audit.js';
 import { WhisperService } from './stt/providers/whisper-service.js';
 import type { WhisperConfig } from './stt/providers/whisper-service.js';

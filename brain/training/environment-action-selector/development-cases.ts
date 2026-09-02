@@ -30,6 +30,18 @@ const COMMANDS = [
   'pushup',
   'nod',
 ];
+const COMMAND_DESCRIPTIONS: Record<string, string> = {
+  stand: 'Rise into the standard upright four-leg standing pose.',
+  sit: 'Lower the body into the built-in seated pose.',
+  wave: 'Lift and wave one front limb, then return it.',
+  turn_right_90: 'Rotate the body approximately 90 degrees to the right.',
+  turn_left_90: 'Rotate the body approximately 90 degrees to the left.',
+  walk_forward: 'Advance forward using the built-in walking gait.',
+  walk_backward: 'Move backward using the built-in reverse gait.',
+  bow: 'Lower the front of the body into a bow, then recover.',
+  pushup: 'Lower and raise the body in the built-in push-up motion.',
+  nod: 'Dip and raise the front of the body in a nodding gesture.',
+};
 
 function observation(overrides: Partial<EnvironmentObservation> = {}): EnvironmentObservation {
   return {
@@ -47,6 +59,7 @@ function observation(overrides: Partial<EnvironmentObservation> = {}): Environme
     capabilities: {
       actions: ['robotCommand', 'robotMotionPlan', 'captureImage'],
       robotCommands: [...COMMANDS],
+      robotCommandDescriptions: { ...COMMAND_DESCRIPTIONS },
       motionClasses: ['body_local', 'open_loop_displacement'],
       movement: true,
       visual: true,
@@ -89,6 +102,28 @@ function namedAction(
       requiredCompletionBasis: 'action_result',
       motionClass,
       actionPurpose: 'task_effect',
+    },
+  };
+}
+
+function advertisedObjectiveStep(
+  command: string,
+  response: string,
+  motionClass: 'body_local' | 'open_loop_displacement' = 'body_local',
+): EnvironmentModelOutput {
+  return {
+    response,
+    actions: [{ type: 'robotCommand', command }],
+    movementRequest: null,
+    taskDecision: {
+      outcome: 'act',
+      reason: `The advertised ${command} effect is an appropriate current step; the broader objective remains open.`,
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      motionClass,
+      actionPurpose: 'information_gain',
+      visualEvidenceMode: 'single',
     },
   };
 }
@@ -174,6 +209,84 @@ for (const entry of namedCommands) {
     `Executing the advertised ${entry.command} command.`,
     entry.motionClass,
   ));
+}
+
+const currentSearchFrame = {
+  id: 'search-current-frame',
+  timestamp: TIMESTAMP,
+  mimeType: 'image/jpeg' as const,
+  dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=',
+  metadata: { correlationId: 'search-current-cycle' },
+};
+const advertisedSearchSteps: Array<{
+  fold: number;
+  command: 'turn_right_90' | 'turn_left_90' | 'walk_forward';
+  instructions: EnvironmentActionSelectorDevelopmentCase['instructions'];
+  response: string;
+}> = [
+  {
+    fold: 0,
+    command: 'turn_right_90',
+    instructions: [
+      'Help me search the room for a missing toy; it is not in the current view.',
+      'Look for my keys by checking another part of the room after this empty view.',
+      'Continue searching for the object outside the area currently visible.',
+      'Find the missing ball by inspecting a new direction from this view.',
+    ],
+    response: 'I will use the advertised right turn to inspect another part of the room.',
+  },
+  {
+    fold: 1,
+    command: 'turn_left_90',
+    instructions: [
+      'The target is absent here; continue the room search in the unchecked area to the left.',
+      'Keep looking by checking the unobserved left side of the room.',
+      'Search the next direction to the left for the missing item.',
+      'Inspect another part of the room by turning left, then reassess the view.',
+    ],
+    response: 'I will use the advertised left turn to inspect the unchecked area.',
+  },
+  {
+    fold: 2,
+    command: 'walk_forward',
+    instructions: [
+      'Continue the search in the open area straight ahead, then inspect the new view.',
+      'The current area is clear; advance into the next searchable area ahead.',
+      'Keep looking by moving forward into the open space and reassessing afterward.',
+      'Search the next part of the room by walking forward once, then review the result.',
+    ],
+    response: 'I will use the advertised forward walk to reach the next searchable area.',
+  },
+  {
+    fold: 3,
+    command: 'turn_right_90',
+    instructions: [
+      'Help find the missing item by scanning another room sector with an available turn.',
+      'The object is not visible here; rotate to inspect a different part of the room.',
+      'Continue this visual search with a supported turn and then evaluate the new view.',
+      'Check another direction for the target using an advertised rotation.',
+    ],
+    response: 'I will use an advertised turn to inspect a different room sector.',
+  },
+];
+for (const entry of advertisedSearchSteps) {
+  add(
+    'multi-step-advertised-action',
+    'high',
+    entry.instructions,
+    advertisedObjectiveStep(
+      entry.command,
+      entry.response,
+      entry.command === 'walk_forward' ? 'open_loop_displacement' : 'body_local',
+    ),
+    {
+      fold: entry.fold,
+      observation: observation({
+        visual: { ...currentSearchFrame, id: `search-current-frame-${entry.fold}` },
+        metadata: { correlationId: 'search-current-cycle' },
+      }),
+    },
+  );
 }
 
 const offScript: Array<[EnvironmentActionSelectorDevelopmentCase['instructions'], string]> = [
@@ -285,7 +398,6 @@ const failedWaveState: EnvironmentTaskState = {
   objective: 'Wave once.',
   phase: 'awaiting_action',
   step: 1,
-  maxSteps: 3,
   continuationPolicy: 'none',
   requiredCompletionBasis: 'action_result',
   motionClass: 'body_local',
@@ -311,7 +423,6 @@ const approachState: EnvironmentTaskState = {
   objective: 'Move closer to the visible object.',
   phase: 'evaluating_evidence',
   step: 1,
-  maxSteps: 3,
   continuationPolicy: 'bounded',
   requiredCompletionBasis: 'visual_observation',
   motionClass: 'open_loop_displacement',
@@ -437,7 +548,6 @@ for (const entry of persistedCounterfactuals) {
     objective: entry.objective,
     phase: 'awaiting_action',
     step: 1,
-    maxSteps: 3,
     continuationPolicy: 'none',
     requiredCompletionBasis: 'action_result',
     motionClass: entry.motionClass,
@@ -474,7 +584,6 @@ for (const entry of persistedCounterfactuals) {
     objective: `Verify the bounded ${entry.command} objective visually.`,
     phase: 'evaluating_evidence',
     step: 1,
-    maxSteps: 3,
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'visual_observation',
     motionClass: entry.motionClass,
@@ -814,7 +923,6 @@ for (const entry of authorityRefinementCases) {
     objective: `Verify the external result of ${entry.completedCommand}.`,
     phase: 'evaluating_evidence',
     step: 1,
-    maxSteps: 3,
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'visual_observation',
     motionClass: entry.completedMotionClass,
@@ -853,7 +961,6 @@ for (const entry of authorityRefinementCases) {
     objective: `Complete one ${entry.positiveCommand} action.`,
     phase: 'awaiting_action',
     step: 1,
-    maxSteps: 3,
     continuationPolicy: 'none',
     requiredCompletionBasis: 'action_result',
     motionClass: entry.positiveMotionClass,
@@ -884,5 +991,12 @@ for (const entry of authorityRefinementCases) {
     }),
   });
 }
+
+add('social-companionship', 'high', [
+  'I feel lonely today. Would you keep me company?',
+  'Could you stay and talk with me for a little while?',
+  'I could use some company right now.',
+  'Please be here with me; today has felt isolating.',
+], complete('I am here with you, and I would be glad to keep you company.'));
 
 export const ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES = cases;

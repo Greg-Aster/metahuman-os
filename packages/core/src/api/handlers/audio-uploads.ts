@@ -1,10 +1,4 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import type { UnifiedHandler } from '../types.js';
-import { audit } from '../../audit.js';
-import { generateId } from '../../paths.js';
-import { storageClient } from '../../storage-client.js';
-import { systemPaths } from '../../path-builder.js';
 import {
   copyToSoVITS,
   saveVoiceSample,
@@ -17,15 +11,6 @@ interface UploadedFile {
   size: number;
   buffer: Buffer;
 }
-
-interface AudioConfig {
-  formats: {
-    supported: string[];
-    maxSizeMB: number;
-  };
-}
-
-const AUDIO_CONFIG_PATH = path.join(systemPaths.etc, 'audio.json');
 
 function uploadedFile(value: unknown): UploadedFile | null {
   if (
@@ -41,109 +26,6 @@ function uploadedFile(value: unknown): UploadedFile | null {
 
   return null;
 }
-
-function loadAudioConfig(): AudioConfig {
-  if (!fs.existsSync(AUDIO_CONFIG_PATH)) {
-    return {
-      formats: {
-        supported: ['mp3', 'wav', 'm4a', 'ogg', 'webm', 'flac'],
-        maxSizeMB: 100,
-      },
-    };
-  }
-
-  return JSON.parse(fs.readFileSync(AUDIO_CONFIG_PATH, 'utf8'));
-}
-
-export const handleAudioUpload: UnifiedHandler = async (req) => {
-  try {
-    const file = uploadedFile(req.body?.audio);
-    if (!file) {
-      return { status: 400, data: { success: false, error: 'No audio file provided' } };
-    }
-
-    const config = loadAudioConfig();
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (!ext || !config.formats.supported.includes(ext)) {
-      return {
-        status: 400,
-        data: {
-          success: false,
-          error: `Unsupported format. Supported: ${config.formats.supported.join(', ')}`,
-        },
-      };
-    }
-
-    const sizeMB = file.size / (1024 * 1024);
-    if (sizeMB > config.formats.maxSizeMB) {
-      return {
-        status: 400,
-        data: {
-          success: false,
-          error: `File too large. Max size: ${config.formats.maxSizeMB}MB`,
-        },
-      };
-    }
-
-    const audioId = generateId('audio');
-    const filename = `${audioId}.${ext}`;
-    const inboxResult = storageClient.resolvePath({ category: 'voice', subcategory: 'inbox' });
-
-    if (!inboxResult.success || !inboxResult.path) {
-      return {
-        status: 500,
-        data: { success: false, error: 'Cannot resolve audio inbox path' },
-      };
-    }
-
-    fs.mkdirSync(inboxResult.path, { recursive: true });
-    const filepath = path.join(inboxResult.path, filename);
-    fs.writeFileSync(filepath, file.buffer);
-
-    audit({
-      level: 'info',
-      category: 'data',
-      event: 'audio_uploaded',
-      details: {
-        audioId,
-        filename,
-        size: file.size,
-        sizeMB: sizeMB.toFixed(2),
-        format: ext,
-      },
-      actor: 'human',
-    });
-
-    return {
-      status: 200,
-      data: {
-        success: true,
-        audioId,
-        filename,
-        size: file.size,
-        message: 'Audio uploaded successfully. Transcription will begin automatically.',
-      },
-    };
-  } catch (error) {
-    console.error('[api/audio-upload] Error:', error);
-
-    audit({
-      level: 'error',
-      category: 'system',
-      event: 'audio_upload_failed',
-      details: { error: (error as Error).message },
-      actor: 'system',
-    });
-
-    return {
-      status: 500,
-      data: {
-        success: false,
-        error: 'Failed to upload audio file',
-      },
-    };
-  }
-};
 
 export const handleVoiceProfileUpload: UnifiedHandler = async (req) => {
   try {

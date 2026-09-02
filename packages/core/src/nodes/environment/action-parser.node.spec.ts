@@ -59,6 +59,40 @@ test('an advertised command is admitted only with the strict selector lifecycle 
   assert.match(malformed.taskDecisionError, /strict JSON/i);
 });
 
+test('punctuation-only advertised commands are admitted unchanged', async () => {
+  const punctuationObservation: EnvironmentObservation = {
+    ...observation,
+    capabilities: {
+      ...observation.capabilities,
+      robotCommands: ['#1', '#2'],
+    },
+  };
+
+  for (const command of punctuationObservation.capabilities.robotCommands ?? []) {
+    const result = await environmentActionParserNode.execute({
+      response: JSON.stringify({
+        response: `Executing the advertised ${command} command.`,
+        actions: [{ type: 'robotCommand', command }],
+        movementRequest: null,
+        taskDecision: {
+          outcome: 'act',
+          reason: `The exact advertised ${command} command satisfies the request.`,
+          objectiveComplete: false,
+          continuationPolicy: 'none',
+          requiredCompletionBasis: 'action_result',
+          motionClass: 'body_local',
+          actionPurpose: 'expression',
+        },
+      }),
+      observation: punctuationObservation,
+      sessionId: punctuationObservation.sessionId,
+    }, {}, {});
+
+    assert.equal(result.actions[0]?.command, command);
+    assert.equal(result.actionAdmission?.admitted, true);
+  }
+});
+
 test('the parser normalizes selected physical work and leaves completion evidence judgment to Task State', async () => {
   const result = await environmentActionParserNode.execute({
     response: JSON.stringify({
@@ -199,7 +233,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
   assert.equal(boundedWave.taskDecision?.continuationPolicy, 'bounded');
   assert.equal(boundedWave.taskDecision?.requiredCompletionBasis, 'visual_observation');
 
-  const decoderPlaceholder = await environmentActionParserNode.execute({
+  const conflictingRoutes = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will continue waving because no hand is visible.',
       actions: [{ type: 'robotCommand', command: 'wave' }],
@@ -218,9 +252,12 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
     observation: visualObservation,
     sessionId: visualObservation.sessionId,
   }, {}, {});
-  assert.equal(decoderPlaceholder.actions[0]?.command, 'wave');
-  assert.equal(decoderPlaceholder.movementRequest, null);
-  assert.equal(decoderPlaceholder.taskDecisionError, '');
+  assert.deepEqual(conflictingRoutes.actions, []);
+  assert.equal(conflictingRoutes.movementRequest, null);
+  assert.match(
+    conflictingRoutes.taskDecisionError,
+    /either actions or movementRequest, not both/i,
+  );
 });
 
 test('action purpose and evidence reach canonical Task State without competing parser policy', async () => {

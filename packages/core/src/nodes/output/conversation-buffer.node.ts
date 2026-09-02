@@ -6,14 +6,43 @@
 
 import {
   getBufferPathForUser,
+  loadBufferForUser,
   writeBufferEntry,
-  writeConversationBufferSummary,
   type ConversationMessage,
 } from '../../conversation-buffer.js';
 import { defineNode, type NodeExecutor } from '../types.js';
 
-function assistantResponseText(inputs: Record<string, any>, context: Record<string, any>): string {
-  const explicitEntry = inputs.entry ?? context.bufferEntry;
+function entryTimestamp(entry: Record<string, any>, context: Record<string, any>): number {
+  const candidate = entry.timestamp ?? context.memoryTimestamp;
+  if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
+  if (typeof candidate === 'string') {
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+function normalizeEntryIdentity(
+  entry: ConversationMessage,
+  context: Record<string, any>,
+): ConversationMessage {
+  const meta = entry.meta && typeof entry.meta === 'object' ? { ...entry.meta } : {};
+  const explicitKey = typeof meta.idempotencyKey === 'string' ? meta.idempotencyKey.trim() : '';
+  const executionKey = typeof context.idempotencyKey === 'string' ? context.idempotencyKey.trim() : '';
+  const idempotencyKey = explicitKey || (executionKey ? `${executionKey}:${entry.role}` : '');
+  return {
+    ...entry,
+    content: entry.content.trim(),
+    timestamp: entryTimestamp(entry, context),
+    meta: {
+      ...meta,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    },
+  };
+}
+
+function assistantResponseText(inputs: Record<string, any>): string {
+  const explicitEntry = inputs.entry;
   if (
     explicitEntry
     && typeof explicitEntry === 'object'
@@ -44,7 +73,7 @@ function taskLifecycleMetadata(value: unknown): Record<string, unknown> | null {
 
 const execute: NodeExecutor = async (inputs, context) => {
   const passthrough = inputs.passthrough ?? null;
-  const assistantResponse = assistantResponseText(inputs, context);
+  const assistantResponse = assistantResponseText(inputs);
   const taskLifecycle = taskLifecycleMetadata(inputs.taskLifecycle);
   const assistantMetadata = taskLifecycleMetadata(inputs.metadata) ?? {};
   const username = typeof context.username === 'string'
@@ -57,6 +86,7 @@ const execute: NodeExecutor = async (inputs, context) => {
     return {
       persisted: false,
       skipped: true,
+      entries: [],
       reason: 'No authenticated username',
       response: assistantResponse,
       responseBufferId: inputs.responseBufferId || '',
@@ -64,10 +94,11 @@ const execute: NodeExecutor = async (inputs, context) => {
     };
   }
 
-  if (context.composeTarget === 'inner' && !context.bufferEntry) {
+  if (context.composeTarget === 'inner') {
     return {
       persisted: false,
       skipped: true,
+      entries: [],
       reason: 'Inner compose turn is owned by the Inner Dialogue Buffer node',
       bufferPath: getBufferPathForUser(username, 'conversation'),
       response: assistantResponse,
@@ -76,26 +107,8 @@ const execute: NodeExecutor = async (inputs, context) => {
     };
   }
 
-  const summary = inputs.summary ?? context.bufferSummary;
-  if (summary && typeof summary === 'object') {
-    const persisted = await writeConversationBufferSummary(username, {
-      sessionId: String(summary.sessionId || ''),
-      content: String(summary.content || ''),
-      messageCount: Number(summary.messageCount || 0),
-    });
-    return {
-      persisted,
-      skipped: !persisted,
-      messageCount: 0,
-      bufferPath: getBufferPathForUser(username, 'conversation'),
-      response: '',
-      responseBufferId: '',
-      passthrough,
-    };
-  }
-
-  const explicitEntry = inputs.entry ?? context.bufferEntry;
-  const entries: Array<Pick<ConversationMessage, 'role' | 'content' | 'meta'>> = [];
+  const explicitEntry = inputs.entry;
+  const entries: ConversationMessage[] = [];
   if (explicitEntry && typeof explicitEntry === 'object') {
     entries.push({
       ...explicitEntry,
@@ -114,10 +127,8 @@ const execute: NodeExecutor = async (inputs, context) => {
   } else {
     const userText = typeof inputs.userMessage === 'string'
       ? inputs.userMessage.trim()
-      : typeof context.userMessage === 'string'
-        ? context.userMessage.trim()
-        : '';
-    if (userText && context.userMessageAdmitted !== true) {
+      : '';
+    if (userText) {
       entries.push({
         role: 'user',
         content: userText,
@@ -148,26 +159,41 @@ const execute: NodeExecutor = async (inputs, context) => {
   }
 
   const allowedRoles = new Set(['user', 'assistant']);
-  let persistedCount = 0;
-  for (const entry of entries) {
-    if (!allowedRoles.has(entry.role) || typeof entry.content !== 'string' || !entry.content.trim()) {
+  const admittedEntries: ConversationMessage[] = [];
+  for (const rawEntry of entries) {
+    if (!allowedRoles.has(rawEntry.role) || typeof rawEntry.content !== 'string' || !rawEntry.content.trim()) {
       continue;
     }
+    const entry = normalizeEntryIdentity(rawEntry, context);
     if (await writeBufferEntry(username, 'conversation', {
       role: entry.role,
       content: entry.content.trim(),
       meta: entry.meta,
+      timestamp: entry.timestamp,
     })) {
-      persistedCount++;
+      const idempotencyKey = typeof entry.meta?.idempotencyKey === 'string'
+        ? entry.meta.idempotencyKey
+        : '';
+      const durableEntry = idempotencyKey
+        ? [...loadBufferForUser(username, 'conversation').messages]
+            .reverse()
+            .find(message => message.meta?.idempotencyKey === idempotencyKey)
+        : entry;
+      if (!durableEntry) {
+        throw new Error('Conversation Buffer did not retain the admitted idempotent entry');
+      }
+      admittedEntries.push(durableEntry);
     }
   }
 
   return {
-    persisted: persistedCount > 0,
-    skipped: persistedCount === 0,
-    messageCount: persistedCount,
+    persisted: admittedEntries.length > 0,
+    skipped: admittedEntries.length === 0,
+    messageCount: admittedEntries.length,
+    entry: admittedEntries[0],
+    entries: admittedEntries,
     bufferPath: getBufferPathForUser(username, 'conversation'),
-    response: entries.find(entry => entry.role === 'assistant')?.content || assistantResponse,
+    response: admittedEntries.find(entry => entry.role === 'assistant')?.content || assistantResponse,
     responseBufferId: inputs.responseBufferId || '',
     passthrough,
   };
@@ -181,17 +207,17 @@ export const ConversationBufferNode = defineNode({
     { name: 'entry', type: 'message', optional: true, description: 'One typed conversation entry' },
     { name: 'userMessage', type: 'string', optional: true, description: 'Voiced user message' },
     { name: 'response', type: 'any', optional: true, description: 'Assistant response' },
-    { name: 'conversationHistory', type: 'array', optional: true, description: 'Legacy history edge; persistence does not derive ownership from it' },
     { name: 'taskLifecycle', type: 'object', optional: true, description: 'Existing task owner lifecycle decision attached to an assistant result' },
     { name: 'metadata', type: 'object', optional: true, description: 'Origin metadata attached to the assistant response' },
     { name: 'responseBufferId', type: 'string', optional: true, description: 'Pass-through response-buffer ID' },
-    { name: 'summary', type: 'object', optional: true, description: 'Conversation summary marker' },
     { name: 'passthrough', type: 'any', optional: true, description: 'Data forwarded after conversation admission for graph sequencing' },
   ],
   outputs: [
     { name: 'persisted', type: 'boolean' },
     { name: 'skipped', type: 'boolean' },
     { name: 'messageCount', type: 'number' },
+    { name: 'entry', type: 'message', optional: true, description: 'First exact entry retained by the buffer' },
+    { name: 'entries', type: 'array', description: 'Exact entries retained by the buffer for downstream long-term saving' },
     { name: 'bufferPath', type: 'string' },
     { name: 'response', type: 'string' },
     { name: 'responseBufferId', type: 'string' },

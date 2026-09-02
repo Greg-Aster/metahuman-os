@@ -46,17 +46,19 @@ export {
   getPreferenceStats,
   getPreferencesByCategory,
   getActivePreferences,
+  getConfirmedPreferences,
   findContradictions,
   cleanupPreferences,
   preferenceLearner,
 } from './preference-learner';
+export * from './persona-learning';
+export * from './psychoanalyzer-config';
 export * from './goal-review';  // Phase 4: Weekly goal reviews
 export * from './system-operator';  // Phase 5: System operator maintenance skills
 export * from './voice';  // Phase 5: Live voice loop foundation
 // Note: memory-validation and memory-cleanup are internal utilities, not exported
 export * from './memory-metrics-cache';
 export * from './recent-tools-cache';
-export * from './summary-state';
 export * from './function-memory';
 export * from './curiosity-questions';
 export * from './audit';
@@ -107,8 +109,11 @@ export * from './logging';
 export * from './runtime-mode';
 export * from './sleep-config';
 export * from './sleep-runtime';
-export * from './transcription';
 export * from './adapters';
+export * from './training-dataset';
+export * from './training-automation';
+export * from './training-config';
+export * from './training-launch';
 // Skills - exclude queueForApproval and getPendingApprovals (conflicts with policy)
 export type {
   SkillCategory,
@@ -233,21 +238,19 @@ export {
   loadBufferForUser,
   type CanonicalBufferMode,
   type ConversationBuffer,
-  type ConversationBufferSummary,
   type ConversationMessage,
 } from './conversation-buffer.js';
 export {
-  submitConversationEntry,
-  submitConversationSummary,
   submitInnerDialogue,
   submitSystemEvent,
-  submitAgencyConversationEntry,
   submitInnerReflection,
+  submitInnerReflectionWithResult,
   submitInnerDream,
   submitInnerDaydream,
   submitInnerReasoning,
   submitExecutionProgress,
   type BufferAdmissionOptions,
+  type BufferAdmissionReceipt,
   type BufferEntry,
 } from './buffer-admission.js';
 export * from './response-buffer';
@@ -264,6 +267,7 @@ export * from './fs-glob';
 export * from './progress-tracker';
 export * from './state';
 export * from './context-builder';
+export * from './curiosity-memory-sampling.js';
 
 // Schema manager - rename FormattedSample to avoid conflict with mode-validator
 export type {
@@ -371,11 +375,13 @@ export * from './context';  // DEPRECATED - will be removed
 export * from './config';
 export * from './runpod-config';
 export * from './safe-file';  // Atomic file writes with backup for data safety
+export * from './robot-status.js';
 // users.ts exported at top of file (must load before path-builder)
 export * from './sessions';
 export * from './window-session';  // Multi-window support
 export * from './buffer-locks';     // Conversation buffer locking
 export * from './profile';
+export * from './profile-sync';
 
 // Profile storage management
 export { validateProfilePath, isValidProfilePath, isExternalStoragePath } from './path-security.js';
@@ -560,8 +566,10 @@ export {
   DEFAULT_HANDLERS,
   DEFAULT_PRIORITIES,
   PRIORITY_VALUES,
+  submitAgentFollowOn,
   submitDesireExecution,
   submitDesireOutcomeReview,
+  type AgentFollowOnSubmission,
   // Persistence
   loadQueueState,
   persistQueueState,
@@ -644,9 +652,6 @@ export {
   triggerBigBrotherExecutionReview,
 } from './active-operator/index.js';
 
-// Drift System (voice/style consistency monitoring)
-export * from './drift/index.js';
-
 // Escalation backends (Big Brother mode - external LLM tool executors)
 export * from './tool-executor-config.js';
 export * from './open-interpreter.js';
@@ -670,7 +675,6 @@ export {
   ingestChatsFromDirectory,
   chatIngestor,
 } from './connectors/chat-ingestor.js';
-export * from './connectors/voice-memo-ingestor.js';
 export * from './connectors/clip-tagger.js';
 
 // Maintained inference and training defaults

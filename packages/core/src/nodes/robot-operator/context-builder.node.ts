@@ -5,6 +5,7 @@ import type {
 import { defineNode } from '../types.js';
 import {
   buildEnvironmentSelectorJsonSchema,
+  projectRobotCommandDescriptions,
   robotOperatorActionRequirement,
 } from '../environment/helpers.js';
 import { ROBOT_OPERATOR_DECISION_JSON_SCHEMA } from './decision-parser.node.js';
@@ -159,6 +160,26 @@ function robotTrigger(observation: EnvironmentObservation): Record<string, unkno
   };
 }
 
+function delegatedPlannerDecision(
+  observation: EnvironmentObservation,
+): Record<string, unknown> | null {
+  const value = isRecord(observation.metadata?.robotOperatorDecision)
+    ? observation.metadata.robotOperatorDecision
+    : null;
+  if (!value) return null;
+  const observed = cleanText(value.observed, 500);
+  const instruction = cleanText(value.instruction, 1_000);
+  const reason = cleanText(value.reason, 500);
+  if (!observed || !instruction || !reason) return null;
+  return {
+    provenance: 'boredom_planner_decision',
+    observed,
+    instruction,
+    reason,
+    ...(cleanText(value.decidedAt, 100) ? { decidedAt: cleanText(value.decidedAt, 100) } : {}),
+  };
+}
+
 function compactFeedback(observation: EnvironmentObservation): Array<Record<string, unknown>> {
   return (observation.feedback ?? []).slice(-8).map(feedback => ({
     id: feedback.id,
@@ -272,6 +293,8 @@ export const robotOperatorContextBuilderNode = defineNode({
     { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona' },
     { name: 'memoryContext', type: 'array', optional: true, description: 'Historical memories supplied as inspiration, never current-world evidence' },
     { name: 'taskState', type: 'object', optional: true, description: 'Canonical Environment Task State for the current autonomy objective' },
+    { name: 'preparedMovementRequest', type: 'object', optional: true, description: 'Already-authorized off-script request ready for Movement Generator' },
+    { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
   ],
   outputs: [
     { name: 'messages', type: 'array', description: 'Multimodal messages for the configured Robot Operator LLM' },
@@ -344,6 +367,7 @@ export const robotOperatorContextBuilderNode = defineNode({
       .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
       .map(frameSummary);
     const trigger = robotTrigger(observation);
+    const plannerDecision = delegatedPlannerDecision(observation);
     const cycleId = cleanText(trigger.cycleId, 200);
     const latestActionContext = isRecord(observation.metadata?.actionContext)
       ? observation.metadata.actionContext
@@ -371,6 +395,10 @@ export const robotOperatorContextBuilderNode = defineNode({
     const taskState = isRecord(inputs.taskState)
       ? boundedObject(inputs.taskState, 4_000)
       : null;
+    const resumePreparedMovement = isRecord(inputs.preparedMovementRequest);
+    const robotStatus = isRecord(inputs.robotStatus)
+      ? boundedObject(inputs.robotStatus, 6_000)
+      : null;
     const taskNarrative = recentContext.filter(entry => (
       isRecord(entry.context) && cleanText(entry.context.correlationId, 200) === cycleId
     ));
@@ -379,6 +407,13 @@ export const robotOperatorContextBuilderNode = defineNode({
       || cleanText(observation.metadata?.autonomousStimulus, 100) === 'boredom-reflection';
     const feedback = compactFeedback(observation);
     const stimulusReady = images.length > 0 || feedback.length > 0;
+    const robotCommandDescriptions = properties?.outputContract === 'delegation'
+      ? {}
+      : projectRobotCommandDescriptions(observation.capabilities);
+    const {
+      robotCommandDescriptions: _unboundedRobotCommandDescriptions,
+      ...baseCapabilities
+    } = observation.capabilities;
     const stimulus = {
       observedAt: observation.timestamp,
       stateObservedAt: cleanText(observation.metadata?.sourceObservationAt, 100)
@@ -387,7 +422,12 @@ export const robotOperatorContextBuilderNode = defineNode({
       state: boundedObject(observation.state, 8_000),
       location: boundedObject(observation.location, 4_000),
       map: boundedObject(observation.map, 4_000),
-      capabilities: boundedObject(observation.capabilities, 4_000),
+      capabilities: boundedObject({
+        ...baseCapabilities,
+        ...(Object.keys(robotCommandDescriptions).length > 0
+          ? { robotCommandDescriptions }
+          : {}),
+      }, 8_000),
       feedback,
       verifiedCurrentAction: boundedObject(currentActionContext, 2_000),
       text: (observation.text ?? []).slice(-8).map(event => ({
@@ -401,7 +441,11 @@ export const robotOperatorContextBuilderNode = defineNode({
     };
     const stimulusText = JSON.stringify({
       robotStimulus: stimulus,
-      ...(stimulusInstruction ? { autonomyTriggerInstruction: stimulusInstruction } : {}),
+      ...(plannerDecision
+        ? { plannerDecision }
+        : stimulusInstruction
+          ? { autonomyTriggerInstruction: stimulusInstruction }
+          : {}),
       ...(reflectionTrigger
         ? {
             reflectionMaterial: {
@@ -413,7 +457,7 @@ export const robotOperatorContextBuilderNode = defineNode({
         : {}),
     });
     const userContent = images.length > 0
-      ? [{ type: 'text', text: stimulusText }, ...images]
+      ? [{ type: 'text', text: `The attached image is what you currently see.\n${stimulusText}` }, ...images]
       : stimulusText;
     const supportingMemoryContext = reflectionTrigger ? [] : memoryContext;
     const supportingContext = {
@@ -436,6 +480,15 @@ export const robotOperatorContextBuilderNode = defineNode({
             provenance: 'canonical_robot_buffer',
             entries: actionHistory,
           },
+          ...(robotStatus
+            ? {
+                robotStatus: {
+                  provenance: 'profile_robot_status_snapshot',
+                  currentEvidence: false,
+                  state: robotStatus,
+                },
+              }
+            : {}),
           ...(historicalLatestAction
             ? {
                 recentActionContext: {
@@ -460,14 +513,18 @@ export const robotOperatorContextBuilderNode = defineNode({
     };
 
     return {
-      messages: [
-        { role: 'system', content: instruction },
-        supportingContext,
-        { role: 'user', content: userContent },
-      ],
-      jsonSchema: properties?.outputContract === 'delegation'
-        ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA
-        : autonomySelectorSchema(observation, inputs.taskState),
+      messages: resumePreparedMovement
+        ? []
+        : [
+            { role: 'system', content: instruction },
+            supportingContext,
+            { role: 'user', content: userContent },
+          ],
+      jsonSchema: resumePreparedMovement
+        ? null
+        : properties?.outputContract === 'delegation'
+          ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA
+          : autonomySelectorSchema(observation, inputs.taskState),
       context: {
         instruction,
         stimulusInstruction,
@@ -480,8 +537,11 @@ export const robotOperatorContextBuilderNode = defineNode({
         actionHistoryCount: actionHistory.length,
         historicalLatestActionIncluded: Boolean(historicalLatestAction),
         memoryContextCount: memoryContext.length,
+        robotStatusIncluded: Boolean(robotStatus),
+        plannerDecisionIncluded: Boolean(plannerDecision),
         reflectionMaterialIncluded: reflectionTrigger && memoryContext.length > 0,
         imageCount: images.length,
+        selectorInvoked: !resumePreparedMovement,
       },
       stimulusReady,
       valid: true,

@@ -17,7 +17,6 @@ export const meta: AgentMeta = {
   description: 'Generates self-directed questions and answers them using local memory',
   usesLLM: true,
   priority: 'low',
-  defaultInterval: 1200, // 20 minutes
   tags: ['curiosity', 'llm', 'background', 'inner-dialogue'],
 };
 
@@ -34,9 +33,8 @@ export default agent;
 // Re-export core functions for direct usage
 export {
   runCycle,
-  generateInnerQuestion,
-  sampleWeightedMemories,
-  getAllMemories,
+  runInnerCuriosity,
   type InnerCuriosityOptions,
+  type InnerCuriosityOutcome,
   type InnerCuriosityResult,
 } from './core.js';

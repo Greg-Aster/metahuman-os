@@ -29,8 +29,11 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `Train of thought ({{thoughtCount}} steps):
 {{chainText}}`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  const input0 = inputs.thoughtData || inputs[0] || {};
-  const thoughts = input0.thoughts || input0.scratchpad?.thoughts || context.scratchpad?.thoughts || [];
+  const input0 = inputs.thoughtData || {};
+  const rawThoughts = input0.thoughts || input0.scratchpad?.thoughts || context.scratchpad?.thoughts || [];
+  const thoughts = Array.isArray(rawThoughts)
+    ? rawThoughts.filter((value: unknown): value is string => typeof value === 'string' && Boolean(value.trim()))
+    : [];
   const summaryStyle = properties?.summaryStyle ?? 'narrative';
   const maxLength = properties?.maxLength ?? 200;
   const maxTokens = properties?.maxTokens ?? 800;
@@ -41,84 +44,71 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const username = context.userId || context.username;
 
   if (thoughts.length === 0) {
-    return {
-      consolidatedChain: '',
-      insight: '',
-      summary: 'No thoughts generated in this chain.',
-      thoughtCount: 0,
-    };
+    throw new Error('Thought Aggregator requires at least one generated thought');
   }
 
-  try {
-    const persona = loadPersonaCore();
+  const persona = loadPersonaCore();
 
-    // Build the chain representation
-    const chainText = thoughts.map((t: string, i: number) => `Step ${i + 1}: ${t}`).join('\n\n');
+  const chainText = thoughts.map((t: string, i: number) => `Step ${i + 1}: ${t}`).join('\n\n');
 
-    const systemPrompt = renderPromptTemplate(systemPromptTemplate, {
-      personaName: persona.identity.name,
-      maxLength,
-      summaryStyle,
-    });
-    const userPrompt = renderPromptTemplate(userPromptTemplate, {
-      thoughtCount: thoughts.length,
-      chainText,
-    });
+  const systemPrompt = renderPromptTemplate(systemPromptTemplate, {
+    personaName: persona.identity.name,
+    maxLength,
+    summaryStyle,
+  });
+  const userPrompt = renderPromptTemplate(userPromptTemplate, {
+    thoughtCount: thoughts.length,
+    chainText,
+  });
 
-    const messages = [
-      { role: 'system' as const, content: systemPrompt },
-      { role: 'user' as const, content: userPrompt },
-    ];
+  const messages = [
+    { role: 'system' as const, content: systemPrompt },
+    { role: 'user' as const, content: userPrompt },
+  ];
 
-    const response = await callLLM({
-      role,
-      messages,
-      userId: username,
-      cognitiveMode: context.cognitiveMode,
-      options: {
-        maxTokens,
-        temperature,
-      },
-      onProgress: context.emitProgress,
-    });
+  const response = await callLLM({
+    role,
+    messages,
+    userId: username,
+    cognitiveMode: context.cognitiveMode,
+    options: {
+      maxTokens,
+      temperature,
+    },
+    onProgress: context.emitProgress,
+  });
 
-    const content = response.content || '';
-    const narrativeMatch = content.match(/NARRATIVE:\s*(.+?)(?=\nINSIGHT:|$)/s);
-    const insightMatch = content.match(/INSIGHT:\s*(.+?)(?=\nSUMMARY:|$)/s);
-    const summaryMatch = content.match(/SUMMARY:\s*(.+?)$/s);
+  const content = response.content?.trim() || '';
+  if (!content) throw new Error('Thought Aggregator model returned empty content');
+  const narrativeMatch = content.match(/NARRATIVE:\s*(.+?)(?=\nINSIGHT:|$)/s);
+  const insightMatch = content.match(/INSIGHT:\s*(.+?)(?=\nSUMMARY:|$)/s);
+  const summaryMatch = content.match(/SUMMARY:\s*(.+?)$/s);
 
-    const consolidatedChain = narrativeMatch?.[1]?.trim() || chainText;
-    const insight = insightMatch?.[1]?.trim() || thoughts[thoughts.length - 1] || '';
-    const summary = summaryMatch?.[1]?.trim() || `Explored ${thoughts.length} connected thoughts.`;
-
-    audit({
-      level: 'info',
-      category: 'decision',
-      event: 'thought_chain_aggregated',
-      actor: 'train-of-thought',
-      details: {
-        thoughtCount: thoughts.length,
-        insightPreview: insight.substring(0, 100),
-      },
-    });
-
-    return {
-      consolidatedChain,
-      insight,
-      summary,
-      thoughtCount: thoughts.length,
-      raw: content,
-    };
-  } catch (error) {
-    console.error('[ThoughtAggregator] Error:', error);
-    return {
-      consolidatedChain: thoughts.join('\n\n'),
-      insight: thoughts[thoughts.length - 1] || '',
-      summary: `Chain of ${thoughts.length} thoughts (aggregation failed).`,
-      thoughtCount: thoughts.length,
-      error: (error as Error).message,
-    };
+  const consolidatedChain = narrativeMatch?.[1]?.trim() || '';
+  const insight = insightMatch?.[1]?.trim() || '';
+  const summary = summaryMatch?.[1]?.trim() || '';
+  if (!consolidatedChain || !insight || !summary) {
+    throw new Error('Thought Aggregator model response did not satisfy the narrative, insight, and summary contract');
   }
+
+  audit({
+    level: 'info',
+    category: 'decision',
+    event: 'thought_chain_aggregated',
+    actor: 'train-of-thought',
+    details: {
+      thoughtCount: thoughts.length,
+      sourceAgent: context.sourceAgent,
+    },
+  });
+
+  return {
+    result: consolidatedChain,
+    consolidatedChain,
+    insight,
+    summary,
+    thoughtCount: thoughts.length,
+  };
 };
 
 export const ThoughtAggregatorNode: NodeDefinition = defineNode({
@@ -129,6 +119,7 @@ export const ThoughtAggregatorNode: NodeDefinition = defineNode({
     { name: 'thoughtData', type: 'object', description: 'Scratchpad with thoughts' },
   ],
   outputs: [
+    { name: 'result', type: 'string', description: 'Consolidated reasoning chain for persistence' },
     { name: 'consolidatedChain', type: 'string', description: 'Full reasoning chain' },
     { name: 'insight', type: 'string', description: 'Key insight' },
     { name: 'summary', type: 'string', description: 'Brief summary' },

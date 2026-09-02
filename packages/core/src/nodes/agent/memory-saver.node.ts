@@ -1,52 +1,49 @@
-/**
- * Memory Saver Node
- *
- * Saves enriched memory data back to file
- */
+/** Persists Organizer enrichment through Core's memory owner. */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { updateEpisodicMemoryMetadata } from '../../memory.js';
 
-const execute: NodeExecutor = async (inputs, _context, properties) => {
-  const memory = inputs[0];
-  const updateOnly = properties?.updateOnly !== false;
-
-  if (!memory || !memory.path) {
-    return {
-      success: false,
-      error: 'Memory path required',
-    };
+const execute: NodeExecutor = async (inputs, context) => {
+  const memory = inputs.memory;
+  if (!memory || typeof memory !== 'object' || Array.isArray(memory)) {
+    throw new Error('Enriched Organizer memory is required');
   }
-
-  try {
-    const fs = await import('fs');
-
-    let existingData = {};
-    if (updateOnly) {
-      try {
-        const content = fs.readFileSync(memory.path, 'utf-8');
-        existingData = JSON.parse(content);
-      } catch (error) {
-        console.warn('[MemorySaver] Could not read existing file:', error);
-      }
-    }
-
-    const { path: _path, ...dataToSave } = memory;
-    const mergedData = { ...existingData, ...dataToSave };
-
-    fs.writeFileSync(memory.path, JSON.stringify(mergedData, null, 2), 'utf-8');
-
-    return {
-      success: true,
-      path: memory.path,
-      updated: true,
-    };
-  } catch (error) {
-    console.error('[MemorySaver] Error:', error);
-    return {
-      success: false,
-      error: (error as Error).message,
-    };
+  const username = typeof context.username === 'string' ? context.username.trim() : '';
+  if (!username) throw new Error('Organizer memory save requires a resolved username');
+  if (typeof memory.id !== 'string' || typeof memory.relativePath !== 'string') {
+    throw new Error('Organizer memory save requires id and relativePath');
   }
+  if (!memory.metadata || memory.metadata.processed !== true
+      || typeof memory.metadata.processedAt !== 'string') {
+    throw new Error('Organizer memory save requires completed enrichment metadata');
+  }
+  const outcome = inputs.outcome === 'skipped' ? 'skipped' : 'updated';
+  const organizerStatus = memory.metadata.organizerStatus;
+  if (organizerStatus !== 'updated'
+      && organizerStatus !== 'skipped'
+      && organizerStatus !== 'no-content') {
+    throw new Error('Organizer memory save received an invalid enrichment status');
+  }
+  const updated = updateEpisodicMemoryMetadata({
+    username,
+    relativePath: memory.relativePath,
+    expectedId: memory.id,
+    tags: memory.tags,
+    entities: memory.entities,
+    metadata: {
+      processed: true,
+      processedAt: memory.metadata.processedAt,
+      model: typeof memory.metadata.model === 'string' ? memory.metadata.model : undefined,
+      organizerStatus,
+    },
+  });
+
+  return {
+    success: true,
+    relativePath: updated.relativePath,
+    encrypted: updated.encrypted,
+    outcome,
+  };
 };
 
 export const MemorySaverNode: NodeDefinition = defineNode({
@@ -54,23 +51,16 @@ export const MemorySaverNode: NodeDefinition = defineNode({
   name: 'Memory Saver',
   category: 'agent',
   inputs: [
-    { name: 'memory', type: 'memory', description: 'Memory object to save (must include path)' },
+    { name: 'memory', type: 'memory', description: 'Enriched memory with a Core-owned relative path' },
+    { name: 'outcome', type: 'string', description: 'Whether enrichment updated or skipped this memory' },
   ],
   outputs: [
     { name: 'success', type: 'boolean' },
-    { name: 'path', type: 'string' },
+    { name: 'relativePath', type: 'string' },
+    { name: 'encrypted', type: 'boolean' },
+    { name: 'outcome', type: 'string' },
   ],
-  properties: {
-    updateOnly: true,
-  },
-  propertySchemas: {
-    updateOnly: {
-      type: 'boolean',
-      default: true,
-      label: 'Update Only',
-      description: 'Only update existing files, do not create new ones',
-    },
-  },
-  description: 'Saves memory back to disk after enrichment',
+  properties: {},
+  description: 'Atomically updates enrichment metadata through Core memory persistence',
   execute,
 });

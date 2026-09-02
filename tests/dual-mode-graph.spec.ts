@@ -107,9 +107,9 @@ function validateWorkflowShape(graph: SvelteFlowGraph): void {
   assert(edgeExists(graph, '34', 'shouldContinueLoop', '35', 'open'))
   assert(edgeExists(graph, '35', 'output', '31', 'response'))
   assert(edgeExists(graph, '31', 'stripped', '23', 'response'))
-  assert(edgeExists(graph, '31', 'stripped', '21', 'assistantResponse'))
   assert(edgeExists(graph, '31', 'stripped', '26', 'response'))
-  assert(edgeExists(graph, '31', 'stripped', '36', 'conversation'))
+  assert(edgeExists(graph, '26', 'entries', '21', 'entries'))
+  assert(edgeExists(graph, '26', 'response', '36', 'conversation'))
   assert(edgeExists(graph, '21', 'saved', '22', 'data'))
   assert(edgeExists(graph, '26', 'persisted', '22', 'status'))
 }

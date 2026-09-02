@@ -6,14 +6,55 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { audit } from '../../audit.js';
-import { captureEvent } from '../../memory.js';
 import { recordSystemActivity } from '../../system-activity.js';
-import { submitInnerDream, submitInnerReasoning } from '../../buffer-admission.js';
 import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
 function markBackgroundActivity() {
-  try { recordSystemActivity(); } catch {}
+  try {
+    recordSystemActivity();
+  } catch (error) {
+    console.warn('[DreamerContinuation] Could not record background activity:', (error as Error).message);
+  }
+}
+
+export interface DreamContinuation {
+  dream: string;
+  thinking?: string;
+  index: number;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('Dream continuation cancelled', 'AbortError');
+}
+
+export function resolveContinuationLimit(
+  configuredMax: unknown,
+  runDreamLimit: unknown,
+): number {
+  const propertyLimit = typeof configuredMax === 'number' && Number.isFinite(configuredMax)
+    ? Math.max(0, Math.floor(configuredMax))
+    : 4;
+  const totalLimit = typeof runDreamLimit === 'number' && Number.isFinite(runDreamLimit)
+    ? Math.max(1, Math.floor(runDreamLimit))
+    : propertyLimit + 1;
+  return Math.min(propertyLimit, totalLimit - 1);
+}
+
+async function waitForDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (milliseconds <= 0) return;
+  throwIfAborted(signal);
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', abort);
+      resolve();
+    }, milliseconds);
+    const abort = () => {
+      clearTimeout(timeout);
+      reject(new DOMException('Dream continuation cancelled', 'AbortError'));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are continuing a surreal dream sequence. You only see the previous dream fragment - use it as inspiration,
@@ -32,9 +73,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   let lastDream = previousDreamInput?.dream || previousDreamInput;
   const username = context.userId || context.username;
   const temperature = properties?.temperature ?? 1.0;
-  const continuationChance = properties?.continuationChance ?? 0.75;
-  const maxContinuations = properties?.maxContinuations ?? 4;
-  const delaySeconds = properties?.delaySeconds ?? 60;
+  const continuationChance = Math.min(1, Math.max(0, Number(properties?.continuationChance ?? 0.75)));
+  const maxContinuations = resolveContinuationLimit(properties?.maxContinuations, context.maxDreams);
+  const delaySeconds = Math.max(0, Number(properties?.delaySeconds ?? 60));
   const maxTokens = properties?.maxTokens ?? 800;
   const role = properties?.role ?? 'persona';
   const systemPrompt = properties?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
@@ -48,98 +89,65 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     };
   }
 
-  const dreams: string[] = [];
+  const dreams: DreamContinuation[] = [];
   let continuationIndex = 0;
 
-  try {
-    while (continuationIndex < maxContinuations) {
-      const roll = Math.random();
+  while (continuationIndex < maxContinuations) {
+    throwIfAborted(context.signal);
+    const roll = Math.random();
 
-      if (roll >= continuationChance) {
-        break;
-      }
+    if (roll >= continuationChance) break;
 
-      if (delaySeconds > 0) {
-        await new Promise(resolve => setTimeout(resolve, delaySeconds * 1000));
-        markBackgroundActivity();
-      }
+    await waitForDelay(delaySeconds * 1000, context.signal);
+    markBackgroundActivity();
 
-      const userPrompt = renderPromptTemplate(userPromptTemplate, { lastDream });
+    const userPrompt = renderPromptTemplate(userPromptTemplate, { lastDream });
 
-      const messages: RouterMessage[] = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ];
+    const messages: RouterMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ];
 
-      const response = await callLLM({
-        role,
-        messages,
-        userId: username,
-        options: { temperature, maxTokens },
-      });
+    const response = await callLLM({
+      role,
+      messages,
+      userId: username,
+      options: { temperature, maxTokens },
+    });
 
-      const rawContinuation = response.content.trim();
-      if (!rawContinuation) break;
+    throwIfAborted(context.signal);
+    const rawContinuation = response.content.trim();
+    if (!rawContinuation) throw new Error('LLM returned an empty dream continuation');
 
-      // Strip thinking blocks from continuation (LLM may include <think> reasoning)
-      const { stripped: continuation, thinking } = parseThinkingBlocks(rawContinuation);
-      if (!continuation) break;
+    const { stripped: continuation, thinking } = parseThinkingBlocks(rawContinuation);
+    if (!continuation) throw new Error('Dream continuation contained reasoning but no dream content');
 
-      const parentDream = lastDream;
-      lastDream = continuation;
-      dreams.push(continuation);
-      continuationIndex++;
+    lastDream = continuation;
+    continuationIndex++;
+    dreams.push({
+      dream: continuation,
+      ...(thinking ? { thinking } : {}),
+      index: continuationIndex,
+    });
 
-      captureEvent(continuation, {
-        type: 'dream',
-        metadata: {
-          continuation: true,
-          confidence: 0.6,
-          sources: [],
-          parentDream,
-        },
-      });
-
-      // Append to conversation buffer so it appears in UI
-      // Reasoning first, then dream (so reasoning displays above dream)
-      if (username) {
-        if (thinking) {
-          await submitInnerReasoning(username, thinking, {
-            dialogueSource: 'dreamer-continuation',
-            displayColor: '#8b5cf6',
-          });
-        }
-        await submitInnerDream(username, continuation);
-      }
-
-      audit({
-        level: 'info',
-        category: 'decision',
-        event: 'dream_continuation_generated',
-        details: {
-          continuationIndex,
-          length: continuation.length,
-          username,
-        },
-        metadata: { dream: continuation },
-        actor: 'dreamer',
-      });
-    }
-
-    return {
-      dreams,
-      count: dreams.length,
-      username,
-    };
-  } catch (error) {
-    console.error('[DreamerContinuation] Error:', error);
-    return {
-      dreams,
-      count: dreams.length,
-      error: (error as Error).message,
-      username,
-    };
+    audit({
+      level: 'info',
+      category: 'decision',
+      event: 'dream_continuation_generated',
+      details: {
+        continuationIndex,
+        length: continuation.length,
+        username,
+      },
+      actor: 'dreamer',
+    });
   }
+
+  return {
+    dreams,
+    count: dreams.length,
+    username,
+  };
 };
 
 export const DreamerContinuationGeneratorNode: NodeDefinition = defineNode({

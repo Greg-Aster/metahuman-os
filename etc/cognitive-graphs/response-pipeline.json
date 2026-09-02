@@ -96,6 +96,18 @@
         "properties": {},
         "title": "Conversation Buffer"
       }
+    },
+    {
+      "id": "7",
+      "type": "outputNode",
+      "position": { "x": 1640, "y": 200 },
+      "width": 220,
+      "height": 90,
+      "data": {
+        "nodeType": "memory_capture",
+        "properties": {},
+        "title": "Conversation Memory Saver"
+      }
     }
   ],
   "edges": [
@@ -305,6 +317,14 @@
       "sourceHandle": "responseBufferId",
       "target": "6",
       "targetHandle": "responseBufferId",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e6-7-entries",
+      "source": "6",
+      "sourceHandle": "entries",
+      "target": "7",
+      "targetHandle": "entries",
       "type": "smoothstep"
     }
   ]

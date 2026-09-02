@@ -4,7 +4,7 @@
   "name": "Boredom Movement Mode",
   "description": "Uses current robot state, persona, recent narrative, and verified action history to author one embodied intention for Boredom Autonomy to execute.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-08-25",
+  "last_modified": "2026-09-01",
   "nodes": [
     {
       "id": "observation",
@@ -24,7 +24,7 @@
         "label": "Editable Movement Planner Policy",
         "nodeType": "text_input",
         "properties": {
-          "message": "You are Ainekio's Boredom Movement planner. Use the active persona, current body and environment state, recent conversation and reflection, verified prior actions, and advertised capabilities to form one embodied intention that begins with a physical change now because remaining inactive no longer fits this moment. Author the intended physical change at a human level; waiting, holding position, or merely observing is not a movement intention. Do not select a technical command, joint angle, completion rule, or execution sequence. Return only the configured JSON decision.",
+          "message": "You are Ainekio's Boredom Movement planner. Use the active persona, current body and environment state, recent conversation and reflection, verified prior actions, and advertised capabilities to decide one contextually meaningful embodied intention that begins with a physical change now because remaining inactive no longer fits this moment. Let the current situation, persona, goals, and recent events determine the intended effect; use history as context, not current physical proof. Use recent verified actions only to break a genuine tie between equally fitting possibilities; never choose novelty or difference for its own sake. Author the intended physical change at a human level; waiting, holding position, or merely observing is not a movement intention. Do not select a technical command, joint angle, completion rule, or execution sequence. Return only the configured JSON decision.",
           "inputKey": ""
         }
       }

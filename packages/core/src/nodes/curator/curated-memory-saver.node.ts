@@ -5,26 +5,11 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { getProfilePaths } from '../../paths.js';
 import { writeJsonAtomically } from './atomic-json.js';
 import { isSuccessfulCuration, type CuratorItemResult } from './contracts.js';
-
-function curatedFilename(result: CuratorItemResult & { curated: NonNullable<CuratorItemResult['curated']> }): string {
-  const timestamp = new Date(result.curated.originalTimestamp);
-  if (Number.isNaN(timestamp.getTime())) {
-    throw new Error(`Curated memory ${result.memoryId} has an invalid original timestamp`);
-  }
-  const date = timestamp.toISOString().slice(0, 10);
-  const id = result.curated.id;
-  if (/^[A-Za-z0-9._-]{1,120}$/.test(id)) return `${date}-${id}.json`;
-
-  const digest = createHash('sha256').update(id).digest('hex').slice(0, 12);
-  const safeId = `${encodeURIComponent(id).replace(/%/g, '_').slice(0, 96)}-${digest}`;
-  if (!safeId) throw new Error(`Curated memory ${result.memoryId} has an invalid id`);
-  return `${date}-${safeId}.json`;
-}
+import { curatedRecordFilename } from './curated-store.js';
 
 export function saveCuratedResults(
   curatedResults: CuratorItemResult[],
@@ -35,7 +20,7 @@ export function saveCuratedResults(
 
   for (const result of curatedResults) {
     if (!isSuccessfulCuration(result)) continue;
-    const filepath = path.join(curatedDir, curatedFilename(result));
+    const filepath = path.join(curatedDir, curatedRecordFilename(result.curated));
     writeJsonAtomically(filepath, result.curated);
     savedPaths.push(filepath);
   }

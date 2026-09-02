@@ -63,7 +63,7 @@
     {
       "id": "8",
       "type": "outputNode",
-      "position": { "x": 1000, "y": 260 },
+      "position": { "x": 1300, "y": 260 },
       "data": {
         "label": "TTS Output",
         "nodeType": "tts",
@@ -71,6 +71,18 @@
       },
       "width": 180,
       "height": 60
+    },
+    {
+      "id": "9",
+      "type": "cognitiveNode",
+      "position": { "x": 1000, "y": 260 },
+      "data": {
+        "label": "Save Inner Dialogue Memory",
+        "nodeType": "inner_dialogue_saver",
+        "properties": {}
+      },
+      "width": 240,
+      "height": 90
     }
   ],
   "edges": [
@@ -99,12 +111,20 @@
       "data": { "type": "string", "comment": "Execution Summary to Inner Dialogue" }
     },
     {
-      "id": "e-7-text-8-innerDialogue",
+      "id": "e-7-entries-9-entries",
       "source": "7",
+      "target": "9",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "data": { "type": "array", "comment": "Buffer-admitted execution summary to Persona Memory" }
+    },
+    {
+      "id": "e-9-text-8-innerDialogue",
+      "source": "9",
       "target": "8",
       "sourceHandle": "text",
       "targetHandle": "innerDialogue",
-      "data": { "type": "string", "comment": "Persisted Inner Dialogue to TTS" }
+      "data": { "type": "string", "comment": "Long-term persisted Inner Dialogue to TTS" }
     }
   ]
 }

@@ -949,7 +949,7 @@
           <div>
             <h3 class="m-0 mb-2 text-xl font-semibold">Persona Insights</h3>
             <p class="m-0 text-sm text-gray-500 dark:text-gray-400 max-w-xl">
-              Track how your persona evolves over time. The psychoanalyzer agent analyzes your conversations and updates your persona based on patterns it discovers.
+              Track evidence-backed persona changes. Psychoanalyzer records the supporting memories, confidence, and reason for every applied update.
             </p>
           </div>
           <button class="btn-secondary" on:click={loadInsights} disabled={loadingInsights}>
@@ -961,8 +961,8 @@
           <div class="text-center py-12">Loading insights...</div>
         {:else if insights && insights.entries.length === 0}
           <div class="text-center py-12 text-gray-500 dark:text-gray-400">
-            <p>No insights yet. Run the psychoanalyzer agent to analyze your conversations and discover personality patterns.</p>
-            <p class="text-sm mt-2 text-gray-400">Go to Memory → Run Psychoanalyzer to get started.</p>
+            <p>No insights yet. Run Psychoanalyzer to review recent conversations for durable, evidence-backed persona changes.</p>
+            <p class="text-sm mt-2 text-gray-400">Go to Agent Catalog → Run Psychoanalyzer to get started.</p>
           </div>
         {:else if insights && insights.entries.length > 0}
           <div class="flex flex-col gap-4">

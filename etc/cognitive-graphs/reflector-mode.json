@@ -4,7 +4,7 @@
   "name": "Reflector Agent Workflow",
   "description": "Loads the authenticated persona, samples multiple historical memories, builds a grounded reflection prompt, generates a concise reflection, and saves it as inner dialogue",
   "cognitiveMode": "agent",
-  "last_modified": "2026-08-24",
+  "last_modified": "2026-08-29",
   "nodes": [
     {
       "id": "persona-loader",
@@ -37,8 +37,9 @@
         "nodeType": "reflection_memory_sampler",
         "properties": {
           "memoryCount": 4,
-          "contentMode": "profile",
-          "fallbackContentMode": "user",
+          "contentMode": "configured",
+          "maxCandidateFiles": 2000,
+          "maxFileSizeBytes": 2097152,
           "recencyHalfLifeDays": 14,
           "associationBoost": 1.5,
           "maxMemoryChars": 1200
@@ -91,7 +92,7 @@
       "data": {
         "label": "Save Reasoning",
         "nodeType": "inner_dialogue_buffer",
-        "properties": { "dialogueSource": "reflector", "displayColor": "#8b5cf6", "role": "reasoning", "captureMemory": false }
+        "properties": { "dialogueSource": "reflector", "displayColor": "#8b5cf6", "role": "reasoning" }
       }
     },
     {
@@ -107,9 +108,32 @@
           "tags": ["idle-thought", "self-reflection", "grounded", "inner"],
           "displayColor": "#eab308",
           "dialogueSource": "reflector",
-          "role": "reflection",
-          "captureMemory": true
+          "role": "reflection"
         }
+      }
+    },
+    {
+      "id": "reasoning-memory",
+      "type": "cognitiveNode",
+      "position": { "x": 2050, "y": 340 },
+      "width": 240,
+      "height": 100,
+      "data": {
+        "label": "Save Reasoning Memory",
+        "nodeType": "inner_dialogue_saver",
+        "properties": { "roles": ["reasoning"] }
+      }
+    },
+    {
+      "id": "reflection-memory",
+      "type": "cognitiveNode",
+      "position": { "x": 2350, "y": 180 },
+      "width": 240,
+      "height": 100,
+      "data": {
+        "label": "Save Reflection Memory",
+        "nodeType": "inner_dialogue_saver",
+        "properties": { "roles": ["reflection"] }
       }
     },
     {
@@ -118,7 +142,15 @@
       "position": { "x": 1750, "y": 60 },
       "width": 190,
       "height": 80,
-      "data": { "label": "Audit Reflection", "nodeType": "audit_logger", "properties": {} }
+      "data": {
+        "label": "Audit Reflection",
+        "nodeType": "audit_logger",
+        "properties": {
+          "category": "agent",
+          "event": "reflection_persisted",
+          "level": "info"
+        }
+      }
     },
     {
       "id": "8",
@@ -130,6 +162,22 @@
         "label": "TTS Output",
         "nodeType": "tts",
         "properties": { "source": "reflector", "defaultMode": "inner" }
+      }
+    },
+    {
+      "id": "train-of-thought-follow-on",
+      "type": "cognitiveNode",
+      "position": { "x": 2350, "y": 180 },
+      "width": 240,
+      "height": 100,
+      "data": {
+        "label": "Optional Thought Follow-on",
+        "nodeType": "agent_trigger",
+        "properties": {
+          "agentName": "train-of-thought",
+          "sourceAgent": "reflector",
+          "probability": 0.2
+        }
       }
     }
   ],
@@ -215,20 +263,52 @@
       "data": { "type": "string", "comment": "Persist extracted model reasoning separately" }
     },
     {
-      "id": "e-10-stripped-7-event-type",
-      "source": "10",
-      "target": "7",
-      "sourceHandle": "stripped",
-      "targetHandle": "eventType",
-      "data": { "type": "string", "comment": "Audit clean reflection completion" }
+      "id": "e-11-entries-reasoning-memory",
+      "source": "11",
+      "target": "reasoning-memory",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "data": { "type": "array", "comment": "Buffer-admitted reasoning to long-term Persona Memory" }
     },
     {
-      "id": "e-10-stripped-8-inner-dialogue",
-      "source": "10",
+      "id": "e-2-entries-reflection-memory",
+      "source": "2",
+      "target": "reflection-memory",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "data": { "type": "array", "comment": "Buffer-admitted reflection to long-term Persona Memory" }
+    },
+    {
+      "id": "e-reasoning-memory-gate-reflection-memory",
+      "source": "reasoning-memory",
+      "target": "reflection-memory",
+      "sourceHandle": "saved",
+      "targetHandle": "gate",
+      "data": { "type": "boolean", "comment": "Complete both long-term saves before publishing the reflection" }
+    },
+    {
+      "id": "e-reflection-memory-saved-7-data",
+      "source": "reflection-memory",
+      "target": "7",
+      "sourceHandle": "saved",
+      "targetHandle": "data",
+      "data": { "type": "boolean", "comment": "Audit only the long-term persisted reflection" }
+    },
+    {
+      "id": "e-reflection-memory-text-8-inner-dialogue",
+      "source": "reflection-memory",
       "target": "8",
-      "sourceHandle": "stripped",
+      "sourceHandle": "text",
       "targetHandle": "innerDialogue",
-      "data": { "type": "string", "comment": "Queue clean reflection for inner TTS" }
+      "data": { "type": "string", "comment": "Queue only the long-term persisted reflection for inner TTS" }
+    },
+    {
+      "id": "e-reflection-memory-text-train-of-thought-seed",
+      "source": "reflection-memory",
+      "target": "train-of-thought-follow-on",
+      "sourceHandle": "text",
+      "targetHandle": "seed",
+      "data": { "type": "string", "comment": "Long-term persisted reflection may seed a new associative thought chain" }
     }
   ]
 }

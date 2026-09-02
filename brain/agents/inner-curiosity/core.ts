@@ -1,477 +1,679 @@
-/**
- * Inner Curiosity Agent — Core Logic
- *
- * Generates self-directed questions and attempts to answer them using local memory.
- * This simulates the AI's internal curiosity - asking and answering its own questions
- * as inner dialogue, never appearing in the main chat.
- *
- * Flow:
- * 1. Sample weighted memories
- * 2. Generate an interesting question about patterns/connections
- * 3. Search local memory for relevant information
- * 4. Synthesize answer from findings
- * 5. Save as inner_dialogue event
- *
- * This module can be used both:
- * - CLI: via cli.ts wrapper
- * - Mobile: imported directly and run in-process
- */
+/** Canonical finite owner for private, self-directed curiosity Q&A. */
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import {
-  callLLM,
-  captureEvent,
-  queryIndex,
-  storageClient,
   audit,
+  callLLM,
+  cognitiveGraphPath,
+  getFirstFailedNode,
+  getProfilePaths,
   getTargetUser,
-  withUserContext,
   loadCuriosityConfig,
+  loadGraphFile,
   loadPersonaCore,
+  queryIndexWithReconciliation,
+  runGraph,
+  safeReadJSON,
+  safeWriteJSON,
+  sampleCuriosityMemories,
   submitInnerReflection,
+  withUserContext,
+  type CuriosityMemoryEvidence,
+  type CuriosityMemorySample,
+  type CuriosityConfig,
   type VectorIndexItem,
-} from '@metahuman/core';
-import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
+} from '@metahuman/core'
+import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime'
 
-// ============================================================================
-// Types
-// ============================================================================
+const LOG_PREFIX = '[inner-curiosity]'
+const RECEIPT_SCHEMA_VERSION = 1
+const MAX_RECEIPTS = 768
+const MAX_EXECUTION_ID_CHARS = 400
+
+export type InnerCuriositySkipReason = 'disabled' | 'no-memories'
 
 export interface InnerCuriosityOptions {
-  singleUser?: boolean;
+  username?: string
+  executionId?: string
+  executionTimestamp?: string
+  signal?: AbortSignal
 }
+
+export type InnerCuriosityOutcome =
+  | {
+    status: 'generated'
+    username: string
+    executionId: string
+    deduplicated: boolean
+    memoriesConsidered: number
+    searchResults: number
+  }
+  | {
+    status: 'skipped'
+    username: string
+    executionId: string
+    reason: InnerCuriositySkipReason
+  }
 
 export interface InnerCuriosityResult {
-  success: boolean;
-  questionsGenerated: number;
-  userCount: number;
-  errors: string[];
+  success: boolean
+  questionsGenerated: number
+  questionsSkipped: number
+  userCount: number
+  outcome?: InnerCuriosityOutcome
+  errors: string[]
 }
 
-// ============================================================================
-// Memory Functions
-// ============================================================================
-
-/**
- * Get ALL memories with weighted selection
- */
-export async function getAllMemories(): Promise<Array<{ file: string; timestamp: Date; content: any }>> {
-  const result = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' });
-  if (!result.success || !result.path) {
-    console.error('[inner-curiosity] Cannot resolve episodic path');
-    return [];
-  }
-  const episodicDir = result.path;
-  const allMemories: Array<{ file: string; timestamp: Date; content: any }> = [];
-
-  async function walk(dir: string, acc: Array<{ file: string; timestamp: Date; content: any }>) {
-    let entries: string[];
-    try {
-      entries = await fs.readdir(dir);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return;
-      }
-      throw error;
-    }
-
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry);
-      let stats;
-      try {
-        stats = await fs.stat(fullPath);
-      } catch {
-        continue;
-      }
-
-      if (stats.isDirectory()) {
-        await walk(fullPath, acc);
-      } else if (stats.isFile() && entry.endsWith('.json')) {
-        try {
-          const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
-
-          // Skip self-referential types
-          if (content.type === 'curiosity_question' ||
-              content.type === 'reflection' ||
-              content.type === 'inner_dialogue' ||
-              content.type === 'dream' ||
-              content.metadata?.type === 'curiosity_question' ||
-              content.metadata?.type === 'reflection' ||
-              content.metadata?.type === 'inner_dialogue') {
-            continue;
-          }
-
-          acc.push({
-            file: fullPath,
-            timestamp: new Date(content.timestamp),
-            content
-          });
-        } catch {
-          // Skip malformed files
-        }
-      }
-    }
-  }
-
-  await walk(episodicDir, allMemories);
-  allMemories.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-  return allMemories;
+interface InnerCuriosityReceiptBase {
+  schemaVersion: typeof RECEIPT_SCHEMA_VERSION
+  kind: 'inner-curiosity-execution'
+  executionId: string
+  idempotencyKey: string
+  username: string
+  timestamp: string
+  question: string
+  answer: string
+  innerDialogue: string
+  sourceMemoryIds: string[]
+  searchResultIds: string[]
+  sampling: CuriosityMemorySample['diagnostics']
 }
 
-/**
- * Sample memories using weighted selection
- */
-export async function sampleWeightedMemories(count: number): Promise<any[]> {
-  const allMemories = await getAllMemories();
-  if (allMemories.length === 0) return [];
-
-  const now = Date.now();
-  const decayFactor = 14; // Days
-  const selected: any[] = [];
-  const usedIndices = new Set<number>();
-
-  const technicalKeywords = [
-    'metahuman', 'ai agent', 'organizer', 'reflector', 'boredom-service',
-    'llm', 'ollama', 'typescript', 'package.json', 'astro', 'dev server',
-    'audit', 'persona', 'memory system', 'cli', 'codebase', 'development'
-  ];
-
-  for (let i = 0; i < count && selected.length < Math.min(count, allMemories.length); i++) {
-    const weights = allMemories.map((mem, idx) => {
-      if (usedIndices.has(idx)) return 0;
-
-      const ageInDays = (now - mem.timestamp.getTime()) / (1000 * 60 * 60 * 24);
-      let weight = Math.exp(-ageInDays / decayFactor);
-
-      const contentLower = mem.content.content?.toLowerCase() || '';
-      const isTechnical = technicalKeywords.some(kw => contentLower.includes(kw));
-      if (isTechnical) {
-        weight *= 0.3;
-      }
-
-      return weight;
-    });
-
-    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-    if (totalWeight === 0) break;
-
-    let rand = Math.random() * totalWeight;
-    let cumulativeWeight = 0;
-
-    for (let idx = 0; idx < allMemories.length; idx++) {
-      cumulativeWeight += weights[idx];
-      if (rand <= cumulativeWeight) {
-        selected.push(allMemories[idx].content);
-        usedIndices.add(idx);
-        break;
-      }
-    }
-  }
-
-  return selected;
+export interface PreparedInnerCuriosityReceipt extends InnerCuriosityReceiptBase {
+  status: 'prepared'
+  preparedAt: string
 }
 
-// ============================================================================
-// Question Generation
-// ============================================================================
+export interface CompletedInnerCuriosityReceipt extends InnerCuriosityReceiptBase {
+  status: 'completed'
+  preparedAt: string
+  completedAt: string
+}
 
-/**
- * Generate and answer an inner question for a single user
- */
-export async function generateInnerQuestion(username: string): Promise<boolean> {
-  console.log(`[inner-curiosity] Processing user: ${username}`);
+export type InnerCuriosityReceipt = PreparedInnerCuriosityReceipt | CompletedInnerCuriosityReceipt
 
-  const config = loadCuriosityConfig(username);
-  const persona = loadPersonaCore();
+export interface InnerCuriosityDependencies {
+  loadConfig: (username: string) => CuriosityConfig
+  sampleMemories: (username: string) => Promise<CuriosityMemorySample>
+  loadPersonaName: () => string
+  generateQuestion: (
+    memories: CuriosityMemoryEvidence[],
+    personaName: string,
+    signal?: AbortSignal,
+  ) => Promise<string>
+  searchMemories: (question: string, username: string, signal?: AbortSignal) => Promise<VectorIndexItem[]>
+  generateAnswer: (
+    question: string,
+    memories: CuriosityMemoryEvidence[],
+    searchResults: VectorIndexItem[],
+    personaName: string,
+    signal?: AbortSignal,
+  ) => Promise<string>
+  loadReceipt: (username: string, idempotencyKey: string) => InnerCuriosityReceipt | null
+  saveReceipt: (receipt: InnerCuriosityReceipt) => void
+  persistDialogue: (receipt: PreparedInnerCuriosityReceipt, signal?: AbortSignal) => Promise<void>
+  triggerFollowOn: (receipt: PreparedInnerCuriosityReceipt, signal?: AbortSignal) => Promise<void>
+  auditGenerated: (receipt: CompletedInnerCuriosityReceipt, deduplicated: boolean) => void
+  now: () => Date
+  newExecutionId: () => string
+}
 
-  // Check if inner questions are enabled
-  if (!config.innerQuestionMode || config.innerQuestionMode === 'off') {
-    console.log(`[inner-curiosity] Inner questions disabled`);
-    return false;
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  if (signal.reason instanceof Error) throw signal.reason
+  throw new DOMException('Inner Curiosity execution cancelled', 'AbortError')
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function requireBoundedText(value: unknown, label: string, maximum: number): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} returned empty content`)
+  const text = value.trim()
+  if (text.length > maximum) throw new Error(`${label} exceeded the ${maximum}-character limit`)
+  return text
+}
+
+function validateExecutionId(value: string): string {
+  const executionId = value.trim()
+  if (!executionId) throw new Error('Inner Curiosity executionId must not be empty')
+  if (executionId.length > MAX_EXECUTION_ID_CHARS) {
+    throw new Error(`Inner Curiosity executionId must not exceed ${MAX_EXECUTION_ID_CHARS} characters`)
   }
+  return executionId
+}
 
-  // Sample weighted memories
-  const memories = await sampleWeightedMemories(5);
-  if (memories.length === 0) {
-    console.log(`[inner-curiosity] No memories to base question on yet`);
-    return false;
+function validateTimestamp(value: string): string {
+  if (Number.isNaN(Date.parse(value))) throw new Error('Inner Curiosity executionTimestamp must be a valid date')
+  return new Date(value).toISOString()
+}
+
+function executionIdentity(
+  username: string,
+  options: InnerCuriosityOptions,
+  dependencies: InnerCuriosityDependencies,
+): { executionId: string; idempotencyKey: string; requestedTimestamp?: string } {
+  const executionId = validateExecutionId(options.executionId || dependencies.newExecutionId())
+  return {
+    executionId,
+    idempotencyKey: `inner-curiosity:${username}:${executionId}`,
+    requestedTimestamp: options.executionTimestamp
+      ? validateTimestamp(options.executionTimestamp)
+      : undefined,
   }
+}
 
-  console.log(`[inner-curiosity] Selected ${memories.length} weighted memories`);
+function receiptFile(username: string, idempotencyKey: string): string {
+  const digest = createHash('sha256').update(idempotencyKey).digest('hex')
+  return path.join(getProfilePaths(username).state, 'inner-curiosity', `${digest}.json`)
+}
 
-  // Step 1: Generate a self-directed question
-  const memoriesText = memories.map((m, i) => `${i + 1}. ${m.content}`).join('\n');
+function requireStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || !item.trim())) {
+    throw new Error(`Invalid Inner Curiosity receipt ${field}`)
+  }
+  return value.map(item => String(item).trim())
+}
 
-  const questionSystemPrompt = `
-You are ${persona.identity.name}'s internal curiosity. Generate ONE self-directed question that explores deeper patterns, connections, or meanings in recent experiences.
-
-This is an inner question - you're asking yourself, not the user. Focus on:
-- Deeper "why" questions about your own patterns
-- Connections between seemingly unrelated experiences
-- Implications of recent observations
-- Meta-questions about your own thinking
-
-Keep under 100 words. Be genuinely curious and thoughtful.
-  `.trim();
-
-  const questionPrompt = `
-Based on these recent experiences:
-${memoriesText}
-
-What question should I ask myself to deepen my understanding?
-  `.trim();
-
-  let question: string;
-  try {
-    const response = await callLLM({
-      role: 'persona',
-      messages: [
-        { role: 'system', content: questionSystemPrompt },
-        { role: 'user', content: questionPrompt }
-      ],
-      options: { temperature: 0.8 }
-    });
-
-    question = response.content.trim();
-    if (!question) {
-      console.log(`[inner-curiosity] Generated empty question`);
-      return false;
+function parseSamplingDiagnostics(value: unknown): CuriosityMemorySample['diagnostics'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid Inner Curiosity receipt sampling diagnostics')
+  }
+  const record = value as Record<string, unknown>
+  const fields = [
+    'filesConsidered',
+    'filesRead',
+    'skippedMalformed',
+    'skippedOversize',
+    'skippedGenerated',
+    'skippedEmpty',
+    'truncatedContent',
+  ] as const
+  for (const field of fields) {
+    if (!Number.isSafeInteger(record[field]) || Number(record[field]) < 0) {
+      throw new Error(`Invalid Inner Curiosity receipt sampling.${field}`)
     }
-
-    console.log(`[inner-curiosity] Generated question: "${question.substring(0, 80)}..."`);
-  } catch (error) {
-    console.error(`[inner-curiosity] Error generating question:`, error);
-    return false;
   }
+  return {
+    filesConsidered: Number(record.filesConsidered),
+    filesRead: Number(record.filesRead),
+    skippedMalformed: Number(record.skippedMalformed),
+    skippedOversize: Number(record.skippedOversize),
+    skippedGenerated: Number(record.skippedGenerated),
+    skippedEmpty: Number(record.skippedEmpty),
+    truncatedContent: Number(record.truncatedContent),
+  }
+}
 
-  // Step 2: Search memory for relevant context
-  let searchResults: VectorIndexItem[] = [];
-  try {
-    // Extract key terms from question for search
-    const keyTerms = question
-      .toLowerCase()
-      .replace(/[?.,!]/g, '')
-      .split(/\s+/)
-      .filter(word => word.length > 4)
-      .slice(0, 3);
-
-    for (const term of keyTerms) {
-      try {
-        const results = await queryIndex(term, { topK: 3, username });
-        searchResults.push(...results.map(({ item }) => item));
-      } catch {}
+function parseReceipt(value: unknown): InnerCuriosityReceipt {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid Inner Curiosity receipt object')
+  }
+  const record = value as Record<string, unknown>
+  if (record.schemaVersion !== RECEIPT_SCHEMA_VERSION || record.kind !== 'inner-curiosity-execution') {
+    throw new Error('Unsupported Inner Curiosity receipt schema')
+  }
+  if (record.status !== 'prepared' && record.status !== 'completed') {
+    throw new Error('Invalid Inner Curiosity receipt status')
+  }
+  const requiredStrings = [
+    'executionId', 'idempotencyKey', 'username', 'timestamp', 'question',
+    'answer', 'innerDialogue', 'preparedAt',
+  ] as const
+  for (const field of requiredStrings) {
+    if (typeof record[field] !== 'string' || !record[field].trim()) {
+      throw new Error(`Invalid Inner Curiosity receipt ${field}`)
     }
-
-    // Remove duplicates
-    searchResults = [...new Map(searchResults.map(result => [result.id, result])).values()];
-    console.log(`[inner-curiosity] Found ${searchResults.length} relevant memories`);
-  } catch (error) {
-    console.warn(`[inner-curiosity] Memory search failed:`, error);
   }
+  validateTimestamp(String(record.timestamp))
+  validateTimestamp(String(record.preparedAt))
+  const common: InnerCuriosityReceiptBase & { preparedAt: string } = {
+    schemaVersion: RECEIPT_SCHEMA_VERSION,
+    kind: 'inner-curiosity-execution' as const,
+    executionId: String(record.executionId),
+    idempotencyKey: String(record.idempotencyKey),
+    username: String(record.username),
+    timestamp: String(record.timestamp),
+    question: String(record.question),
+    answer: String(record.answer),
+    innerDialogue: String(record.innerDialogue),
+    sourceMemoryIds: requireStringArray(record.sourceMemoryIds, 'sourceMemoryIds'),
+    searchResultIds: requireStringArray(record.searchResultIds, 'searchResultIds'),
+    sampling: parseSamplingDiagnostics(record.sampling),
+    preparedAt: String(record.preparedAt),
+  }
+  if (record.status === 'prepared') return { ...common, status: 'prepared' }
+  if (typeof record.completedAt !== 'string' || !record.completedAt.trim()) {
+    throw new Error('Invalid Inner Curiosity receipt completedAt')
+  }
+  validateTimestamp(record.completedAt)
+  return { ...common, status: 'completed', completedAt: record.completedAt }
+}
 
-  // Step 3: Synthesize answer from local findings
-  const answerSystemPrompt = `
-You are ${persona.identity.name} contemplating a self-directed question.
+function loadReceipt(username: string, idempotencyKey: string): InnerCuriosityReceipt | null {
+  const file = receiptFile(username, idempotencyKey)
+  if (!fs.existsSync(file)) return null
+  const receipt = parseReceipt(safeReadJSON<unknown>(file))
+  if (receipt.username !== username || receipt.idempotencyKey !== idempotencyKey) {
+    throw new Error('Inner Curiosity receipt identity does not match the requested execution')
+  }
+  return receipt
+}
 
-Based on your memories and experiences, provide a thoughtful answer. This is internal reflection - be authentic, exploratory, and open to uncertainty.
+function pruneReceipts(username: string): void {
+  const directory = path.join(getProfilePaths(username).state, 'inner-curiosity')
+  if (!fs.existsSync(directory)) return
+  const receipts = fs.readdirSync(directory)
+    .filter(name => name.endsWith('.json'))
+    .map(name => ({ name, mtime: fs.statSync(path.join(directory, name)).mtimeMs }))
+    .sort((left, right) => right.mtime - left.mtime)
+  let excess = receipts.length - MAX_RECEIPTS
+  for (const receipt of receipts.slice().reverse()) {
+    if (excess <= 0) break
+    const file = path.join(directory, receipt.name)
+    const parsed = parseReceipt(safeReadJSON<unknown>(file))
+    if (parsed.status !== 'completed') continue
+    fs.unlinkSync(file)
+    excess -= 1
+    const backupDirectory = path.join(directory, '.backups')
+    if (!fs.existsSync(backupDirectory)) continue
+    for (const backup of fs.readdirSync(backupDirectory)) {
+      if (backup.startsWith(`${receipt.name}.`) && backup.endsWith('.bak')) {
+        fs.unlinkSync(path.join(backupDirectory, backup))
+      }
+    }
+  }
+}
 
-If the available information is insufficient, acknowledge that and explain what you'd need to explore further.
-  `.trim();
+function saveReceipt(receipt: InnerCuriosityReceipt): void {
+  safeWriteJSON(receiptFile(receipt.username, receipt.idempotencyKey), receipt)
+  if (receipt.status === 'completed') pruneReceipts(receipt.username)
+}
 
+async function generateQuestion(
+  memories: CuriosityMemoryEvidence[],
+  personaName: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  throwIfAborted(signal)
+  const memoriesText = memories.map((memory, index) => `${index + 1}. ${memory.content}`).join('\n')
+  const response = await callLLM({
+    role: 'persona',
+    messages: [
+      {
+        role: 'system',
+        content: `You are ${personaName}'s internal curiosity. Generate one private, self-directed question that explores deeper patterns, connections, meanings, or implications in recent experiences. Ask yourself rather than the user. Keep it under 100 words.`,
+      },
+      {
+        role: 'user',
+        content: `Recent experiences:\n${memoriesText}\n\nWhat question should I ask myself to deepen my understanding?`,
+      },
+    ],
+    options: { temperature: 0.8, maxTokens: 192 },
+  })
+  throwIfAborted(signal)
+  return requireBoundedText(response.content, 'Inner Curiosity question model', 1_500)
+}
+
+function searchTerms(question: string): string[] {
+  const stopWords = new Set(['about', 'could', 'should', 'their', 'there', 'these', 'think', 'through', 'what', 'when', 'where', 'which', 'would'])
+  return [...new Set(question.toLowerCase().match(/[a-z][a-z0-9'-]{4,}/g) || [])]
+    .filter(word => !stopWords.has(word))
+    .slice(0, 3)
+}
+
+async function searchMemories(
+  question: string,
+  username: string,
+  signal?: AbortSignal,
+): Promise<VectorIndexItem[]> {
+  const results: VectorIndexItem[] = []
+  for (const term of searchTerms(question)) {
+    throwIfAborted(signal)
+    const matches = await queryIndexWithReconciliation(term, {
+      topK: 3,
+      username,
+      reconciliationSource: 'inner-curiosity',
+    })
+    results.push(...matches.map(match => match.item))
+  }
+  throwIfAborted(signal)
+  return [...new Map(results.map(result => [result.id, result])).values()].slice(0, 9)
+}
+
+async function generateAnswer(
+  question: string,
+  memories: CuriosityMemoryEvidence[],
+  searchResults: VectorIndexItem[],
+  personaName: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  throwIfAborted(signal)
+  const memoriesText = memories.map((memory, index) => `${index + 1}. ${memory.content}`).join('\n')
   const searchContext = searchResults.length > 0
-    ? `\n\nRelevant memories:\n${searchResults.map((result, index) => `${index + 1}. ${result.text.slice(0, 200)}`).join('\n')}`
-    : '';
+    ? `\n\nRelevant indexed memories:\n${searchResults.map((result, index) => `${index + 1}. ${result.text.slice(0, 500)}`).join('\n')}`
+    : ''
+  const response = await callLLM({
+    role: 'persona',
+    messages: [
+      {
+        role: 'system',
+        content: `You are ${personaName} privately contemplating a self-directed question. Answer from the supplied memories. Be thoughtful, exploratory, and explicit about uncertainty or missing evidence.`,
+      },
+      {
+        role: 'user',
+        content: `Question: ${question}\n\nRecent experiences:\n${memoriesText}${searchContext}\n\nWhat grounded insights or patterns emerge?`,
+      },
+    ],
+    options: { temperature: 0.7, maxTokens: 768 },
+  })
+  throwIfAborted(signal)
+  return requireBoundedText(response.content, 'Inner Curiosity answer model', 10_000)
+}
 
-  const answerPrompt = `
-Question I'm pondering: ${question}
+async function persistDialogue(receipt: PreparedInnerCuriosityReceipt, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal)
+  const persisted = await submitInnerReflection(receipt.username, receipt.innerDialogue, {
+    dialogueSource: 'inner-curiosity',
+    displayColor: '#8b5cf6',
+    type: 'inner_question',
+    tags: ['inner-curiosity', 'self-directed-question', 'inner'],
+    idempotencyKey: receipt.idempotencyKey,
+    skipDedup: true,
+    innerCuriosity: {
+      question: receipt.question,
+      answer: receipt.answer,
+      sourceMemoryIds: receipt.sourceMemoryIds,
+      searchResultIds: receipt.searchResultIds,
+    },
+  }, {
+    idempotencyKey: receipt.idempotencyKey,
+    memoryTimestamp: receipt.timestamp,
+  })
+  throwIfAborted(signal)
+  if (!persisted) throw new Error('Inner Buffer admission completed without durable persistence')
+}
 
-My recent experiences:
-${memoriesText}
-${searchContext}
-
-What insights can I draw from this? What patterns emerge?
-  `.trim();
-
-  let answer: string;
-  try {
-    const response = await callLLM({
-      role: 'persona',
-      messages: [
-        { role: 'system', content: answerSystemPrompt },
-        { role: 'user', content: answerPrompt }
-      ],
-      options: { temperature: 0.7 }
-    });
-
-    answer = response.content.trim();
-    console.log(`[inner-curiosity] Generated answer (${answer.split(/\s+/).length} words)`);
-  } catch (error) {
-    console.error(`[inner-curiosity] Error generating answer:`, error);
-    return false;
-  }
-
-  // Step 4: Save as inner dialogue
-  const innerDialogue = `🤔 ${question}\n\n💭 ${answer}`;
-
-  try {
-    // Save to episodic memory
-    captureEvent(innerDialogue, {
-      type: 'inner_dialogue',
-      tags: ['inner-curiosity', 'self-directed-question', 'inner'],
-      metadata: {
-        innerCuriosity: {
-          question,
-          answer,
-          mode: config.innerQuestionMode,
-          memoriesConsidered: memories.length,
-          searchResults: searchResults.length
-        }
-      }
-    });
-
-    // Also append to conversation buffer so it appears in Inner Dialogue tab
-    await submitInnerReflection(username, innerDialogue, {
-      dialogueSource: 'inner-curiosity',
-      displayColor: '#8b5cf6', // Purple for inner curiosity
-      type: 'inner_question',
-    });
-
-    audit({
-      category: 'action',
-      level: 'info',
-      event: 'inner_question_generated',
-      actor: 'inner-curiosity',
-      details: {
-        questionPreview: question.substring(0, 100),
-        answerLength: answer.length,
-        memoriesConsidered: memories.length,
-        username
-      }
-    });
-
-    console.log(`[inner-curiosity] Saved inner Q&A to inner dialogue and buffer`);
-    return true;
-
-  } catch (error) {
-    console.error(`[inner-curiosity] Error saving inner dialogue:`, error);
-    return false;
+async function triggerFollowOn(receipt: PreparedInnerCuriosityReceipt, signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal)
+  const loaded = await loadGraphFile(cognitiveGraphPath('inner-curiosity-follow-on.json'), {
+    logPrefix: LOG_PREFIX,
+  })
+  if (!loaded) throw new Error('Inner Curiosity follow-on graph could not be loaded')
+  const result = await runGraph({
+    graph: loaded.graph,
+    signal,
+    context: {
+      userId: receipt.username,
+      username: receipt.username,
+      cognitiveMode: 'agent',
+      allowMemoryWrites: false,
+      followOnSeed: receipt.innerDialogue,
+      idempotencyKey: receipt.idempotencyKey,
+      executionId: receipt.executionId,
+      abortSignal: signal,
+    },
+  })
+  throwIfAborted(signal)
+  if (result.status !== 'completed') {
+    const failure = getFirstFailedNode(result)
+    throw new Error(
+      failure
+        ? `Inner Curiosity follow-on failed at node ${failure.nodeId}: ${failure.error}`
+        : 'Inner Curiosity follow-on graph did not complete',
+    )
   }
 }
 
-// ============================================================================
-// Main Cycle
-// ============================================================================
+function auditGenerated(receipt: CompletedInnerCuriosityReceipt, deduplicated: boolean): void {
+  audit({
+    category: 'action',
+    level: 'info',
+    event: 'inner_question_generated',
+    actor: 'inner-curiosity',
+    details: {
+      executionId: receipt.executionId,
+      memoriesConsidered: receipt.sourceMemoryIds.length,
+      searchResults: receipt.searchResultIds.length,
+      skippedMemories: receipt.sampling.skippedMalformed
+        + receipt.sampling.skippedOversize
+        + receipt.sampling.skippedEmpty,
+      deduplicated,
+      username: receipt.username,
+    },
+  })
+}
+
+const DEFAULT_DEPENDENCIES: InnerCuriosityDependencies = {
+  loadConfig: loadCuriosityConfig,
+  sampleMemories: username => sampleCuriosityMemories({ username }),
+  loadPersonaName: () => requireBoundedText(loadPersonaCore().identity.name, 'Persona identity name', 200),
+  generateQuestion,
+  searchMemories,
+  generateAnswer,
+  loadReceipt,
+  saveReceipt,
+  persistDialogue,
+  triggerFollowOn,
+  auditGenerated,
+  now: () => new Date(),
+  newExecutionId: randomUUID,
+}
 
 /**
- * Run a full inner-curiosity cycle (multi-user)
+ * Execute one already-authenticated profile cycle. Exported for focused tests;
+ * production callers use runInnerCuriosity(), which resolves real identity.
  */
-export async function runCycle(options: InnerCuriosityOptions = {}): Promise<InnerCuriosityResult> {
-  console.log('[inner-curiosity] Starting cycle...');
+export async function executeInnerCuriosityForUser(
+  username: string,
+  options: InnerCuriosityOptions = {},
+  dependencies: InnerCuriosityDependencies = DEFAULT_DEPENDENCIES,
+): Promise<InnerCuriosityOutcome> {
+  throwIfAborted(options.signal)
+  const identity = executionIdentity(username, options, dependencies)
+  const existing = dependencies.loadReceipt(username, identity.idempotencyKey)
+  if (existing) {
+    if (
+      existing.executionId !== identity.executionId
+      || (identity.requestedTimestamp && existing.timestamp !== identity.requestedTimestamp)
+    ) {
+      throw new Error('Inner Curiosity execution identity conflicts with its durable receipt')
+    }
+    if (existing.status === 'completed') {
+      return {
+        status: 'generated',
+        username,
+        executionId: identity.executionId,
+        deduplicated: true,
+        memoriesConsidered: existing.sourceMemoryIds.length,
+        searchResults: existing.searchResultIds.length,
+      }
+    }
+    await dependencies.persistDialogue(existing, options.signal)
+    await dependencies.triggerFollowOn(existing, options.signal)
+    const completed: CompletedInnerCuriosityReceipt = {
+      ...existing,
+      status: 'completed',
+      completedAt: dependencies.now().toISOString(),
+    }
+    dependencies.saveReceipt(completed)
+    dependencies.auditGenerated(completed, true)
+    return {
+      status: 'generated',
+      username,
+      executionId: identity.executionId,
+      deduplicated: true,
+      memoriesConsidered: existing.sourceMemoryIds.length,
+      searchResults: existing.searchResultIds.length,
+    }
+  }
 
+  const config = dependencies.loadConfig(username)
+  if (config.innerQuestionMode === 'off') {
+    return { status: 'skipped', username, executionId: identity.executionId, reason: 'disabled' }
+  }
+  if (config.innerQuestionMode !== 'local') {
+    throw new Error(`Unsupported Inner Curiosity mode: ${String(config.innerQuestionMode)}`)
+  }
+
+  const sample = await dependencies.sampleMemories(username)
+  throwIfAborted(options.signal)
+  if (sample.memories.length === 0) {
+    return { status: 'skipped', username, executionId: identity.executionId, reason: 'no-memories' }
+  }
+
+  const personaName = dependencies.loadPersonaName()
+  const question = await dependencies.generateQuestion(sample.memories, personaName, options.signal)
+  const searchResults = await dependencies.searchMemories(question, username, options.signal)
+  const answer = await dependencies.generateAnswer(
+    question,
+    sample.memories,
+    searchResults,
+    personaName,
+    options.signal,
+  )
+  throwIfAborted(options.signal)
+
+  const preparedAt = dependencies.now().toISOString()
+  const timestamp = identity.requestedTimestamp || preparedAt
+  const prepared: PreparedInnerCuriosityReceipt = {
+    schemaVersion: RECEIPT_SCHEMA_VERSION,
+    kind: 'inner-curiosity-execution',
+    status: 'prepared',
+    executionId: identity.executionId,
+    idempotencyKey: identity.idempotencyKey,
+    username,
+    timestamp,
+    question,
+    answer,
+    innerDialogue: `🤔 ${question}\n\n💭 ${answer}`,
+    sourceMemoryIds: sample.memories.map(memory => memory.id),
+    searchResultIds: searchResults.map(result => result.id),
+    sampling: sample.diagnostics,
+    preparedAt,
+  }
+  dependencies.saveReceipt(prepared)
+  await dependencies.persistDialogue(prepared, options.signal)
+  await dependencies.triggerFollowOn(prepared, options.signal)
+  const completed: CompletedInnerCuriosityReceipt = {
+    ...prepared,
+    status: 'completed',
+    completedAt: dependencies.now().toISOString(),
+  }
+  dependencies.saveReceipt(completed)
+  dependencies.auditGenerated(completed, false)
+  return {
+    status: 'generated',
+    username,
+    executionId: identity.executionId,
+    deduplicated: false,
+    memoriesConsidered: prepared.sourceMemoryIds.length,
+    searchResults: prepared.searchResultIds.length,
+  }
+}
+
+/** Canonical execution contract used by CLI, agent-runtime, and mobile. */
+export async function runInnerCuriosity(options: InnerCuriosityOptions): Promise<InnerCuriosityOutcome> {
+  const username = options.username?.trim()
+  if (!username) throw new Error('Inner Curiosity requires a resolved username')
+  const user = getTargetUser({ username })
+  if (!user) throw new Error(`No authenticated user found for Inner Curiosity profile ${username}`)
+  return withUserContext(user, () => executeInnerCuriosityForUser(username, options))
+}
+
+export function parseInnerCuriosityArgs(
+  args: string[],
+  environment: NodeJS.ProcessEnv = process.env,
+): InnerCuriosityOptions {
+  const unsupported = args.filter(argument => argument !== '--')
+  if (unsupported.length > 0) throw new Error(`Unknown inner-curiosity option: ${unsupported[0]}`)
+  return {
+    username: environment.MH_TRIGGER_USERNAME?.trim() || undefined,
+    executionId: environment.MH_TASK_ID?.trim() || undefined,
+    executionTimestamp: environment.MH_TASK_CREATED_AT?.trim() || undefined,
+  }
+}
+
+/** Run one bounded scheduled or manual cycle. */
+export async function runCycle(options: InnerCuriosityOptions = {}): Promise<InnerCuriosityResult> {
   const result: InnerCuriosityResult = {
     success: false,
     questionsGenerated: 0,
+    questionsSkipped: 0,
     userCount: 0,
     errors: [],
-  };
+  }
 
   try {
-    // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
-    const activeUser = getTargetUser();
-
-    if (!activeUser) {
-      console.log('[inner-curiosity] No active users found, exiting.');
-      result.success = true;
-      return result;
-    }
-
-    console.log(`[inner-curiosity] Processing user: ${activeUser.username}`);
-    result.userCount = 1;
-
-    try {
-      const success = await withUserContext(
-        { userId: activeUser.userId, username: activeUser.username, role: activeUser.role },
-        async () => generateInnerQuestion(activeUser.username)
-      );
-
-      if (success) result.questionsGenerated++;
-    } catch (error) {
-      const errorMsg = `User ${activeUser.username}: ${(error as Error).message}`;
-      console.error(`[inner-curiosity] Failed: ${errorMsg}`);
-      result.errors.push(errorMsg);
-    }
-
-    console.log(`[inner-curiosity] Cycle complete. Generated ${result.questionsGenerated} inner questions for user ${activeUser.username}.`);
-
+    const targetUser = getTargetUser({ username: options.username })
+    if (!targetUser) throw new Error('No explicit or active authenticated user found')
+    result.userCount = 1
+    result.outcome = await runInnerCuriosity({ ...options, username: targetUser.username })
+    if (result.outcome.status === 'generated') result.questionsGenerated = 1
+    else result.questionsSkipped = 1
+    result.success = true
     audit({
       category: 'action',
       level: 'info',
       event: 'inner_curiosity_cycle_complete',
       actor: 'inner-curiosity',
       details: {
+        status: result.outcome.status,
+        reason: result.outcome.status === 'skipped' ? result.outcome.reason : undefined,
         questionsGenerated: result.questionsGenerated,
-        username: activeUser.username
-      }
-    });
-
-    result.success = result.errors.length === 0;
-    return result;
+        questionsSkipped: result.questionsSkipped,
+        username: targetUser.username,
+      },
+    })
   } catch (error) {
-    const errorMsg = (error as Error).message;
-    console.error('[inner-curiosity] Error during cycle:', errorMsg);
-    result.errors.push(errorMsg);
-    return result;
+    const message = errorMessage(error)
+    result.errors.push(message)
+    console.error(`${LOG_PREFIX} ${message}`)
+    audit({
+      category: 'system',
+      level: 'error',
+      event: 'inner_curiosity_cycle_failed',
+      actor: 'inner-curiosity',
+      details: { error: message, username: options.username },
+    })
   }
+
+  return result
 }
 
-// ============================================================================
-// Agent Runtime Interface
-// ============================================================================
-
-/**
- * Run function for agent-runtime
- */
+/** Agent Runtime entry point for in-process execution. */
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
-  const startTime = Date.now();
-  const args = input.args || [];
-  const opts = input.options || {};
-
-  const options: InnerCuriosityOptions = {
-    singleUser: args.includes('--single-user') || opts.singleUser === true,
-  };
-
+  const startedAt = Date.now()
   try {
-    // If running for a specific user context, process just that user
-    if (ctx.username && options.singleUser) {
-      const success = await withUserContext(
-        { userId: ctx.username, username: ctx.username, role: 'owner' },
-        async () => generateInnerQuestion(ctx.username)
-      );
-
-      return {
-        success: true,
-        data: { questionsGenerated: success ? 1 : 0, userCount: 1, errors: [] },
-        duration: Date.now() - startTime,
-        itemsProcessed: success ? 1 : 0,
-      };
+    if ((input.args?.filter(argument => argument !== '--').length ?? 0) > 0) {
+      throw new Error(`Unknown inner-curiosity option: ${input.args?.find(argument => argument !== '--')}`)
     }
-
-    // Otherwise run full cycle
-    const result = await runCycle(options);
-
+    const allowedOptions = new Set(['executionId', 'executionTimestamp'])
+    const unknownOption = Object.keys(input.options || {}).find(key => !allowedOptions.has(key))
+    if (unknownOption) throw new Error(`Unknown inner-curiosity option: ${unknownOption}`)
+    const result = await runCycle({
+      username: ctx.username,
+      executionId: typeof input.options?.executionId === 'string' ? input.options.executionId : undefined,
+      executionTimestamp: typeof input.options?.executionTimestamp === 'string'
+        ? input.options.executionTimestamp
+        : undefined,
+      signal: ctx.signal,
+    })
     return {
       success: result.success,
       data: result,
-      error: result.errors.length > 0 ? result.errors.join('; ') : undefined,
-      duration: Date.now() - startTime,
+      errors: result.errors.length > 0 ? result.errors : undefined,
       itemsProcessed: result.questionsGenerated,
-    };
+      durationMs: Date.now() - startedAt,
+    }
   } catch (error) {
     return {
       success: false,
-      error: (error as Error).message,
-      duration: Date.now() - startTime,
-    };
+      error: errorMessage(error),
+      durationMs: Date.now() - startedAt,
+    }
   }
 }

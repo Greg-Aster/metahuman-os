@@ -31,7 +31,8 @@
     ],
   };
 
-  // Default percentages (favoring user input)
+  // Stored primary values are retained for backwards compatibility, but the
+  // aggregator always includes primary user-authored records at 100%.
   const defaultPercentages: Record<string, number> = {
     conversation: 40,
     observation: 25,
@@ -51,11 +52,6 @@
     ...defaultPercentages,
     ...percentages,
   };
-
-  // Note: With new "pie chart" logic, percentages for secondary types mean
-  // "% of primary data to include", not a slice of total. No 100% validation needed.
-  $: totalPercentage = Object.values(mergedPercentages).reduce((sum, val) => sum + val, 0);
-  $: isValid = true; // No longer need 100% total - secondary % are relative to primary
 
   // Handle slider change
   function handleSliderChange(key: string, event: Event) {
@@ -128,7 +124,7 @@
     <label class="flex justify-between items-center p-3 bg-white dark:bg-gray-900 rounded-md border border-gray-200 dark:border-gray-700 cursor-pointer">
       <span class="flex flex-col gap-1">
         <strong class="text-sm">Include Persona Data</strong>
-        <span class="text-xs text-gray-500">Include core personality traits and values in training</span>
+        <span class="text-xs text-gray-500">Upload the profile persona as training context when the runner supports it</span>
       </span>
       <input
         type="checkbox"
@@ -145,6 +141,7 @@
     <h4 class="m-0 mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Quick Presets</h4>
     <div class="flex flex-wrap gap-2">
       <button
+        type="button"
         class="px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-sm cursor-pointer transition-all text-gray-700 dark:text-gray-300 hover:enabled:bg-blue-500 hover:enabled:text-white hover:enabled:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
         on:click={() => applyPreset('balanced')}
         {disabled}
@@ -153,6 +150,7 @@
         Balanced (Default)
       </button>
       <button
+        type="button"
         class="px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-sm cursor-pointer transition-all text-gray-700 dark:text-gray-300 hover:enabled:bg-blue-500 hover:enabled:text-white hover:enabled:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
         on:click={() => applyPreset('user-focused')}
         {disabled}
@@ -161,6 +159,7 @@
         User-Focused
       </button>
       <button
+        type="button"
         class="px-4 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md text-sm cursor-pointer transition-all text-gray-700 dark:text-gray-300 hover:enabled:bg-blue-500 hover:enabled:text-white hover:enabled:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
         on:click={() => applyPreset('self-growth')}
         {disabled}
@@ -187,18 +186,22 @@
           <div class="{i < types.length - 1 ? 'mb-3' : ''}">
             <div class="flex justify-between items-center mb-1">
               <span class="text-sm font-medium">{type.label}</span>
-              <span class="text-sm font-semibold text-blue-500 dark:text-blue-400 min-w-[3rem] text-right">{mergedPercentages[type.key]}%</span>
+              <span class="text-sm font-semibold text-blue-500 dark:text-blue-400 min-w-[3rem] text-right">{type.isPrimary ? 100 : mergedPercentages[type.key]}%</span>
             </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              value={mergedPercentages[type.key]}
-              on:input={(e) => handleSliderChange(type.key, e)}
-              {disabled}
-              class="slider w-full h-1.5 rounded bg-gray-200 dark:bg-gray-700 appearance-none cursor-pointer"
-            />
+            {#if type.isPrimary}
+              <div class="h-1.5 w-full rounded bg-blue-500" aria-label={`${type.label} fixed at 100%`}></div>
+            {:else}
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={mergedPercentages[type.key]}
+                on:input={(e) => handleSliderChange(type.key, e)}
+                {disabled}
+                class="slider w-full h-1.5 rounded bg-gray-200 dark:bg-gray-700 appearance-none cursor-pointer"
+              />
+            {/if}
             <span class="text-[0.7rem] text-gray-500 dark:text-gray-400 block mt-1">{type.description}</span>
           </div>
         {/each}
@@ -206,6 +209,7 @@
     {/each}
 
     <button
+      type="button"
       class="mt-4 px-4 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md text-sm text-gray-700 dark:text-gray-300 cursor-pointer transition-all hover:enabled:bg-gray-200 dark:hover:enabled:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
       on:click={resetToDefaults}
       {disabled}

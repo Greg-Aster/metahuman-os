@@ -834,50 +834,11 @@ export async function markVerificationFailed(username: string): Promise<LocalUse
 // ============ Local Session Management ============
 
 const SESSION_KEY = 'currentSession';
-const SYNC_SERVER_KEY = 'syncServerCredentials';
-const SYNCED_CREDENTIALS_KEY = 'syncedCredentials';
 
 interface LocalSession {
   username: string;
   displayName: string;
   loginAt: string;
-}
-
-/**
- * Remote sync server credentials
- */
-export interface SyncServerCredentials {
-  serverUrl: string;
-  username: string;
-  password: string;  // Base64 encoded for basic obfuscation
-  lastSyncAt?: string;
-  verified?: boolean;
-}
-
-/**
- * Credentials synced from remote server (RunPod, BigBrother, etc.)
- */
-export interface SyncedCredentials {
-  runpod?: {
-    apiKey: string | null;
-    templateId: string | null;
-    gpuType: string | null;
-  };
-  bigBrother?: {
-    enabled: boolean;
-    provider: string;
-    escalateOnStuck: boolean;
-    escalateOnRepeatedFailures: boolean;
-    maxRetries: number;
-    includeFullScratchpad: boolean;
-    autoApplySuggestions: boolean;
-  };
-  remote?: {
-    provider: string;
-    serverUrl: string;
-    model: string;
-  };
-  syncedAt?: string;
 }
 
 /**
@@ -924,108 +885,4 @@ export async function clearLocalSession(): Promise<void> {
 export async function hasLocalSession(): Promise<boolean> {
   const session = await getLocalSession();
   return session !== null;
-}
-
-// ============ Sync Server Credentials ============
-
-/**
- * Save sync server credentials (for connecting to remote MetaHuman server)
- */
-export async function saveSyncServerCredentials(creds: SyncServerCredentials): Promise<void> {
-  // Encode password for basic obfuscation (not security, just to avoid plain text)
-  const encoded: SyncServerCredentials = {
-    ...creds,
-    password: btoa(creds.password),
-  };
-  await setSetting(SYNC_SERVER_KEY, encoded);
-}
-
-/**
- * Get sync server credentials
- */
-export async function getSyncServerCredentials(): Promise<SyncServerCredentials | null> {
-  const creds = await getSetting<SyncServerCredentials | null>(SYNC_SERVER_KEY, null);
-  if (!creds) return null;
-
-  // Decode password
-  try {
-    return {
-      ...creds,
-      password: atob(creds.password),
-    };
-  } catch {
-    return creds;
-  }
-}
-
-/**
- * Clear sync server credentials
- */
-export async function clearSyncServerCredentials(): Promise<void> {
-  const db = await getDB();
-  await db.delete('settings', SYNC_SERVER_KEY);
-}
-
-/**
- * Check if sync server is configured
- */
-export async function hasSyncServerCredentials(): Promise<boolean> {
-  const creds = await getSyncServerCredentials();
-  return creds !== null && !!creds.serverUrl && !!creds.username;
-}
-
-/**
- * Update last sync timestamp for server credentials
- */
-export async function updateSyncTimestamp(): Promise<void> {
-  const creds = await getSyncServerCredentials();
-  if (creds) {
-    await saveSyncServerCredentials({
-      ...creds,
-      lastSyncAt: new Date().toISOString(),
-    });
-  }
-}
-
-// ============ Synced Credentials (from remote server) ============
-
-/**
- * Save credentials fetched from remote server (RunPod, BigBrother, etc.)
- */
-export async function saveSyncedCredentials(creds: SyncedCredentials): Promise<void> {
-  await setSetting(SYNCED_CREDENTIALS_KEY, {
-    ...creds,
-    syncedAt: new Date().toISOString(),
-  });
-}
-
-/**
- * Get synced credentials (RunPod API key, etc.)
- */
-export async function getSyncedCredentials(): Promise<SyncedCredentials | null> {
-  return getSetting<SyncedCredentials | null>(SYNCED_CREDENTIALS_KEY, null);
-}
-
-/**
- * Clear synced credentials
- */
-export async function clearSyncedCredentials(): Promise<void> {
-  const db = await getDB();
-  await db.delete('settings', SYNCED_CREDENTIALS_KEY);
-}
-
-/**
- * Get RunPod API key from synced credentials
- */
-export async function getRunPodApiKey(): Promise<string | null> {
-  const creds = await getSyncedCredentials();
-  return creds?.runpod?.apiKey || null;
-}
-
-/**
- * Check if BigBrother escalation is enabled
- */
-export async function isBigBrotherEnabled(): Promise<boolean> {
-  const creds = await getSyncedCredentials();
-  return creds?.bigBrother?.enabled || false;
 }

@@ -71,11 +71,11 @@ The `brain/` layer contains agents and services above the core engine. They are 
 
 Examples include:
 
-- memory organizer, ingestor, pruner, sync, and summarizer;
+- memory organizer and ingestor;
 - reflector, dreamer, daydreamer, train-of-thought, curiosity service, and inner curiosity;
 - desire generator, desire planner, desire executor, and outcome reviewer;
-- curator, night pipeline, training orchestrators, adapter builders, and model utilities;
-- transcriber, audio organizer, voice-training helpers, and maintenance services.
+- curator, training orchestrators, adapter builders, and model utilities;
+- audio organizer, voice-training helpers, and maintenance services.
 
 Full vector-index reconciliation is core engine work admitted through the Work Coordinator, including the final Sleep Workflow stage; it is not a separate agent or scheduler.
 

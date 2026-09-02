@@ -454,7 +454,6 @@ export const systemPaths = {
   brain: path.join(ROOT, 'brain'),
   agents: path.join(ROOT, 'brain', 'agents'),
   skills: path.join(ROOT, 'brain', 'skills'),
-  policies: path.join(ROOT, 'brain', 'policies'),
   logs: path.join(ROOT, 'logs'),
   run: path.join(ROOT, 'logs', 'run'),
   runAgents: path.join(ROOT, 'logs', 'run', 'agents'),
@@ -469,6 +468,9 @@ export const systemPaths = {
 
   // System-wide output directory
   out: path.join(ROOT, 'out'),
+
+  // Generated mobile release metadata and APKs
+  mobileReleases: path.join(ROOT, 'out', 'releases', 'mobile'),
 
   // Voice models (shared system-wide - these are large 60-120MB files)
   voiceModels: path.join(ROOT, 'out', 'voices'),

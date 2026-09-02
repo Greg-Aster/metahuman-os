@@ -15,6 +15,7 @@ function observation(): EnvironmentObservation {
     capabilities: {
       actions: ['robotCommand', 'captureImage'],
       robotCommands: ['stand'],
+      robotCommandDescriptions: { stand: 'move into the upright standing pose' },
       text: true,
       movement: true,
       visual: true,
@@ -36,12 +37,18 @@ test('instruction interpreter preserves current state and advertised capabilitie
     observation: observation(),
   }, {
     userMessage: 'Report the current device value.',
+    conversationInput: 'Report the current device value.',
   });
 
   assert.equal(result.instruction, 'Report the current device value.');
+  assert.equal(result.conversationInput, 'Report the current device value.');
   assert.equal(result.observation.state.device.status.currentValue, 12.4);
   assert.equal(result.observation.capabilities.visual, true);
   assert.equal(result.observation.capabilities.navigation, false);
+  assert.deepEqual(
+    result.observation.capabilities.robotCommandDescriptions,
+    { stand: 'move into the upright standing pose' },
+  );
   assert.equal(result.routingRequest, undefined);
 });
 
@@ -74,6 +81,7 @@ test('instruction interpreter restores the original objective from a persisted c
 
   const result = await environmentInstructionInterpreterNode.execute({ observation: input }, {});
   assert.equal(result.instruction, contract.objective);
+  assert.equal(result.conversationInput, '');
   assert.equal(result.observation.visual.id, 'visual-1');
   assert.equal(result.observation.visual.dataUrl, 'data:image/jpeg;base64,/9j/2gAA/9k=');
 });
@@ -158,12 +166,12 @@ test('Environment graph routes normalized input into the sole task-state owner',
 
   assert(observationEdge);
   assert(instructionEdge);
-  assert(graph.edges.some((candidate: Record<string, unknown>) => (
+  assert.equal(graph.edges.some((candidate: Record<string, unknown>) => (
     candidate.source === 'task-state-prepare'
     && candidate.sourceHandle === 'precomputedResponse'
     && candidate.target === '4'
     && candidate.targetHandle === 'precomputedResponse'
-  )));
+  )), false);
   assert.equal(prepare?.data?.nodeType, 'environment_task_state');
   assert.equal(prepare?.data?.properties?.phase, 'prepare');
   assert.equal(graph.nodes.some((candidate: Record<string, any>) => candidate.data?.nodeType === 'orchestrator_llm'), false);

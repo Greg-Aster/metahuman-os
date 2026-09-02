@@ -2,7 +2,7 @@
  * Train of Thought Agent — Module Definition
  *
  * Exports the AgentModule for registration with agent-runtime.
- * This is the entry point for in-process execution on mobile.
+ * This is the Agent Runtime registration entry point.
  */
 
 import type { AgentModule, AgentMeta } from '@metahuman/agent-runtime';
@@ -17,8 +17,7 @@ export const meta: AgentMeta = {
   description: 'Performs recursive reasoning by following memory associations',
   usesLLM: true,
   priority: 'low',
-  defaultInterval: 1800, // 30 minutes
-  tags: ['reasoning', 'llm', 'background', 'inner-dialogue', 'reflection'],
+  tags: ['reasoning', 'llm', 'follow-on', 'inner-dialogue'],
 };
 
 /**
@@ -31,15 +30,10 @@ const agent: AgentModule = {
 
 export default agent;
 
-// Re-export core functions for direct usage
 export {
-  runCycle,
-  executeTrainOfThoughtForUser,
-  loadTrainOfThoughtGraph,
-  getAllMemories,
-  extractKeywords,
-  selectSeedMemory,
+  evaluateTrainOfThoughtGraph,
+  parseTrainOfThoughtArgs,
+  runTrainOfThought,
   type TrainOfThoughtOptions,
-  type TrainOfThoughtResult,
-  type UserThoughtStats,
+  type TrainOfThoughtOutcome,
 } from './core.js';

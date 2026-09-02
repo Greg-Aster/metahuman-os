@@ -54,24 +54,24 @@ const config: TriggerManagerConfig = {
       inactivityThreshold: 1,
       maxRetries: 1,
     },
-    digest: {
-      id: 'digest',
+    'curiosity-researcher': {
+      id: 'curiosity-researcher',
       enabled: true,
       type: 'interval',
       lifecycle: 'scheduled-work',
-      handler: 'agent.digest',
+      handler: 'agent.curiosity-researcher',
       priority: 'low',
       allowedModes: ['semi', 'full'],
       startupPolicy: 'skip',
       interval: 1,
       maxRetries: 0,
     },
-    summarizer: {
-      id: 'summarizer',
+    'event-agent': {
+      id: 'event-agent',
       enabled: true,
       type: 'event',
       lifecycle: 'scheduled-work',
-      handler: 'agent.summarizer',
+      handler: 'agent.event-agent',
       priority: 'normal',
       allowedModes: ['reactive', 'semi', 'full'],
       startupPolicy: 'skip',
@@ -122,6 +122,14 @@ try {
   const initial = service.load();
 
   assert.equal(initial.scope, 'system');
+  assert.equal(initial.config.globalSettings.memoryContentMode, 'user');
+  const beforeValidation = fs.readFileSync(configPath, 'utf8');
+  service.validateUpdate({ agents: { mood: { enabled: false } } });
+  assert.equal(fs.readFileSync(configPath, 'utf8'), beforeValidation, 'trigger validation must not persist its preview');
+  assert.throws(
+    () => service.validateUpdate({ globalSettings: { memoryContentMode: 'unsupported' } }),
+    /must be all, user, or agent/,
+  );
   assert.equal(manager.getSnapshot().config.runtimeRevision, 1);
   assert.equal(manager.getSnapshot().timezone, 'UTC');
   assert.equal(manager.getSnapshot().triggers.some(trigger => trigger.id === 'boredom-observer'), false);
@@ -136,7 +144,7 @@ try {
 
   manager.start();
   assert.equal(manager.getSnapshot().lifecycle, 'running');
-  assert.ok(manager.getSnapshot().triggers.find(trigger => trigger.id === 'digest')?.nextRun);
+  assert.ok(manager.getSnapshot().triggers.find(trigger => trigger.id === 'curiosity-researcher')?.nextRun);
   const reactiveDue = manager.evaluateActivityTriggers(Date.now() + 2_000);
   assert.deepEqual(reactiveDue, []);
   assert.equal(manager.getSnapshot().triggers.find(trigger => trigger.id === 'reflector')?.lastSuppressionReason, 'mode:reactive');
@@ -148,7 +156,7 @@ try {
 
   manager.pauseAll();
   assert.equal(manager.triggerEvent('memory.updated').length, 0);
-  assert.equal(manager.getSnapshot().triggers.find(trigger => trigger.id === 'summarizer')?.lastSuppressionReason, 'global-pause');
+  assert.equal(manager.getSnapshot().triggers.find(trigger => trigger.id === 'event-agent')?.lastSuppressionReason, 'global-pause');
   manager.resumeAll();
   const eventTasks = manager.triggerEvent('memory.updated.detail');
   assert.equal(eventTasks.length, 1);
@@ -181,7 +189,7 @@ try {
   manager.setAutonomyMode('full');
   assert.equal(manager.getSnapshot().autonomyMode, 'full');
   await new Promise(resolve => setTimeout(resolve, 1_100));
-  const intervalTask = queue.getAllTasks().find(task => task.metadata?.triggerId === 'digest');
+  const intervalTask = queue.getAllTasks().find(task => task.metadata?.triggerId === 'curiosity-researcher');
   assert.ok(intervalTask, 'a due interval must be admitted in full mode');
   assert.equal(intervalTask?.metadata?.producer, 'trigger-manager');
 
@@ -193,6 +201,18 @@ try {
   assert.equal(snapshot.triggers.find(trigger => trigger.id === 'reflector')?.enabled, false);
   assert.deepEqual(manager.evaluateActivityTriggers(Date.now() + 5_000), []);
 
+  assert.deepEqual(
+    manager.evaluateActivityTriggers(Date.now() + 61_000),
+    [],
+    'idle-reset work must remain dormant outside Semi mode',
+  );
+  assert.equal(manager.getSnapshot().triggers.find(trigger => trigger.id === 'mood')?.lastSuppressionReason, 'mode:not-allowed');
+
+  manager.setAutonomyMode('reactive');
+  assert.deepEqual(manager.evaluateActivityTriggers(Date.now() + 61_000), []);
+  assert.equal(manager.getSnapshot().triggers.find(trigger => trigger.id === 'mood')?.lastSuppressionReason, 'mode:reactive');
+
+  manager.setAutonomyMode('semi');
   const idleTasks = manager.evaluateActivityTriggers(Date.now() + 61_000);
   assert.equal(idleTasks.length, 1, 'Mood should admit one baseline reset after its idle cooldown');
   const idleTask = queue.getTask(idleTasks[0]);
@@ -232,7 +252,7 @@ try {
     /belongs in services\.json/,
   );
   assert.throws(
-    () => service.update({ agents: { summarizer: { eventPattern: 'memory.*.invalid' } } }, 'test'),
+    () => service.update({ agents: { 'event-agent': { eventPattern: 'memory.*.invalid' } } }, 'test'),
     /only supports a trailing \.\* wildcard/,
   );
 

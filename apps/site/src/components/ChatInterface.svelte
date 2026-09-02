@@ -22,6 +22,7 @@
     closeEventSourceConnections,
     parseConversationStreamEvent,
     readLlmOptions,
+    responsePipelineCardTypeForReply,
   } from '../lib/client/conversation-transport';
   import { connectProposalsStream, disconnectProposalsStream } from '../stores/proposals';
   import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
@@ -316,8 +317,7 @@
     reason: 'user-input' | 'barge-in' | 'manual-stop' | 'speech-disabled',
   ): Promise<void> {
     const stopReason = reason === 'speech-disabled' ? 'disabled' : 'interrupted';
-    ttsApi.stopActiveAudio(stopReason);
-    ttsApi.cancelInFlightTts(stopReason);
+    ttsApi.interruptPlayback(stopReason);
     try {
       const response = await apiFetch('/api/tts-queue-interrupt', {
         method: 'POST',
@@ -1410,26 +1410,29 @@
     const wasReplying = $selectedMessage !== null;
     messagesApi.clearSelection();
 
-    // Route ALL selected card responses through the dedicated response pipeline
-    // This provides focused context and routes through Big Brother for tool execution
-    // The response pipeline handles ANY card type - not just agency cards
-    if (wasReplying && replyToContent && requestComposeTarget === 'conversation') {
+    const responsePipelineCardType = responsePipelineCardTypeForReply({
+      cognitiveMode: $currentMode,
+      cardType: replyToCardType,
+      questionId: replyToQuestionId,
+      desireId: replyToDesireId,
+      dialogueSource: replyToDialogueSource,
+      isAgencyMessage: isAgencyCardReply,
+    });
+
+    // Dedicated interactive cards keep their focused workflow. An ordinary
+    // selected-message reply in Environment mode stays on the Environment graph,
+    // which already receives replyToContent and owns semantic action decisions.
+    if (
+      wasReplying
+      && replyToContent
+      && requestComposeTarget === 'conversation'
+      && responsePipelineCardType
+    ) {
       sendInProgress = false; // Reset guard before delegating
 
-      // Determine the card type for context - use the card's type or derive from role/source
-      let effectiveCardType = replyToCardType || 'selected_card';
-      if (!effectiveCardType || effectiveCardType === 'selected_card') {
-        // Try to determine a more specific type from available metadata
-        if (isAgencyCardReply || replyToDialogueSource === 'agency-system') {
-          effectiveCardType = replyToDesireId ? 'desire_awaiting_input' : 'agency_notification';
-        } else if (replyToQuestionId) {
-          effectiveCardType = 'curiosity_response';
-        }
-      }
+      console.log(`[sendMessage] Routing to response pipeline: type=${responsePipelineCardType}, hasDesire=${!!replyToDesireId}`);
 
-      console.log(`[sendMessage] Routing to response pipeline: type=${effectiveCardType}, hasDesire=${!!replyToDesireId}`);
-
-      await sendResponsePipeline(userMessage, effectiveCardType, {
+      await sendResponsePipeline(userMessage, responsePipelineCardType, {
         desireId: replyToDesireId,
         desireTitle: replyToDesireTitle,
         content: replyToContent,

@@ -1,819 +1,140 @@
-/**
- * Profile Sync Handlers
- *
- * Handles full profile export/import for mobile sync.
- * Exports persona, configs, and memories (excluding out/ and audio files).
- */
+/** Thin profile-sync transport over the canonical Core owners. */
 
-import fs from 'fs';
-import path from 'path';
-import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { successResponse } from '../types.js';
-import { getProfilePaths } from '../../paths.js';
-import { verifyUserPassword } from '../../users.js';
+import type { EpisodicEvent } from '../../memory.js'
+import { scanEpisodicMemoryRecords } from '../../memory.js'
+import {
+  exportProfileSyncBundle,
+  importProfileSyncBundle,
+} from '../../profile-sync.js'
+import { verifyUserPassword } from '../../users.js'
+import type { UnifiedRequest, UnifiedResponse } from '../types.js'
+import { successResponse } from '../types.js'
 
-/**
- * File entry in the profile bundle
- */
-interface ProfileFile {
-  /** Relative path from profile root */
-  path: string;
-  /** File content (text) or base64 (binary) */
-  content: string;
-  /** Whether content is base64 encoded */
-  isBase64?: boolean;
+const MAX_MEMORY_PAGE_SIZE = 100
+const MAX_EXCLUDED_MEMORY_IDS = 100
+const MAX_MEMORY_DAYS = 3650
+
+function authenticatedSyncUsername(req: UnifiedRequest): string | null {
+  if (req.user.isAuthenticated) return req.user.username
+  if (req.method !== 'POST' || !req.body) return null
+  const { username, password } = req.body as { username?: unknown; password?: unknown }
+  if (typeof username !== 'string' || typeof password !== 'string') return null
+  return verifyUserPassword(username, password) ? username : null
 }
 
-/**
- * Profile export bundle
- */
-interface ProfileBundle {
-  version: string;
-  exportedAt: string;
-  username: string;
-  files: ProfileFile[];
-  stats: {
-    totalFiles: number;
-    totalSize: number;
-    excludedFiles: number;
-  };
-}
-
-/**
- * Patterns to exclude from full export
- */
-const EXCLUDE_PATTERNS = [
-  /^out\//,                    // Generated outputs (adapters, etc.)
-  /\.mp3$/i,                   // Audio files
-  /\.wav$/i,
-  /\.ogg$/i,
-  /\.m4a$/i,
-  /\.flac$/i,
-  /\.aac$/i,
-  /^memory\/inbox\//,          // Raw inbox files (potentially large)
-  /^memory\/index\//,          // Vector index (regeneratable)
-  /^state\/.*\.lock$/,         // Lock files
-  /\.tmp$/,                    // Temp files
-];
-
-/**
- * Priority files for initial mobile sync (essential profile data only)
- */
-const PRIORITY_PATTERNS = [
-  /^persona\//,                // All persona files (core, relationships, etc.)
-  /^etc\//,                    // All configuration files
-  /^state\/conversation-buffer.*\.json$/,  // Recent conversation state
-];
-
-/**
- * Patterns to exclude from initial priority sync (defer to later chunks)
- */
-const INITIAL_EXCLUDE_PATTERNS = [
-  ...EXCLUDE_PATTERNS,
-  /^memory\/episodic\//,       // Defer episodic memories to chunked sync
-  /^memory\/tasks\//,          // Defer task history to chunked sync
-  /^training-data\//,          // Defer training data (very large)
-  /^logs\//,                   // Defer historical logs
-];
-
-/**
- * Max file size to include (10MB)
- */
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
-
-/**
- * Check if a file should be excluded from full export
- */
-function shouldExclude(relativePath: string): boolean {
-  return EXCLUDE_PATTERNS.some(pattern => pattern.test(relativePath));
-}
-
-/**
- * Check if a file should be included in priority sync (essential files only)
- */
-function shouldIncludeInPrioritySync(relativePath: string): boolean {
-  // Must match priority patterns AND not be excluded
-  const matchesPriority = PRIORITY_PATTERNS.some(pattern => pattern.test(relativePath));
-  const isExcluded = INITIAL_EXCLUDE_PATTERNS.some(pattern => pattern.test(relativePath));
-  return matchesPriority && !isExcluded;
-}
-
-/**
- * Recursively collect files from a directory
- */
-function collectFiles(
-  dir: string,
-  baseDir: string,
-  files: ProfileFile[],
-  stats: { totalSize: number; excludedFiles: number }
-): void {
-  if (!fs.existsSync(dir)) return;
-
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    const relativePath = path.relative(baseDir, fullPath);
-
-    if (entry.isDirectory()) {
-      // Skip excluded directories
-      if (shouldExclude(relativePath + '/')) {
-        continue;
-      }
-      collectFiles(fullPath, baseDir, files, stats);
-    } else if (entry.isFile()) {
-      // Check exclusions
-      if (shouldExclude(relativePath)) {
-        stats.excludedFiles++;
-        continue;
-      }
-
-      // Check file size
-      const stat = fs.statSync(fullPath);
-      if (stat.size > MAX_FILE_SIZE) {
-        console.log(`[profile-sync] Skipping large file: ${relativePath} (${stat.size} bytes)`);
-        stats.excludedFiles++;
-        continue;
-      }
-
-      try {
-        // Read file content
-        const content = fs.readFileSync(fullPath);
-
-        // Check if it's a text file (JSON, etc.)
-        const isText = /\.(json|txt|md|yaml|yml|toml|csv)$/i.test(entry.name);
-
-        if (isText) {
-          files.push({
-            path: relativePath,
-            content: content.toString('utf-8'),
-          });
-        } else {
-          // Binary file - base64 encode
-          files.push({
-            path: relativePath,
-            content: content.toString('base64'),
-            isBase64: true,
-          });
-        }
-
-        stats.totalSize += stat.size;
-      } catch (err) {
-        console.error(`[profile-sync] Error reading file ${relativePath}:`, err);
-      }
-    }
+function positiveInteger(value: unknown, field: string, maximum: number, fallback?: number): number {
+  if (value === undefined || value === null || value === '') {
+    if (fallback !== undefined) return fallback
+    throw new Error(`${field} is required`)
   }
-}
-
-/**
- * Collect priority files only (persona, config, conversation buffer)
- */
-function collectPriorityFiles(
-  dir: string,
-  baseDir: string,
-  files: ProfileFile[],
-  stats: { totalSize: number; excludedFiles: number }
-): void {
-  if (!fs.existsSync(dir)) return;
-
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    const relativePath = path.relative(baseDir, fullPath);
-
-    if (entry.isDirectory()) {
-      // Skip directories that don't contain priority files
-      const hasPriorityFiles = PRIORITY_PATTERNS.some(pattern =>
-        pattern.source.startsWith('^' + relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-      );
-
-      if (hasPriorityFiles) {
-        collectPriorityFiles(fullPath, baseDir, files, stats);
-      }
-    } else if (entry.isFile()) {
-      // Only include files that match priority patterns
-      if (!shouldIncludeInPrioritySync(relativePath)) {
-        stats.excludedFiles++;
-        continue;
-      }
-
-      // Check file size
-      const stat = fs.statSync(fullPath);
-      if (stat.size > MAX_FILE_SIZE) {
-        console.log(`[profile-sync] Skipping large priority file: ${relativePath} (${stat.size} bytes)`);
-        stats.excludedFiles++;
-        continue;
-      }
-
-      try {
-        // Read file content
-        const content = fs.readFileSync(fullPath);
-        const isText = /\.(json|txt|md|yaml|yml|toml|csv)$/i.test(entry.name);
-
-        files.push({
-          path: relativePath,
-          content: isText ? content.toString('utf-8') : content.toString('base64'),
-          isBase64: !isText,
-        });
-
-        stats.totalSize += stat.size;
-      } catch (err) {
-        console.error(`[profile-sync] Error reading priority file ${relativePath}:`, err);
-      }
-    }
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) {
+    throw new Error(`${field} must be a positive integer no greater than ${maximum}`)
   }
+  return parsed
 }
 
-/**
- * GET/POST /api/profile-sync/export-priority - Export essential profile files for initial sync
- *
- * Returns a minimal bundle with only persona, config, and conversation buffer.
- * This avoids OOM crashes on mobile by excluding large memory/training data.
- *
- * Supports two auth methods:
- * 1. Cookie-based (GET): Uses mh_session cookie (same-origin requests)
- * 2. Credentials in body (POST): For cross-origin mobile sync where cookies don't work
- */
+function nonNegativeInteger(value: unknown, field: string): number {
+  const parsed = value === undefined || value === null || value === '' ? 0 : Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${field} must be a non-negative integer`)
+  return parsed
+}
+
+function memoryQuery(req: UnifiedRequest): Record<string, unknown> {
+  return req.method === 'POST' && req.body
+    ? { ...(req.query ?? {}), ...req.body }
+    : { ...(req.query ?? {}) }
+}
+
+function excludedIds(value: unknown): Set<string> {
+  if (value === undefined || value === null || value === '') return new Set()
+  const values = Array.isArray(value) ? value : String(value).split(',')
+  if (values.length > MAX_EXCLUDED_MEMORY_IDS) {
+    throw new Error(`exclude must contain at most ${MAX_EXCLUDED_MEMORY_IDS} memory ids`)
+  }
+  const normalized = values.map(item => String(item).trim()).filter(Boolean)
+  if (normalized.some(item => item.length > 256)) throw new Error('Memory ids must not exceed 256 characters')
+  return new Set(normalized)
+}
+
+function cutoffTimestamp(query: Record<string, unknown>): number | null {
+  if (query.since !== undefined && query.since !== null && query.since !== '') {
+    if (typeof query.since !== 'string') throw new Error('since must be an ISO timestamp')
+    const parsed = Date.parse(query.since)
+    if (Number.isNaN(parsed)) throw new Error('since must be an ISO timestamp')
+    return parsed
+  }
+  if (query.days !== undefined && query.days !== null && query.days !== '') {
+    const days = positiveInteger(query.days, 'days', MAX_MEMORY_DAYS)
+    return Date.now() - days * 24 * 60 * 60 * 1000
+  }
+  return null
+}
+
+function collectMemories(username: string): EpisodicEvent[] {
+  const memories: EpisodicEvent[] = []
+  const failures: string[] = []
+  for (const outcome of scanEpisodicMemoryRecords(username)) {
+    if (outcome.status === 'record') memories.push(outcome.record.event)
+    else failures.push(`${outcome.relativePath}: ${outcome.error}`)
+  }
+  if (failures.length > 0) throw new Error(`Cannot export all episodic memories: ${failures.join('; ')}`)
+  return memories
+}
+
+/** POST /api/profile-sync/export-priority */
 export async function handleExportPriorityProfile(req: UnifiedRequest): Promise<UnifiedResponse> {
-  let authenticatedUsername: string | null = null;
-
-  // Method 1: Try cookie-based auth (works for same-origin)
-  if (req.user.isAuthenticated) {
-    authenticatedUsername = req.user.username;
+  const username = authenticatedSyncUsername(req)
+  if (!username) return { status: 401, error: 'Valid profile credentials are required' }
+  try {
+    return successResponse(await exportProfileSyncBundle(username))
+  } catch (error) {
+    return { status: 500, error: (error as Error).message }
   }
-  // Method 2: Try credentials in body (for cross-origin mobile sync)
-  else if (req.method === 'POST' && req.body) {
-    const { username, password } = req.body as { username?: string; password?: string };
-    if (username && password) {
-      // Validate credentials directly
-      if (verifyUserPassword(username, password)) {
-        authenticatedUsername = username;
-        console.log(`[profile-sync] Authenticated via POST credentials: ${username}`);
-      } else {
-        return {
-          status: 401,
-          error: 'Invalid credentials',
-        };
-      }
-    }
-  }
-
-  if (!authenticatedUsername) {
-    return {
-      status: 401,
-      error: 'Authentication required. Use cookie auth (GET) or pass credentials in body (POST).',
-    };
-  }
-
-  // Use the authenticated username for the rest of the handler
-  const user = { username: authenticatedUsername, isAuthenticated: true };
-
-  const profilePaths = getProfilePaths(user.username);
-  const profileRoot = profilePaths.root;
-
-  // DEBUG: Log what path we resolved
-  console.log(`[profile-sync] Profile path for ${user.username}: ${profileRoot}`);
-
-  if (!fs.existsSync(profileRoot)) {
-    return {
-      status: 404,
-      error: 'Profile not found',
-    };
-  }
-
-  console.log(`[profile-sync] Exporting priority profile for ${user.username}`);
-
-  const files: ProfileFile[] = [];
-  const stats = { totalSize: 0, excludedFiles: 0 };
-
-  // Collect only priority files
-  collectPriorityFiles(profileRoot, profileRoot, files, stats);
-
-  const bundle: ProfileBundle = {
-    version: '1.0.0',
-    exportedAt: new Date().toISOString(),
-    username: user.username,
-    files,
-    stats: {
-      totalFiles: files.length,
-      totalSize: stats.totalSize,
-      excludedFiles: stats.excludedFiles,
-    },
-  };
-
-  console.log(`[profile-sync] Priority export complete: ${files.length} files, ${stats.totalSize} bytes`);
-
-  return successResponse(bundle);
 }
 
-/**
- * GET /api/profile-sync/export - Export full profile for sync
- *
- * Returns a JSON bundle containing all profile files.
- * Excludes: out/, audio files, inbox, vector index.
- */
-export async function handleExportProfile(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user } = req;
-
-  if (!user.isAuthenticated) {
-    return {
-      status: 401,
-      error: 'Authentication required',
-    };
-  }
-
-  const profilePaths = getProfilePaths(user.username);
-  const profileRoot = profilePaths.root;
-
-  if (!fs.existsSync(profileRoot)) {
-    return {
-      status: 404,
-      error: 'Profile not found',
-    };
-  }
-
-  console.log(`[profile-sync] Exporting profile for ${user.username}`);
-
-  const files: ProfileFile[] = [];
-  const stats = { totalSize: 0, excludedFiles: 0 };
-
-  // Collect all files from profile directory
-  collectFiles(profileRoot, profileRoot, files, stats);
-
-  const bundle: ProfileBundle = {
-    version: '1.0.0',
-    exportedAt: new Date().toISOString(),
-    username: user.username,
-    files,
-    stats: {
-      totalFiles: files.length,
-      totalSize: stats.totalSize,
-      excludedFiles: stats.excludedFiles,
-    },
-  };
-
-  console.log(`[profile-sync] Exported ${files.length} files (${Math.round(stats.totalSize / 1024)}KB), excluded ${stats.excludedFiles}`);
-
-  return successResponse(bundle);
-}
-
-/**
- * POST /api/profile-sync/import - Import profile bundle
- *
- * Writes files from the bundle to the local profile directory.
- * Used by mobile to receive synced profile data.
- */
+/** POST /api/profile-sync/import */
 export async function handleImportProfile(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, body } = req;
-
-  if (!user.isAuthenticated) {
-    return {
-      status: 401,
-      error: 'Authentication required',
-    };
-  }
-
-  const bundle = body as ProfileBundle;
-
-  if (!bundle || !bundle.files || !Array.isArray(bundle.files)) {
-    return {
-      status: 400,
-      error: 'Invalid profile bundle',
-    };
-  }
-
-  const profilePaths = getProfilePaths(user.username);
-  const profileRoot = profilePaths.root;
-
-  // Ensure profile directory exists
-  if (!fs.existsSync(profileRoot)) {
-    fs.mkdirSync(profileRoot, { recursive: true });
-  }
-
-  console.log(`[profile-sync] Importing ${bundle.files.length} files for ${user.username}`);
-
-  let imported = 0;
-  let errors = 0;
-
-  for (const file of bundle.files) {
-    try {
-      const fullPath = path.join(profileRoot, file.path);
-      const dir = path.dirname(fullPath);
-
-      // Ensure directory exists
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
-      // Write file
-      if (file.isBase64) {
-        fs.writeFileSync(fullPath, Buffer.from(file.content, 'base64'));
-      } else {
-        fs.writeFileSync(fullPath, file.content, 'utf-8');
-      }
-
-      imported++;
-    } catch (err) {
-      console.error(`[profile-sync] Error writing file ${file.path}:`, err);
-      errors++;
-    }
-  }
-
-  console.log(`[profile-sync] Imported ${imported} files, ${errors} errors`);
-
-  return successResponse({
-    success: true,
-    imported,
-    errors,
-    username: user.username,
-  });
-}
-
-/**
- * GET /api/profile-sync/metadata - Get profile metadata for sync
- */
-export async function handleGetProfileMetadata(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user } = req;
-
-  if (!user.isAuthenticated) {
-    return {
-      status: 401,
-      error: 'Authentication required',
-    };
-  }
-
-  const profilePaths = getProfilePaths(user.username);
-  
-  if (!fs.existsSync(profilePaths.root)) {
-    return {
-      status: 404,
-      error: 'Profile not found',
-    };
-  }
-
-  // Count persona files
-  const personaKeys = ['core', 'relationships', 'routines', 'decision-rules'];
-  const availablePersonaKeys = personaKeys.filter(key => {
-    const filePath = path.join(profilePaths.persona, `${key}.json`);
-    return fs.existsSync(filePath);
-  });
-
-  // Count memory files
-  let memoryCount = 0;
-  const episodicDir = path.join(profilePaths.episodic);
-  if (fs.existsSync(episodicDir)) {
-    const years = fs.readdirSync(episodicDir, { withFileTypes: true })
-      .filter(dirent => dirent.isDirectory())
-      .map(dirent => dirent.name);
-    
-    for (const year of years) {
-      const yearDir = path.join(episodicDir, year);
-      if (fs.existsSync(yearDir)) {
-        const files = fs.readdirSync(yearDir)
-          .filter(file => file.endsWith('.json'));
-        memoryCount += files.length;
-      }
-    }
-  }
-
-  return successResponse({
-    username: user.username,
-    personaKeys: availablePersonaKeys,
-    memoryCount,
-    lastModified: new Date().toISOString(),
-  });
-}
-
-/**
- * GET/POST /api/profile-sync/memories - Get paginated memories for sync
- *
- * Query params:
- *   - offset: Starting index (default 0)
- *   - limit: Max memories per page (default 100)
- *   - days: Only include memories from the last N days (default: all)
- *   - since: Only include memories after this ISO date (alternative to days)
- *
- * Supports two auth methods:
- * 1. Cookie-based (GET): Uses mh_session cookie (same-origin requests)
- * 2. Credentials in body (POST): For cross-origin mobile sync where cookies don't work
- */
-export async function handleGetProfileMemories(req: UnifiedRequest): Promise<UnifiedResponse> {
-  console.log('[profile-sync] ====== MEMORIES ENDPOINT CALLED ======');
-  console.log('[profile-sync] Method:', req.method);
-
-  let authenticatedUsername: string | null = null;
-
-  // Method 1: Try cookie-based auth (works for same-origin)
-  if (req.user.isAuthenticated) {
-    authenticatedUsername = req.user.username;
-    console.log('[profile-sync] Memories: Authenticated via cookie:', authenticatedUsername);
-  }
-  // Method 2: Try credentials in body (for cross-origin mobile sync)
-  else if (req.method === 'POST' && req.body) {
-    const { username, password } = req.body as { username?: string; password?: string };
-    if (username && password) {
-      if (verifyUserPassword(username, password)) {
-        authenticatedUsername = username;
-        console.log(`[profile-sync] Memories: Authenticated via POST credentials: ${username}`);
-      } else {
-        return { status: 401, error: 'Invalid credentials' };
-      }
-    }
-  }
-
-  if (!authenticatedUsername) {
-    return {
-      status: 401,
-      error: 'Authentication required. Use cookie auth (GET) or pass credentials in body (POST).',
-    };
-  }
-
-  // For POST requests, get query params from body
-  const query = req.method === 'POST' && req.body
-    ? { ...req.query, ...req.body }
-    : req.query;
-
-  const offset = parseInt(query?.offset || '0', 10);
-  const limit = parseInt(query?.limit || '100', 10);
-
-  // Date filtering options
-  const daysParam = query?.days ? parseInt(query.days, 10) : null;
-  const sinceParam = query?.since ? new Date(query.since) : null;
-
-  // Calculate cutoff date
-  let cutoffDate: Date | null = null;
-  if (daysParam && daysParam > 0) {
-    cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - daysParam);
-  } else if (sinceParam && !isNaN(sinceParam.getTime())) {
-    cutoffDate = sinceParam;
-  }
-
-  const profilePaths = getProfilePaths(authenticatedUsername);
-  const episodicDir = path.join(profilePaths.episodic);
-
-  const memories: any[] = [];
-
-  if (!fs.existsSync(episodicDir)) {
-    return successResponse({
-      memories: [],
-      hasMore: false,
-      total: 0,
-      filtered: cutoffDate ? true : false,
-    });
-  }
-
-  // Get list of memory IDs to exclude (already on device)
-  const excludeIds = query?.exclude
-    ? (Array.isArray(query.exclude) ? query.exclude : query.exclude.split(','))
-    : [];
-  const excludeSet = new Set(excludeIds);
-
-  // Collect memory files using FILENAME date prefix (efficient - no file reads)
-  // Files are named: YYYY-MM-DD-<uuid>.json
-  const allFiles: { path: string; filename: string; datePrefix: string }[] = [];
-
-  // Calculate cutoff date string for comparison (YYYY-MM-DD format)
-  const cutoffDateStr = cutoffDate
-    ? cutoffDate.toISOString().split('T')[0]  // "2024-01-15"
-    : null;
-
-  // Filter years first for efficiency
-  const cutoffYear = cutoffDate ? cutoffDate.getFullYear() : 0;
-
-  const years = fs.readdirSync(episodicDir, { withFileTypes: true })
-    .filter(dirent => dirent.isDirectory())
-    .filter(dirent => {
-      // Skip years before cutoff (if cutoff specified)
-      if (cutoffYear > 0) {
-        const year = parseInt(dirent.name, 10);
-        return !isNaN(year) && year >= cutoffYear;
-      }
-      return true;
+  if (!req.user.isAuthenticated) return { status: 401, error: 'Authentication required' }
+  try {
+    const result = await importProfileSyncBundle(req.user.username, req.body, {
+      expectedSourceUsername: req.user.username,
     })
-    .map(dirent => dirent.name);
-
-  for (const year of years) {
-    const yearDir = path.join(episodicDir, year);
-    if (fs.existsSync(yearDir)) {
-      const files = fs.readdirSync(yearDir)
-        .filter(file => file.endsWith('.json'))
-        .filter(file => {
-          // Extract date from filename: YYYY-MM-DD-<uuid>.json
-          const datePrefix = file.substring(0, 10);  // "2024-01-15"
-
-          // Filter by date prefix (string comparison works for ISO dates)
-          if (cutoffDateStr && datePrefix < cutoffDateStr) {
-            return false;
-          }
-
-          // Skip excluded IDs (extract ID from filename)
-          const memId = file.replace('.json', '');
-          if (excludeSet.has(memId)) {
-            return false;
-          }
-
-          return true;
-        })
-        .map(file => {
-          const filePath = path.join(yearDir, file);
-          const datePrefix = file.substring(0, 10);
-          return { path: filePath, filename: file, datePrefix };
-        });
-      allFiles.push(...files);
+    if (!result.success) {
+      return { status: 500, data: result, error: result.errors.join('; ') }
     }
+    return successResponse({ ...result, username: req.user.username })
+  } catch (error) {
+    return { status: 400, error: (error as Error).message }
   }
-
-  // Sort by date prefix (newest first) - string comparison works for ISO dates
-  allFiles.sort((a, b) => b.datePrefix.localeCompare(a.datePrefix));
-
-  // Apply pagination
-  const pageFiles = allFiles.slice(offset, offset + limit);
-
-  for (const fileInfo of pageFiles) {
-    try {
-      const content = fs.readFileSync(fileInfo.path, 'utf-8');
-      const memory = JSON.parse(content);
-
-      // Ensure required fields exist for sync push
-      // id: derive from filename if not present (format: YYYY-MM-DD-<uuid>.json)
-      if (!memory.id) {
-        memory.id = fileInfo.filename.replace('.json', '');
-      }
-      // type: default to 'observation' if not present
-      if (!memory.type) {
-        memory.type = 'observation';
-      }
-
-      memories.push(memory);
-    } catch (err) {
-      console.warn(`[profile-sync] Failed to read memory file ${fileInfo.path}:`, err);
-    }
-  }
-
-  const hasMore = offset + limit < allFiles.length;
-
-  console.log(`[profile-sync] Memories: ${allFiles.length} total${cutoffDate ? ` (filtered to last ${daysParam} days)` : ''}, excluded ${excludeSet.size}, returning ${memories.length} at offset ${offset}`);
-
-  return successResponse({
-    memories,
-    hasMore,
-    total: allFiles.length,
-    offset,
-    limit,
-    filtered: cutoffDate ? true : false,
-    cutoffDate: cutoffDate?.toISOString(),
-  });
 }
 
-/**
- * GET /api/profile-sync/tasks - Get tasks for sync
- */
-export async function handleGetProfileTasks(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user } = req;
-
-  if (!user.isAuthenticated) {
-    return {
-      status: 401,
-      error: 'Authentication required',
-    };
-  }
-
-  const profilePaths = getProfilePaths(user.username);
-  const tasksDir = path.join(profilePaths.tasks, 'active');
-
-  const tasks: any[] = [];
-
-  if (!fs.existsSync(tasksDir)) {
+/** GET/POST /api/profile-sync/memories */
+export async function handleGetProfileMemories(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const username = authenticatedSyncUsername(req)
+  if (!username) return { status: 401, error: 'Valid profile credentials are required' }
+  try {
+    const query = memoryQuery(req)
+    const offset = nonNegativeInteger(query.offset, 'offset')
+    const limit = positiveInteger(query.limit, 'limit', MAX_MEMORY_PAGE_SIZE, MAX_MEMORY_PAGE_SIZE)
+    const cutoff = cutoffTimestamp(query)
+    const exclude = excludedIds(query.exclude)
+    const memories = collectMemories(username)
+      .filter(memory => cutoff === null || Date.parse(memory.timestamp) > cutoff)
+      .filter(memory => !exclude.has(memory.id))
+      .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
+    const page = memories.slice(offset, offset + limit)
     return successResponse({
-      tasks: [],
-    });
+      memories: page,
+      hasMore: offset + page.length < memories.length,
+      total: memories.length,
+      offset,
+      limit,
+      filtered: cutoff !== null,
+    })
+  } catch (error) {
+    const message = (error as Error).message
+    const validation = /must|required|at most|timestamp|ids/.test(message)
+    return { status: validation ? 400 : 500, error: message }
   }
-
-  const taskFiles = fs.readdirSync(tasksDir)
-    .filter(file => file.endsWith('.json'));
-
-  for (const file of taskFiles) {
-    try {
-      const filePath = path.join(tasksDir, file);
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const task = JSON.parse(content);
-      tasks.push(task);
-    } catch (err) {
-      console.warn(`[profile-sync] Failed to read task file ${file}:`, err);
-    }
-  }
-
-  return successResponse({
-    tasks,
-  });
-}
-
-/**
- * GET /api/profile-sync/changes - Get incremental changes since timestamp
- */
-export async function handleGetProfileChanges(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { user, query } = req;
-
-  if (!user.isAuthenticated) {
-    return {
-      status: 401,
-      error: 'Authentication required',
-    };
-  }
-
-  const since = query?.since ? new Date(query.since) : new Date(0);
-  const profilePaths = getProfilePaths(user.username);
-
-  const changes: any = {
-    memories: [],
-    persona: {},
-    tasks: [],
-  };
-
-  // Check for memory changes
-  const episodicDir = path.join(profilePaths.episodic);
-  if (fs.existsSync(episodicDir)) {
-    const years = fs.readdirSync(episodicDir, { withFileTypes: true })
-      .filter(dirent => dirent.isDirectory())
-      .map(dirent => dirent.name);
-
-    for (const year of years) {
-      const yearDir = path.join(episodicDir, year);
-      if (fs.existsSync(yearDir)) {
-        const files = fs.readdirSync(yearDir)
-          .filter(file => file.endsWith('.json'));
-
-        for (const file of files) {
-          const filePath = path.join(yearDir, file);
-          const stat = fs.statSync(filePath);
-
-          if (stat.mtime > since) {
-            try {
-              const content = fs.readFileSync(filePath, 'utf-8');
-              const memory = JSON.parse(content);
-
-              // Ensure required fields exist for sync push
-              if (!memory.id) {
-                memory.id = file.replace('.json', '');
-              }
-              if (!memory.type) {
-                memory.type = 'observation';
-              }
-
-              changes.memories.push(memory);
-            } catch (err) {
-              console.warn(`[profile-sync] Failed to read changed memory ${file}:`, err);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Check for persona changes
-  const personaKeys = ['core', 'relationships', 'routines', 'decision-rules'];
-  for (const key of personaKeys) {
-    const filePath = path.join(profilePaths.persona, `${key}.json`);
-    if (fs.existsSync(filePath)) {
-      const stat = fs.statSync(filePath);
-      if (stat.mtime > since) {
-        try {
-          const content = fs.readFileSync(filePath, 'utf-8');
-          changes.persona[key] = JSON.parse(content);
-        } catch (err) {
-          console.warn(`[profile-sync] Failed to read changed persona ${key}:`, err);
-        }
-      }
-    }
-  }
-
-  // Check for task changes
-  const tasksDir = path.join(profilePaths.tasks, 'active');
-  if (fs.existsSync(tasksDir)) {
-    const taskFiles = fs.readdirSync(tasksDir)
-      .filter(file => file.endsWith('.json'));
-
-    for (const file of taskFiles) {
-      const filePath = path.join(tasksDir, file);
-      const stat = fs.statSync(filePath);
-      
-      if (stat.mtime > since) {
-        try {
-          const content = fs.readFileSync(filePath, 'utf-8');
-          const task = JSON.parse(content);
-          changes.tasks.push(task);
-        } catch (err) {
-          console.warn(`[profile-sync] Failed to read changed task ${file}:`, err);
-        }
-      }
-    }
-  }
-
-  return successResponse({
-    changes,
-    since: since.toISOString(),
-    timestamp: new Date().toISOString(),
-  });
 }

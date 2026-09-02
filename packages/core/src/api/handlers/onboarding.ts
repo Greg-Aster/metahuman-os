@@ -124,13 +124,6 @@ export async function handleSkipOnboarding(req: UnifiedRequest): Promise<Unified
             'Drop files in: memory/inbox/',
           ],
         },
-        audioUpload: {
-          description: 'Upload voice recordings for transcription',
-          locations: [
-            'Audio view → Upload tab',
-            'CLI: ./bin/mh audio ingest <file>',
-          ],
-        },
         taskCreation: {
           description: 'Create goals and to-do items',
           locations: [

@@ -1,42 +1,54 @@
-/**
- * Persona Summary Loader Node
- * Loads and formats persona data for curator context
- */
-
-import fs from 'node:fs';
-import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { getProfilePaths } from '../../paths.js';
+import { loadPersonaWithFacet, type PersonaCore } from '../../identity.js';
+import {
+  getActivePersonaGoals,
+  getPersonaBackground,
+  getPersonaName,
+  getPersonaTraitDescriptions,
+  getPersonaValueNames,
+} from '../../persona-summary.js';
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function summaryLine(label: string, values: string[]): string | null {
+  return values.length > 0 ? `${label}: ${values.join(', ')}` : null;
+}
+
+/** Format the canonical active persona into the bounded context Curator needs. */
+export function buildCuratorPersonaSummary(persona: PersonaCore): string {
+  const identity = persona.identity;
+  const role = nonEmptyString(identity?.role);
+  const purpose = nonEmptyString(identity?.purpose);
+  const background = getPersonaBackground(persona);
+  const lines = [
+    `Name: ${getPersonaName(persona)}`,
+    role ? `Role: ${role}` : null,
+    purpose ? `Purpose: ${purpose}` : null,
+    summaryLine('Core Values', getPersonaValueNames(persona)),
+    summaryLine('Personality Traits', getPersonaTraitDescriptions(persona)),
+    summaryLine('Active Goals', getActivePersonaGoals(persona)),
+    background ? `Background: ${background}` : null,
+  ].filter((line): line is string => Boolean(line));
+
+  return lines.join('\n');
+}
 
 const execute: NodeExecutor = async (_inputs, context, _properties) => {
   if (!context.userId) {
     throw new Error('Curator requires a userId to load persona context');
   }
 
-  const profilePaths = getProfilePaths(context.userId);
-  const personaCorePath = path.join(profilePaths.persona, 'core.json');
-  if (!fs.existsSync(personaCorePath)) {
-    throw new Error(`Curator persona context is missing for user ${context.userId}`);
+  const persona = loadPersonaWithFacet();
+  if (!persona) {
+    throw new Error(`Curator requires an active persona context for user ${context.userId}`);
   }
 
-  let personaData: any;
-  try {
-    personaData = JSON.parse(fs.readFileSync(personaCorePath, 'utf-8'));
-  } catch (error) {
-    throw new Error(`Curator persona context is invalid for user ${context.userId}: ${(error as Error).message}`);
+  const personaSummary = buildCuratorPersonaSummary(persona);
+  if (!personaSummary) {
+    throw new Error(`Curator persona context is empty for user ${context.userId}`);
   }
-
-  if (!personaData || typeof personaData !== 'object' || Array.isArray(personaData)) {
-    throw new Error(`Curator persona context must be an object for user ${context.userId}`);
-  }
-
-  const personaSummary = `
-Name: ${personaData.identity?.name || context.userId}
-Role: ${personaData.identity?.role || 'User'}
-Communication Style: ${personaData.personality?.communicationStyle || 'Natural and conversational'}
-Core Values: ${personaData.coreValues?.join(', ') || 'Not specified'}
-Interests: ${personaData.interests?.join(', ') || 'Various topics'}
-`.trim();
 
   return {
     personaSummary,

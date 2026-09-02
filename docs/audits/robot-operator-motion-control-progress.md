@@ -7,6 +7,10 @@ diagnosis, software-only safety improvements, latency reduction, and eventual
 camera-feedback control. Update it when an implementation step is started,
 completed, validated, reverted, or materially redesigned.
 
+Status reviewed: 2026-08-31. The latest recorded implementation evidence in
+this ledger is dated 2026-08-22. This documentation cleanup does not establish
+later live-runtime, camera, network, or physical-motion behavior.
+
 This is a progress record, not a competing architecture authority. The broader
 mode philosophy and implementation sequence remain in
 `docs/implementation-plans/robot-active-operator-roadmap.md`. Environment Mode
@@ -6114,7 +6118,7 @@ Scene contract:
   creature used during model selection. The query is frozen as `silver metal
   bottle`.
 - Captured visible, partial-cover, absent, and returned phases under
-  `/home/greggles/Ainekio/recordings/active-view/20260806-heldout-scene-01-silver-white`.
+  `Ainekio/recordings/active-view/20260806-heldout-scene-01-silver-white`.
   Each phase contains 24 ordered VGA previews and one XGA annotation still,
   reports `physicalMotion: false`, and ends with a correlated camera-off
   acknowledgement. The complete scene contains 100 frames.
@@ -6165,7 +6169,7 @@ Second scene:
   red hand tool on tan backing. This is a different target instance and a
   substantially different low floor-level scene from held-out scene one.
 - Captured visible, partial-cover, absent, and returned phases under
-  `/home/greggles/Ainekio/recordings/active-view/20260806-heldout-scene-02-soda-red-tool`.
+  `Ainekio/recordings/active-view/20260806-heldout-scene-02-soda-red-tool`.
   Every phase contains 24 ordered VGA previews and one XGA annotation still,
   reports `physicalMotion: false`, and ends with a correlated camera-off
   acknowledgement. The complete scene contains 100 frames.

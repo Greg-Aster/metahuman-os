@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveCuriosityAnswer, type ResponsePipelineRequest } from './response-pipeline.js';
+import {
+  buildResponsePipelineExecutionContext,
+  resolveCuriosityAnswer,
+  type ResponsePipelineRequest,
+} from './response-pipeline.js';
 
 function request(cardType: string, questionId?: string): ResponsePipelineRequest {
   return {
@@ -30,4 +34,24 @@ test('curiosity response without a question id fails instead of reporting succes
     () => resolveCuriosityAnswer(request('curiosity_response'), 'alice'),
     /requires a questionId/,
   );
+});
+
+test('response pipeline execution uses a real cognitive mode for memory policy', () => {
+  const environment = buildResponsePipelineExecutionContext(
+    request('curiosity_response', 'cur-q-one'),
+    'alice',
+    'environment',
+  );
+  assert.equal(environment.cognitiveMode, 'environment');
+  assert.equal(environment.allowMemoryWrites, true);
+  assert.equal(environment.recordPersonaMemory, true);
+
+  const emulation = buildResponsePipelineExecutionContext(
+    request('curiosity_response', 'cur-q-one'),
+    'alice',
+    'emulation',
+  );
+  assert.equal(emulation.cognitiveMode, 'emulation');
+  assert.equal(emulation.allowMemoryWrites, false);
+  assert.equal(emulation.recordPersonaMemory, true);
 });

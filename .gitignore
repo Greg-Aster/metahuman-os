@@ -83,6 +83,9 @@ profiles/*/etc/*.pem
 /memory/*
 !/memory/README.md
 
+# Legacy runtime journal area (journal memories are profile-scoped)
+/brain/journal/
+
 # Personal logs and audit trails
 /logs/**
 !/logs/README.md
@@ -143,13 +146,9 @@ build/
 # Mobile build artifacts (large binary files - regenerate with build-mobile.sh)
 *mobile-build-backup*
 
-# APK downloads (built artifacts, too large for git)
-apps/site/public/downloads/*.apk
-
 # React Native build artifacts
 apps/react-native/node_modules/
 apps/react-native/generated/
-apps/react-native/releases/
 apps/react-native/android/app/debug.keystore
 apps/react-native/android/app/build/
 apps/react-native/android/app/src/main/assets/index.android.bundle
@@ -202,9 +201,10 @@ Thumbs.db
 # ============================================
 /metahuman-runs/
 /docs/archive/*
+!/docs/archive/audits/
+!/docs/archive/audits/**
 !/docs/archive/user-guide-legacy/
 !/docs/archive/user-guide-legacy/**
-/docs/run_logs/
 *.pid
 *.lock
 !pnpm-lock.yaml
@@ -224,7 +224,7 @@ secrets/
 # ============================================
 # AI TOOL CONFIGURATIONS (Local settings, not tracked)
 # ============================================
-AGENTS.md
+# AGENTS.md is tracked repository guidance, not machine-local configuration.
 CLAUDE.md
 GEMINI.md
 .ai-config/

@@ -28,8 +28,12 @@ const JSON_OUT = path.join(OUT_DIR, 'maintained-source-inventory.json');
 const MD_OUT = path.join(OUT_DIR, 'maintained-source-inventory.md');
 const maintainedPolicy = loadMaintainedSourcePolicy(ROOT);
 
-function gitLsFiles(): string[] {
-  return execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' })
+function gitSourceFiles(): string[] {
+  return execFileSync(
+    'git',
+    ['ls-files', '--cached', '--others', '--exclude-standard'],
+    { cwd: ROOT, encoding: 'utf8' },
+  )
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
@@ -39,7 +43,7 @@ function isMaintained(file: string): boolean {
   return existsSync(path.join(ROOT, file)) && isMaintainedSourcePath(file, maintainedPolicy);
 }
 
-const maintainedFiles = gitLsFiles().filter(isMaintained);
+const maintainedFiles = gitSourceFiles().filter(isMaintained);
 if (LIST) {
   process.stdout.write(maintainedFiles.join('\n') + (maintainedFiles.length > 0 ? '\n' : ''));
   process.exit(0);
@@ -51,9 +55,7 @@ function areaFor(file: string): string {
   if (file.startsWith('brain/agents/')) return 'agents';
   if (file.startsWith('brain/services/')) return 'brain-services';
   if (file.startsWith('brain/training/')) return 'training';
-  if (file.startsWith('brain/scripts/')) return 'brain-scripts';
   if (file === 'brain/mobile-agents.ts' || file === 'brain/mobile-handlers.ts') return 'mobile-runtime';
-  if (file.startsWith('brain/policies/') || file.startsWith('brain/rules/')) return 'brain-policy';
   if (file.startsWith('packages/cli/')) return 'cli';
   if (file.startsWith('packages/agent-runtime/')) return 'agent-runtime';
   if (file.startsWith('packages/local-model-service/')) return 'local-model-service';

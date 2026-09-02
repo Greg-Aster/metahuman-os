@@ -93,11 +93,12 @@ for (const file of files) {
       throw new Error(`Invalid cognitiveMode: "${graph.cognitiveMode}". Must be one of: ${VALID_MODES.join(', ')}, or omit the field for cross-mode graphs.`);
     }
 
-    // Maintained conversational graphs use strict runtime wiring: every handle
-    // and persisted property must match a registered node contract.
+    // Ownership-sensitive graphs use strict runtime wiring: every handle and
+    // persisted property must match a registered node contract.
     if (
       file === 'dual-mode.json'
       || file === 'environment-mode.json'
+      || file === 'curator-mode.json'
       || file === 'boredom-observer-mode.json'
       || file === 'boredom-movement-mode.json'
       || file === 'boredom-reflection-mode.json'

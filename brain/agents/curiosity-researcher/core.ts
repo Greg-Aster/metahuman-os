@@ -14,15 +14,14 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 import {
   audit,
   callLLM,
-  captureEventWithDetails,
   curiosityQuestionStore,
   getProfilePaths,
   getTargetUser,
   loadCuriosityConfig,
-  queryIndex,
+  queryIndexWithReconciliation,
   safeWriteJSON,
+  submitInnerReflectionWithResult,
   withUserContext,
-  type CaptureResult,
   type CuriosityQuestionRecord,
   type RouterMessage,
   type VectorIndexItem,
@@ -85,7 +84,15 @@ export interface CuriosityResearchDependencies {
     username: string,
     priorResearch: CompletedCuriosityResearch[],
   ) => Promise<CuriosityResearchFinding>
-  captureLearning: (record: PreparedCuriosityResearch) => Pick<CaptureResult, 'eventId' | 'filePath' | 'deduplicated'>
+  captureLearning: (record: PreparedCuriosityResearch, username: string) => Promise<{
+    eventId: string
+    filePath: string
+    deduplicated?: boolean
+  }> | {
+    eventId: string
+    filePath: string
+    deduplicated?: boolean
+  }
   writeRecord: (filePath: string, record: CuriosityResearchRecord) => void
   auditCompletion: (record: CompletedCuriosityResearch, username: string) => void
   now: () => string
@@ -241,7 +248,11 @@ export async function researchQuestion(
 
   const memoriesById = new Map<string, VectorIndexItem>()
   for (const topic of topics) {
-    const results = await queryIndex(topic, { topK: 5, username })
+    const results = await queryIndexWithReconciliation(topic, {
+      topK: 5,
+      username,
+      reconciliationSource: 'curiosity-researcher',
+    })
     for (const { item } of results) memoriesById.set(item.id, item)
   }
   const relatedMemories = [...memoriesById.values()].slice(0, 15)
@@ -281,25 +292,35 @@ export async function researchQuestion(
   }
 }
 
-function captureResearchLearning(record: PreparedCuriosityResearch): Pick<CaptureResult, 'eventId' | 'filePath' | 'deduplicated'> {
-  return captureEventWithDetails(
+async function captureResearchLearning(record: PreparedCuriosityResearch, username: string): Promise<{
+  eventId: string
+  filePath: string
+  deduplicated?: boolean
+}> {
+  const receipt = await submitInnerReflectionWithResult(
+    username,
     `Curiosity research ${record.questionId}\n\nQuestion explored: ${record.question}\n\nFinding: ${record.summary}`,
     {
-      type: 'inner_dialogue',
+      type: 'curiosity_research',
       importance: 0.65,
       tags: ['curiosity', 'curiosity-research', 'inner'],
-      metadata: {
-        dialogueSource: 'curiosity-researcher',
-        curiosityResearch: {
-          researchId: record.id,
-          questionId: record.questionId,
-          topics: record.topics,
-          sourceMemoryIds: record.sourceMemoryIds,
-          sourceResearchIds: record.sourceResearchIds,
-        },
+      dialogueSource: 'curiosity-researcher',
+      curiosityResearch: {
+        researchId: record.id,
+        questionId: record.questionId,
+        topics: record.topics,
+        sourceMemoryIds: record.sourceMemoryIds,
+        sourceResearchIds: record.sourceResearchIds,
       },
     },
+    {
+      idempotencyKey: record.id,
+      memoryTimestamp: record.preparedAt,
+    },
   )
+  const memory = receipt.memoryResults[0]
+  if (!memory?.filePath) throw new Error(`Memory capture returned no durable result for ${record.questionId}`)
+  return memory
 }
 
 const defaultDependencies: CuriosityResearchDependencies = {
@@ -325,13 +346,13 @@ const defaultDependencies: CuriosityResearchDependencies = {
   now: () => new Date().toISOString(),
 }
 
-function completePreparedResearch(
+async function completePreparedResearch(
   prepared: PreparedCuriosityResearch,
   recordPath: string,
   username: string,
   dependencies: CuriosityResearchDependencies,
-): void {
-  const capture = dependencies.captureLearning(prepared)
+): Promise<void> {
+  const capture = await dependencies.captureLearning(prepared, username)
   if (!capture.filePath && !capture.deduplicated) {
     throw new Error(`Memory capture returned no durable result for ${prepared.questionId}`)
   }
@@ -386,7 +407,7 @@ export async function processResearchQueue(
       }
       if (existing.status === 'completed') continue
 
-      completePreparedResearch(existing, recordPath, username, dependencies)
+      await completePreparedResearch(existing, recordPath, username, dependencies)
       return 1
     }
 
@@ -406,7 +427,7 @@ export async function processResearchQueue(
       preparedAt: dependencies.now(),
     }
     dependencies.writeRecord(recordPath, prepared)
-    completePreparedResearch(prepared, recordPath, username, dependencies)
+    await completePreparedResearch(prepared, recordPath, username, dependencies)
     return 1
   }
 

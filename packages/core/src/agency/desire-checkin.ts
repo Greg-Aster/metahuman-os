@@ -1,7 +1,7 @@
 import { audit } from '../audit.js';
 import {
-  submitAgencyConversationEntry,
   submitInnerReflection,
+  submitSystemEvent,
 } from '../buffer-admission.js';
 import { searchMemory } from '../memory.js';
 import { callLLMText } from '../model-router.js';
@@ -174,11 +174,12 @@ export async function runDesireCheckin(
       if (evaluation.questionsForUser.length > 0) {
         result.questionsGenerated += evaluation.questionsForUser.length;
         const questions = evaluation.questionsForUser.map((question, index) => `${index + 1}. ${question}`).join('\n');
-        await submitAgencyConversationEntry(
+        await submitSystemEvent(
           options.username,
           `**Check-in on "${desire.title}"**\n\n${evaluation.statusAssessment}\n\n**Questions**\n${questions}`,
           {
             dialogueSource: 'agency-system',
+            source: 'agency',
             displayColor: '#8b5cf6',
             type: 'desire_checkin_questions',
             desireId: desire.id,
@@ -195,11 +196,12 @@ export async function runDesireCheckin(
         const advanced = await advanceDesireMilestone(desire.id, options.username);
         if (advanced) {
           result.milestonesAdvanced += 1;
-          await submitAgencyConversationEntry(
+          await submitSystemEvent(
             options.username,
             `**Milestone complete: "${desire.title}"**\n\nCompleted: ${advanced.completedMilestone.title}${advanced.nextMilestone ? `\nNext: ${advanced.nextMilestone.title}` : ''}`,
             {
               dialogueSource: 'agency-system',
+              source: 'agency',
               displayColor: '#22c55e',
               type: 'milestone_advanced',
               desireId: desire.id,
@@ -208,11 +210,12 @@ export async function runDesireCheckin(
           );
         }
       } else if (evaluation.recommendation === 'escalate') {
-        await submitAgencyConversationEntry(
+        await submitSystemEvent(
           options.username,
           `**Attention needed: "${desire.title}"**\n\n${evaluation.statusAssessment}${evaluation.recommendationReason ? `\n\nReason: ${evaluation.recommendationReason}` : ''}`,
           {
             dialogueSource: 'agency-system',
+            source: 'agency',
             displayColor: '#ef4444',
             type: 'desire_checkin_escalate',
             desireId: desire.id,

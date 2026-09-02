@@ -27,6 +27,15 @@ export interface ResponsePipelineRequestBody {
   responseBufferId?: string;
 }
 
+export interface SelectedReplyRouteInput {
+  cognitiveMode: string;
+  cardType?: string | null;
+  questionId?: string | null;
+  desireId?: string | null;
+  dialogueSource?: string | null;
+  isAgencyMessage?: boolean;
+}
+
 export interface EventSourceConnectionRef {
   name: string;
   source: EventSource | null;
@@ -90,6 +99,19 @@ export function buildResponsePipelineRequestBody(
     cardData,
     responseBufferId: responseBufferId || undefined,
   };
+}
+
+export function responsePipelineCardTypeForReply(input: SelectedReplyRouteInput): string | null {
+  if (input.questionId) return 'curiosity_response';
+
+  const agencyReply = input.isAgencyMessage === true || input.dialogueSource === 'agency-system';
+  if (agencyReply) {
+    if (input.cardType && input.cardType !== 'selected_card') return input.cardType;
+    return input.desireId ? 'desire_awaiting_input' : 'agency_notification';
+  }
+
+  if (input.cognitiveMode === 'environment') return null;
+  return input.cardType || 'selected_card';
 }
 
 export function closeEventSourceConnections(logPrefix: string, connections: EventSourceConnectionRef[]): number {

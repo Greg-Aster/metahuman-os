@@ -21,7 +21,6 @@ export * from './response-pipeline.js';
 export * from './voice-settings.js';
 export * from './terminal.js';
 export * from './server-info.js';
-export * from './local-state.js';
 export * from './pause-state.js';
 export * from './feedback.js';
 export * from './templates.js';

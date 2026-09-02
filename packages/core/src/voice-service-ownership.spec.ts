@@ -75,4 +75,22 @@ assert.match(stopLauncher, /mh" sovits stop/, 'voice stop launcher must delegate
 assert.doesNotMatch(stopLauncher, /sovits\.pid|kill "\$PID"/, 'voice stop launcher must not own SoVITS PID files')
 assert.match(sovitsManager, /ownsSovitsProcess/, 'SoVITS lifecycle owner must verify process identity before signaling')
 
+for (const retiredPath of [
+  'brain/agents/transcriber',
+  'packages/core/src/transcription.ts',
+  'packages/core/src/connectors/voice-memo-ingestor.ts',
+  'packages/core/src/api/handlers/voice-memo-ingestion.ts',
+]) {
+  assert.equal(
+    fs.existsSync(path.join(ROOT, retiredPath)),
+    false,
+    `${retiredPath} must remain retired in favor of the canonical STT owner`,
+  )
+}
+
+const apiRouter = read('packages/core/src/api/router.ts')
+const coreExports = read('packages/core/src/index.ts')
+assert.doesNotMatch(apiRouter, /\/api\/(?:audio\/upload|voice-memos\/)/, 'retired file-transcription routes must not be registered')
+assert.doesNotMatch(coreExports, /\.\/transcription|voice-memo-ingestor/, 'retired file-transcription owners must not be exported')
+
 console.log('voice-service-ownership.spec.ts passed')

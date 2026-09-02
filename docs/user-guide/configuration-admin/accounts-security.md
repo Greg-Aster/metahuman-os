@@ -1,387 +1,82 @@
-# Accounts & Security
+# Accounts and Security
 
-This guide covers account types, multi-device sync, data storage, encryption, and security best practices.
+This chapter covers account roles, profile visibility, profile storage, recovery, and the operational evidence needed to protect a multi-user installation.
 
----
+## Roles
 
-## Account Types
+- **Owner** — the first account; can administer the installation and owner-only surfaces.
+- **Standard** — a named authenticated account with its own writable profile
+  boundary, subject to policy.
+- **Guest** — an authenticated, read-only role limited to public profiles. The
+  one-hour temporary guest session uses this same role.
 
-MetaHuman OS has three account roles:
+Role checks are enforced by server handlers. Hiding a button is not the security boundary.
 
-| Role | Description | Permissions |
-|------|-------------|-------------|
-| **Owner** | System owner | Full access: all settings, mode switching, trust levels, user management |
-| **Standard** | Regular user | Read/write memories, chat, tasks. Cannot change system settings or trust levels |
-| **Guest** | Read-only visitor | View-only access. Cannot create memories, modify data, or access sensitive settings |
+## Profile Isolation
 
-### Owner Account
+Persona, memory, tasks, voice assets, training data, configuration, and state are resolved for the active profile. Never construct a profile path by joining `profiles/` with an unvalidated username. Custom storage can move a profile outside the repository, and encrypted storage has additional readiness requirements.
 
-- The **first account created** on any machine automatically becomes the owner
-- Only one owner per machine
-- Owners can:
-  - Switch cognitive modes (Dual Consciousness, Agent, Emulation)
-  - Modify trust levels and security policies
-  - Manage other user accounts
-  - Access all system configuration
-
-### Standard Account
-
-- Any account created after the owner
-- Full access to personal features (chat, memory, tasks, persona editing)
-- Cannot modify system-wide settings
-
-### Guest Account
-
-**⚠️ Important:** All users must authenticate - there are no anonymous sessions.
-
-- Created by owner or via existing credentials
-- Must log in with credentials (no "Continue as Guest" without authentication)
-- Sessions last 1 hour
-- Always forced into emulation mode (read-only)
-- Read-only access to view public profiles
-- Useful for demonstrations or sharing your digital twin with others
-
-See [Authentication](authentication.md) for details on creating guest accounts.
-
----
-
-## Where Accounts Are Stored
-
-**Accounts are local to each machine.** When you create an account:
-
-- **On a server:** Account exists on that server
-- **On a mobile device:** Account exists on that device
-- **On your local machine:** Account exists on that machine
-
-If you try to log in on a machine where your account doesn't exist, you'll see:
-- "User not found" error
-- Options to **Sync from Server** or **Create Account**
-
----
-
-## Multi-Device Sync
-
-MetaHuman supports using your profile across multiple devices through sync.
-
-### How Sync Works
-
-When you sync from a server:
-
-1. You authenticate with the remote server
-2. The following data is downloaded to your local machine:
-   - Persona files (identity, personality, relationships)
-   - Configuration files
-   - Conversation buffer (recent chat context)
-   - Recent memories
-
-This effectively creates **two copies of your account** — one on each machine.
-
-### Setting Up Sync
-
-**Initial sync (login screen):**
-1. Enter your username and password
-2. If "User not found", click **Sync from Server**
-3. Enter the server URL (e.g., `https://mh.example.com`)
-4. Click **Sync Profile**
-
-**Ongoing sync (after login):**
-- **Status Widget** (left sidebar) — Shows sync status and last sync time
-- **Settings → Sync** — Configure auto-sync and manual sync options
-
-### Auto-Sync on Login
-
-When enabled, each login will:
-1. Check for the remote server
-2. Pull latest persona, config, and memories
-3. Merge with local data
-
-### Important Notes
-
-> **Sync is currently pull-only.** Data flows FROM the server TO your device.
->
-> To keep both devices up-to-date, you must log into **both machines regularly**.
->
-> This feature is under active development and may change.
-
----
-
-## Data Storage
-
-### Default Storage Location
-
-By default, user data is stored in:
-
-```
-profiles/{username}/
-├── persona/          # Identity and personality
-├── memory/           # Episodic memories, tasks
-├── etc/              # User-specific configuration
-├── state/            # Runtime state
-└── out/              # Generated outputs, adapters
-```
-
-**This data is stored unencrypted by default.**
-
-### Custom Storage Location (Stacks)
-
-**⚠️ CRITICAL: Many users configure custom profile storage** for encrypted drives, external storage, or network mounts.
-
-You can store your profile data on a different location:
-- USB drive
-- External hard drive
-- Encrypted partition (LUKS, VeraCrypt)
-- Network storage (NAS)
-
-This is called a **"stack"** — a portable, self-contained profile storage.
-
-#### Configuration via `persona/users.json`
-
-Custom storage is configured per-user in `persona/users.json`:
-
-```json
-{
-  "users": [
-    {
-      "id": "user-123",
-      "username": "greggles",
-      "metadata": {
-        "profileStorage": {
-          "path": "/media/greggles/STACK/metahuman-profiles/greggles",
-          "type": "encrypted",
-          "fallbackBehavior": "error",
-          "encryption": {
-            "type": "luks",
-            "mountPoint": "/media/greggles/STACK/metahuman-profiles/greggles"
-          }
-        }
-      }
-    }
-  ]
-}
-```
-
-**Configuration Fields:**
-- `path` - Absolute path to custom profile storage location
-- `type` - Storage type: `internal` (default), `external`, or `encrypted`
-- `fallbackBehavior` - What to do if custom path unavailable:
-  - `error` (recommended for encrypted storage) - Throw error, prevent writes to default location
-  - `fallback` - Silently fall back to default `profiles/<username>/` location
-- `encryption` - Optional encryption metadata
-
-#### Storage Types
-
-| Type | Description | Example |
-|------|-------------|---------|
-| `internal` | Default location in repo | `profiles/<username>/` |
-| `external` | USB drive, network mount | `/mnt/external/profiles/<username>/` |
-| `encrypted` | LUKS, VeraCrypt, AES-256 | `/media/user/STACK/metahuman-profiles/<username>/` |
-
-#### Path Resolution Flow
-
-**For developers:** Always use `getProfilePaths(username)` - never hardcode paths.
-
-```typescript
-import { getProfilePaths } from '@metahuman/core';
-
-// CORRECT: Resolves actual path (including custom storage)
-const profilePaths = getProfilePaths('greggles');
-console.log(profilePaths.root);  // /media/greggles/STACK/metahuman-profiles/greggles
-
-// WRONG: Hardcoded path fails for custom storage
-const path = `profiles/greggles/`;  // ❌ Will miss encrypted storage!
-```
-
-**Resolution Process:**
-1. Check `persona/users.json` → `users[].metadata.profileStorage.path`
-2. If custom path exists and is accessible → use it
-3. If unavailable:
-   - `fallbackBehavior: 'error'` → Throw error (prevent unencrypted writes)
-   - `fallbackBehavior: 'fallback'` → Use default `profiles/<username>/`
-
-#### Finding Your Actual Profile Path
-
-**Never assume** your profile is at `profiles/<username>/`. Check the actual location:
+Use supported UI and CLI operations. For diagnostics, resolve the current path through the profile owner:
 
 ```bash
-# Via CLI (shows actual path)
-./bin/mh profile path
-
-# Via API
-import { resolveProfileRoot } from '@metahuman/core/path-builder';
-const resolution = resolveProfileRoot('username');
-console.log(resolution.root);  // Shows actual location
-console.log(resolution.storageType);  // 'encrypted', 'external', or 'internal'
+./bin/mh --user USERNAME profile path
 ```
 
-#### Security with Custom Storage
+Private profile data must not be committed even when an internal profile happens to live below the repository directory.
 
-**Recommended: `fallbackBehavior: 'error'` for encrypted storage**
+## Profile Visibility
 
-When using encrypted storage, set `fallbackBehavior: 'error'` to prevent the system from silently writing to unencrypted default storage if the encrypted drive is unmounted.
+Owners can mark a profile public or private through the profile controls.
 
-```json
-{
-  "profileStorage": {
-    "path": "/media/user/encrypted-drive/metahuman/user",
-    "type": "encrypted",
-    "fallbackBehavior": "error"  // Fail loudly if drive unavailable
-  }
-}
-```
+- **Private** profiles are available only to authorized named accounts.
+- **Public** profiles may appear in the guest profile chooser.
 
-This ensures sensitive data never accidentally writes to unencrypted storage.
+Public visibility does not grant write permission and does not make the underlying profile files public repository content.
 
-#### Manual Configuration
+## Storage Types
 
-**To configure custom storage:**
-1. Edit `persona/users.json` and add `metadata.profileStorage` configuration
-2. Create the custom directory: `mkdir -p /path/to/custom/storage`
-3. Move existing profile data: `mv profiles/username/* /path/to/custom/storage/`
-4. Restart MetaHuman OS
-5. Verify: `./bin/mh profile path` should show custom location
+The profile-location controls support installation-owned storage modes such as internal, external, and encrypted locations. Configure the location through the UI so the path is validated and the profile owner records the intended policy.
 
-### Mobile Storage
+Before moving a profile:
 
-On mobile devices:
-- Data is stored in the app's private storage
-- No encryption options available (relies on device passcode)
-- Assumes single-user device with device-level security
+1. back up the profile securely;
+2. validate the destination and available space;
+3. stop active writes or follow the UI's migration flow;
+4. verify the resolved path after the change;
+5. verify persona, memory, and encryption readiness before removing the old copy.
 
----
+Do not treat a fallback location as a successful encrypted or external mount. The UI reports when a fallback is active.
 
 ## Encryption
 
-**Implementation**: `packages/core/src/encryption-manager.ts` (638 lines)
+Encrypted profile storage can use the configured operating-system or application storage owner. Login attempts to unlock supported encrypted storage before establishing the session.
 
-MetaHuman supports three encryption types for profile data:
-
-### Available Encryption Options
-
-| Method | Platform | Implementation | Performance | Notes |
-|--------|----------|---------------|-------------|-------|
-| **LUKS** | Linux | `luks.ts` (663 lines) | Fast (block-level) | Recommended. Native Linux encryption via cryptsetup |
-| **VeraCrypt** | All platforms | `veracrypt.ts` (672 lines) | Fast (volume) | Cross-platform container encryption |
-| **AES-256-GCM** | All platforms | `encryption.ts` (739 lines) | Slower (per-file) | Pure software, works on any filesystem |
-| **None** | All | - | - | Default. Data stored in plaintext |
-
-**Total encryption code**: 2,074 lines across 3 implementations + 638-line unified manager
-
-### LUKS Encryption (Recommended for Linux)
-
-LUKS (Linux Unified Key Setup) provides proven, system-level encryption:
-
-1. Go to **Settings → Storage → Encryption**
-2. Select **LUKS**
-3. Choose whether to use your login password or a separate encryption key
-4. Follow the setup wizard
-
-When using login password:
-- Profile auto-unlocks on login
-- Profile auto-locks on logout
-
-### Mobile Encryption
-
-**No encryption is currently available on mobile devices.**
-
-Mobile security relies on:
-- Device passcode/biometrics
-- App sandboxing
-- Assumption of single-user device
-
----
+There is no safe hidden fallback for a lost encryption secret. Keep recovery material outside the repository and test recovery while a backup exists. A successful account password reset does not necessarily recover independently encrypted data.
 
 ## Recovery Codes
 
-**Implementation**: `packages/core/src/recovery-codes.ts` (117 lines)
+Account creation produces 10 single-use recovery codes. Using one to reset a password invalidates the old set and produces a new set. Never store recovery codes in source control, shared logs, screenshots, or the user guide.
 
-Recovery codes allow password reset when you forget your password.
+## Remote Access
 
-### How Recovery Codes Work
+Remote access expands the trust boundary. Use HTTPS, restrict who can reach the origin, keep owner endpoints authenticated, and expose guest access only when at least one intentionally public profile exists.
 
-- **10 codes generated** per user
-- **Format**: XXXX-XXXX-XXXX-XXXX (16 random characters)
-- **One-time use**: Each code can only be used once
-- **Storage**: `profiles/<username>/recovery-codes.json` (custom storage aware)
-- **Security**: Cryptographically random (crypto.randomBytes)
+Cloud model and training providers receive the data submitted to them. Local-first operation does not mean every configured workflow stays on the machine.
 
-### Finding Your Recovery Codes
+## Security Checklist
 
-After creating an account:
-1. Log in to your account
-2. Go to **Settings → Security**
-3. View or regenerate your recovery codes
+- use a strong, unique owner password;
+- store recovery codes and encryption secrets securely;
+- keep private profiles private;
+- review pending approvals before authorizing actions;
+- keep runtime data, credentials, and model weights out of Git;
+- verify remote endpoints and TLS before entering credentials;
+- inspect audit and terminal failure states instead of accepting apparent success;
+- update dependencies and the application through deliberate, reviewed changes.
 
-### Using Recovery Codes
+## Related Guides
 
-During password reset:
-1. Click "Forgot Password" on login screen
-2. Enter your username
-3. Enter one of your recovery codes
-4. Set new password
-5. Code is marked as used (cannot reuse)
-
-**Store your codes securely** — in a password manager or printed copy.
-
-### API Functions
-
-```typescript
-import {
-  generateRecoveryCodes,
-  saveRecoveryCodes,
-  verifyRecoveryCode,
-  getRemainingCodes
-} from '@metahuman/core';
-
-// Generate codes for new user
-const codes = generateRecoveryCodes();  // Returns 10 codes
-saveRecoveryCodes('username', codes);
-
-// Verify during password reset
-if (verifyRecoveryCode('username', userCode)) {
-  // Code valid, allow password reset
-  updatePassword(userId, newPassword);
-}
-
-// Check remaining codes
-const remaining = getRemainingCodes('username');  // Unused codes
-```
-
----
-
-## Security Best Practices
-
-### For Maximum Security
-
-1. **Use trusted devices only** — MetaHuman stores sensitive personal data
-2. **Enable encryption** — Use LUKS on Linux for proven protection
-3. **Use a remote server with Cloudflare** — For secure remote access without port forwarding
-4. **Backup to external storage** — Use a stack on a removable drive
-5. **Keep sync server behind HTTPS** — Never sync over unencrypted connections
-
-### Deployment Options
-
-| Setup | Pros | Cons |
-|-------|------|------|
-| **Local only** | Simple, private | Limited to one device |
-| **Local + Mobile sync** | Use on multiple devices | Must sync manually, pull-only |
-| **Remote server** | Access from anywhere, full features | Requires server setup |
-| **Remote server + Cloudflare** | Secure remote access, no port forwarding | Requires Cloudflare account |
-| **Mobile only** | Portable, always with you | Limited compute power |
-
-### Remote Server Benefits
-
-Running MetaHuman on a remote server provides:
-- Maximum storage capacity
-- Full computational power for training
-- Access from any device without syncing
-- Always-on autonomous agents
-
-### Cloud Processing (RunPod)
-
-You don't need to install MetaHuman locally to use it:
-
-1. Set up an account on an existing server
-2. Configure RunPod for remote LLM processing
-3. Access via browser from any device
-
-Note: Cloud processing services typically have usage costs.
+- [Authentication](/user-guide#authentication)
+- [Security and Trust](/user-guide#security-trust)
+- [Deployment and Remote Access](/user-guide#deployment)
+- [Configuration Ownership](/user-guide#configuration-files)

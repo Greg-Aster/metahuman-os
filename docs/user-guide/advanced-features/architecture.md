@@ -81,6 +81,6 @@ Before adding a route, node, store, worker, or service:
    change.
 
 The remote-safe architecture authority is
-[`docs/technical/MAINTAINED_SURFACE.md`](../../technical/MAINTAINED_SURFACE.md).
+`docs/technical/MAINTAINED_SURFACE.md`.
 The active refactor rules and validation standard are in
-[`docs/technical/REFACTOR_BLUEPRINT.md`](../../technical/REFACTOR_BLUEPRINT.md).
+`docs/technical/REFACTOR_BLUEPRINT.md`.

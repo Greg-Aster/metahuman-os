@@ -7,17 +7,24 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { audit } from '../../audit.js';
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
-  const generatorOutput = inputs[0] || {};
+  const generatorOutput = inputs.thoughtData || {};
   const currentThought = generatorOutput.thought || '';
-  const currentKeywords = generatorOutput.keywords || [];
-  const confidence = generatorOutput.confidence || 0.5;
-  const thoughts = generatorOutput.thoughts || [];
+  const currentKeywords = Array.isArray(generatorOutput.keywords) ? generatorOutput.keywords : [];
+  const parsedConfidence = Number(generatorOutput.confidence);
+  const confidence = Number.isFinite(parsedConfidence) ? parsedConfidence : 0.5;
+  const thoughts = Array.isArray(generatorOutput.thoughts) ? generatorOutput.thoughts : [];
   const seedMemory = generatorOutput.seedMemory || '';
 
   // Use thoughts length as iteration count
   const iteration = thoughts.length;
-  const maxIterations = properties?.maxIterations || 7;
-  const minConfidence = properties?.minConfidence || 0.4;
+  const maxIterations = Number(properties?.maxIterations ?? 4);
+  const minConfidence = Number(properties?.minConfidence ?? 0.4);
+  if (!Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > 5) {
+    throw new Error('Thought Evaluator maxIterations must be an integer from 1 to 5');
+  }
+  if (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1) {
+    throw new Error('Thought Evaluator minConfidence must be between 0 and 1');
+  }
 
   // Decision logic
   let shouldContinue = true;
@@ -78,7 +85,7 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
     },
   });
 
-  return {
+  const evaluation = {
     isComplete: !shouldContinue,
     reason,
     nextSearchTerms,
@@ -86,7 +93,11 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
     confidence,
     thoughts,
     seedMemory,
+    seenMemoryIds: Array.isArray(generatorOutput.seenMemoryIds)
+      ? generatorOutput.seenMemoryIds
+      : [],
   };
+  return { evaluation, ...evaluation };
 };
 
 export const ThoughtEvaluatorNode: NodeDefinition = defineNode({
@@ -97,6 +108,7 @@ export const ThoughtEvaluatorNode: NodeDefinition = defineNode({
     { name: 'thoughtData', type: 'object', description: 'Output from thought_generator' },
   ],
   outputs: [
+    { name: 'evaluation', type: 'object', description: 'Continuation decision and accumulated thought state' },
     { name: 'isComplete', type: 'boolean', description: 'True if should exit loop' },
     { name: 'reason', type: 'string', description: 'Evaluation reason' },
     { name: 'nextSearchTerms', type: 'array', description: 'Keywords for next search' },
@@ -104,7 +116,7 @@ export const ThoughtEvaluatorNode: NodeDefinition = defineNode({
   ],
   properties: {
     minConfidence: 0.4,
-    maxIterations: 7,
+    maxIterations: 4,
   },
   propertySchemas: {
     minConfidence: {
@@ -115,9 +127,11 @@ export const ThoughtEvaluatorNode: NodeDefinition = defineNode({
     },
     maxIterations: {
       type: 'number',
-      default: 7,
+      default: 4,
       label: 'Max Iterations',
       description: 'Hard limit on iterations',
+      min: 1,
+      max: 5,
     },
   },
   description: 'Decides if the train of thought should continue or conclude',

@@ -4,6 +4,7 @@ import {
   normalizeEnvironmentVisualTarget,
   type EnvironmentAction,
   type EnvironmentActionType,
+  type EnvironmentCapabilities,
   type EnvironmentMotionClass,
   type EnvironmentObservation,
   type EnvironmentVisualFrame,
@@ -33,6 +34,13 @@ export interface EnvironmentMovementRequest {
   sessionId?: string;
   /** Environment LLM-owned motion reference; never authored by the movement model. */
   motionClass: Extract<EnvironmentMotionClass, 'body_local'>;
+}
+
+export interface EnvironmentPendingMovementContract {
+  continuationPolicy: EnvironmentContinuationPolicy;
+  requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'>;
+  actionPurpose?: EnvironmentActionPurpose;
+  visualEvidenceMode?: EnvironmentVisualEvidenceMode;
 }
 
 export const ENVIRONMENT_TASK_OUTCOMES = [
@@ -118,7 +126,6 @@ export interface EnvironmentTaskState {
   objective: string;
   phase: EnvironmentTaskPhase;
   step: number;
-  maxSteps: number;
   continuationPolicy: EnvironmentContinuationPolicy;
   requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'>;
   motionClass?: EnvironmentMotionClass;
@@ -126,6 +133,8 @@ export interface EnvironmentTaskState {
   visualEvidenceMode?: EnvironmentVisualEvidenceMode;
   baselineFrame?: EnvironmentTaskFrameRef;
   selectedAction?: EnvironmentTaskSelectedAction;
+  pendingMovementRequest?: EnvironmentMovementRequest;
+  pendingMovementContract?: EnvironmentPendingMovementContract;
 }
 
 export type EnvironmentTaskContractSource =
@@ -272,7 +281,6 @@ export function encodeEnvironmentTaskState(state: EnvironmentTaskState): string 
     objective: state.objective.trim().slice(0, 1_000),
     phase: state.phase,
     step: Math.max(0, Math.floor(state.step)),
-    maxSteps: Math.max(1, Math.min(10, Math.floor(state.maxSteps))),
     continuationPolicy: state.continuationPolicy,
     requiredCompletionBasis: state.requiredCompletionBasis,
     ...(state.motionClass ? { motionClass: state.motionClass } : {}),
@@ -280,6 +288,31 @@ export function encodeEnvironmentTaskState(state: EnvironmentTaskState): string 
     ...(state.visualEvidenceMode ? { visualEvidenceMode: state.visualEvidenceMode } : {}),
     ...(state.baselineFrame ? { baselineFrame: state.baselineFrame } : {}),
     ...(state.selectedAction ? { selectedAction: state.selectedAction } : {}),
+    ...(state.pendingMovementRequest
+      ? {
+          pendingMovementRequest: {
+            description: state.pendingMovementRequest.description.trim().slice(0, 500),
+            ...(state.pendingMovementRequest.sessionId
+              ? { sessionId: state.pendingMovementRequest.sessionId.trim().slice(0, 200) }
+              : {}),
+            motionClass: 'body_local',
+          },
+      }
+      : {}),
+    ...(state.pendingMovementContract
+      ? {
+          pendingMovementContract: {
+            continuationPolicy: state.pendingMovementContract.continuationPolicy,
+            requiredCompletionBasis: state.pendingMovementContract.requiredCompletionBasis,
+            ...(state.pendingMovementContract.actionPurpose
+              ? { actionPurpose: state.pendingMovementContract.actionPurpose }
+              : {}),
+            ...(state.pendingMovementContract.visualEvidenceMode
+              ? { visualEvidenceMode: state.pendingMovementContract.visualEvidenceMode }
+              : {}),
+          },
+        }
+      : {}),
   })}`;
 }
 
@@ -322,6 +355,46 @@ function normalizedSelectedAction(value: unknown): EnvironmentTaskSelectedAction
   };
 }
 
+function normalizedPendingMovementRequest(value: unknown): EnvironmentMovementRequest | null {
+  if (!isRecord(value)) return null;
+  const description = typeof value.description === 'string'
+    ? value.description.trim().slice(0, 500)
+    : '';
+  const sessionId = typeof value.sessionId === 'string'
+    ? value.sessionId.trim().slice(0, 200)
+    : '';
+  if (!description || value.motionClass !== 'body_local') return null;
+  return {
+    description,
+    ...(sessionId ? { sessionId } : {}),
+    motionClass: 'body_local',
+  };
+}
+
+function normalizedPendingMovementContract(value: unknown): EnvironmentPendingMovementContract | null {
+  if (!isRecord(value)) return null;
+  const continuationPolicy = value.continuationPolicy;
+  const requiredCompletionBasis = normalizedCompletionBasis(value.requiredCompletionBasis);
+  const actionPurpose = normalizedEnvironmentActionPurpose(value.actionPurpose);
+  const visualEvidenceMode = value.visualEvidenceMode === 'single'
+    || value.visualEvidenceMode === 'comparison'
+    ? value.visualEvidenceMode
+    : undefined;
+  if (
+    (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
+    || !requiredCompletionBasis
+    || requiredCompletionBasis === 'none'
+    || (value.actionPurpose !== undefined && !actionPurpose)
+    || (value.visualEvidenceMode !== undefined && !visualEvidenceMode)
+  ) return null;
+  return {
+    continuationPolicy,
+    requiredCompletionBasis,
+    ...(actionPurpose ? { actionPurpose } : {}),
+    ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
+  };
+}
+
 export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState | null {
   if (typeof value !== 'string' || !value.startsWith(ENVIRONMENT_TASK_STATE_PREFIX)) return null;
   try {
@@ -342,13 +415,10 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
       ? parsed.visualEvidenceMode
       : undefined;
     const step = Number.isInteger(parsed.step) ? Number(parsed.step) : -1;
-    const maxSteps = Number.isInteger(parsed.maxSteps) ? Number(parsed.maxSteps) : 0;
     if (
       !objective
       || !phase
       || step < 0
-      || maxSteps < 1
-      || maxSteps > 10
       || (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
       || !requiredCompletionBasis
       || requiredCompletionBasis === 'none'
@@ -357,12 +427,16 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
     ) return null;
     const baselineFrame = normalizedTaskFrameRef(parsed.baselineFrame);
     const selectedAction = normalizedSelectedAction(parsed.selectedAction);
+    const pendingMovementRequest = normalizedPendingMovementRequest(parsed.pendingMovementRequest);
+    const pendingMovementContract = normalizedPendingMovementContract(parsed.pendingMovementContract);
+    if (parsed.pendingMovementRequest !== undefined && !pendingMovementRequest) return null;
+    if (parsed.pendingMovementContract !== undefined && !pendingMovementContract) return null;
+    if (pendingMovementContract && !pendingMovementRequest) return null;
     return {
       version: 1,
       objective,
       phase,
       step,
-      maxSteps,
       continuationPolicy,
       requiredCompletionBasis,
       ...(motionClass ? { motionClass } : {}),
@@ -370,6 +444,8 @@ export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState 
       ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
       ...(baselineFrame ? { baselineFrame } : {}),
       ...(selectedAction ? { selectedAction } : {}),
+      ...(pendingMovementRequest ? { pendingMovementRequest } : {}),
+      ...(pendingMovementContract ? { pendingMovementContract } : {}),
     };
   } catch {
     return null;
@@ -391,15 +467,11 @@ export function environmentTaskStateFromObservation(
   const contract = environmentTaskContractFromObservation(observation);
   if (!contract || contract.requiredCompletionBasis === 'none') return null;
   const step = Number.isInteger(command?.step) ? Math.max(0, Number(command?.step)) : 1;
-  const maxSteps = Number.isInteger(command?.maxSteps)
-    ? Math.max(1, Math.min(10, Number(command?.maxSteps)))
-    : 3;
   return {
     version: 1,
     objective: contract.objective,
     phase: 'awaiting_action',
     step,
-    maxSteps,
     continuationPolicy: contract.continuationPolicy,
     requiredCompletionBasis: contract.requiredCompletionBasis,
     ...(contract.motionClass ? { motionClass: contract.motionClass } : {}),
@@ -492,12 +564,14 @@ const SELECTOR_MAX_OBJECT_KEYS = 12;
 const SELECTOR_MAX_ARRAY_ITEMS = 8;
 const SELECTOR_MAX_DEPTH = 3;
 const SELECTOR_MAX_STRING_LENGTH = 180;
-const SELECTOR_STATE_LEAF_LIMIT = 10;
+const SELECTOR_STATE_FIELD_LEAF_LIMIT = 10;
+const SELECTOR_COMMAND_DESCRIPTION_BUDGET = 4_000;
 
 function projectSelectorEvidence(
   value: unknown,
   budget: { remaining: number },
   depth = 0,
+  maxDepth = SELECTOR_MAX_DEPTH,
 ): unknown {
   if (budget.remaining <= 0) return undefined;
   if (typeof value === 'string') {
@@ -510,19 +584,88 @@ function projectSelectorEvidence(
   }
   if (Array.isArray(value)) {
     return value.slice(0, SELECTOR_MAX_ARRAY_ITEMS).flatMap(item => {
-      const projected = projectSelectorEvidence(item, budget, depth + 1);
+      const projected = projectSelectorEvidence(item, budget, depth + 1, maxDepth);
       return projected === undefined ? [] : [projected];
     });
   }
-  if (!isRecord(value) || depth >= SELECTOR_MAX_DEPTH) return undefined;
+  if (!isRecord(value) || depth >= maxDepth) return undefined;
   return Object.fromEntries(
     Object.entries(value)
       .slice(0, SELECTOR_MAX_OBJECT_KEYS)
       .flatMap(([key, nested]) => {
-        const projected = projectSelectorEvidence(nested, budget, depth + 1);
+        const projected = projectSelectorEvidence(nested, budget, depth + 1, maxDepth);
         return projected === undefined ? [] : [[key, projected]];
       }),
   );
+}
+
+function projectSelectorState(value: unknown): unknown {
+  if (!isRecord(value)) return projectSelectorEvidence(value, { remaining: SELECTOR_STATE_FIELD_LEAF_LIMIT });
+  return Object.fromEntries(
+    Object.entries(value)
+      .slice(0, SELECTOR_MAX_OBJECT_KEYS)
+      .flatMap(([key, nested]) => {
+        const projected = projectSelectorEvidence(
+          nested,
+          { remaining: SELECTOR_STATE_FIELD_LEAF_LIMIT },
+          1,
+          SELECTOR_MAX_DEPTH + 1,
+        );
+        return projected === undefined ? [] : [[key, projected]];
+      }),
+  );
+}
+
+function projectRobotStatusContext(value: unknown): unknown {
+  if (!isRecord(value)) return null;
+  const situation = isRecord(value.situation) ? value.situation : null;
+  const agency = isRecord(value.agency) ? value.agency : null;
+  const context = {
+    updatedAt: value.updatedAt,
+    ...(situation
+      ? {
+          situation: {
+            currentGoal: situation.currentGoal,
+            currentIntent: situation.currentIntent,
+            userContext: situation.userContext,
+            uncertainties: situation.uncertainties,
+          },
+        }
+      : {}),
+    ...(agency
+      ? {
+          agency: {
+            activeDesires: agency.activeDesires,
+          },
+        }
+      : {}),
+  };
+  return projectSelectorEvidence(context, { remaining: 32 }, 0, 4) ?? null;
+}
+
+/**
+ * Preserve only descriptions for currently executable exact command names. The
+ * adapter owns their meaning; this projection bounds untrusted bridge input for
+ * the selector prompt without attempting to choose a command in code.
+ */
+export function projectRobotCommandDescriptions(
+  capabilities: Pick<EnvironmentCapabilities, 'robotCommands' | 'robotCommandDescriptions'>,
+): Record<string, string> {
+  if (!isRecord(capabilities.robotCommandDescriptions)) return {};
+  const entries = [...new Set(capabilities.robotCommands ?? [])].slice(0, 64).flatMap(command => {
+    const description = typeof capabilities.robotCommandDescriptions?.[command] === 'string'
+      ? capabilities.robotCommandDescriptions[command].replace(/\s+/g, ' ').trim()
+      : '';
+    return description ? [[command, description] as const] : [];
+  });
+  const descriptionLimit = Math.min(
+    SELECTOR_MAX_STRING_LENGTH,
+    Math.floor(SELECTOR_COMMAND_DESCRIPTION_BUDGET / Math.max(1, entries.length)),
+  );
+  return Object.fromEntries(entries.map(([command, description]) => [
+    command,
+    description.slice(0, descriptionLimit),
+  ]));
 }
 
 export interface EnvironmentSelectorEnvelopeInput {
@@ -532,6 +675,8 @@ export interface EnvironmentSelectorEnvelopeInput {
   recentConversation?: Array<{ role: string; content: string }>;
   memories?: string[];
   personaText?: string;
+  robotStatus?: unknown;
+  replyToContent?: string;
   mustSelectAction?: boolean;
   mustAdvanceTask?: boolean;
   inputSource?: 'user' | 'autonomy';
@@ -559,9 +704,16 @@ export function buildEnvironmentSelectorSystemPrompt(
 
 function selectorCapabilityRules(observation: EnvironmentObservation): string[] {
   const actions = new Set(observation.capabilities.actions);
+  const commandDescriptions = projectRobotCommandDescriptions(observation.capabilities);
   return [
     actions.has('robotCommand')
-      ? 'robotCommand: use an exact advertised robotCommands value.'
+      ? Object.keys(commandDescriptions).length > 0
+        ? actions.has('robotMotionPlan')
+          ? 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. For a multi-step objective, select a command whenever its described effect is an appropriate current step, then reassess after feedback. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail; use movementRequest only when no description covers that current movement. State the matched catalog effect in taskDecision.reason.'
+          : 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. For a multi-step objective, select a command whenever its described effect is an appropriate current step, then reassess after feedback. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail. State the matched catalog effect in taskDecision.reason.'
+        : actions.has('robotMotionPlan')
+          ? 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects; use movementRequest when a named effect cannot be identified confidently.'
+          : 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects.'
       : '',
     actions.has('robotMotionPlan')
       ? 'robotMotionPlan: request off-script body_local motion through movementRequest; never author a motion plan directly.'
@@ -590,6 +742,7 @@ export function buildEnvironmentSelectorEnvelope(
   input: EnvironmentSelectorEnvelopeInput,
 ): string {
   const observation = input.observation;
+  const robotCommandDescriptions = projectRobotCommandDescriptions(observation.capabilities);
   const frames = [observation.visual, ...(observation.visuals ?? [])]
     .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
     .slice(-2)
@@ -612,10 +765,7 @@ export function buildEnvironmentSelectorEnvelope(
       ? event.data.command.slice(0, SELECTOR_MAX_STRING_LENGTH)
       : undefined,
   }));
-  const state = projectSelectorEvidence(
-    observation.state ?? {},
-    { remaining: SELECTOR_STATE_LEAF_LIMIT },
-  );
+  const state = projectSelectorState(observation.state ?? {});
   const location = projectSelectorEvidence(observation.location, { remaining: 6 });
   const map = projectSelectorEvidence(observation.map, { remaining: 6 });
   const robotObserver = isRecord(observation.metadata?.robotObserver)
@@ -637,7 +787,9 @@ export function buildEnvironmentSelectorEnvelope(
       ...(map !== undefined ? { map } : {}),
       capabilities: {
         actions: observation.capabilities.actions.slice(0, 32),
-        robotCommands: observation.capabilities.robotCommands?.slice(0, 64) ?? [],
+        ...(Object.keys(robotCommandDescriptions).length > 0
+          ? { robotCommandCatalog: robotCommandDescriptions }
+          : { robotCommands: observation.capabilities.robotCommands?.slice(0, 64) ?? [] }),
         motionClasses: observation.capabilities.motionClasses ?? [],
         navigation: observation.capabilities.navigation === true,
         visual: observation.capabilities.visual === true,
@@ -657,6 +809,10 @@ export function buildEnvironmentSelectorEnvelope(
     capabilityRules: selectorCapabilityRules(observation),
     taskState: input.taskState ?? null,
     activePersona: input.personaText?.trim().slice(0, 2_000) || null,
+    robotStatus: projectRobotStatusContext(input.robotStatus),
+    ...(input.replyToContent?.trim()
+      ? { replyToContext: input.replyToContent.trim().slice(0, 500) }
+      : {}),
     recentConversation: (input.recentConversation ?? []).slice(-4).map(message => ({
       role: message.role === 'assistant' ? 'assistant' : 'user',
       content: message.content.slice(0, SELECTOR_MAX_STRING_LENGTH),
@@ -971,12 +1127,24 @@ export function buildEnvironmentSelectorJsonSchema(
   const movementSupported = !capabilityBound || advertisedActions.has('robotMotionPlan');
   const progressBranches: Record<string, unknown>[] = [];
   const autonomyWorkBranches: Record<string, unknown>[] = [];
+  const outputRouteBranches: Record<string, unknown>[] = [{
+    properties: {
+      actions: { maxItems: 0 },
+      movementRequest: { type: 'null' },
+    },
+  }];
   if (directActionTypes.length > 0) {
-    progressBranches.push({ properties: { actions: { minItems: 1 } } });
-    autonomyWorkBranches.push({
+    const directActionBranch = {
       properties: {
         actions: { minItems: 1 },
         movementRequest: { type: 'null' },
+      },
+    };
+    outputRouteBranches.push(directActionBranch);
+    progressBranches.push(directActionBranch);
+    autonomyWorkBranches.push({
+      properties: {
+        ...directActionBranch.properties,
         taskDecision: {
           required: ['outcome', 'objectiveComplete'],
           properties: {
@@ -988,11 +1156,17 @@ export function buildEnvironmentSelectorJsonSchema(
     });
   }
   if (movementSupported) {
-    progressBranches.push({ properties: { movementRequest: { type: 'object' } } });
-    autonomyWorkBranches.push({
+    const generatedMovementBranch = {
       properties: {
         actions: { maxItems: 0 },
         movementRequest: { type: 'object' },
+      },
+    };
+    outputRouteBranches.push(generatedMovementBranch);
+    progressBranches.push(generatedMovementBranch);
+    autonomyWorkBranches.push({
+      properties: {
+        ...generatedMovementBranch.properties,
         taskDecision: {
           required: ['outcome', 'objectiveComplete'],
           properties: {
@@ -1021,7 +1195,7 @@ export function buildEnvironmentSelectorJsonSchema(
   });
   const autonomyCompletionBranch = {
     properties: {
-      response: { type: 'string', minLength: 1 },
+      response: SELECTOR_SCHEMA_STRING,
       actions: { maxItems: 0 },
       movementRequest: { type: 'null' },
       taskDecision: {
@@ -1035,20 +1209,21 @@ export function buildEnvironmentSelectorJsonSchema(
     },
   };
   const autonomyBranches = [...autonomyWorkBranches, autonomyCompletionBranch];
+  const routeConstraints: Record<string, unknown>[] = [{ anyOf: outputRouteBranches }];
+  if (input.requireAutonomousConsequence === true) {
+    const requiredBranches = input.requireAction === true ? autonomyWorkBranches : autonomyBranches;
+    if (requiredBranches.length > 0) routeConstraints.push({ anyOf: requiredBranches });
+  } else if (input.requireProgress === true && progressBranches.length > 0) {
+    routeConstraints.push({ anyOf: progressBranches });
+  } else if (input.requireAction === true && autonomyWorkBranches.length > 0) {
+    routeConstraints.push({ anyOf: autonomyWorkBranches });
+  }
 
   return {
     type: 'object',
     additionalProperties: false,
     required: ['response', 'actions', 'movementRequest', 'taskDecision'],
-    ...(input.requireAutonomousConsequence === true
-      ? {
-          allOf: [{
-            anyOf: input.requireAction === true ? autonomyWorkBranches : autonomyBranches,
-          }],
-        }
-      : input.requireProgress === true
-        ? { allOf: [{ anyOf: progressBranches }] }
-      : {}),
+    allOf: routeConstraints,
     properties: {
       response: SELECTOR_SCHEMA_STRING,
       actions: {
@@ -1233,15 +1408,11 @@ export function validateEnvironmentSelectorOutput(
   }
   if (actions.length > 1) errors.push('selector output may contain at most one action');
   const normalizedActions = actions.filter((action): action is Partial<EnvironmentAction> => action !== null);
-  // Some structured decoders populate both mutually exclusive branches. A
-  // complete typed direct action is the narrower and safer choice, so it owns
-  // the decision and the off-script movement branch is discarded. Without a
-  // direct action, movement remains strictly validated below.
-  const movement = parseMovementRequest(
-    normalizedActions.length > 0 ? null : raw.movementRequest,
-    sessionId,
-  );
+  const movement = parseMovementRequest(raw.movementRequest, sessionId);
   if (movement.error) errors.push(movement.error);
+  if (normalizedActions.length > 0 && movement.request) {
+    errors.push('selector output must choose either actions or movementRequest, not both');
+  }
   const task = parseTaskDecision(raw.taskDecision);
   if (task.error) errors.push(task.error);
 

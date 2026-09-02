@@ -16,7 +16,9 @@ import type {
   EnvironmentTextEvent,
 } from './types.js';
 import {
+  commandedPoseAfterCompletedAction,
   assertBoundedMotionPlanEncoding,
+  normalizeEnvironmentCommandedPose,
   normalizeEnvironmentMotionPlanFields,
 } from './motion-plan.js';
 import {
@@ -58,6 +60,60 @@ let bridgeStateNotificationPending = false;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function environmentBodyEpoch(observation: EnvironmentObservation | undefined): string | undefined {
+  const body = isRecord(observation?.state?.body) ? observation.state.body : null;
+  const robotId = typeof body?.robotId === 'string' ? body.robotId : '';
+  const gateway = isRecord(observation?.state?.gateway) ? observation.state.gateway : null;
+  const robots = isRecord(gateway?.robots) ? gateway.robots : null;
+  const robot = robotId && isRecord(robots?.[robotId]) ? robots[robotId] : null;
+  const epoch = typeof robot?.epoch === 'number' || typeof robot?.epoch === 'string'
+    ? String(robot.epoch)
+    : '';
+  return robotId && epoch ? `${robotId}:${epoch}` : undefined;
+}
+
+function carryCommandedPose(
+  observation: EnvironmentObservation,
+  existing: EnvironmentObservation | undefined,
+): EnvironmentObservation {
+  const state = { ...(observation.state ?? {}) };
+  delete state.commandedPose;
+  const body = isRecord(state.body) ? state.body : null;
+  const bodyOffline = body?.authenticated === false;
+  const prior = normalizeEnvironmentCommandedPose(existing?.state?.commandedPose);
+  const currentBodyEpoch = environmentBodyEpoch(observation);
+  const sameBodyEpoch = prior?.bodyEpoch === currentBodyEpoch;
+  if (prior && !bodyOffline && sameBodyEpoch) state.commandedPose = prior;
+  return { ...observation, state };
+}
+
+function updateCommandedPoseFromFeedback(
+  action: EnvironmentCommandWork,
+  feedback: EnvironmentFeedback,
+): void {
+  const state = readEnvironmentBridgeState();
+  const sessionId = action.sessionId ?? '';
+  const session = sessionId ? state.sessions[sessionId] : undefined;
+  if (!session?.latestObservation) return;
+  const nonMotion = action.type === 'captureImage' || action.type === 'sendText' || action.type === 'speak';
+  const next = feedback.type === 'completed'
+    ? commandedPoseAfterCompletedAction(
+        action,
+        feedback.timestamp,
+        environmentBodyEpoch(session.latestObservation),
+      )
+    : (feedback.type === 'cancelled' || feedback.type === 'failed') && !nonMotion
+      ? null
+      : undefined;
+  if (next === undefined) return;
+  const observationState = { ...(session.latestObservation.state ?? {}) };
+  if (next) observationState.commandedPose = next;
+  else delete observationState.commandedPose;
+  session.latestObservation = { ...session.latestObservation, state: observationState };
+  state.sessions[sessionId] = session;
+  writeEnvironmentBridgeState(state);
 }
 
 function nowIso(): string {
@@ -240,9 +296,6 @@ export function attachEnvironmentActionContext(
   if (!isRecord(metadata.robotObserver) && isRecord(taskInputMetadata?.robotObserver)) {
     metadata.robotObserver = taskInputMetadata.robotObserver;
   }
-  if (!isRecord(metadata.motionControl) && isRecord(taskInputMetadata?.motionControl)) {
-    metadata.motionControl = taskInputMetadata.motionControl;
-  }
   if (typeof metadata.correlationId !== 'string' && task?.correlationId) {
     metadata.correlationId = task.correlationId;
   }
@@ -283,27 +336,40 @@ export function attachEnvironmentActionContext(
   };
 }
 
-export function recordEnvironmentObservation(
+function persistEnvironmentObservation(
   observation: EnvironmentObservation,
-): EnvironmentBridgeSummary {
+): { summary: EnvironmentBridgeSummary; observation: EnvironmentObservation } {
   const contextualObservation = attachEnvironmentActionContext(observation);
   const state = readEnvironmentBridgeState();
   const existing = state.sessions[contextualObservation.sessionId];
+  const poseAwareObservation = carryCommandedPose(
+    contextualObservation,
+    existing?.latestObservation,
+  );
   const now = nowIso();
-  state.sessions[contextualObservation.sessionId] = {
-    sessionId: contextualObservation.sessionId,
-    environmentId: contextualObservation.environmentId,
-    adapter: contextualObservation.adapter,
+  state.sessions[poseAwareObservation.sessionId] = {
+    sessionId: poseAwareObservation.sessionId,
+    environmentId: poseAwareObservation.environmentId,
+    adapter: poseAwareObservation.adapter,
     status: 'connected',
-    firstSeenAt: existing?.firstSeenAt ?? contextualObservation.timestamp ?? now,
-    lastSeenAt: contextualObservation.timestamp ?? now,
-    latestObservation: contextualObservation,
+    firstSeenAt: existing?.firstSeenAt ?? poseAwareObservation.timestamp ?? now,
+    lastSeenAt: poseAwareObservation.timestamp ?? now,
+    latestObservation: poseAwareObservation,
     processedTextEventIds: existing?.processedTextEventIds ?? [],
   };
-  if (contextualObservation.feedback?.length) {
-    state.feedback = boundedFeedback([...state.feedback, ...contextualObservation.feedback]);
+  if (poseAwareObservation.feedback?.length) {
+    state.feedback = boundedFeedback([...state.feedback, ...poseAwareObservation.feedback]);
   }
-  return summarizeEnvironmentBridgeState(writeEnvironmentBridgeState(state));
+  return {
+    summary: summarizeEnvironmentBridgeState(writeEnvironmentBridgeState(state)),
+    observation: poseAwareObservation,
+  };
+}
+
+export function recordEnvironmentObservation(
+  observation: EnvironmentObservation,
+): EnvironmentBridgeSummary {
+  return persistEnvironmentObservation(observation).summary;
 }
 
 export function applyRobotStatusToEnvironmentObservation(
@@ -384,8 +450,8 @@ export function publishEnvironmentObservation(
   observation: EnvironmentObservation,
   options: { username: string; graph?: string; ttsGeneration?: number },
 ): { summary: EnvironmentBridgeSummary; workId: string } {
-  const contextualObservation = attachEnvironmentActionContext(observation);
-  const summary = recordEnvironmentObservation(contextualObservation);
+  const recorded = persistEnvironmentObservation(observation);
+  const contextualObservation = recorded.observation;
   const work = getQueueManager().enqueue({
     type: 'environment_observation',
     handler: 'environment.observation',
@@ -410,7 +476,7 @@ export function publishEnvironmentObservation(
       robotObserver: contextualObservation.metadata?.robotObserver,
     },
   });
-  return { summary, workId: work.id };
+  return { summary: recorded.summary, workId: work.id };
 }
 
 export function touchEnvironmentSession(sessionId: string): EnvironmentBridgeSummary {
@@ -691,11 +757,13 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
     if (feedback.type === 'expired') manager.expire(task.id);
   }
   const current = manager.getTask(task.id) || task;
-  return {
+  const recorded = {
     action: commandView(current),
     feedback,
     username: current.username,
   };
+  updateCommandedPoseFromFeedback(recorded.action, feedback);
+  return recorded;
 }
 
 getQueueManager().addEventListener(event => {

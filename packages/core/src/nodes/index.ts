@@ -90,6 +90,9 @@ import * as activeOperatorNodes from './active-operator/index.js';
 // Robot Operator nodes
 import * as robotOperatorNodes from './robot-operator/index.js';
 
+// Robot Status nodes
+import * as robotStatusNodes from './robot-status/index.js';
+
 // Response Pipeline nodes
 import * as responseNodes from './response/index.js';
 
@@ -136,6 +139,7 @@ export const allNodes: NodeDefinition[] = collectNodes(
   memoryNodes,
   activeOperatorNodes,
   robotOperatorNodes,
+  robotStatusNodes,
   responseNodes,
 );
 

@@ -6,11 +6,8 @@
  * dreams or reflections as factual history.
  */
 
-import fs from 'node:fs/promises'
-import type { Dirent } from 'node:fs'
-import path from 'node:path'
-import { systemPaths } from '../../path-builder.js'
-import { storageClient } from '../../storage-client.js'
+import { loadMemoryContentMode } from '../../memory-content-filter.js'
+import { scanEpisodicMemoryRecords } from '../../memory.js'
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 
 export type ReflectionContentMode = 'all' | 'user' | 'agent'
@@ -71,6 +68,13 @@ function cleanText(value: unknown): string {
 function conversationParts(memory: Record<string, any>): { user: string; assistant: string } {
   const content = cleanText(memory.content)
   const response = cleanText(memory.response)
+  const role = memory.metadata?.role
+  if (role === 'user') {
+    return { user: content.replace(/^(?:Me|User):\s*/i, '').trim(), assistant: '' }
+  }
+  if (role === 'assistant') {
+    return { user: '', assistant: content.replace(/^(?:Assistant|AI|MetaHuman):\s*/i, '').trim() }
+  }
   const assistantSeparator = /\n\n(?:Assistant|AI|MetaHuman):\s*/i
 
   if (assistantSeparator.test(content)) {
@@ -125,55 +129,50 @@ function extractKeywords(memory: Record<string, any>, text: string): string[] {
   return [...new Set(words)].slice(0, 24)
 }
 
-async function loadCandidates(mode: ReflectionContentMode): Promise<ReflectionMemoryCandidate[]> {
-  const result = storageClient.resolvePath({ category: 'memory', subcategory: 'episodic' })
-  if (!result.success || !result.path) return []
-
+export function loadReflectionMemoryCandidates(
+  username: string,
+  mode: ReflectionContentMode,
+  options: { maxFiles: number; maxFileSizeBytes: number; signal?: AbortSignal },
+): {
+  candidates: ReflectionMemoryCandidate[]
+  failures: Array<{ relativePath: string; error: string }>
+  filesConsidered: number
+  scanLimited: boolean
+} {
   const candidates: ReflectionMemoryCandidate[] = []
-
-  async function walk(directory: string): Promise<void> {
-    let entries: Dirent[]
-    try {
-      entries = await fs.readdir(directory, { withFileTypes: true })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
-      throw error
+  const failures: Array<{ relativePath: string; error: string }> = []
+  let filesConsidered = 0
+  for (const outcome of scanEpisodicMemoryRecords(username, {
+    maxFiles: options.maxFiles,
+    maxFileSizeBytes: options.maxFileSizeBytes,
+    newestFirst: true,
+  })) {
+    if (options.signal?.aborted) {
+      throw new DOMException('Reflection memory sampling cancelled', 'AbortError')
     }
-
-    for (const entry of entries) {
-      const fullPath = path.join(directory, entry.name)
-      if (entry.isDirectory()) {
-        await walk(fullPath)
-        continue
-      }
-      if (!entry.isFile() || !entry.name.endsWith('.json')) continue
-
-      try {
-        const memory = JSON.parse(await fs.readFile(fullPath, 'utf8')) as Record<string, any>
-        const text = extractReflectionMemoryText(memory, mode)
-        if (!text) continue
-
-        const parsedTimestamp = new Date(memory.timestamp)
-        const timestamp = Number.isFinite(parsedTimestamp.getTime())
-          ? parsedTimestamp.toISOString()
-          : new Date(0).toISOString()
-
-        candidates.push({
-          id: cleanText(memory.id) || path.basename(entry.name, '.json'),
-          timestamp,
-          type: normalizeType(memory),
-          text,
-          file: fullPath,
-          keywords: extractKeywords(memory, text),
-        })
-      } catch {
-        // A malformed or encrypted record is not usable as prompt evidence.
-      }
+    filesConsidered += 1
+    if (outcome.status === 'failed') {
+      failures.push(outcome)
+      continue
     }
+    const memory = outcome.record.event as Record<string, any>
+    const text = extractReflectionMemoryText(memory, mode)
+    if (!text) continue
+    candidates.push({
+      id: memory.id,
+      timestamp: new Date(memory.timestamp).toISOString(),
+      type: normalizeType(memory),
+      text,
+      file: outcome.record.relativePath,
+      keywords: extractKeywords(memory, text),
+    })
   }
-
-  await walk(result.path)
-  return candidates.sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+  return {
+    candidates: candidates.sort((left, right) => right.timestamp.localeCompare(left.timestamp)),
+    failures,
+    filesConsidered,
+    scanLimited: filesConsidered >= options.maxFiles,
+  }
 }
 
 function weightedIndex(weights: number[], random: () => number): number {
@@ -228,32 +227,35 @@ export function selectReflectionMemories(
 async function resolveContentMode(properties: Record<string, any>): Promise<ReflectionContentMode> {
   const configured = properties.contentMode
   if (configured === 'all' || configured === 'user' || configured === 'agent') return configured
+  if (configured !== 'configured') throw new Error('Reflection contentMode must be configured, user, agent, or all')
+  return loadMemoryContentMode()
+}
 
-  const fallback = properties.fallbackContentMode === 'all' || properties.fallbackContentMode === 'agent'
-    ? properties.fallbackContentMode as ReflectionContentMode
-    : 'user'
-
-  try {
-    const result = storageClient.resolvePath({ category: 'config', subcategory: 'agents' })
-    const profileAgentsPath = result.success && result.path
-      ? result.path.endsWith('.json') ? result.path : path.join(result.path, 'agents.json')
-      : null
-    const configPaths = [profileAgentsPath, path.join(systemPaths.etc, 'agents.json')]
-      .filter((value): value is string => Boolean(value))
-
-    for (const configPath of [...new Set(configPaths)]) {
-      try {
-        const config = JSON.parse(await fs.readFile(configPath, 'utf8'))
-        const mode = config.globalSettings?.memoryContentMode ?? config.agents?.reflector?.contentMode
-        if (mode === 'all' || mode === 'user' || mode === 'agent') return mode
-      } catch {
-        // Continue from a missing profile override to the system owner.
-      }
-    }
-    return fallback
-  } catch {
-    return fallback
+function integerProperty(
+  value: unknown,
+  fallback: number,
+  name: string,
+  minimum: number,
+  maximum: number,
+): number {
+  const resolved = value ?? fallback
+  if (!Number.isInteger(resolved) || Number(resolved) < minimum || Number(resolved) > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`)
   }
+  return Number(resolved)
+}
+
+function numberProperty(
+  value: unknown,
+  fallback: number,
+  name: string,
+  minimum: number,
+): number {
+  const resolved = value ?? fallback
+  if (typeof resolved !== 'number' || !Number.isFinite(resolved) || resolved < minimum) {
+    throw new Error(`${name} must be a finite number greater than or equal to ${minimum}`)
+  }
+  return resolved
 }
 
 const execute: NodeExecutor = async (_inputs, context, properties) => {
@@ -266,24 +268,70 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
 
   try {
     const contentMode = await resolveContentMode(properties || {})
-    const memoryCount = Math.max(2, Math.min(8, Number(properties?.memoryCount) || 4))
-    const candidates = await loadCandidates(contentMode)
+    const memoryCount = integerProperty(properties?.memoryCount, 4, 'memoryCount', 2, 8)
+    const maxCandidateFiles = integerProperty(
+      properties?.maxCandidateFiles,
+      2_000,
+      'maxCandidateFiles',
+      2,
+      10_000,
+    )
+    const maxFileSizeBytes = integerProperty(
+      properties?.maxFileSizeBytes,
+      2 * 1024 * 1024,
+      'maxFileSizeBytes',
+      1,
+      16 * 1024 * 1024,
+    )
+    const recencyHalfLifeDays = numberProperty(
+      properties?.recencyHalfLifeDays,
+      14,
+      'recencyHalfLifeDays',
+      Number.EPSILON,
+    )
+    const associationBoost = numberProperty(
+      properties?.associationBoost,
+      1.5,
+      'associationBoost',
+      0,
+    )
+    const maxMemoryChars = integerProperty(
+      properties?.maxMemoryChars,
+      1_200,
+      'maxMemoryChars',
+      200,
+      10_000,
+    )
+    const scan = loadReflectionMemoryCandidates(username, contentMode, {
+      maxFiles: maxCandidateFiles,
+      maxFileSizeBytes,
+      signal: context.abortSignal as AbortSignal | undefined,
+    })
     const memories = selectReflectionMemories(
-      candidates,
+      scan.candidates,
       memoryCount,
-      Number(properties?.recencyHalfLifeDays) || 14,
-      Number(properties?.associationBoost) || 1.5,
+      recencyHalfLifeDays,
+      associationBoost,
     ).map(memory => ({
       ...memory,
-      text: memory.text.slice(0, Math.max(200, Number(properties?.maxMemoryChars) || 1200)),
+      text: memory.text.slice(0, maxMemoryChars),
     }))
+
+    const error = memories.length < 2 && scan.failures.length > 0
+      ? `${scan.failures.length} episodic memory file(s) failed validation while fewer than 2 usable memories remained`
+      : undefined
 
     return {
       memories,
       count: memories.length,
-      candidateCount: candidates.length,
+      candidateCount: scan.candidates.length,
+      filesConsidered: scan.filesConsidered,
+      failedCount: scan.failures.length,
+      failures: scan.failures.slice(0, 20),
+      scanLimited: scan.scanLimited,
       contentMode,
-      ready: memories.length >= 2,
+      ready: memories.length >= 2 && !error,
+      ...(error ? { error } : {}),
       username,
     }
   } catch (error) {
@@ -307,13 +355,18 @@ export const ReflectionMemorySamplerNode: NodeDefinition = defineNode({
     { name: 'memories', type: 'array', description: 'Distinct profile-scoped historical excerpts' },
     { name: 'count', type: 'number' },
     { name: 'candidateCount', type: 'number' },
+    { name: 'filesConsidered', type: 'number' },
+    { name: 'failedCount', type: 'number' },
+    { name: 'failures', type: 'array' },
+    { name: 'scanLimited', type: 'boolean' },
     { name: 'contentMode', type: 'string' },
     { name: 'ready', type: 'boolean' },
   ],
   properties: {
     memoryCount: 4,
-    contentMode: 'profile',
-    fallbackContentMode: 'user',
+    contentMode: 'configured',
+    maxCandidateFiles: 2000,
+    maxFileSizeBytes: 2097152,
     recencyHalfLifeDays: 14,
     associationBoost: 1.5,
     maxMemoryChars: 1200,
@@ -322,16 +375,12 @@ export const ReflectionMemorySamplerNode: NodeDefinition = defineNode({
     memoryCount: { type: 'slider', default: 4, label: 'Memory Count', min: 2, max: 8, step: 1 },
     contentMode: {
       type: 'select',
-      default: 'profile',
+      default: 'configured',
       label: 'Content Mode',
-      options: ['profile', 'user', 'agent', 'all'],
+      options: ['configured', 'user', 'agent', 'all'],
     },
-    fallbackContentMode: {
-      type: 'select',
-      default: 'user',
-      label: 'Fallback Content Mode',
-      options: ['user', 'agent', 'all'],
-    },
+    maxCandidateFiles: { type: 'number', default: 2000, label: 'Maximum Candidate Files' },
+    maxFileSizeBytes: { type: 'number', default: 2097152, label: 'Maximum File Size (bytes)' },
     recencyHalfLifeDays: { type: 'number', default: 14, label: 'Recency Half-life (days)' },
     associationBoost: { type: 'number', default: 1.5, label: 'Shared-term Association Boost' },
     maxMemoryChars: { type: 'number', default: 1200, label: 'Maximum Characters per Memory' },

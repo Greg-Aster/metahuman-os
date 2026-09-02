@@ -228,7 +228,8 @@ export default function App() {
         console.log('[App] Opening URL:', data.url);
 
         // Check if this is an APK download
-        const isApk = data.url.toLowerCase().endsWith('.apk');
+        const lowerUrl = data.url.toLowerCase();
+        const isApk = lowerUrl.endsWith('.apk') || lowerUrl.includes('/api/mobile/download');
         if (isApk) {
           console.log('[App] APK download detected - opening download URL');
           // Note: For APK installation, user needs to enable "Install unknown apps" for the browser/app
@@ -282,11 +283,6 @@ export default function App() {
           sendToWebView({ type: 'settings-opened', success: false, error: (err as Error).message });
         }
         return;
-      }
-
-      // Forward to Node.js if needed (most communication goes via HTTP)
-      if (data.type === 'agent-init' || data.type === 'agent-stop') {
-        nodejs.channel.send(data);
       }
     } catch (e) {
       console.error('[App] Failed to parse WebView message:', e);

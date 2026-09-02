@@ -8,7 +8,6 @@ import {
   getBufferPathForUser,
   loadBufferForUser,
   writeBufferEntry,
-  writeConversationBufferSummary,
   type CanonicalBufferMode,
 } from './conversation-buffer.js';
 import {
@@ -78,13 +77,6 @@ try {
     assert.equal(buffer.messages.at(-1)?.content, `${mode}-${counts[mode] - 1}`);
     assert.equal(fs.existsSync(getBufferNotificationPath(username, mode)), true, `${mode} emits a notification`);
   }
-
-  assert.equal(await writeConversationBufferSummary(username, {
-    sessionId: 'summary-session',
-    content: 'A bounded summary.',
-    messageCount: 7,
-  }), true);
-  assert.equal(loadBufferForUser(username, 'conversation').summaryMarkers.length, 1);
 
   const corruptedPath = getBufferPathForUser(username, 'system');
   fs.writeFileSync(corruptedPath, '{invalid json');

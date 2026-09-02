@@ -1,356 +1,208 @@
 /**
  * Training History API Handlers
  *
- * Returns training run history from docs/run_logs and audit logs.
- * Works for both web (Astro) and mobile (nodejs-mobile).
+ * The training launcher owns one persisted process log per run under logs/run.
+ * Terminal lifecycle markers are authoritative for new runs; older launcher
+ * logs are classified from their explicit pipeline completion/failure output.
  */
 
-import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { successResponse } from '../types.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { UnifiedRequest, UnifiedResponse } from '../types.js';
+import { successResponse } from '../types.js';
 import { systemPaths } from '../../paths.js';
 
-interface TrainingRun {
+export interface TrainingRun {
   id: string;
   startTime: string;
   endTime?: string;
-  status: 'completed' | 'failed' | 'cancelled';
+  status: 'completed' | 'failed' | 'cancelled' | 'incomplete';
   pid?: number;
-  method: string;
+  method: 'local-lora' | 'remote-lora' | 'fine-tune';
   logFile: string;
-  dataset?: string;
+  username?: string;
   baseModel?: string;
   duration?: string;
   error?: string;
-  fullLogPath?: string;
 }
 
-/**
- * Parse docs/run_logs directory to extract training runs
- */
-function parseRunLogsDirectory(): TrainingRun[] {
-  const runs: TrainingRun[] = [];
-  const runLogsDir = path.join(systemPaths.root, 'docs', 'run_logs');
+interface TrainingLifecycleMarker {
+  status: 'completed' | 'failed' | 'cancelled';
+  endedAt: string;
+  pid?: number;
+  username?: string;
+  exitCode?: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: string;
+}
 
-  if (!fs.existsSync(runLogsDir)) {
-    return runs;
-  }
+const TRAINING_LOG_PATTERN = /^(full-cycle-local|full-cycle|fine-tune-cycle)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)\.log$/;
+const LIFECYCLE_PREFIX = '[training-lifecycle] ';
 
+function parseFileTimestamp(encoded: string): string {
+  const match = encoded.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/);
+  if (!match) throw new Error(`Invalid training log timestamp: ${encoded}`);
+  return `${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`;
+}
+
+function parseLifecycleMarker(content: string): TrainingLifecycleMarker | undefined {
+  const markerLines = content
+    .split('\n')
+    .filter(line => line.startsWith(LIFECYCLE_PREFIX));
+  if (markerLines.length === 0) return undefined;
+
+  const raw = markerLines.at(-1)!.slice(LIFECYCLE_PREFIX.length);
+  let marker: unknown;
   try {
-    // Get date directories (YYYY-MM-DD)
-    const dateDirs = fs.readdirSync(runLogsDir)
-      .filter(f => {
-        const fullPath = path.join(runLogsDir, f);
-        return fs.statSync(fullPath).isDirectory();
-      })
-      .sort()
-      .reverse()
-      .slice(0, 30); // Last 30 days
-
-    for (const dateDir of dateDirs) {
-      const datePath = path.join(runLogsDir, dateDir);
-
-      // Get run directories within each date
-      const runDirs = fs.readdirSync(datePath)
-        .filter(f => {
-          const fullPath = path.join(datePath, f);
-          return fs.statSync(fullPath).isDirectory();
-        });
-
-      for (const runDir of runDirs) {
-        const runPath = path.join(datePath, runDir);
-        const trainerLogPath = path.join(runPath, 'trainer.log');
-
-        if (!fs.existsSync(trainerLogPath)) {
-          continue;
-        }
-
-        try {
-          // Parse trainer.log to extract metadata (optimized - read only last 50KB for large files)
-          const logStats = fs.statSync(trainerLogPath);
-          const fileSize = logStats.size;
-
-          let logContent = '';
-          if (fileSize > 50000) {
-            // For large files, read last 50KB only (roughly 500-1000 lines)
-            const fd = fs.openSync(trainerLogPath, 'r');
-            const readSize = Math.min(50000, fileSize);
-            const buffer = Buffer.alloc(readSize);
-            fs.readSync(fd, buffer, 0, readSize, fileSize - readSize);
-            fs.closeSync(fd);
-            logContent = buffer.toString('utf-8');
-          } else {
-            // For small files, read entire file
-            logContent = fs.readFileSync(trainerLogPath, 'utf-8');
-          }
-
-          const lines = logContent.split('\n');
-
-          let startTime = '';
-          let endTime = '';
-          let status: 'completed' | 'failed' | 'cancelled' = 'completed';
-          let method = 'fine-tune';
-          let baseModel = '';
-          let error = '';
-
-          // Extract metadata from log lines (optimized - scan in reverse for end time)
-          for (let i = lines.length - 1; i >= 0; i--) {
-            const line = lines[i];
-
-            // Extract end time first (scan from bottom)
-            if (!endTime) {
-              const timestampMatch = line.match(/\[([\d-T:.Z]+)\]/);
-              if (timestampMatch) {
-                endTime = timestampMatch[1];
-              }
-            }
-
-            // Check for errors
-            if (line.includes('Training exit code: 1') || line.includes('failed')) {
-              status = 'failed';
-            }
-
-            if (line.includes('torch.AcceleratorError') || line.includes('CUDA error')) {
-              status = 'failed';
-              error = 'CUDA error: GPU busy or unavailable';
-            }
-
-            if (line.includes('Training stderr') && line.includes('error')) {
-              status = 'failed';
-              if (!error) error = 'Training script error';
-            }
-          }
-
-          // Scan from top for start time and model info
-          for (const line of lines) {
-            // Extract start time (first timestamp)
-            if (!startTime && line.includes('Starting new training run')) {
-              const match = line.match(/\[([\d-T:.Z]+)\]/);
-              if (match) startTime = match[1];
-            }
-
-            // Extract base model
-            if (!baseModel && (line.includes('base_model') || line.includes('Loading tokenizer for'))) {
-              const modelMatch = line.match(/(?:base_model|tokenizer for)\s+(\S+)/);
-              if (modelMatch) baseModel = modelMatch[1];
-            }
-
-            // Detect LORA vs full fine-tune
-            if (line.includes('LoRA') || line.includes('lora_rank')) {
-              method = 'remote-lora';
-            } else if (line.includes('FULL FINE-TUNING') || line.includes('full_finetune')) {
-              method = 'fine-tune';
-            }
-
-            // Early exit if we have all critical metadata
-            if (startTime && baseModel && endTime) {
-              break;
-            }
-          }
-
-          // Use directory name for start time if not found in logs
-          if (!startTime) {
-            const dirMatch = runDir.match(/(\d{4}-\d{2}-\d{2})-(\d{6})/);
-            if (dirMatch) {
-              const date = dirMatch[1];
-              const time = dirMatch[2];
-              startTime = `${date}T${time.substring(0, 2)}:${time.substring(2, 4)}:${time.substring(4, 6)}Z`;
-            }
-          }
-
-          const run: TrainingRun = {
-            id: runDir,
-            startTime: startTime || new Date().toISOString(),
-            endTime: endTime || undefined,
-            status,
-            method,
-            logFile: `${dateDir}/${runDir}/trainer.log`,
-            fullLogPath: trainerLogPath,
-            baseModel: baseModel || undefined,
-            duration: startTime && endTime ? calculateDuration(startTime, endTime) : undefined,
-            error: error || undefined,
-          };
-
-          runs.push(run);
-        } catch (err) {
-          // Skip invalid run directories
-          console.warn(`[training/history] Failed to parse run ${runDir}:`, err);
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[training/history] Failed to scan run_logs directory:', err);
+    marker = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Malformed training lifecycle marker: ${(error as Error).message}`);
   }
 
-  return runs;
+  if (!marker || typeof marker !== 'object') {
+    throw new Error('Malformed training lifecycle marker: expected an object');
+  }
+  const candidate = marker as Record<string, unknown>;
+  if (!['completed', 'failed', 'cancelled'].includes(String(candidate.status))) {
+    throw new Error(`Malformed training lifecycle marker status: ${String(candidate.status)}`);
+  }
+  if (typeof candidate.endedAt !== 'string' || !Number.isFinite(Date.parse(candidate.endedAt))) {
+    throw new Error('Malformed training lifecycle marker: endedAt must be an ISO timestamp');
+  }
+
+  return candidate as unknown as TrainingLifecycleMarker;
 }
 
-/**
- * Parse audit logs to extract training run history (legacy)
- */
-function parseTrainingHistory(): TrainingRun[] {
-  const runs: TrainingRun[] = [];
-  const auditDir = path.join(systemPaths.logs, 'audit');
-
-  if (!fs.existsSync(auditDir)) {
-    return runs;
-  }
-
-  // Get all audit log files, sorted by date (newest first)
-  const logFiles = fs.readdirSync(auditDir)
-    .filter(f => f.endsWith('.ndjson'))
-    .sort()
-    .reverse()
-    .slice(0, 30); // Last 30 days
-
-  // Track training runs by PID
-  const runsByPid = new Map<number, TrainingRun>();
-
-  for (const logFile of logFiles) {
-    const logPath = path.join(auditDir, logFile);
-    const content = fs.readFileSync(logPath, 'utf-8');
-    const lines = content.trim().split('\n');
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-
-      try {
-        const entry = JSON.parse(line);
-        const event = entry.event as string;
-
-        // Track training starts from the canonical training lifecycle.
-        if (event === 'training_started') {
-          const pid = entry.details?.pid;
-          const method = entry.details?.method || 'unknown';
-          const logPath = entry.details?.logPath;
-
-          if (pid) {
-            const run: TrainingRun = {
-              id: `run-${pid}`,
-              startTime: entry.timestamp,
-              status: 'completed',
-              pid,
-              method: method,
-              logFile: logPath || `training-${pid}.log`,
-              baseModel: entry.details?.config?.base_model,
-            };
-
-            runsByPid.set(pid, run);
-          }
-        }
-
-        // Track cancellations
-        if (event === 'training_cancelled') {
-          const processes = Array.isArray(entry.details?.processes) ? entry.details.processes : [];
-          for (const processInfo of processes) {
-            const pid = processInfo?.pid;
-            const run = runsByPid.get(pid);
-            if (run) {
-              run.status = 'cancelled';
-              run.endTime = entry.timestamp;
-              run.duration = calculateDuration(run.startTime, entry.timestamp);
-            }
-          }
-        }
-
-        // Track failures
-        if (event === 'training_failed') {
-          const pid = entry.details?.pid;
-          if (pid) {
-            const run = runsByPid.get(pid);
-            if (run) {
-              run.status = 'failed';
-              run.error = entry.details?.error || 'Training failed';
-              run.endTime = entry.timestamp;
-              run.duration = calculateDuration(run.startTime, entry.timestamp);
-            }
-          }
-        }
-
-        if (event === 'training_completed') {
-          const pid = entry.details?.pid;
-          const run = runsByPid.get(pid);
-          if (run) {
-            run.endTime = entry.timestamp;
-            run.duration = calculateDuration(run.startTime, entry.timestamp);
-          }
-        }
-      } catch (err) {
-        // Skip invalid JSON lines
-      }
-    }
-  }
-
-  // Convert map to array and sort by start time (newest first)
-  const allRuns = Array.from(runsByPid.values())
-    .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
-
-  return allRuns.slice(0, 50);
+function lastIndexOfAny(content: string, markers: string[]): number {
+  return markers.reduce((latest, marker) => Math.max(latest, content.lastIndexOf(marker)), -1);
 }
 
-/**
- * Calculate duration between two ISO timestamps
- */
-function calculateDuration(start: string, end: string): string {
+function legacyOutcome(content: string): Pick<TrainingRun, 'status' | 'error'> {
+  const completedAt = lastIndexOfAny(content, [
+    '✅ [full-cycle] Training complete for user:',
+    '[fine-tune-cycle] ===== PIPELINE COMPLETE =====',
+  ]);
+  const failedAt = lastIndexOfAny(content, [
+    '[full-cycle] Remote training failed',
+    '[full-cycle] failed:',
+    '[fine-tune-cycle] ===== PIPELINE FAILED =====',
+    '====== TRAINING FAILED ======',
+    'TRAINING FAILED - Exit code',
+    '[lora-trainer] An error occurred:',
+  ]);
+
+  if (failedAt > completedAt) {
+    const errorMatch = content.match(/(?:\[full-cycle\] failed:|\[fine-tune-cycle\] Error:|\[lora-trainer\] An error occurred:)\s*(.+)/);
+    return {
+      status: 'failed',
+      error: errorMatch?.[1]?.trim() || 'Training pipeline reported failure',
+    };
+  }
+  if (completedAt >= 0) return { status: 'completed' };
+  return {
+    status: 'incomplete',
+    error: 'Training process ended without an explicit terminal outcome',
+  };
+}
+
+function inferUsername(content: string): string | undefined {
+  return content.match(/Starting remote (?:full cycle|training) for (?:user:\s*)?([A-Za-z0-9_-]+)/)?.[1]
+    || content.match(/Starting fine-tuning cycle for user:\s*([A-Za-z0-9_-]+)/)?.[1]
+    || content.match(/Training complete for user:\s*([A-Za-z0-9_-]+)/)?.[1];
+}
+
+function inferBaseModel(content: string): string | undefined {
+  return content.match(/(?:Training base model|Base model):\s*([^\s]+)/)?.[1];
+}
+
+function methodForAgent(agent: string): TrainingRun['method'] {
+  if (agent === 'full-cycle-local') return 'local-lora';
+  if (agent === 'fine-tune-cycle') return 'fine-tune';
+  return 'remote-lora';
+}
+
+function calculateDuration(start: string, end: string): string | undefined {
+  const difference = Date.parse(end) - Date.parse(start);
+  if (!Number.isFinite(difference) || difference < 0) return undefined;
+
+  const totalSeconds = Math.floor(difference / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+export function parseTrainingConsoleLog(
+  fileName: string,
+  content: string,
+  modifiedAt: Date,
+): TrainingRun {
+  const match = fileName.match(TRAINING_LOG_PATTERN);
+  if (!match) throw new Error(`Unsupported training log name: ${fileName}`);
+
+  const startTime = parseFileTimestamp(match[2]);
+  const lifecycle = parseLifecycleMarker(content);
+  const legacy = lifecycle ? undefined : legacyOutcome(content);
+  const status = lifecycle?.status || legacy!.status;
+  const endTime = lifecycle?.endedAt || modifiedAt.toISOString();
+  const exitDescription = lifecycle?.status === 'failed' && lifecycle.exitCode !== undefined
+    ? `Training process exited with code ${String(lifecycle.exitCode)}`
+    : undefined;
+
+  return {
+    id: fileName.slice(0, -'.log'.length),
+    startTime,
+    endTime,
+    status,
+    pid: lifecycle?.pid,
+    method: methodForAgent(match[1]),
+    logFile: fileName,
+    username: lifecycle?.username || inferUsername(content),
+    baseModel: inferBaseModel(content),
+    duration: calculateDuration(startTime, endTime),
+    error: lifecycle?.error || exitDescription || legacy?.error,
+  };
+}
+
+export function readTrainingHistory(
+  logsDirectory = path.join(systemPaths.logs, 'run'),
+  limit = 50,
+): TrainingRun[] {
+  if (!fs.existsSync(logsDirectory)) return [];
+
+  return fs.readdirSync(logsDirectory, { withFileTypes: true })
+    .filter(entry => entry.isFile() && TRAINING_LOG_PATTERN.test(entry.name))
+    .map(entry => {
+      const filePath = path.join(logsDirectory, entry.name);
+      const stats = fs.statSync(filePath);
+      return parseTrainingConsoleLog(entry.name, fs.readFileSync(filePath, 'utf8'), stats.mtime);
+    })
+    .sort((left, right) => Date.parse(right.startTime) - Date.parse(left.startTime))
+    .slice(0, limit);
+}
+
+export function readTrainingHistoryForUser(
+  username: string,
+  logsDirectory = path.join(systemPaths.logs, 'run'),
+): TrainingRun[] {
+  return readTrainingHistory(logsDirectory, Number.MAX_SAFE_INTEGER)
+    .filter(run => run.username === username)
+    .slice(0, 50);
+}
+
+/** GET /api/training/history - Get canonical training process history. */
+export async function handleGetTrainingHistory(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    const startTime = new Date(start).getTime();
-    const endTime = new Date(end).getTime();
-    const diffMs = endTime - startTime;
-
-    const hours = Math.floor(diffMs / (1000 * 60 * 60));
-    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
-
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${seconds}s`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${seconds}s`;
-    } else {
-      return `${seconds}s`;
-    }
-  } catch {
-    return 'N/A';
-  }
-}
-
-/**
- * GET /api/training/history - Get training history
- */
-export async function handleGetTrainingHistory(_req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    // Parse both sources and merge
-    const runLogsRuns = parseRunLogsDirectory();
-    const auditRuns = parseTrainingHistory();
-
-    // Merge runs, preferring docs/run_logs data (more detailed)
-    const runsById = new Map<string, TrainingRun>();
-
-    // Add audit runs first
-    for (const run of auditRuns) {
-      runsById.set(run.id, run);
-    }
-
-    // Overlay run_logs data (more authoritative)
-    for (const run of runLogsRuns) {
-      runsById.set(run.id, run);
-    }
-
-    const allRuns = Array.from(runsById.values())
-      .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())
-      .slice(0, 50);
-
-    return successResponse({
-      success: true,
-      runs: allRuns,
-      count: allRuns.length,
-    });
+    const runs = readTrainingHistoryForUser(req.user.username);
+    return successResponse({ success: true, runs, count: runs.length });
   } catch (error) {
     console.error('[training/history] GET error:', error);
     return {
       status: 500,
-      error: (error as Error).message || 'Failed to load training history',
-      data: { runs: [] },
+      error: error instanceof Error ? error.message : 'Failed to load training history',
+      data: { success: false, runs: [] },
     };
   }
 }

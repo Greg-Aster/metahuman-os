@@ -1,13 +1,12 @@
-import { createHash } from 'node:crypto';
 import { callLLM } from '../../model-router.js';
 import {
   ENVIRONMENT_MOTION_PLAN_JOINTS,
   ENVIRONMENT_MOTION_PLAN_LIMITS,
   ENVIRONMENT_MOTION_PLAN_END_POSES,
   assertBoundedMotionPlanEncoding,
+  normalizeEnvironmentCommandedPose,
   normalizeEnvironmentMotionPlanFields,
   type EnvironmentAction,
-  type EnvironmentMotionControlState,
   type EnvironmentObservation,
 } from '../../environment-interface/index.js';
 import { defineNode } from '../types.js';
@@ -17,6 +16,48 @@ const COMPACT_RESULT_KEYS = ['summary', 'frames', 'endPose'] as const;
 const MOTION_FRAME_KEYS = ['durationMs', ...ENVIRONMENT_MOTION_PLAN_JOINTS] as const;
 const MOTION_DURATION_PATTERN = '^(?:[1-9][0-9]{2}|[1-4][0-9]{3}|5000)$';
 const MOTION_DEGREES_PATTERN = '^(?:(?:[0-9]|[1-9][0-9]|1[0-7][0-9])(?:\\.[0-9]{1,2})?|180(?:\\.0{1,2})?)$';
+
+export const AINEKIO_FREESTYLE_BODY_MODEL = Object.freeze({
+  version: 1,
+  body: 'physical eight-servo quadruped',
+  angleUnit: 'logical degrees',
+  jointMapVersion: 1,
+  jointOrder: [...ENVIRONMENT_MOTION_PLAN_JOINTS],
+  logicalRange: { minimum: 0, maximum: 180 },
+  limbs: [
+    { position: 'front-right', joints: ['R1', 'R3'], roles: ['proximal shoulder', 'distal arm'] },
+    { position: 'rear-right', joints: ['R2', 'R4'], roles: ['proximal hip', 'distal lower leg'] },
+    { position: 'front-left', joints: ['L1', 'L3'], roles: ['proximal shoulder', 'distal arm'] },
+    { position: 'rear-left', joints: ['L2', 'L4'], roles: ['proximal hip', 'distal lower leg'] },
+  ],
+  mirrorPairs: [
+    ['R1', 'L1'],
+    ['R2', 'L2'],
+    ['R3', 'L3'],
+    ['R4', 'L4'],
+  ],
+  referencePoses: {
+    standing: { R1: 135, R2: 45, L1: 45, L2: 135, R4: 0, R3: 180, L3: 0, L4: 180 },
+    neutral: { R1: 90, R2: 90, L1: 90, L2: 90, R4: 90, R3: 90, L3: 90, L4: 90 },
+  },
+  geometry: {
+    targetsAre: 'absolute logical joint angles, never deltas',
+    mirroredTargetRule: 'the corresponding left/right angle is normally 180 minus its mirror',
+    towardNeutral: 'moving a standing limb toward 90 folds it toward the all-neutral resting geometry',
+    cameraMount: 'fixed to the body; there is no independent head or neck axis',
+  },
+  playback: {
+    frameDurationMs: {
+      minimum: ENVIRONMENT_MOTION_PLAN_LIMITS.minFrameDurationMs,
+      maximum: ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrameDurationMs,
+    },
+    maximumFrames: ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrames,
+    maximumTotalDurationMs: ENVIRONMENT_MOTION_PLAN_LIMITS.maxTotalDurationMs,
+    targetInterpolation: 'smoothstep',
+    maximumTransitionMsWithinFrame: 300,
+    remainingFrameTime: 'hold target',
+  },
+});
 
 const MOTION_FRAME_JSON_SCHEMA = {
   type: 'object',
@@ -147,65 +188,36 @@ function movementRequest(value: unknown): EnvironmentMovementRequest | null {
   };
 }
 
-function commandedPose(observation: EnvironmentObservation | undefined): Record<string, number> | undefined {
-  const candidate = observation?.state?.commandedPose;
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
-  const pose = candidate as Record<string, unknown>;
+function commandedPose(observation: EnvironmentObservation | undefined): {
+  pose: Record<string, number>;
+  basis: Record<string, unknown>;
+} | undefined {
+  const state = normalizeEnvironmentCommandedPose(observation?.state?.commandedPose);
+  if (!state) return undefined;
+  const reference = state.kind === 'reference' && (state.reference === 'stand' || state.reference === 'neutral')
+    ? state.reference
+    : null;
+  const pose = reference
+    ? AINEKIO_FREESTYLE_BODY_MODEL.referencePoses[reference === 'stand' ? 'standing' : 'neutral']
+    : state.kind === 'joints' && state.joints && typeof state.joints === 'object' && !Array.isArray(state.joints)
+      ? state.joints as Record<string, unknown>
+      : null;
+  if (!pose) return undefined;
   const normalized: Record<string, number> = {};
   for (const joint of ENVIRONMENT_MOTION_PLAN_JOINTS) {
     const degrees = pose[joint];
-    if (typeof degrees !== 'number' || !Number.isFinite(degrees)) return undefined;
+    if (typeof degrees !== 'number' || !Number.isFinite(degrees) || degrees < 0 || degrees > 180) return undefined;
     normalized[joint] = degrees;
   }
-  return normalized;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function motionControlState(observation: EnvironmentObservation | undefined): EnvironmentMotionControlState | null {
-  const command = isRecord(observation?.metadata?.taskValidatorCommand)
-    ? observation.metadata.taskValidatorCommand
-    : null;
-  const candidate = isRecord(command?.motionControl)
-    ? command.motionControl
-    : isRecord(observation?.metadata?.motionControl)
-      ? observation.metadata.motionControl
-      : null;
-  if (!candidate) return null;
-  const lastPlanId = typeof candidate.lastPlanId === 'string' ? candidate.lastPlanId : undefined;
-  const lastVisualFrameId = typeof candidate.lastVisualFrameId === 'string'
-    ? candidate.lastVisualFrameId
-    : undefined;
-  const lastVisualFrameTimestamp = typeof candidate.lastVisualFrameTimestamp === 'string'
-    ? candidate.lastVisualFrameTimestamp
-    : undefined;
   return {
-    version: 1,
-    ...(typeof candidate.cycleId === 'string' ? { cycleId: candidate.cycleId } : {}),
-    ...(lastPlanId ? { lastPlanId } : {}),
-    ...(lastVisualFrameId ? { lastVisualFrameId } : {}),
-    ...(lastVisualFrameTimestamp ? { lastVisualFrameTimestamp } : {}),
+    pose: normalized,
+    basis: {
+      kind: state.kind,
+      ...(reference ? { reference } : {}),
+      ...(typeof state.sourceActionId === 'string' ? { sourceActionId: state.sourceActionId } : {}),
+      ...(typeof state.updatedAt === 'string' ? { updatedAt: state.updatedAt } : {}),
+    },
   };
-}
-
-function latestVisualFrame(
-  observation: EnvironmentObservation | undefined,
-): EnvironmentObservation['visual'] | undefined {
-  const frames = [observation?.visual, ...(observation?.visuals ?? [])]
-    .filter((frame): frame is NonNullable<EnvironmentObservation['visual']> => Boolean(frame));
-  return frames.reduce<EnvironmentObservation['visual'] | undefined>((latest, candidate) => {
-    if (!latest) return candidate;
-    return Date.parse(candidate.timestamp) >= Date.parse(latest.timestamp) ? candidate : latest;
-  }, undefined);
-}
-
-function motionPlanId(action: Partial<EnvironmentAction>): string {
-  return createHash('sha256').update(JSON.stringify({
-    frames: action.frames ?? [],
-    endPose: action.endPose ?? null,
-  })).digest('hex').slice(0, 24);
 }
 
 export function movementGeneratorPrompt(
@@ -215,27 +227,29 @@ export function movementGeneratorPrompt(
 ): Array<{ role: 'system' | 'user'; content: string }> {
   const currentPose = commandedPose(observation);
   const system = [
-    'You are Movement Generator for the Ainekio eight-servo robot emulator.',
-    'Generate one complete, expressive, time-indexed logical-joint trajectory for the admitted body-local movement. You propose pose and gesture motion; downstream safety validators decide whether it executes.',
-    'Never interpret this request as open-loop displacement, target approach, navigation, path planning, target tracking, or arrival.',
+    'You are the freestyle trajectory planner for a physical eight-servo quadruped robot.',
+    'Generate one original, complete, time-indexed logical-joint trajectory that expresses the requested movement. Calculate the movement yourself from the supplied body model and intent; do not retrieve, copy, blend, or approximate an installed named motion.',
+    'The supplied bodyModel is factual capability information, not a movement recipe. Use it to reason about the robot, then choose the angles, timing, phases, coordination, and final pose yourself.',
+    'Never invent a head, neck, wheel, gripper, joint, degree of freedom, or physical capability that bodyModel does not contain.',
     'Return exactly one JSON object and no markdown, prose, code fences, thinking tags, or extra fields.',
     'Required result: {"summary":"1..160 characters","frames":[{"durationMs":"300","R1":"135","R2":"45","L1":"45","L2":"135","R4":"0","R3":"180","L3":"0","L4":"180"}],"endPose":"hold"}.',
     `Each frame object contains exactly durationMs and ${ENVIRONMENT_MOTION_PLAN_JOINTS.join(', ')}.`,
-    'Body layout: front-right limb uses R1/R3, front-left limb uses L1/L3, right-rear leg uses R2/R4, and left-rear leg uses L2/L4. On each front limb, the first joint is the shoulder and the second is the arm. On each rear leg, the first joint is the hip and the second is the lower leg.',
-    'Interpret right or left arm/hand requests as the corresponding front limb unless the instruction explicitly identifies a rear leg.',
-    'Reason about the paired joints of every limb involved. A visible lift, reach, or gesture usually needs coordinated changes across the limb rather than treating one joint as the entire limb. Choose all angles, timing, support-limb compensation, and movement phases yourself from the user request.',
-    `Before returning the trajectory, check that the requested side and limb perform the visible action described by the user and that all frame durations sum to no more than ${ENVIRONMENT_MOTION_PLAN_LIMITS.maxTotalDurationMs} ms.`,
-    'Logical standing pose: R1=135, R2=45, L1=45, L2=135, R4=0, R3=180, L3=0, L4=180.',
+    'Solve the movement anatomically: identify which limb or whole-body posture expresses the intent, coordinate both joints of each involved limb, and account for the other limbs when that improves the chosen result. Mirrored anatomy normally requires opposite numeric changes around the reference pose rather than identical left/right angles.',
+    'Balance, support, weight transfer, and recovery are planning options, not mandatory goals. Falling, rolling, collapsing, unusual support patterns, abrupt gestures, and ending away from stand are valid choices. Make the choice that best expresses the intent.',
+    'For a look or scan, remember there is no independent head or neck joint: create any desired view-changing gesture with coordinated body and limb motion. Do not reduce every look request to the same canned stance.',
+    'currentCommandedPose is the correlated logical target established before this planning call. Treat every output frame as an absolute target and calculate the trajectory from that exact starting geometry.',
+    'Understand the playback timing before choosing frames: each frame eases toward its target for at most 300 ms, then holds that target for the remainder of durationMs. Longer duration alone does not make a large transition slower. Use additional calculated intermediate targets when you want a gradual transition; use a large direct change when an abrupt motion is intentional.',
+    'Choose the number of distinct frames and their amplitude from the movement itself. Avoid accidental low-amplitude jitter and meaningless reversals; motion may still be subtle, rapid, irregular, or twitch-like when that is the intended expression.',
     `Encode durationMs and every joint degree as decimal strings. Use ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrames}..${ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrames} frames with integer durations ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrameDurationMs}..${ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrameDurationMs} ms. Each duration is individual, never an absolute or cumulative timestamp. Add every frame duration and keep the sum at or below ${ENVIRONMENT_MOTION_PLAN_LIMITS.maxTotalDurationMs} ms.`,
-    'Choose the number of distinct frames needed for the requested movement within the motion-plan contract. Do not repeat identical frames unless one repeated frame represents a deliberate pause.',
-    'Degrees must be finite 0..180 with no more than two decimal places. endPose must be hold, stand, or neutral.',
-    'Use clearly visible joint changes. This is an emulator: unstable movement or falling is acceptable when it better matches the request.',
+    'Degrees must be finite logical angles from 0 through 180 with no more than two decimal places. Choose hold, stand, or neutral for endPose according to the intended result; hold may preserve any reachable final pose.',
     'Do not emit an action wrapper, target objects, session IDs, action IDs, sequence numbers, repeat counts, servo/PWM/GPIO fields, calibration, simulator commands, persistence, named motions, metadata, or partial joint frames.',
   ].join('\n');
   const user = JSON.stringify({
     movementRequest: request.description,
     originalInstruction: instruction.slice(0, 1_000),
-    currentCommandedPose: currentPose ?? null,
+    bodyModel: AINEKIO_FREESTYLE_BODY_MODEL,
+    currentCommandedPose: currentPose?.pose ?? null,
+    currentCommandedPoseBasis: currentPose?.basis ?? null,
   });
   return [
     { role: 'system', content: system },
@@ -249,23 +263,23 @@ export const movementGeneratorNode = defineNode({
   category: 'environment',
   inputs: [
     { name: 'movementRequest', type: 'object', optional: true, description: 'Eligible structured off-script movement request' },
+    { name: 'preparedMovementRequest', type: 'object', optional: true, description: 'Persisted request resumed after standing preparation completes' },
     { name: 'instruction', type: 'string', optional: true, description: 'Original interpreted user instruction' },
     { name: 'observation', type: 'object', optional: true, description: 'Robot capability and current-state observation' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
   ],
   outputs: [
-    { name: 'action', type: 'object', description: 'One validated robotMotionPlan action, or null' },
+    { name: 'action', type: 'object', description: 'One standing preparation or validated robotMotionPlan action, or null' },
     { name: 'actions', type: 'array', description: 'Validated action list for Environment Bridge Out' },
-    { name: 'valid', type: 'boolean', description: 'Whether a bounded plan was generated' },
+    { name: 'valid', type: 'boolean', description: 'Whether standing preparation or a validated plan was produced' },
     { name: 'rejected', type: 'boolean', description: 'Whether a requested plan was rejected' },
     { name: 'error', type: 'string', description: 'Validation or generation error' },
     { name: 'response', type: 'string', description: 'Short visible generation result or rejection' },
     { name: 'planSummary', type: 'object', description: 'Bounded frame and duration summary' },
-    { name: 'controlResult', type: 'object', description: 'Cycle-owned plan identity and ready/stuck result for the existing Task Validator' },
   ],
   properties: {
     role: 'orchestrator',
-    maxTokens: 1536,
+    maxTokens: 4096,
     temperature: 0.2,
   },
   propertySchemas: {
@@ -277,7 +291,7 @@ export const movementGeneratorNode = defineNode({
     },
     maxTokens: {
       type: 'number',
-      default: 1536,
+      default: 4096,
       label: 'Max Tokens',
       min: 1024,
       max: 8192,
@@ -294,8 +308,9 @@ export const movementGeneratorNode = defineNode({
   },
   description: 'Generates and strictly validates one bounded off-script logical-joint trajectory. It cannot authorize calibration or direct servo control.',
   async execute(inputs, context, properties) {
-    const hasRequestedValue = inputs.movementRequest !== undefined && inputs.movementRequest !== null;
-    const request = movementRequest(inputs.movementRequest);
+    const requestedValue = inputs.preparedMovementRequest ?? inputs.movementRequest;
+    const hasRequestedValue = requestedValue !== undefined && requestedValue !== null;
+    const request = movementRequest(requestedValue);
     if (!request) {
       const error = hasRequestedValue
         ? 'Movement Generator accepts only an admitted body_local movement request.'
@@ -308,7 +323,6 @@ export const movementGeneratorNode = defineNode({
         error,
         response: error,
         planSummary: null,
-        controlResult: hasRequestedValue ? { status: 'rejected', reason: 'invalid_motion_class' } : null,
       };
     }
     const observation = inputs.observation && typeof inputs.observation === 'object'
@@ -319,7 +333,7 @@ export const movementGeneratorNode = defineNode({
       : request.sessionId || observation?.sessionId;
     if (!sessionId) {
       const error = 'Off-script movement requires a connected target session.';
-      return { action: null, actions: [], valid: false, rejected: true, error, response: error, planSummary: null, controlResult: { status: 'rejected', reason: 'missing_session' } };
+      return { action: null, actions: [], valid: false, rejected: true, error, response: error, planSummary: null };
     }
     if (!observation?.capabilities?.actions?.includes('robotMotionPlan')) {
       const error = 'Off-script movement is unavailable because robotMotionPlan is not advertised.';
@@ -331,31 +345,44 @@ export const movementGeneratorNode = defineNode({
         error,
         response: error,
         planSummary: null,
-        controlResult: { status: 'rejected', reason: 'robot_motion_plan_unavailable' },
       };
     }
-    const previous = motionControlState(observation);
-    const visualFrame = latestVisualFrame(observation);
-    if (
-      previous?.lastPlanId
-      && previous.lastVisualFrameId
-      && visualFrame?.id === previous.lastVisualFrameId
-    ) {
-      const error = 'Motion stopped because no fresh camera frame followed the previous physical attempt.';
-      return {
-        action: null,
-        actions: [],
-        valid: false,
-        rejected: true,
-        error,
-        response: error,
-        planSummary: null,
-        controlResult: {
-          status: 'stuck',
-          reason: 'stale_motion_frame',
-          planId: previous.lastPlanId,
-          state: previous,
+    const currentPose = commandedPose(observation);
+    if (!currentPose) {
+      const canStand = observation.capabilities.actions.includes('robotCommand')
+        && observation.capabilities.robotCommands?.includes('stand') === true;
+      if (!canStand) {
+        const error = 'Off-script movement requires a known commanded pose or an advertised stand command.';
+        return {
+          action: null,
+          actions: [],
+          valid: false,
+          rejected: true,
+          error,
+          response: error,
+          planSummary: null,
+        };
+      }
+      const action: Partial<EnvironmentAction> = {
+        type: 'robotCommand',
+        command: 'stand',
+        sessionId,
+        metadata: {
+          motionPreparation: {
+            version: 1,
+            kind: 'stand_before_freestyle',
+            movementRequest: request,
+          },
         },
+      };
+      return {
+        action,
+        actions: [action],
+        valid: true,
+        rejected: false,
+        error: '',
+        response: '',
+        planSummary: { preparing: true, requiredPose: 'stand' },
       };
     }
     try {
@@ -367,9 +394,9 @@ export const movementGeneratorNode = defineNode({
         userId: context.userId || context.username,
         cognitiveMode: 'environment',
         options: {
-          maxTokens: properties?.maxTokens || 1536,
+          maxTokens: properties?.maxTokens || 4096,
           temperature: properties?.temperature ?? 0.2,
-          repeatPenalty: 1.1,
+          repeatPenalty: 1,
           format: 'json',
           jsonSchema: MOVEMENT_GENERATOR_JSON_SCHEMA,
         },
@@ -380,24 +407,11 @@ export const movementGeneratorNode = defineNode({
         ? { content: await injected({ request, instruction, observation, messages }) }
         : await callGenerator(messages);
       const normalized = normalizeGeneratedMotionPlan(result.content, sessionId, request.description);
-      const planId = motionPlanId(normalized.action);
-      const cycle = isRecord(observation?.metadata?.robotObserver)
-        ? observation.metadata.robotObserver
-        : null;
-      const state: EnvironmentMotionControlState = {
-        version: 1,
-        ...(typeof cycle?.cycleId === 'string'
-          ? { cycleId: cycle.cycleId }
-          : previous?.cycleId ? { cycleId: previous.cycleId } : {}),
-        lastPlanId: planId,
-        ...(visualFrame?.id ? { lastVisualFrameId: visualFrame.id } : {}),
-        ...(visualFrame?.timestamp ? { lastVisualFrameTimestamp: visualFrame.timestamp } : {}),
-      };
       const action = {
         ...normalized.action,
         metadata: {
           ...(normalized.action.metadata ?? {}),
-          motionControl: state,
+          motionSummary: normalized.summary,
         },
       };
       return {
@@ -406,14 +420,12 @@ export const movementGeneratorNode = defineNode({
         valid: true,
         rejected: false,
         error: '',
-        response: normalized.summary,
+        response: '',
         planSummary: {
           frameCount: normalized.action.frames?.length ?? 0,
           durationMs: normalized.totalDurationMs,
           endPose: normalized.action.endPose,
-          planId,
         },
-        controlResult: { status: 'ready', reason: '', planId, state },
       };
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : String(cause);
@@ -426,7 +438,6 @@ export const movementGeneratorNode = defineNode({
         error,
         response: error,
         planSummary: null,
-        controlResult: { status: 'rejected', reason: 'generation_failed' },
       };
     }
   },

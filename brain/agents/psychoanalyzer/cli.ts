@@ -9,40 +9,23 @@
  *
  * Options:
  *   --username <name>  Process specific user
- *   --single-user      Process only the default user
+ * The target user must resolve from --username, MH_TRIGGER_USERNAME, or the
+ * canonical active-user resolver. No fabricated default profile is used.
  *
  * Environment variables:
  *   MH_TRIGGER_USERNAME  When set (by API), automatically targets that user
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';
-import { runCycle, type PsychoanalyzerOptions } from './core.js';
+import { parsePsychoanalyzerArgs, runCycle } from './core.js';
 
 async function main() {
   initGlobalLogger('psychoanalyzer');
 
-  // Parse arguments
   const args = process.argv.slice(2);
-
-  // Check for trigger username from API (enables single-user mode automatically)
   const triggerUsername = process.env.MH_TRIGGER_USERNAME;
-
-  const options: PsychoanalyzerOptions = {
-    singleUser: args.includes('--single-user') || !!triggerUsername,
-    username: triggerUsername, // Use trigger username if set
-  };
-
-  // Parse username from CLI args (overrides trigger username if provided)
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--username' && i + 1 < args.length) {
-      options.username = args[i + 1];
-      break;
-    }
-  }
-
-  if (triggerUsername && !args.includes('--username')) {
-    console.log(`[psychoanalyzer] Mode: single-user (triggered by ${triggerUsername})`);
-  }
+  const options = parsePsychoanalyzerArgs(args);
+  options.username ??= triggerUsername;
 
   console.log('[psychoanalyzer] Starting with options:', options);
 
@@ -51,12 +34,13 @@ async function main() {
 
     console.log(`[psychoanalyzer] Completed: ${result.usersProcessed} users processed`);
 
-    // Summary
     for (const [username, stats] of Object.entries(result.stats)) {
       if (stats.skipped) {
         console.log(`  - ${username}: skipped (${stats.skipReason})`);
       } else {
-        console.log(`  - ${username}: ${stats.memoriesAnalyzed} memories, ${stats.changesApplied} changes`);
+        console.log(
+          `  - ${username}: ${stats.memoriesAnalyzed} memories, ${stats.changesApplied} applied, ${stats.changesRejected} rejected`,
+        );
       }
     }
 
@@ -64,7 +48,7 @@ async function main() {
       console.error('[psychoanalyzer] Errors:', result.errors);
     }
 
-    process.exit(result.success ? 0 : 1);
+    process.exitCode = result.success ? 0 : 1;
   } catch (error) {
     console.error('[psychoanalyzer] Fatal error:', error);
 
@@ -76,7 +60,7 @@ async function main() {
       details: { error: (error as Error).stack },
     });
 
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 

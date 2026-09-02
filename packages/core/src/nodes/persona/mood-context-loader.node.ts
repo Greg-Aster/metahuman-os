@@ -21,7 +21,7 @@ interface MoodPersonaCandidate {
 
 function clipMessages(messages: ConversationMessage[], limit: number, maxChars: number): Array<Record<string, unknown>> {
   const selected = messages
-    .filter(message => !message.meta?.summaryMarker && typeof message.content === 'string' && message.content.trim())
+    .filter(message => typeof message.content === 'string' && message.content.trim())
     .slice(-limit)
     .map(message => ({
       role: message.role,
@@ -35,22 +35,24 @@ function clipMessages(messages: ConversationMessage[], limit: number, maxChars: 
 
 function personaSummary(username: string, facet: PersonaFacetDefinition): Record<string, unknown> {
   const filePath = personaFacetResolvedPath(username, facet);
-  if (!filePath || !fs.existsSync(filePath)) return {};
-  try {
-    const persona = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Record<string, any>;
-    return {
-      identity: persona.identity ? {
-        name: persona.identity.name,
-        role: persona.identity.role,
-        purpose: persona.identity.purpose,
-      } : undefined,
-      communicationStyle: persona.personality?.communicationStyle,
-      traits: persona.personality?.traits ?? persona.traits,
-      currentFocus: persona.context?.currentFocus,
-    };
-  } catch {
-    return {};
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error(`Mood persona candidate is missing its configured persona file: ${facet.name}`);
   }
+  const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Mood persona candidate must contain a JSON object: ${facet.name}`);
+  }
+  const persona = parsed as Record<string, any>;
+  return {
+    identity: persona.identity ? {
+      name: persona.identity.name,
+      role: persona.identity.role,
+      purpose: persona.identity.purpose,
+    } : undefined,
+    communicationStyle: persona.personality?.communicationStyle,
+    traits: persona.personality?.traits ?? persona.traits,
+    currentFocus: persona.context?.currentFocus,
+  };
 }
 
 export const MoodContextLoaderNode: NodeDefinition = defineNode({

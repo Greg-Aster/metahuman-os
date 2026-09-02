@@ -39,9 +39,7 @@ export type ConversationMessage = {
 };
 
 export type ConversationBuffer = {
-  summaryMarkers: ConversationMessage[];
   messages: ConversationMessage[];
-  lastSummarizedIndex: number | null;
   lastUpdated: string;
   userMessageCount?: number;
 };
@@ -51,9 +49,7 @@ export type ConversationBuffer = {
  */
 function createEmptyBuffer(): ConversationBuffer {
   return {
-    summaryMarkers: [],
     messages: [],
-    lastSummarizedIndex: null,
     lastUpdated: new Date().toISOString(),
     userMessageCount: 0,
   };
@@ -108,9 +104,7 @@ export function loadBufferForUser(username: string, mode: CanonicalBufferMode): 
     }
     const parsed = JSON.parse(raw) as Partial<ConversationBuffer>;
     return {
-      summaryMarkers: Array.isArray(parsed.summaryMarkers) ? parsed.summaryMarkers : [],
       messages: Array.isArray(parsed.messages) ? parsed.messages : [],
-      lastSummarizedIndex: typeof parsed.lastSummarizedIndex === 'number' ? parsed.lastSummarizedIndex : null,
       lastUpdated: typeof parsed.lastUpdated === 'string' ? parsed.lastUpdated : new Date().toISOString(),
       userMessageCount: typeof parsed.userMessageCount === 'number' ? parsed.userMessageCount : 0,
     };
@@ -126,49 +120,6 @@ export async function clearBufferForUser(username: string, mode: CanonicalBuffer
     const bufferPath = getBufferPathForUser(username, mode);
     fs.writeFileSync(bufferPath, JSON.stringify(createEmptyBuffer(), null, 2));
     touchBufferNotification(username, mode);
-    return true;
-  });
-  return result === true;
-}
-
-export interface ConversationBufferSummary {
-  sessionId: string;
-  content: string;
-  messageCount: number;
-}
-
-/** Storage primitive used only by the Conversation Buffer node. */
-export async function writeConversationBufferSummary(
-  username: string,
-  summary: ConversationBufferSummary,
-): Promise<boolean> {
-  const result = await withBufferLock(username, 'conversation', 'write_summary', async () => {
-    const bufferPath = getBufferPathForUser(username, 'conversation');
-    const buffer = loadBufferForUser(username, 'conversation');
-    const summaryMarkers = buffer.summaryMarkers.filter(
-      marker => !(marker.meta?.summaryMarker && marker.meta.sessionId === summary.sessionId)
-    );
-    const rangeEnd = Math.max(summary.messageCount - 1, 0);
-    summaryMarkers.push({
-      role: 'system',
-      content: `Conversation summary (messages 0-${rangeEnd}): ${summary.content}`,
-      timestamp: Date.now(),
-      meta: {
-        summaryMarker: true,
-        sessionId: summary.sessionId,
-        createdAt: new Date().toISOString(),
-        range: { start: 0, end: rangeEnd },
-        summaryCount: summary.messageCount,
-      },
-    });
-    fs.writeFileSync(bufferPath, JSON.stringify({
-      ...buffer,
-      summaryMarkers,
-      messages: buffer.messages.filter(message => !message.meta?.summaryMarker),
-      lastSummarizedIndex: summary.messageCount,
-      lastUpdated: new Date().toISOString(),
-    }, null, 2));
-    touchBufferNotification(username, 'conversation');
     return true;
   });
   return result === true;
@@ -224,7 +175,7 @@ function recoverCorruptedBufferForUser(bufferPath: string, username: string, mod
 export async function writeBufferEntry(
   userIdOrUsername: string,
   mode: CanonicalBufferMode,
-  message: { role: string; content: string; meta?: Record<string, unknown> },
+  message: { role: string; content: string; meta?: Record<string, unknown>; timestamp?: number },
   windowId?: string
 ): Promise<boolean> {
   // Resolve user - try UUID first, then username (agents often pass username)
@@ -289,7 +240,9 @@ export async function writeBufferEntry(
         role: message.role as ConversationMessage['role'],
         content: message.content,
         meta: message.meta,
-        timestamp: Date.now(),
+        timestamp: typeof message.timestamp === 'number' && Number.isFinite(message.timestamp)
+          ? message.timestamp
+          : Date.now(),
       };
 
       buffer.messages.push(newMessage);

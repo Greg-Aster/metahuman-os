@@ -60,7 +60,6 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
     const username = context.username;
 
     let messages = mode === 'conversation' ? context.conversationHistory || [] : [];
-    let summaryMarkers: any[] = [];
     let loadedFromBuffer = false;
     let innerDialogueCount = 0;
 
@@ -69,7 +68,6 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
         const loadStart = Date.now();
         const parsed = loadBufferForUser(username, mode);
         messages = parsed.messages;
-        summaryMarkers = parsed.summaryMarkers;
         loadedFromBuffer = true;
         const loadTime = Date.now() - loadStart;
         console.log(`[ConversationHistory] Loaded ${messages.length} messages from persisted ${mode} buffer (${loadTime}ms)`);
@@ -136,7 +134,6 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
     return {
       history: messages,
       messages,
-      summaryMarkers,
       count: messages.length,
       pruned,
       loadedFromBuffer,

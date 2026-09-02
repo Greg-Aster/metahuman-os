@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { audit } from '../audit.js'
 import { getOperatorMode } from '../active-operator/mode-controller.js'
+import { withUserContext } from '../context.js'
 import {
   getEnvironmentActionSubscriberCount,
   summarizeEnvironmentBridgeState,
@@ -18,6 +19,7 @@ import {
 import { getQueueManager } from './unified-queue-manager.js'
 import type { QueuedTask } from './types.js'
 import type { WorkHandlerContext } from './execution-engine.js'
+import { getUserByUsername } from '../users.js'
 
 function requestedSessionId(task: QueuedTask, configuredSessionId?: string): string | undefined {
   if (typeof task.input.sessionId === 'string' && task.input.sessionId.trim()) return task.input.sessionId.trim()
@@ -27,6 +29,9 @@ function requestedSessionId(task: QueuedTask, configuredSessionId?: string): str
 }
 
 function stimulusAgent(task: QueuedTask): RobotOperatorStimulusAgent {
+  if (task.handler === 'workflow.robot-status' || task.input.agentId === 'robot-status') {
+    return 'robot-status'
+  }
   if (task.handler === 'workflow.boredom-reflection' || task.input.agentId === 'boredom-reflection') {
     return 'boredom-reflection'
   }
@@ -34,6 +39,45 @@ function stimulusAgent(task: QueuedTask): RobotOperatorStimulusAgent {
     return 'boredom-movement'
   }
   return 'boredom-observer'
+}
+
+async function executeRobotStatusGraph(
+  task: QueuedTask,
+  graphName: string,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const [{ loadGraphForMode }, { collectNodeOutputs, listFailedNodes, runGraph }] = await Promise.all([
+    import('../graph-streaming.js'),
+    import('../graph-runtime.js'),
+  ])
+  const user = getUserByUsername(task.username)
+  if (!user) throw new Error(`Robot Status user not found: ${task.username}`)
+  const loaded = await loadGraphForMode(graphName, user.username)
+  if (!loaded) throw new Error(`Robot Status graph not found: ${graphName}`)
+  const graphState = await withUserContext(
+    { userId: user.id, username: user.username, role: user.role },
+    () => runGraph({
+      graph: loaded.graph,
+      signal,
+      context: {
+        userId: user.id,
+        username: user.username,
+        cognitiveMode: 'environment',
+        mode: 'system',
+        dialogueType: 'system',
+        environment: 'server',
+        abortSignal: signal,
+      },
+    }),
+  )
+  const failures = listFailedNodes(graphState)
+  if (graphState.status !== 'completed' || failures.length > 0) {
+    throw new Error(`Robot Status graph failed: ${failures[0]?.error ?? graphState.status}`)
+  }
+  const outputs = collectNodeOutputs(graphState)
+  const persisted = Object.values(outputs).some(output => output?.persisted === true)
+  if (!persisted) throw new Error('Robot Status graph completed without persisting a snapshot')
+  return { graphExecuted: true, graph: graphName, persisted: true, agentId: 'robot-status' }
 }
 
 function anotherRobotAutonomyCycleIsActive(currentTaskId: string): boolean {
@@ -83,6 +127,17 @@ export async function executeRobotAutonomyTriggerWork(
   }
 
   const config = loadRobotOperatorConfig()
+  if (agentId === 'robot-status') {
+    const result = await executeRobotStatusGraph(task, robotOperatorChildGraph(config, agentId), context.signal)
+    audit({
+      level: 'info',
+      category: 'data',
+      event: 'robot_status_updated',
+      actor: agentId,
+      details: { taskId: task.id, mode, graph: robotOperatorChildGraph(config, agentId) },
+    })
+    return result
+  }
   const summary = summarizeEnvironmentBridgeState()
   if (!summary.enabled) return { skipped: true, reason: 'environment_bridge_disabled', agentId }
 

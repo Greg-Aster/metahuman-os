@@ -18,6 +18,7 @@ import { storageClient } from './storage-client.js';
 import { callLLM } from './model-router.js';
 import { audit } from './audit.js';
 import { listEpisodicFiles, type EpisodicEvent } from './memory.js';
+import { safeWriteJSON } from './safe-file.js';
 
 // ============================================================================
 // Types
@@ -120,12 +121,22 @@ function loadPreferences(): LearnedPreference[] {
     return [];
   }
 
-  try {
-    const data = JSON.parse(fs.readFileSync(filepath, 'utf8'));
-    return data.preferences || [];
-  } catch {
-    return [];
+  const data = JSON.parse(fs.readFileSync(filepath, 'utf8')) as { preferences?: unknown };
+  if (!Array.isArray(data.preferences)) {
+    throw new Error(`Invalid preference store: ${filepath}`);
   }
+  for (const [index, preference] of data.preferences.entries()) {
+    if (!preference || typeof preference !== 'object' || Array.isArray(preference)) {
+      throw new Error(`Invalid preference at index ${index}: ${filepath}`);
+    }
+    const candidate = preference as Record<string, unknown>;
+    if (typeof candidate.id !== 'string' || typeof candidate.description !== 'string'
+      || typeof candidate.behavior !== 'string'
+      || !['pending', 'confirmed', 'rejected', 'modified'].includes(String(candidate.validationStatus))) {
+      throw new Error(`Invalid preference at index ${index}: ${filepath}`);
+    }
+  }
+  return data.preferences as LearnedPreference[];
 }
 
 function savePreferences(preferences: LearnedPreference[]): void {
@@ -139,7 +150,7 @@ function savePreferences(preferences: LearnedPreference[]): void {
     stats: calculateStats(preferences),
   };
 
-  fs.writeFileSync(filepath, JSON.stringify(snapshot, null, 2));
+  safeWriteJSON(filepath, snapshot);
 }
 
 function calculateStats(preferences: LearnedPreference[]): PreferenceSnapshot['stats'] {
@@ -680,6 +691,16 @@ export function getActivePreferences(): LearnedPreference[] {
       p.validationStatus === 'confirmed' ||
       p.validationStatus === 'modified' ||
       (p.validationStatus === 'pending' && p.confidence >= 0.8)
+  );
+}
+
+/**
+ * Get preferences that the user has explicitly confirmed or modified.
+ * Pending inferences must not be injected into persona-facing chat context.
+ */
+export function getConfirmedPreferences(): LearnedPreference[] {
+  return loadPreferences().filter(
+    preference => preference.validationStatus === 'confirmed' || preference.validationStatus === 'modified'
   );
 }
 

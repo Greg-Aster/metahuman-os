@@ -6,6 +6,7 @@
  */
 
 export { DesireLoaderNode } from './desire-loader.node.js';
+export { activeDesiresNode } from './active-desires.node.js';
 export { DesireConversationLoaderNode } from './desire-conversation-loader.node.js';
 export { DesirePlanGeneratorNode } from './desire-plan-generator.node.js';
 export { DesireAlignmentReviewerNode } from './desire-alignment-reviewer.node.js';

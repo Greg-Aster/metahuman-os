@@ -1,351 +1,100 @@
 # Persona Generator
 
-The Persona Generator is an AI-powered interview system that helps you create and refine your digital personality through a conversational, therapist-style interview process.
+The Persona Generator conducts a profile-scoped interview and proposes structured persona changes. It does not silently replace the active persona: you review the extracted changes and choose how to apply them.
 
-## Overview
+## Open the Generator
 
-The Persona Generator conducts guided interviews using adaptive questions across 5 personality categories. Through thoughtful responses, the system extracts structured persona data and updates your `persona/core.json` file with new insights.
+Select **Persona** in the left sidebar, then **Generator**. During first-run onboarding, the same interview flow is available as the full-interview personality option.
 
-**Key Features:**
-- **Therapist-style interviewing**: Uses motivational interviewing techniques
-- **Adaptive questions**: Follow-up questions based on your answers
-- **5 personality categories**: Values, goals, style, biography, current focus
-- **Session resume**: Pause and continue interviews later
-- **Safe merging**: Preview changes before applying
-- **Training data export**: Export interviews for LoRA fine-tuning
+The generator requires a configured, available language-model backend for adaptive questions and extraction.
 
-## When to Use
+## Start or Resume an Interview
 
-Use the Persona Generator for:
-- **Initial persona creation** - First-time setup
-- **Major life changes** - Career shifts, relocations, significant events
-- **Personality evolution** - When you've changed significantly
-- **Comprehensive updates** - Quarterly or annual personality reassessment
+Choose **Start New Interview** to create a session. If an unfinished session is found, the page offers **Resume Interview** or **Start Fresh**. Session history shows active, completed, finalized, applied, and aborted sessions with the actions available for each state.
 
-For quick tweaks, use the [Persona Editor](persona-editor.md) instead.
-
-## Accessing the Generator
-
-### Via Web UI
-
-1. Navigate to **Persona Generator** in the left sidebar
-2. Click **"Start New Interview"**
-3. Begin answering questions
-
-### Via CLI
-
-```bash
-# Start a new interview session
-./bin/mh persona generate
-```
-
-## The Interview Process
-
-### 1. Starting a Session
-
-When you start a new interview:
-- System creates a unique session ID
-- First baseline question appears
-- Category coverage tracker initializes (all at 0%)
-
-**Session Storage:**
-```
-profiles/<username>/state/persona-interviews/
-├── session-<id>.json       # Active session
-└── session-<id>-complete.json  # Completed session
-```
-
-### 2. Answering Questions
+The interview normally asks 7–15 adaptive questions and tracks coverage across values, goals, communication style, biography, and current focus.
 
 For each question:
-- Read the question carefully
-- Type your response (minimum 20 characters)
-- Click **"Submit Answer"** or press Ctrl+Enter
-- Wait for next question (system generates adaptive follow-ups)
 
-**Question Categories:**
+1. enter a substantive answer;
+2. choose **Submit Answer** or press Ctrl+Enter;
+3. review the new coverage and next question;
+4. use **Edit Response** if a previous answer is inaccurate.
 
-1. **Values** (Core principles and ethics)
-   - "What core values guide your most important life decisions?"
-   - "When you face a difficult choice, what factors matter most to you?"
+**Pause** leaves the session available for later. **Discard** marks the current session as aborted after confirmation.
 
-2. **Goals** (Aspirations and objectives)
-   - "What are you currently working toward?"
-   - "If you could master one new skill, what would it be and why?"
+## Quick Add Notes
 
-3. **Style** (Communication and interaction preferences)
-   - "How would you describe your communication style?"
-   - "How do you prefer to process information?"
+**Add Notes to Persona** sends free-form observations through the extraction and merge owner without a full interview. This is convenient for a focused update, but it is still model-generated interpretation. Review the resulting persona in the Editor afterward.
 
-4. **Biography** (Formative experiences and background)
-   - "What experiences have shaped who you are today?"
+## Finalize and Review
 
-5. **Current Focus** (Present interests and priorities)
-   - "What topics or projects are you most engaged with right now?"
+When the interview reaches completion, the generator extracts a proposed persona and opens **Review Persona Changes**. The dialog shows:
 
-### 3. Category Coverage
+- additions and updates;
+- extraction confidence;
+- a summary or full diff;
+- the extracted data;
+- the apply strategy.
 
-The UI shows real-time progress for each category:
+Review the actual field changes before applying them.
 
-```
-Values: 60%
-Goals: 80%
-Style: 40%
-Biography: 60%
-Current Focus: 100%
-```
+## Apply Strategies
 
-**Completion Requirements:**
-- Minimum 7 questions answered
-- Each category should reach 80% coverage
-- Typically 7-15 questions total (configurable in `etc/persona-generator.json`)
+- **Merge** updates mentioned fields while preserving unrelated existing data. This is the normal choice.
+- **Append** adds new information alongside existing data without intentionally removing it.
+- **Replace** replaces the existing persona with the extracted result. Use it only when that destructive scope is intended.
 
-### 4. Session Management
+Applying a session updates the active profile and records the session as applied. The CLI path creates a timestamped backup before writing. In the web UI, confirm an archive exists rather than assuming one was made.
 
-**Pause and Resume:**
-- Your session auto-saves every 30 seconds
-- Close the browser - your progress is saved
-- Return later and click **"Resume Session"**
-- Continue where you left off
+## CLI Interview Workflow
 
-**Editing Answers:**
-- Click the **edit icon** (✏️) next to any previous answer
-- Modify your response
-- Click **"Save"** to update
-- System regenerates follow-up questions if needed
+Every persona CLI command requires an explicit registered user:
 
-**Quick Notes Feature:**
-- Click **"Add Notes"** button
-- Paste in existing notes or journal entries
-- System extracts insights without asking questions
-- Useful for bulk importing existing self-reflections
+```bash
+# Inspect current persona and adapter state
+./bin/mh --user USERNAME persona status
 
-### 5. Completing the Interview
+# Start or resume
+./bin/mh --user USERNAME persona generate
+./bin/mh --user USERNAME persona generate --resume
 
-When you've answered enough questions:
-1. Click **"Finalize Interview"**
-2. System analyzes all your responses
-3. Extracts structured persona data
-4. Shows diff preview of proposed changes
+# Inspect sessions
+./bin/mh --user USERNAME persona sessions
+./bin/mh --user USERNAME persona view SESSION_ID
 
-**Extraction Process:**
-- Uses psychotherapist model for analysis
-- Identifies values, goals, communication patterns
-- Detects personality traits and preferences
-- Organizes insights into persona schema
-
-### 6. Reviewing Changes
-
-The diff viewer shows:
-- **Additions**: New fields being added (green)
-- **Modifications**: Existing fields being updated (yellow)
-- **Context**: Unchanged fields for reference (gray)
-
-**Example Diff:**
-```diff
-"communication_style": {
--  "tone": "friendly"
-+  "tone": "friendly and direct",
-+  "preferences": ["concise explanations", "bullet points"]
-}
-
-+ "current_projects": [
-+   "learning guitar",
-+   "building a garden"
-+ ]
+# Apply a completed session
+./bin/mh --user USERNAME persona apply SESSION_ID merge
 ```
 
-### 7. Merge Strategies
+Valid apply strategies are `merge`, `append`, and `replace`.
 
-Choose how to apply changes:
+To abort a session or clean old inactive sessions:
 
-**Merge (Recommended)**
-- Adds new fields
-- Updates existing fields
-- Preserves unmentioned fields
-- **Use when**: You want to enrich existing persona
-
-**Replace**
-- Completely replaces persona with interview results
-- Deletes fields not mentioned in interview
-- **Use when**: Starting fresh or major overhaul
-
-**Append**
-- Only adds new fields
-- Never modifies existing fields
-- **Use when**: You want to add to persona without changing anything
-
-### 8. Applying Changes
-
-After choosing a merge strategy:
-1. Click **"Apply Changes"**
-2. System backs up current persona to `persona/archive/`
-3. Merges interview results into `persona/core.json`
-4. Shows success confirmation
-5. New persona immediately active
-
-**Automatic Backup:**
-```
-persona/archive/
-└── core-2025-11-25-143022.json  # Timestamped backup
+```bash
+./bin/mh --user USERNAME persona discard SESSION_ID
+./bin/mh --user USERNAME persona cleanup --dry-run --max-age 30
+./bin/mh --user USERNAME persona cleanup --max-age 30
 ```
 
-## Configuration
+Run the cleanup dry run first. Cleanup targets old aborted, completed, finalized, and applied sessions and archives them before deletion through the existing owner.
 
-The generator is configured in `etc/persona-generator.json`:
+## Owner Actions in the Web UI
 
-```json
-{
-  "baselineQuestions": [
-    {
-      "id": "q1",
-      "category": "values",
-      "prompt": "What core values guide your life decisions?"
-    }
-  ],
-  "maxQuestionsPerSession": 15,
-  "requireMinimumAnswers": 7,
-  "categories": [
-    "values",
-    "goals",
-    "style",
-    "biography",
-    "current_focus"
-  ],
-  "sessionDefaults": {
-    "minAnswerLength": 20,
-    "maxAnswerLength": 2000,
-    "targetCategoryCompletionPercentage": 80,
-    "allowResume": true,
-    "autoSaveInterval": 30000
-  }
-}
-```
+The generator exposes destructive owner actions for purging all interview sessions and resetting the persona file. These actions cannot be inferred from ordinary editing permission. Read the confirmation dialog and use them only when permanent removal or reset is the intended result.
 
-**Customizable Settings:**
-- Add custom baseline questions
-- Adjust minimum/maximum answer lengths
-- Change category completion targets
-- Modify auto-save interval
-- Add new categories (requires code changes)
+## What the Generator Does Not Do
 
-## Privacy Guidelines
+- It does not train a model or create a LoRA adapter.
+- It does not change the cognitive mode or active backend.
+- It does not make extracted statements automatically true.
+- It does not make private profile data safe to commit.
 
-The generator follows strict privacy rules:
-- ❌ Never asks for full legal name (unless you volunteer it)
-- ❌ Never asks for government IDs or social security numbers
-- ❌ Never asks for medical diagnoses or detailed health info
-- ❌ Never asks for financial account numbers or passwords
-- ❌ Avoids specific location addresses
-- ✅ Focuses on patterns, preferences, and personality traits
+Evaluate the applied persona in a new conversation. If only a field needs correction, use the [Persona Editor](/user-guide#persona-editor) rather than starting another broad interview.
 
-## Interviewing Techniques
+## Related Guides
 
-The system uses professional psychological methods:
-
-**Motivational Interviewing:**
-- Open-ended questions
-- Reflective listening
-- No judgment or criticism
-- Respects your autonomy
-- Encourages self-exploration
-
-**Adaptive Follow-ups:**
-- Next question influenced by your previous answers
-- Deeper exploration of mentioned topics
-- Balanced coverage across categories
-- Natural conversation flow
-
-## Training Data Export
-
-Export your interview for AI model training:
-
-1. Complete and finalize an interview
-2. Click **"Export for Training"**
-3. System generates JSONL file:
-
-```
-profiles/<username>/out/training-data/
-└── persona-interview-2025-11-25.jsonl
-```
-
-**Use Case:** Fine-tune LoRA adapters with your personality patterns. See [AI Training](ai-training.md) for details.
-
-## Session History
-
-View past interviews:
-1. Click **"View History"** button
-2. See list of all completed sessions
-3. Click any session to review Q&A
-4. Export or delete old sessions
-
-**Session Lifecycle:**
-- `active`: Currently in progress
-- `completed`: Finished but not yet applied
-- `finalized`: Applied to persona
-- `aborted`: Cancelled without applying
-
-## Owner Operations
-
-**Purge All Sessions:**
-- Deletes all session data (active and completed)
-- Does NOT affect your applied persona
-- Useful for starting fresh
-
-**Reset Interview:**
-- Clears current active session
-- Preserves session history
-- Start over with blank slate
-
-## Best Practices
-
-### Effective Answering
-
-1. **Be specific**: "I value honesty and transparency in all relationships" > "I value honesty"
-2. **Give examples**: Illustrate values with real-life scenarios
-3. **Be honest**: The persona works best when it reflects the real you
-4. **Take your time**: No rush - sessions can pause/resume
-5. **Minimum 20 characters**: Brief answers lack context for extraction
-
-### When to Interview
-
-- **Initial setup**: First time using MetaHuman OS
-- **Quarterly check-ins**: Review and update every 3 months
-- **After major life events**: Job change, relocation, relationships
-- **When persona feels off**: Responses don't match your current self
-
-### Combining with Other Tools
-
-1. **Persona Generator** → Initial creation
-2. **[Persona Editor](persona-editor.md)** → Fine-tune specific fields
-3. **Daily usage** → Build memories
-4. **Psychoanalyzer agent** → Automatic evolution from memories
-
-## Troubleshooting
-
-### Interview Won't Start
-- Check authentication (must be logged in)
-- Verify not in emulation mode (write access required)
-- Check `etc/persona-generator.json` exists and is valid
-
-### Questions Seem Repetitive
-- System is trying to reach 80% coverage in each category
-- Answer more deeply to satisfy category requirements
-- Check progress bars - incomplete categories get more questions
-
-### Can't Apply Changes
-- Must finalize interview first
-- Check write permissions (not emulation mode)
-- Verify backup directory is writable
-
-### Session Lost
-- Check `profiles/<username>/state/persona-interviews/`
-- Sessions auto-save every 30 seconds
-- Look for `session-<id>.json` files
-
-## Next Steps
-
-- Fine-tune with [Persona Editor](persona-editor.md) for manual adjustments
-- Train AI with your personality via [AI Training](ai-training.md)
-- Let psychoanalyzer agent update persona from memories automatically
-- Explore [Cognitive Modes](cognitive-modes.md) to understand how persona influences behavior
+- [Persona Editor](/user-guide#persona-editor)
+- [Cognitive Modes](/user-guide#cognitive-modes)
+- [AI Training](/user-guide#ai-training)
+- [Accounts and Security](/user-guide#accounts-security)

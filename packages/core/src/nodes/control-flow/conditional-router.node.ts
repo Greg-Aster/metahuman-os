@@ -23,9 +23,10 @@ export const ConditionalRouterNode: NodeDefinition = defineNode({
   description: 'Routes data flow based on conditions, enabling graph-level loops',
 
   execute: async (inputs, _context, _properties) => {
-    const condition = inputs[0]?.condition ?? inputs[0]?.isComplete ?? inputs[0];
-    const trueData = inputs[1]?.trueData ?? inputs[1];
-    const falseData = inputs[2]?.falseData ?? inputs[2];
+    const conditionInput = inputs.condition ?? inputs[0];
+    const condition = conditionInput?.condition ?? conditionInput?.isComplete ?? conditionInput;
+    const trueData = inputs.trueData ?? inputs[1]?.trueData ?? inputs[1];
+    const falseData = inputs.falseData ?? inputs[2]?.falseData ?? inputs[2];
 
     let conditionMet = false;
 

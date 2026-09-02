@@ -5,7 +5,6 @@
   import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, remoteFetch, normalizeUrl, isMobileApp } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
   import { canSyncOnLogin } from '../lib/client/sync-settings';
-  import { runTriggerNow } from '../lib/stores/trigger-manager';
   import { clearSecurityPolicy, fetchSecurityPolicy } from '../stores/security-policy';
 
   function storeSession(sessionId: string, username: string): void {
@@ -219,28 +218,29 @@
         }
 
         // Profile is complete - proceed with login
-        console.log('[AuthGate] LOGIN SUCCESS: Profile validation passed');
-
         // Check if auto-sync on login is enabled - trigger profile-sync agent in background
         // Uses profile-sync to sync: persona, conversation buffer, and memories
         // Flags:
-        //   --pull-only: Only download, don't push to server
         //   --full: Ignore lastMemorySyncAt, do complete memory sync
         //   --skip-config: Don't overwrite device-specific configs (models.json, etc.)
         const shouldSync = await canSyncOnLogin();
         if (shouldSync) {
-          console.log('[AuthGate] Auto-sync on login enabled, triggering profile-sync agent...');
           // Fire-and-forget: agent runs in background while app loads
-          runTriggerNow('profile-sync', ['--pull-only', '--full', '--skip-config'])
-            .then(taskId => console.log(`[AuthGate] Profile-sync queued as ${taskId}`))
+          apiFetch('/api/unified-queue/trigger/profile-sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ args: ['--full', '--skip-config'] }),
+          })
+            .then(async response => {
+              const data = await response.json().catch(() => ({}));
+              if (!response.ok || !data.taskId) throw new Error(data.error || `Profile Sync trigger failed (${response.status})`);
+            })
             .catch(err => console.warn('[AuthGate] Profile-sync trigger failed:', err));
           successMessage = `LOGIN SUCCESS! Welcome back, ${data.user.username}. Syncing profile in background...`;
         } else {
           successMessage = `LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;
         }
         error = ''; // Clear any previous errors
-
-        console.log('[AuthGate] Proceeding to app...');
 
         setTimeout(() => {
           isAuthenticated = true;
@@ -264,17 +264,12 @@
     }
   }
 
-  // Sync profile from remote server
-  // IDENTICAL for web and mobile - uses fetchExternal to handle CORS on mobile
+  // Pre-authentication bootstrap for importing an existing remote profile.
   async function handleSyncFromServer() {
     error = '';
     syncLoading = true;
 
     try {
-      console.log('[AuthGate] Syncing from server:', syncServerUrl);
-      console.log('[AuthGate] Username:', username);
-      console.log('[AuthGate] Password length:', password?.length || 0);
-
       if (!username || !password) {
         error = 'Please enter both username and password on the login screen first';
         syncLoading = false;
@@ -285,8 +280,6 @@
       // Uses remoteFetch which handles CORS on mobile via CapacitorHttp
       const requestBody = { username, password };
       const normalizedSyncUrl = normalizeUrl(syncServerUrl);
-      console.log('[AuthGate] Sending to remote server:', normalizedSyncUrl + '/api/auth/login');
-      console.log('[AuthGate] Request body keys:', Object.keys(requestBody));
 
       const serverRes = await remoteFetch(`${normalizedSyncUrl}/api/auth/login`, {
         method: 'POST',
@@ -294,8 +287,6 @@
         credentials: 'include',
         body: JSON.stringify(requestBody),
       });
-
-      console.log('[AuthGate] Remote server response status:', serverRes.status);
 
       if (!serverRes.ok) {
         const errorText = await serverRes.text().catch(() => 'Unknown error');
@@ -309,27 +300,15 @@
         return;
       }
 
-      console.log('[AuthGate] Server auth successful for:', serverData.user.username);
-
-      // Capture server session ID for remote API calls
-      const serverSessionId = serverData.sessionId;
-      console.log('[AuthGate] Server session ID captured:', serverSessionId?.slice(0, 8) + '...');
-
       // Step 2: Download profile data from remote BEFORE creating local user
       // This prevents empty profiles if download fails
-      console.log('[AuthGate] Downloading profile data from remote...');
       error = '📥 SYNCING: Downloading profile data from server...';
 
       let profileBundle = null;
-      let syncStrategy = 'unknown';
 
       try {
         // Try priority export first (essential files only to avoid OOM)
-        console.log('[AuthGate] Attempting priority sync (persona + config only)...');
         error = '📥 SYNCING: Downloading essential profile data (persona, config, conversations)...';
-
-        console.log('[AuthGate] Calling export-priority with credentials (POST)');
-        console.log('[AuthGate] Full URL:', `${normalizedSyncUrl}/api/profile-sync/export-priority`);
 
         // Use POST with credentials in body - avoids cross-origin cookie issues
         const priorityRes = await remoteFetch(`${normalizedSyncUrl}/api/profile-sync/export-priority`, {
@@ -340,16 +319,12 @@
           body: JSON.stringify({ username, password }),
         });
 
-        console.log('[AuthGate] Export-priority response:', priorityRes.status);
-
         if (priorityRes.ok) {
           profileBundle = await priorityRes.json();
-          syncStrategy = 'priority';
           error = `📥 SYNCING: Downloaded ${profileBundle.stats?.totalFiles || 0} files from server (${Math.round((profileBundle.stats?.totalSize || 0) / 1024)}KB)`;
         } else {
           // Priority export failed - DO NOT create local user
           const priorityError = await priorityRes.text().catch(() => 'Network error');
-          console.error('[AuthGate] Export-priority failed:', priorityRes.status, priorityError);
           error = `SYNC FAILED: Cannot download profile from server (${priorityRes.status}). ${priorityError}`;
           return;
         }
@@ -366,7 +341,6 @@
       }
 
       // Step 3: Create the user locally ONLY after profile downloaded successfully
-      console.log('[AuthGate] Profile downloaded, creating local user...');
       error = '👤 Creating local user account...';
 
       const createRes = await apiFetch('/api/auth/sync-user', {
@@ -394,7 +368,6 @@
 
       // Step 4: Import profile bundle locally
       error = '💾 SYNCING: Importing profile files to local storage...';
-      console.log(`[AuthGate] Calling import with ${profileBundle.files?.length || 0} files`);
 
       const importRes = await apiFetch('/api/profile-sync/import', {
         method: 'POST',
@@ -402,20 +375,15 @@
         body: JSON.stringify(profileBundle),
       });
 
-      console.log(`[AuthGate] Import response status: ${importRes.status}`);
-
       if (!importRes.ok) {
         const importError = await importRes.text().catch(() => 'Unknown import error');
-        console.error(`[AuthGate] Import failed: ${importRes.status} - ${importError}`);
         error = `IMPORT FAILED: Cannot save profile data locally. Error (${importRes.status}): ${importError}. Your profile was not synced.`;
         return;
       }
 
       const importData = await importRes.json();
-      console.log(`[AuthGate] Import result:`, importData);
 
       if (!importData.success) {
-        console.error(`[AuthGate] Import unsuccessful:`, importData.error);
         error = `IMPORT FAILED: ${importData.error || 'Failed to save profile files'}. Your profile was not synced.`;
         return;
       }
@@ -426,10 +394,20 @@
         return;
       }
 
+      const configRes = await apiFetch('/api/profile-sync/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverUrl: normalizedSyncUrl, username, password }),
+      });
+      if (!configRes.ok) {
+        const configData = await configRes.json().catch(() => ({}));
+        error = `PROFILE IMPORTED, BUT SYNC CONFIGURATION FAILED: ${configData.error || configRes.status}. Configure the remote server in Sync Manager before syncing again.`;
+        return;
+      }
+
       // SHOW SUCCESS MESSAGE
       successMessage = `SYNC SUCCESS! Imported ${importData.imported} files from ${syncServerUrl}. Profile ready!`;
       error = ''; // Clear any previous errors
-      console.log(`[AuthGate] SYNC SUCCESS: ${importData.imported} files imported via ${syncStrategy} sync`);
 
       // SUCCESS - Actually synced profile data
       // Give user a moment to see the success message

@@ -33,7 +33,7 @@ export default agent;
 // Re-export core functions for direct usage
 export {
   syncUserProfile,
-  loadSyncCredentials,
+  parseSyncOptions,
   type SyncOptions,
   type SyncResult,
   type SyncProgress,

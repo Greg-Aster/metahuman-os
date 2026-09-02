@@ -1,398 +1,379 @@
-/**
- * Train of Thought Agent — Core Logic
- *
- * Performs recursive reasoning by following memory associations.
- * One thought triggers related thoughts until natural conclusion.
- *
- * Can be triggered:
- * 1. Directly via CLI
- * 2. From reflector agent (via agent_trigger node)
- * 3. From inner-curiosity for deeper exploration
- * 4. Programmatically via executeTrainOfThoughtForUser()
- *
- * This module provides:
- * - executeTrainOfThoughtForUser() for single-user processing
- * - runCycle() for CLI usage
- * - run() for agent-runtime (mobile) usage
- */
+/** Canonical finite owner for seeded associative thought-chain execution. */
 
-import fs from 'node:fs/promises';
-import path from 'node:path';
-
-import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
+import { randomUUID } from 'node:crypto'
+import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime'
 import {
   audit,
+  cognitiveGraphPath,
+  getFirstFailedNode,
   getTargetUser,
-  withUserContext,
+  loadGraphFile,
   runGraph,
-  validateSvelteFlowGraph,
-  systemPaths,
-  getProfilePaths,
+  sampleCuriosityMemories,
+  withUserContext,
+  type GraphExecutionState,
   type SvelteFlowGraph,
-} from '@metahuman/core';
-import { requireUserInfo } from '@metahuman/core/user-resolver';
+} from '@metahuman/core'
 
-// ─────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────
+const MAX_EXECUTION_ID_CHARS = 400
+const MAX_SEED_CHARS = 12_000
+const AGENT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 export interface TrainOfThoughtOptions {
-  singleUser?: boolean;
-  username?: string;
+  username?: string
+  seed?: string
+  sourceAgent?: string
+  executionId?: string
+  executionTimestamp?: string
+  signal?: AbortSignal
 }
 
-export interface TrainOfThoughtResult {
-  success: boolean;
-  usersProcessed: number;
-  errors: string[];
-  stats: Record<string, UserThoughtStats>;
+interface TrainOfThoughtSummary {
+  username: string
+  executionId: string
+  seedSource: 'supplied' | 'memory'
+  sourceAgent?: string
 }
 
-export interface UserThoughtStats {
-  success: boolean;
-  thoughtCount?: number;
-  insight?: string;
-  error?: string;
-}
-
-// Technical keywords to deprioritize
-const technicalKeywords = [
-  'metahuman', 'ai agent', 'organizer', 'reflector', 'train-of-thought',
-  'llm', 'ollama', 'typescript', 'package.json', 'astro', 'dev server',
-  'audit', 'persona', 'memory system', 'cli', 'codebase', 'development'
-];
-
-// ─────────────────────────────────────────────────────────────
-// Core Functions
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Load the train-of-thought cognitive graph
- */
-export async function loadTrainOfThoughtGraph(): Promise<SvelteFlowGraph> {
-  const graphPath = path.join(systemPaths.etc, 'cognitive-graphs', 'train-of-thought.json');
-  const raw = await fs.readFile(graphPath, 'utf-8');
-  const parsed = JSON.parse(raw);
-  return validateSvelteFlowGraph(parsed);
-}
-
-/**
- * Get all episodic memories for weighted sampling
- */
-export async function getAllMemories(episodicDir: string) {
-  async function walk(dir: string, acc: Array<{ file: string; timestamp: Date; content: any }>) {
-    let entries: string[];
-    try {
-      entries = await fs.readdir(dir);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return;
-      }
-      throw error;
-    }
-
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry);
-      let stats;
-      try {
-        stats = await fs.stat(fullPath);
-      } catch {
-        continue;
-      }
-
-      if (stats.isDirectory()) {
-        await walk(fullPath, acc);
-      } else if (stats.isFile() && entry.endsWith('.json')) {
-        try {
-          const content = JSON.parse(await fs.readFile(fullPath, 'utf-8'));
-
-          // Skip self-referential content (avoid echo chamber)
-          if (content.type === 'reflection' || content.type === 'inner_dialogue' ||
-              content.type === 'train-of-thought' || content.type === 'dream') {
-            continue;
-          }
-
-          acc.push({
-            file: fullPath,
-            timestamp: new Date(content.timestamp),
-            content
-          });
-        } catch {
-          // Skip malformed files
-        }
-      }
-    }
+export type TrainOfThoughtGeneratedOutcome = TrainOfThoughtSummary & {
+    status: 'generated'
+    thoughtCount: number
+    insight: string
+    chain: string
+    eventId: string
+    eventPath: string
   }
 
-  const allMemories: Array<{ file: string; timestamp: Date; content: any }> = [];
-  await walk(episodicDir, allMemories);
-
-  // Sort by timestamp (newest first)
-  allMemories.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-  return allMemories;
-}
-
-/**
- * Extract keywords from memory for associative linking
- */
-export function extractKeywords(memory: any): string[] {
-  const content = memory.content || '';
-  const tags = memory.tags || [];
-  const entities = (memory.entities || []).map((e: any) => e.text || e.name || e);
-
-  // Extract capitalized words from content (proper nouns, concepts)
-  const contentWords = content
-    .split(/\s+/)
-    .filter((w: string) => /^[A-Z][a-z]+/.test(w) && w.length > 2)
-    .slice(0, 5);
-
-  const allKeywords = [...tags, ...entities, ...contentWords];
-
-  // Filter out technical keywords (deprioritize, don't exclude)
-  return allKeywords.filter((kw: string) =>
-    !technicalKeywords.some(tech => kw.toLowerCase().includes(tech.toLowerCase()))
-  );
-}
-
-/**
- * Select a seed memory using weighted random sampling
- * Uses exponential decay so older memories can still surface
- */
-export function selectSeedMemory(memories: Array<{ file: string; timestamp: Date; content: any }>): any | null {
-  if (memories.length === 0) return null;
-
-  const now = Date.now();
-  const decayFactor = 14; // Days for weight halving
-
-  // Calculate weights
-  const weights = memories.map(m => {
-    const ageInDays = (now - m.timestamp.getTime()) / (1000 * 60 * 60 * 24);
-    return Math.exp(-ageInDays / decayFactor);
-  });
-
-  // Normalize weights
-  const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-  const normalizedWeights = weights.map(w => w / totalWeight);
-
-  // Weighted random selection
-  const random = Math.random();
-  let cumulative = 0;
-
-  for (let i = 0; i < memories.length; i++) {
-    cumulative += normalizedWeights[i];
-    if (random <= cumulative) {
-      return memories[i].content;
-    }
+export type TrainOfThoughtOutcome =
+  | TrainOfThoughtGeneratedOutcome
+  | TrainOfThoughtSummary & {
+    status: 'skipped'
+    reason: 'no-memories'
   }
 
-  return memories[0].content;
+interface TargetUser {
+  userId: string
+  username: string
+  role: string
 }
 
-/**
- * Execute train of thought for a specific user
- */
-export async function executeTrainOfThoughtForUser(username: string): Promise<UserThoughtStats> {
-  return await withUserContext(requireUserInfo(username), async () => {
-    console.log(`[train-of-thought] Starting for user: ${username}`);
-
-    try {
-      const profilePaths = getProfilePaths(username);
-      const episodicDir = profilePaths.episodic;
-
-      // Get all memories
-      const memories = await getAllMemories(episodicDir);
-
-      if (memories.length === 0) {
-        console.log('[train-of-thought] No memories found');
-        return { success: false, error: 'No memories available' };
-      }
-
-      // Select seed memory
-      const seedMemory = selectSeedMemory(memories);
-      if (!seedMemory) {
-        return { success: false, error: 'Could not select seed memory' };
-      }
-
-      const seedContent = typeof seedMemory === 'string'
-        ? seedMemory
-        : seedMemory.content || JSON.stringify(seedMemory);
-
-      console.log(`[train-of-thought] Selected seed memory: ${seedContent.substring(0, 80)}...`);
-
-      // Load and execute the cognitive graph
-      const graph = await loadTrainOfThoughtGraph();
-
-      const context = {
-        userId: username,
-        allowMemoryWrites: true,
-        cognitiveMode: 'agent' as const,
-        seedMemory: seedContent,
-        keywords: extractKeywords(seedMemory),
-      };
-
-      console.log('[train-of-thought] Executing cognitive graph...');
-
-      const result = await runGraph({ graph, context });
-
-      // Extract results from graph execution (node IDs are strings in Svelte Flow format)
-      const aggregatorState = result.nodes.get('8'); // Node 8 is thought_aggregator
-      const aggregatorOutput = aggregatorState?.outputs;
-      const thoughtCount = aggregatorOutput?.thoughtCount || 0;
-      const insight = aggregatorOutput?.insight || '';
-
-      audit({
-        level: 'info',
-        category: 'decision',
-        event: 'train_of_thought_complete',
-        actor: 'train-of-thought',
-        details: {
-          username,
-          thoughtCount,
-          insightPreview: insight.substring(0, 100),
-          seedMemoryPreview: seedContent.substring(0, 50),
-        },
-      });
-
-      console.log(`[train-of-thought] Complete. Generated ${thoughtCount} thoughts.`);
-
-      return {
-        success: true,
-        thoughtCount,
-        insight,
-      };
-    } catch (error) {
-      console.error('[train-of-thought] Error:', error);
-      return {
-        success: false,
-        error: (error as Error).message,
-      };
-    }
-  });
+export interface TrainOfThoughtDependencies {
+  resolveTargetUser: (options?: { username?: string }) => TargetUser | null
+  sampleSeed: (username: string) => Promise<string | null>
+  loadGraph: () => Promise<SvelteFlowGraph>
+  executeGraph: typeof runGraph
+  runWithUserContext: typeof withUserContext
+  newExecutionId: () => string
+  now: () => string
 }
 
-// ─────────────────────────────────────────────────────────────
-// CLI Entry Point
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Run train of thought cycle for all users (CLI usage)
- */
-export async function runCycle(options: TrainOfThoughtOptions = {}): Promise<TrainOfThoughtResult> {
-  const result: TrainOfThoughtResult = {
-    success: true,
-    usersProcessed: 0,
-    errors: [],
-    stats: {},
-  };
-
-  try {
-    // Get users to process
-    let username: string | null = null;
-
-    if (options.username) {
-      username = options.username;
-    } else if (options.singleUser) {
-      username = 'default';
-    } else {
-      // SECURITY: Get target user - prioritizes explicit username, then API trigger, then most recently active
-      const activeUser = getTargetUser();
-      if (activeUser) {
-        username = activeUser.username;
-      }
-    }
-
-    if (!username) {
-      console.log('[train-of-thought] No active user found');
-      return result;
-    }
-
-    console.log(`[train-of-thought] Processing user: ${username}`);
-
-    try {
-      const stats = await executeTrainOfThoughtForUser(username);
-      result.stats[username] = stats;
-      result.usersProcessed++;
-    } catch (error) {
-      const errorMsg = `Error processing ${username}: ${(error as Error).message}`;
-      result.errors.push(errorMsg);
-      console.error(`[train-of-thought] ${errorMsg}`);
-    }
-
-    console.log('[train-of-thought] Cycle complete.');
-
-    return result;
-  } catch (error) {
-    result.success = false;
-    result.errors.push((error as Error).message);
-    console.error('[train-of-thought] Fatal error:', error);
-    return result;
-  }
+const DEFAULT_DEPENDENCIES: TrainOfThoughtDependencies = {
+  resolveTargetUser: getTargetUser,
+  sampleSeed: async username => {
+    const sample = await sampleCuriosityMemories({ username, sampleSize: 1 })
+    return sample.memories[0]?.content?.trim() || null
+  },
+  loadGraph: async () => {
+    const loaded = await loadGraphFile(cognitiveGraphPath('train-of-thought.json'), {
+      logPrefix: '[train-of-thought]',
+    })
+    if (!loaded) throw new Error('Train of Thought graph could not be loaded')
+    return loaded.graph
+  },
+  executeGraph: runGraph,
+  runWithUserContext: withUserContext,
+  newExecutionId: randomUUID,
+  now: () => new Date().toISOString(),
 }
 
-// ─────────────────────────────────────────────────────────────
-// Agent Runtime Entry Point
-// ─────────────────────────────────────────────────────────────
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('Train of Thought execution cancelled', 'AbortError')
+}
 
-/**
- * Agent runtime entry point for mobile execution
- */
-export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
-  const startTime = Date.now();
-  const args = input.args || [];
-  const opts = input.options || {};
+function validateExecutionId(value: string): string {
+  const executionId = value.trim()
+  if (!executionId) throw new Error('Train of Thought executionId must not be empty')
+  if (executionId.length > MAX_EXECUTION_ID_CHARS) {
+    throw new Error(`Train of Thought executionId must not exceed ${MAX_EXECUTION_ID_CHARS} characters`)
+  }
+  return executionId
+}
 
-  // Extract username from args or options
-  let username = opts.username as string | undefined;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--username' && i + 1 < args.length) {
-      username = args[i + 1];
-      break;
-    }
+function validateTimestamp(value: string): string {
+  if (Number.isNaN(Date.parse(value))) {
+    throw new Error('Train of Thought executionTimestamp must be a valid date')
+  }
+  return new Date(value).toISOString()
+}
+
+function validateSeed(value: string | undefined): string | undefined {
+  const seed = value?.trim()
+  if (!seed) return undefined
+  if (seed.length > MAX_SEED_CHARS) {
+    throw new Error(`Train of Thought seed must not exceed ${MAX_SEED_CHARS} characters`)
+  }
+  return seed
+}
+
+function validateSourceAgent(value: string | undefined): string | undefined {
+  const sourceAgent = value?.trim()
+  if (!sourceAgent) return undefined
+  if (!AGENT_ID_PATTERN.test(sourceAgent)) {
+    throw new Error('Train of Thought sourceAgent must be kebab-case')
+  }
+  return sourceAgent
+}
+
+function graphNodeOutputs(
+  graph: SvelteFlowGraph,
+  graphResult: GraphExecutionState,
+  nodeType: string,
+): Record<string, any> {
+  const matches = graph.nodes.filter(node => node.data.nodeType === nodeType)
+  if (matches.length !== 1) {
+    throw new Error(`Train of Thought graph requires exactly one ${nodeType} node (found ${matches.length})`)
+  }
+  const state = graphResult.nodes.get(matches[0].id)
+  if (!state) throw new Error(`Train of Thought graph did not execute ${nodeType}`)
+  if (state.status !== 'completed') {
+    throw new Error(`Train of Thought node ${nodeType} ended with status ${state.status}`)
+  }
+  if (!state.outputs) throw new Error(`Train of Thought node ${nodeType} produced no outputs`)
+  return state.outputs
+}
+
+export function evaluateTrainOfThoughtGraph(
+  graph: SvelteFlowGraph,
+  graphResult: GraphExecutionState,
+  summary: TrainOfThoughtSummary,
+): TrainOfThoughtGeneratedOutcome {
+  if (graphResult.status !== 'completed') {
+    const failure = getFirstFailedNode(graphResult)
+    throw new Error(
+      failure
+        ? `Train of Thought graph failed at node ${failure.nodeId}: ${failure.error}`
+        : 'Train of Thought graph did not complete',
+    )
   }
 
-  const options: TrainOfThoughtOptions = {
-    singleUser: args.includes('--single-user') || opts.singleUser === true,
-    username: username || ctx.userId,
-  };
-
-  // If context has a specific user, process only that user
-  if (ctx.userId && !options.username) {
-    options.username = ctx.userId;
+  const aggregation = graphNodeOutputs(graph, graphResult, 'thought_aggregator')
+  const thoughtCount = Number(aggregation.thoughtCount)
+  const insight = typeof aggregation.insight === 'string' ? aggregation.insight.trim() : ''
+  const chain = typeof aggregation.result === 'string' ? aggregation.result.trim() : ''
+  if (!Number.isInteger(thoughtCount) || thoughtCount < 1 || !insight || !chain) {
+    throw new Error('Train of Thought aggregation produced an incomplete result')
   }
 
-  if (options.username) {
-    try {
-      const stats = await executeTrainOfThoughtForUser(options.username);
-
-      return {
-        success: stats.success,
-        data: {
-          user: options.username,
-          thoughtCount: stats.thoughtCount,
-          insight: stats.insight,
-        },
-        error: stats.error,
-        durationMs: Date.now() - startTime,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: (error as Error).message,
-        durationMs: Date.now() - startTime,
-      };
-    }
+  const persistence = graphNodeOutputs(graph, graphResult, 'inner_dialogue_buffer')
+  if (persistence.saved !== true || persistence.persisted !== true) {
+    throw new Error(
+      `Train of Thought persistence failed: ${persistence.error || persistence.reason || 'no durable output'}`,
+    )
   }
-
-  // Otherwise run full cycle
-  const result = await runCycle(options);
+  const eventId = typeof persistence.eventId === 'string' ? persistence.eventId.trim() : ''
+  const eventPath = typeof persistence.eventPath === 'string' ? persistence.eventPath.trim() : ''
+  if (!eventId || !eventPath) {
+    throw new Error('Train of Thought persistence did not confirm long-term memory capture')
+  }
 
   return {
-    success: result.success,
-    data: {
-      usersProcessed: result.usersProcessed,
-      stats: result.stats,
-    },
-    errors: result.errors.length > 0 ? result.errors : undefined,
-    durationMs: Date.now() - startTime,
-  };
+    ...summary,
+    status: 'generated',
+    thoughtCount,
+    insight,
+    chain,
+    eventId,
+    eventPath,
+  }
+}
+
+/** Execute exactly one authenticated, profile-scoped associative thought chain. */
+export async function runTrainOfThought(
+  options: TrainOfThoughtOptions = {},
+  dependencyOverrides: Partial<TrainOfThoughtDependencies> = {},
+): Promise<TrainOfThoughtOutcome> {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
+  throwIfAborted(options.signal)
+  const targetUser = dependencies.resolveTargetUser(
+    options.username ? { username: options.username } : undefined,
+  )
+  if (!targetUser) throw new Error('No authenticated target user resolved for Train of Thought')
+
+  const executionId = validateExecutionId(options.executionId || dependencies.newExecutionId())
+  const executionTimestamp = validateTimestamp(options.executionTimestamp || dependencies.now())
+  const sourceAgent = validateSourceAgent(options.sourceAgent)
+  const suppliedSeed = validateSeed(options.seed)
+  const seed = suppliedSeed || await dependencies.sampleSeed(targetUser.username)
+  throwIfAborted(options.signal)
+
+  const summary: TrainOfThoughtSummary = {
+    username: targetUser.username,
+    executionId,
+    seedSource: suppliedSeed ? 'supplied' : 'memory',
+    sourceAgent,
+  }
+  if (!seed) {
+    const outcome: TrainOfThoughtOutcome = { ...summary, status: 'skipped', reason: 'no-memories' }
+    audit({
+      category: 'action',
+      level: 'info',
+      event: 'train_of_thought_skipped',
+      actor: 'train-of-thought',
+      details: outcome,
+    })
+    return outcome
+  }
+
+  const idempotencyKey = `train-of-thought:${targetUser.username}:${executionId}`
+  audit({
+    category: 'action',
+    level: 'info',
+    event: 'train_of_thought_started',
+    actor: 'train-of-thought',
+    details: { ...summary },
+  })
+
+  try {
+    const graph = await dependencies.loadGraph()
+    throwIfAborted(options.signal)
+    const graphResult = await dependencies.runWithUserContext(
+      targetUser,
+      () => dependencies.executeGraph({
+        graph,
+        signal: options.signal,
+        context: {
+          userId: targetUser.userId,
+          username: targetUser.username,
+          allowMemoryWrites: true,
+          cognitiveMode: 'agent' as const,
+          seedMemory: seed,
+          sourceAgent,
+          idempotencyKey,
+          executionId,
+          memoryTimestamp: executionTimestamp,
+          abortSignal: options.signal,
+        },
+      }),
+    )
+    throwIfAborted(options.signal)
+    const outcome = evaluateTrainOfThoughtGraph(graph, graphResult, summary)
+    audit({
+      category: 'action',
+      level: 'info',
+      event: 'train_of_thought_complete',
+      actor: 'train-of-thought',
+      details: {
+        username: outcome.username,
+        executionId: outcome.executionId,
+        thoughtCount: outcome.thoughtCount,
+        seedSource: outcome.seedSource,
+        sourceAgent: outcome.sourceAgent,
+      },
+    })
+    return outcome
+  } catch (error) {
+    audit({
+      category: 'system',
+      level: 'error',
+      event: 'train_of_thought_failed',
+      actor: 'train-of-thought',
+      details: {
+        username: targetUser.username,
+        executionId,
+        sourceAgent,
+        error: (error as Error).message,
+      },
+    })
+    throw error
+  }
+}
+
+function parseTaskPayload(environment: NodeJS.ProcessEnv): Record<string, unknown> {
+  const raw = environment.MH_TASK_PAYLOAD?.trim()
+  if (!raw) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error('MH_TASK_PAYLOAD must contain valid JSON')
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('MH_TASK_PAYLOAD must contain an object')
+  }
+  return parsed as Record<string, unknown>
+}
+
+export function parseTrainOfThoughtArgs(
+  args: string[],
+  environment: NodeJS.ProcessEnv = process.env,
+): TrainOfThoughtOptions {
+  const payload = parseTaskPayload(environment)
+  const options: TrainOfThoughtOptions = {
+    username: environment.MH_TRIGGER_USERNAME?.trim() || undefined,
+    executionId: typeof payload.executionId === 'string' && payload.executionId.trim()
+      ? payload.executionId.trim()
+      : environment.MH_TASK_ID?.trim() || undefined,
+    executionTimestamp: environment.MH_TASK_CREATED_AT?.trim() || undefined,
+    seed: typeof payload.seed === 'string' ? payload.seed : undefined,
+    sourceAgent: typeof payload.sourceAgent === 'string' ? payload.sourceAgent : undefined,
+  }
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
+    const readValue = (label: string): string => {
+      const value = args[index + 1]?.trim()
+      if (!value) throw new Error(`${label} requires a value`)
+      index += 1
+      return value
+    }
+    if (argument === '--username') options.username = readValue('--username')
+    else if (argument === '--seed') options.seed = readValue('--seed')
+    else if (argument === '--source-agent') options.sourceAgent = readValue('--source-agent')
+    else throw new Error(`Unknown train-of-thought option: ${argument}`)
+  }
+  options.seed = validateSeed(options.seed)
+  options.sourceAgent = validateSourceAgent(options.sourceAgent)
+  return options
+}
+
+/** Agent Runtime adapter; all durable behavior remains in runTrainOfThought(). */
+export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
+  const startedAt = Date.now()
+  try {
+    const parsed = parseTrainOfThoughtArgs(input.args || [], {})
+    const allowedOptions = new Set(['username', 'seed', 'sourceAgent', 'executionId', 'executionTimestamp'])
+    const unknownOption = Object.keys(input.options || {}).find(key => !allowedOptions.has(key))
+    if (unknownOption) throw new Error(`Unknown train-of-thought option: ${unknownOption}`)
+    const structured = input.options || {}
+    const outcome = await runTrainOfThought({
+      ...parsed,
+      username: typeof structured.username === 'string'
+        ? structured.username
+        : parsed.username || ctx.username,
+      seed: typeof structured.seed === 'string' ? structured.seed : parsed.seed,
+      sourceAgent: typeof structured.sourceAgent === 'string'
+        ? structured.sourceAgent
+        : parsed.sourceAgent,
+      executionId: typeof structured.executionId === 'string'
+        ? structured.executionId
+        : parsed.executionId,
+      executionTimestamp: typeof structured.executionTimestamp === 'string'
+        ? structured.executionTimestamp
+        : parsed.executionTimestamp,
+      signal: ctx.signal,
+    })
+    return {
+      success: true,
+      data: outcome,
+      durationMs: Date.now() - startedAt,
+      itemsProcessed: outcome.status === 'generated' ? 1 : 0,
+    }
+  } catch (error) {
+    return {
+      success: false,
+      error: (error as Error).message,
+      durationMs: Date.now() - startedAt,
+      itemsProcessed: 0,
+    }
+  }
 }

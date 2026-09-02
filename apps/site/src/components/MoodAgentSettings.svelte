@@ -80,7 +80,7 @@
   <div class="flex flex-wrap items-start justify-between gap-3">
     <div>
       <h3 class="font-semibold text-gray-900 dark:text-gray-100">Mood persona routing</h3>
-      <p class="mt-1 max-w-3xl text-xs text-gray-500">Mood queues the editable <strong>Mood Persona Review</strong> graph after a message threshold, then returns to the baseline facet after the idle cooldown.</p>
+      <p class="mt-1 max-w-3xl text-xs text-gray-500">Mood queues the editable <strong>Mood Persona Review</strong> graph after a message threshold. While Semi mode is active, it returns to the baseline facet after the idle cooldown.</p>
     </div>
     <button class="rounded border px-3 py-2 text-xs dark:border-gray-700" on:click={openGraphEditor}>Open Graph Editor</button>
   </div>
@@ -114,7 +114,7 @@
         <label class="text-xs text-gray-500">Review every N user messages
           <input class="form-input mt-1 w-full" type="number" min="1" max="10000" bind:value={data.trigger.eventCountThreshold} />
         </label>
-        <label class="text-xs text-gray-500">Return to baseline after idle seconds
+        <label class="text-xs text-gray-500">Return to baseline after idle seconds in Semi mode
           <input class="form-input mt-1 w-full" type="number" min="60" max="31536000" bind:value={data.trigger.idleResetSeconds} />
         </label>
       {:else}

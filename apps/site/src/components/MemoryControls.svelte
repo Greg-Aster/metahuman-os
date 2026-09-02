@@ -1,13 +1,27 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte'
   import { apiFetch } from '../lib/client/api-config';
   import { runTriggerNow } from '../lib/stores/trigger-manager';
-  const dispatch = createEventDispatcher()
 
   // ============================================================================
   // Search Index State
   // ============================================================================
-  type IndexStatus = { exists: boolean; model?: string; provider?: string; items?: number; createdAt?: string }
+  type LegacyIndex = {
+    fileName: string
+    model?: string
+    provider?: string
+    createdAt?: string
+    items?: number
+  }
+
+  type IndexStatus = {
+    exists: boolean
+    reason?: 'missing' | 'legacy' | 'corrupt'
+    legacyIndexes?: LegacyIndex[]
+    model?: string
+    provider?: string
+    items?: number
+    createdAt?: string
+  }
   let loadingIndex = false, buildingIndex = false, indexError: string | null = null
   let indexStatus: IndexStatus | null = null
   let indexNotice: string | null = null
@@ -50,10 +64,6 @@
   // ============================================================================
   function agentOptionArgs(options: Record<string, any>): string[] {
     const args: string[] = []
-    if (options.dryRun) args.push('--dry-run')
-    if (options.verbose) args.push('--verbose')
-    if (options.minLength !== undefined) args.push('--min-length', String(options.minLength))
-    if (options.similarity !== undefined) args.push('--similarity', String(options.similarity))
     if (options.temperature !== undefined) args.push('--temperature', String(options.temperature))
     return args
   }
@@ -65,41 +75,6 @@
     } catch (e) {
       console.error(`Failed to run agent ${name}:`, e)
       return false
-    }
-  }
-
-  // ============================================================================
-  // Memory Pruner State & Settings
-  // ============================================================================
-  let prunerRunning = false
-  let prunerSuccess = false
-  let prunerError: string | null = null
-  let prunerShowSettings = false
-
-  // Pruner settings
-  let prunerMinLength = 10
-  let prunerSimilarity = 0.85
-  async function runPruner(dryRun: boolean = false) {
-    prunerRunning = true
-    prunerError = null
-    prunerSuccess = false
-
-    try {
-      const success = await runAgent('memory-pruner', {
-        dryRun,
-        verbose: true,
-        minLength: prunerMinLength,
-        similarity: prunerSimilarity,
-      })
-      if (success) {
-        prunerSuccess = true
-      } else {
-        prunerError = 'Failed to start pruner'
-      }
-    } catch (e) {
-      prunerError = (e as Error).message
-    } finally {
-      prunerRunning = false
     }
   }
 
@@ -176,62 +151,6 @@
   </a>
 
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-    <!-- Memory Pruner Card -->
-    <div class="card">
-      <div class="ctrl-card-header">
-        <div class="flex items-center gap-2">
-          <span class="text-lg">🧹</span>
-          <h3 class="m-0 text-[0.95rem] font-semibold">Memory Pruner</h3>
-        </div>
-        <div class="flex items-center gap-2">
-          <button class="btn-secondary text-sm py-1.5 px-3" on:click={() => prunerShowSettings = !prunerShowSettings}>⚙️</button>
-          <button class="btn-secondary text-sm py-1.5 px-3" on:click={() => runPruner(true)} disabled={prunerRunning}>{prunerRunning ? '…' : 'Preview'}</button>
-          <button class="btn-primary text-sm py-1.5 px-3" on:click={() => runPruner(false)} disabled={prunerRunning}>{prunerRunning ? 'Running…' : 'Run Pruner'}</button>
-        </div>
-      </div>
-      <div class="p-3.5">
-        <p class="m-0 mb-2 text-[0.8125rem] text-gray-500 dark:text-gray-400 leading-snug">
-          <strong>Rule-based cleanup:</strong> Removes duplicates (exact & near-matches),
-          contamination patterns, and low-quality content. <em>Fast, no LLM required.</em>
-        </p>
-
-        {#if prunerShowSettings}
-          <div class="settings-panel">
-            <div class="setting-row">
-              <label for="min-length">Min Content Length</label>
-              <div class="flex items-center gap-2">
-                <input type="range" class="w-[100px] accent-violet-600" id="min-length" bind:value={prunerMinLength} min="5" max="50" step="5" />
-                <span class="text-xs text-gray-500 dark:text-gray-400 min-w-[50px] text-right">{prunerMinLength} chars</span>
-              </div>
-            </div>
-            <div class="setting-row">
-              <label for="similarity">Similarity Threshold</label>
-              <div class="flex items-center gap-2">
-                <input type="range" class="w-[100px] accent-violet-600" id="similarity" bind:value={prunerSimilarity} min="0.7" max="0.95" step="0.05" />
-                <span class="text-xs text-gray-500 dark:text-gray-400 min-w-[50px] text-right">{(prunerSimilarity * 100).toFixed(0)}%</span>
-              </div>
-            </div>
-            <div class="mt-3 text-xs text-gray-500 dark:text-gray-400">
-              <strong>Detection patterns:</strong>
-              <ul class="mt-1 ml-4 list-disc">
-                <li>Exact duplicates (MD5 hash match)</li>
-                <li>Near-duplicates ({(prunerSimilarity * 100).toFixed(0)}%+ word overlap)</li>
-                <li>Contamination: "you ok home", "test test test", single-word replies</li>
-                <li>AI disclaimers: "As an AI...", "I cannot..."</li>
-                <li>System artifacts: JSON, XML, error messages</li>
-              </ul>
-            </div>
-          </div>
-        {/if}
-
-        {#if prunerError}
-          <div class="banner banner-error mt-2 text-sm">⚠️ {prunerError}</div>
-        {:else if prunerSuccess}
-          <div class="banner banner-success mt-2 text-sm">✓ Pruner started. Check Agent Monitor for progress. View results in "Pruned" tab.</div>
-        {/if}
-      </div>
-    </div>
-
     <!-- Curator Card -->
     <div class="card">
       <div class="ctrl-card-header">
@@ -330,7 +249,13 @@
             <div class="flex flex-col gap-0.5">
               <span class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Status</span>
               <span class="text-[0.9rem] font-medium" class:text-green-600={indexStatus.exists} class:text-amber-500={!indexStatus.exists}>
-                {indexStatus.exists ? 'Ready' : 'Not built'}
+                {indexStatus.exists
+                  ? 'Ready'
+                  : indexStatus.reason === 'legacy'
+                    ? 'Legacy index'
+                    : indexStatus.reason === 'corrupt'
+                      ? 'Corrupt index'
+                      : 'Missing index'}
               </span>
             </div>
             {#if indexStatus.exists}
@@ -348,6 +273,19 @@
               </div>
             {/if}
           </div>
+          {#if !indexStatus.exists}
+            <div class="banner banner-error mt-3 text-sm">
+              {#if indexStatus.reason === 'legacy'}
+                A legacy index was found{indexStatus.legacyIndexes?.length
+                  ? ` (${indexStatus.legacyIndexes.map(index => index.model || index.fileName).join(', ')})`
+                  : ''}. Queue a rebuild to create the current profile index.
+              {:else if indexStatus.reason === 'corrupt'}
+                The current profile index cannot be read. Queue a rebuild; the existing file will only be replaced after a successful build.
+              {:else}
+                This profile has no semantic search index. Queue a rebuild before using memory search.
+              {/if}
+            </div>
+          {/if}
         {/if}
       </div>
     </div>

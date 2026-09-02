@@ -61,7 +61,6 @@ export interface EpisodicInventory {
   curiosity: EpisodicItem[];
   aiIngestor: EpisodicItem[];
   audio: EpisodicItem[];
-  pruned: EpisodicItem[];
   activeTotal: number;
 }
 
@@ -153,8 +152,8 @@ function episodicItemFromFile(profileRoot: string, fullPath: string): EpisodicIt
 }
 
 /**
- * Scan every persisted episodic category once, including current dated trees
- * and nested _pruned directories, then partition records by stored type/tags.
+ * Scan every persisted episodic category once, then partition records by
+ * stored type and tags.
  */
 export function scanEpisodicInventory(
   profileRoot: string,
@@ -162,7 +161,6 @@ export function scanEpisodicInventory(
   limit?: number,
 ): EpisodicInventory {
   const active: EpisodicItem[] = [];
-  const pruned: EpisodicItem[] = [];
   const seenIds = new Set<string>();
 
   const walk = (directory: string): void => {
@@ -179,19 +177,12 @@ export function scanEpisodicInventory(
       const item = episodicItemFromFile(profileRoot, fullPath);
       if (!item || seenIds.has(item.id)) continue;
       seenIds.add(item.id);
-
-      const relativeParts = path.relative(episodicRoot, fullPath).split(path.sep);
-      if (relativeParts.includes('_pruned')) {
-        pruned.push(item);
-      } else {
-        active.push(item);
-      }
+      active.push(item);
     }
   };
 
   walk(episodicRoot);
   sortNewestFirst(active);
-  sortNewestFirst(pruned);
 
   const activeWindow = limited(active, limit);
   const reflections = activeWindow.filter(item => isReflectionMemory(item) && !isCuriosityMemory(item));
@@ -215,7 +206,6 @@ export function scanEpisodicInventory(
     curiosity,
     aiIngestor,
     audio,
-    pruned: limited(pruned, limit),
     activeTotal: active.length,
   };
 }
@@ -343,7 +333,6 @@ export async function handleGetAllMemories(req: UnifiedRequest): Promise<Unified
       dreams: inventory.dreams,
       aiIngestor: inventory.aiIngestor,
       audio: inventory.audio,
-      pruned: inventory.pruned,
       tasks: listActiveTasks(profilePaths.root, profilePaths.tasks),
       curated: listCuratedConversations(profilePaths.root, profilePaths.memory),
       curiosityQuestions: mergeCuriosityQuestions(

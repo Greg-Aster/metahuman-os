@@ -7,7 +7,10 @@ import test from 'node:test'
 import { CuratedMemorySaverNode, saveCuratedResults } from './curated-memory-saver.node.js'
 import { CuratorLLMNode, parseCuratorResponse } from './curator-llm.node.js'
 import { markCuratedResults, MemoryMarkerNode } from './memory-marker.node.js'
+import { buildCuratorPersonaSummary } from './persona-summary-loader.node.js'
 import { parseStoredCuratedMemory, type CuratedMemory, type CuratorItemResult, type EpisodicMemory } from './contracts.js'
+import { assembleCuratorSources } from './source-assembler.js'
+import { getDefaultPersonaCore } from '../../identity.js'
 
 const ROOT = path.resolve(import.meta.dirname, '../../../../..')
 const CURATED_AT = '2026-08-24T20:00:00.000Z'
@@ -37,6 +40,7 @@ function curated(id: string, suitableForTraining: boolean): CuratedMemory {
     cognitiveMode: 'dual',
     cognitiveModeSource: 'metadata',
     memoryType: 'conversation',
+    sourceMemoryIds: [id],
   }
 }
 
@@ -65,6 +69,21 @@ test('Curator accepts only an explicit, structurally valid LLM decision', () => 
   assert.equal(legacy.cognitiveMode, 'dual')
   assert.equal(legacy.cognitiveModeSource, 'legacy-default')
 
+  const environment = parseCuratorResponse(JSON.stringify({
+    conversationalEssence: 'An embodied conversation',
+    userMessage: 'ignored rewrite',
+    assistantResponse: 'ignored rewrite',
+    suitableForTraining: true,
+  }), {
+    ...source,
+    content: 'Please look to your left.',
+    response: 'I can see the doorway.',
+    metadata: { cognitiveMode: 'environment' },
+  }, CURATED_AT)
+  assert.equal(environment.cognitiveMode, 'environment')
+  assert.equal(environment.userMessage, 'Please look to your left.')
+  assert.equal(environment.assistantResponse, 'I can see the doorway.')
+
   assert.throws(
     () => parseCuratorResponse('{"conversationalEssence":"Missing decision"}', source),
     /suitableForTraining must be a boolean/,
@@ -73,7 +92,7 @@ test('Curator accepts only an explicit, structurally valid LLM decision', () => 
     () => parseCuratorResponse(JSON.stringify({
       conversationalEssence: 'Accepted but incomplete',
       suitableForTraining: true,
-    }), source),
+    }), { ...source, response: undefined }),
     /userMessage/,
   )
   assert.throws(
@@ -125,11 +144,24 @@ test('Curator nodes preserve complete zero-work output contracts', async () => {
   )
 })
 
+test('Curator persona context uses the canonical persona shape without fabricated fallback text', () => {
+  const summary = buildCuratorPersonaSummary(getDefaultPersonaCore())
+
+  assert.match(summary, /Name: MetaHuman/)
+  assert.match(summary, /Core Values: autonomy, transparency, growth/)
+  assert.doesNotMatch(summary, /\[object Object\]/)
+  assert.doesNotMatch(summary, /Not specified|Various topics|Natural and conversational/)
+})
+
 test('durable Curator records fail closed while legacy mode provenance stays visible', () => {
   const stored = curated('stored', true)
   const parsed = parseStoredCuratedMemory(stored, 'test record')
   assert.equal(parsed.cognitiveMode, 'dual')
   assert.equal(parsed.cognitiveModeSource, 'metadata')
+  assert.deepEqual(parsed.sourceMemoryIds, ['stored'])
+
+  const environment = parseStoredCuratedMemory({ ...stored, cognitiveMode: 'environment' }, 'environment record')
+  assert.equal(environment.cognitiveMode, 'environment')
 
   const { cognitiveMode, cognitiveModeSource, ...legacy } = stored
   const normalizedLegacy = parseStoredCuratedMemory(legacy, 'legacy record')
@@ -143,6 +175,104 @@ test('durable Curator records fail closed while legacy mode provenance stays vis
     () => parseStoredCuratedMemory({ ...stored, assistantResponse: '' }, 'bad record'),
     /assistantResponse/,
   )
+})
+
+test('Curator assembles role-tagged conversation records into one exact exchange', () => {
+  const userPath = '/tmp/user.json'
+  const assistantPath = '/tmp/assistant.json'
+  const assembly = assembleCuratorSources([
+    {
+      id: 'user-entry',
+      timestamp: '2026-08-24T19:00:00.000Z',
+      type: 'conversation',
+      content: 'User: Please describe what you see.',
+      path: userPath,
+      metadata: { role: 'user', sessionId: 'robot-session', cognitiveMode: 'environment' },
+    },
+    {
+      id: 'assistant-entry',
+      timestamp: '2026-08-24T19:00:01.000Z',
+      type: 'conversation',
+      content: 'Assistant: I see a blue chair.',
+      path: assistantPath,
+      metadata: { role: 'assistant', sessionId: 'robot-session', cognitiveMode: 'environment' },
+    },
+  ])
+
+  assert.equal(assembly.deferredPaths.length, 0)
+  assert.equal(assembly.memories.length, 1)
+  assert.equal(assembly.memories[0]?.content, 'Please describe what you see.')
+  assert.equal(assembly.memories[0]?.response, 'I see a blue chair.')
+  assert.deepEqual(assembly.memories[0]?.sourcePaths, [userPath, assistantPath])
+  assert.deepEqual(assembly.memories[0]?.sourceMemoryIds, ['user-entry', 'assistant-entry'])
+  assert.equal(assembly.memories[0]?.metadata?.cognitiveMode, 'environment')
+})
+
+test('Curator defers incomplete role-tagged conversations instead of synthesizing the missing side', () => {
+  const assembly = assembleCuratorSources([{
+    id: 'waiting-user',
+    timestamp: '2026-08-24T19:00:00.000Z',
+    type: 'conversation',
+    content: 'Please wait for the answer.',
+    path: '/tmp/waiting-user.json',
+    metadata: { role: 'user', sessionId: 'waiting-session', cognitiveMode: 'environment' },
+  }])
+
+  assert.deepEqual(assembly.memories, [])
+  assert.deepEqual(assembly.deferredPaths, ['/tmp/waiting-user.json'])
+})
+
+test('Curator pairs interleaved turns by their durable idempotency identity', () => {
+  const common = {
+    timestamp: '2026-08-24T19:00:00.000Z',
+    type: 'conversation',
+    metadata: { sessionId: 'shared-session', cognitiveMode: 'environment' },
+  }
+  const assembly = assembleCuratorSources([
+    { ...common, id: 'u1', content: 'first question', path: '/tmp/u1.json', metadata: { ...common.metadata, role: 'user', idempotencyKey: 'turn-1:user' } },
+    { ...common, id: 'u2', content: 'second question', path: '/tmp/u2.json', metadata: { ...common.metadata, role: 'user', idempotencyKey: 'turn-2:user' } },
+    { ...common, id: 'a2', content: 'second answer', path: '/tmp/a2.json', metadata: { ...common.metadata, role: 'assistant', idempotencyKey: 'turn-2:assistant' } },
+    { ...common, id: 'a1', content: 'first answer', path: '/tmp/a1.json', metadata: { ...common.metadata, role: 'assistant', idempotencyKey: 'turn-1:assistant' } },
+  ])
+
+  assert.equal(assembly.memories.length, 2)
+  assert.deepEqual(
+    assembly.memories.map(memory => [memory.content, memory.response]),
+    [['first question', 'first answer'], ['second question', 'second answer']],
+  )
+})
+
+test('Curator commits every source record in a reviewed conversation pair', () => {
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-curator-pair-'))
+  try {
+    const sourcePaths = ['user', 'assistant'].map(id => {
+      const sourcePath = path.join(temporaryRoot, `${id}.json`)
+      fs.writeFileSync(sourcePath, `${JSON.stringify(memory(id), null, 2)}\n`)
+      return sourcePath
+    })
+    const pair = curated('pair-record', true)
+    pair.sourceMemoryIds = ['user', 'assistant']
+    const result: CuratorItemResult = {
+      success: true,
+      disposition: 'accepted',
+      curated: pair,
+      originalMemoryPath: sourcePaths[0],
+      originalMemoryPaths: sourcePaths,
+      memoryId: pair.id,
+    }
+
+    const marked = markCuratedResults([result])
+    assert.equal(marked.markedCount, 1)
+    assert.equal(marked.sourceMarkedCount, 2)
+    assert.equal(marked.markedPaths.length, 2)
+    for (const sourcePath of sourcePaths) {
+      const source = JSON.parse(fs.readFileSync(sourcePath, 'utf8'))
+      assert.equal(source.metadata.curatorRecordId, pair.id)
+      assert.match(source.metadata.curatorRecordFile, /pair-record\.json$/)
+    }
+  } finally {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true })
+  }
 })
 
 test('Curator saves before marking, is idempotent, and leaves failed items retryable', () => {
@@ -229,9 +359,10 @@ test('canonical and mobile Curator graphs use one save-then-mark path', () => {
     'curator_llm',
     'curated_memory_saver',
     'memory_marker',
-    'audit_logger',
   ])
   assert.ok(graph.edges.some((edge: any) => edge.source === '5' && edge.target === '8'))
+  assert.equal(graph.edges.some((edge: any) => edge.target === '9'), false)
   assert.equal(nodeTypes.includes('training_pair_generator'), false)
   assert.equal(nodeTypes.includes('training_pair_appender'), false)
+  assert.equal(nodeTypes.includes('audit_logger'), false)
 })

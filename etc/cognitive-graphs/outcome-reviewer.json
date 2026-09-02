@@ -67,7 +67,7 @@
     {
       "id": "tts-output",
       "type": "outputNode",
-      "position": { "x": 980, "y": 220 },
+      "position": { "x": 1280, "y": 220 },
       "data": {
         "label": "TTS Output",
         "nodeType": "tts",
@@ -78,6 +78,18 @@
       },
       "width": 180,
       "height": 60
+    },
+    {
+      "id": "inner-memory",
+      "type": "cognitiveNode",
+      "position": { "x": 1280, "y": 100 },
+      "data": {
+        "label": "Save Inner Dialogue Memory",
+        "nodeType": "inner_dialogue_saver",
+        "properties": {}
+      },
+      "width": 240,
+      "height": 90
     },
     {
       "id": "audit-result",
@@ -129,12 +141,20 @@
       "data": { "type": "string", "comment": "Durable transition summary" }
     },
     {
-      "id": "apply-to-tts",
-      "source": "apply-outcome",
+      "id": "inner-to-memory",
+      "source": "inner-dialogue",
+      "target": "inner-memory",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "data": { "type": "array", "comment": "Buffer-admitted transition summary to Persona Memory" }
+    },
+    {
+      "id": "memory-to-tts",
+      "source": "inner-memory",
       "target": "tts-output",
-      "sourceHandle": "summary",
+      "sourceHandle": "text",
       "targetHandle": "innerDialogue",
-      "data": { "type": "string", "comment": "Durable transition summary" }
+      "data": { "type": "string", "comment": "Long-term persisted transition summary" }
     },
     {
       "id": "apply-to-audit",
