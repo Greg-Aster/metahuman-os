@@ -38,7 +38,8 @@ const SYSTEM_PROMPT = `You are the Planning module of MetaHuman OS. Your job is 
 - Steps can be high-level - the operator is intelligent and will figure out specifics
 - Break complex desires into 3-10 sequential steps
 - Each step should have a clear action and expected outcome
-- You MAY reference available skills/tools if applicable, but you can also specify general actions
+- Treat the supplied tool catalog as authoritative; never claim a capability that is not listed
+- A step may describe an objective without naming a skill, but it must not imply unavailable access
 - For complex tasks, describe WHAT to do, not HOW specifically
 
 ## Goal Types
@@ -67,13 +68,8 @@ Break long-running goals into 3-10 major milestones:
   - etc.
 
 ## Execution Context
-Plans will be executed by "Big Brother" - an intelligent Claude-based operator that can:
-- Search the web and gather information
-- Read and write files
-- Execute code and shell commands
-- Create and manage tasks
-- Communicate with the user
-- Think creatively to solve complex problems
+Plans are executed by the configured operator through the supplied capability catalog.
+The catalog, approval requirements, and policy constraints are authoritative.
 
 ## Risk Assessment
 - none: Read-only, information gathering
@@ -133,8 +129,9 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Plan
 **Reason**: {{reason}}
 **Source**: {{source}}
 **Risk Level**: {{risk}}
+{{clarificationContext}}
 {{revisionContext}}{{milestoneContext}}{{executionContext}}
-## Available Tools (Optional Reference)
+## Available Tools
 {{toolCatalogSection}}
 
 ## Decision Rules
@@ -205,28 +202,16 @@ function determineRequiredTrust(risk: string): TrustLevel {
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Inputs come via NAMED handles from graph links (not positional indices!)
-  // The graph executor maps edge.targetHandle -> inputs[handle]
-  //
-  // In desire-planner.json:
-  //   inputs.slot_0 = {desire, found} from desire_loader (edge e-1-slot_0-5-slot_0)
-  //   inputs.slot_1 = {catalog, toolCount, entries} from tool_catalog_builder (edge e-2-slot_0-5-slot_1)
-  //   inputs.slot_2 = {formatted, rules, ...} from policy_loader (edge e-3-slot_0-5-slot_2)
-  //   inputs.slot_3 = {memories, query} from semantic_search (edge e-4-memories-5-slot_3)
-  //
-  // IMPORTANT: Graph executor uses named properties, not array indices!
-
-  // Try named properties first (slot_X), then fall back to positional for legacy compatibility
-  const loaderOutput = (inputs.slot_0 || inputs[0]) as { desire?: Desire; found?: boolean } | undefined;
-  const catalogOutput = (inputs.slot_1 || inputs[1]) as { catalog?: string } | undefined;
-  const policyOutput = (inputs.slot_2 || inputs[2]) as { formatted?: string } | undefined;
-  const searchOutput = (inputs.slot_3 || inputs[3]) as { memories?: unknown[] } | undefined;
-  const username = context.userId || context.username;
-
-  const desire = loaderOutput?.desire;
-  const toolCatalog = catalogOutput?.catalog || '';
-  const decisionRules = policyOutput?.formatted || '';
-  const relevantMemories = JSON.stringify(searchOutput?.memories || [], null, 2);
+  const desire = inputs.desire as Desire | undefined;
+  const toolCatalog = typeof inputs.toolCatalog === 'string' ? inputs.toolCatalog.trim() : '';
+  const decisionRules = typeof inputs.decisionRules === 'string' ? inputs.decisionRules.trim() : '';
+  const relevantMemories = JSON.stringify(
+    Array.isArray(inputs.relevantMemories) ? inputs.relevantMemories : [],
+    null,
+    2,
+  );
+  const username = typeof context.username === 'string' ? context.username.trim() : '';
+  const userId = typeof context.userId === 'string' ? context.userId.trim() : '';
   const temperature = (properties?.temperature as number) ?? 0.3;
   const role = normalizeModelRole(properties?.role, 'orchestrator');
   const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
@@ -242,6 +227,26 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       error: 'No desire provided',
     };
   }
+  if (!username || !userId) {
+    throw new Error('Desire Plan Generator requires authenticated account and profile identity');
+  }
+  if (!toolCatalog) {
+    throw new Error('Desire Plan Generator requires the canonical capability catalog');
+  }
+  if (!decisionRules) {
+    throw new Error('Desire Plan Generator requires loaded decision rules');
+  }
+
+  const clarificationContext = desire.clarifyingQuestions?.completedAt
+    ? `## Clarifying Questions and Answers\n${desire.clarifyingQuestions.answers
+        .map(answer => {
+          const question = desire.clarifyingQuestions?.questions
+            .find(candidate => candidate.id === answer.questionId);
+          return question ? `Q: ${question.text}\nA: ${answer.answer}` : null;
+        })
+        .filter((value): value is string => Boolean(value))
+        .join('\n\n')}`
+    : '';
 
   // Check if this is a revision (has critique and/or previous plan)
   const isRevision = !!(desire.userCritique || desire.plan);
@@ -363,14 +368,13 @@ Consider:
     reason: desire.reason || 'Not specified',
     source: desire.source || 'user',
     risk: desire.risk || 'medium',
+    clarificationContext,
     revisionContext,
     milestoneContext,
     executionContext,
     toolCatalog,
-    toolCatalogSection: toolCatalog
-      ? `These tools are available but you can also use general actions:\n${toolCatalog}`
-      : 'Use general high-level actions - Big Brother will determine specific tools.',
-    decisionRules: decisionRules || 'No specific rules - use good judgment',
+    toolCatalogSection: toolCatalog,
+    decisionRules,
     relevantMemories: relevantMemories || 'No additional context',
     revisionReminder: isRevision
       ? '\nIMPORTANT: This is a revision. Address the user critique and improve upon the previous plan.'
@@ -387,7 +391,7 @@ Consider:
     const response = await callLLM({
       role,
       messages,
-      userId: username,
+      userId,
       options: {
         temperature,
         responseFormat: 'json',
@@ -521,7 +525,7 @@ export const DesirePlanGeneratorNode: NodeDefinition = defineNode({
     { name: 'desire', type: 'object', description: 'Desire to create plan for' },
     { name: 'toolCatalog', type: 'string', optional: true, description: 'Available skills/tools' },
     { name: 'decisionRules', type: 'string', optional: true, description: 'Policy constraints' },
-    { name: 'relevantMemories', type: 'string', optional: true, description: 'Context from memory' },
+    { name: 'relevantMemories', type: 'array', optional: true, description: 'Context from memory' },
   ],
   outputs: [
     { name: 'plan', type: 'object', description: 'Generated DesirePlan' },
