@@ -78,6 +78,16 @@ try {
     assert.equal(fs.existsSync(getBufferNotificationPath(username, mode)), true, `${mode} emits a notification`);
   }
 
+  assert.equal(await writeBufferEntry(username, 'conversation', { role: 'user', content: 'first counted message' }), true);
+  assert.equal(await writeBufferEntry(username, 'conversation', { role: 'user', content: 'second counted message' }), true);
+  assert.equal(loadBufferForUser(username, 'conversation').userMessageCount, 2);
+  assert.equal(await clearBufferForUser(username, 'conversation'), true);
+  const clearedConversation = loadBufferForUser(username, 'conversation');
+  assert.deepEqual(clearedConversation.messages, []);
+  assert.equal(clearedConversation.userMessageCount, 2, 'clearing retained messages must preserve the admission counter');
+  assert.equal(await writeBufferEntry(username, 'conversation', { role: 'user', content: 'message after clear' }), true);
+  assert.equal(loadBufferForUser(username, 'conversation').userMessageCount, 3);
+
   const corruptedPath = getBufferPathForUser(username, 'system');
   fs.writeFileSync(corruptedPath, '{invalid json');
   const recovered = loadBufferForUser(username, 'system');

@@ -446,15 +446,31 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     const responseText = output?.output || output?.response;
     const outputError = output?.error;
     const ttsOutput = extractQueuedTTSOutput(graphState);
+    const bridgeOutput = cognitiveMode === 'environment'
+      ? [...graphState.nodes.values()].find(node => (
+          node.definition?.type === 'environment_send_action'
+          && node.status === 'completed'
+        ))?.outputs
+      : null;
+    const actionOnlyTurn = !responseText
+      && bridgeOutput
+      && bridgeOutput.status !== 'no_actions';
 
     if (outputError) {
       yield push('error', { message: outputError });
       return;
     }
 
-    if (!responseText) {
+    if (!responseText && !actionOnlyTurn) {
       yield push('error', { message: 'Graph executed but produced no response' });
       return;
+    }
+
+    if (
+      bridgeOutput
+      && !['coordinated_for_adapter', 'no_actions'].includes(bridgeOutput.status)
+    ) {
+      yield push('system_message', { content: bridgeOutput.message });
     }
 
     if (mode === 'inner' && userContext?.username) {
@@ -492,18 +508,27 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       content: message,
       meta: mode === 'inner' ? { type: 'user_thought', unvoiced: true } : undefined,
     }, sessionId);
-    pushMessage(mode, {
-      role: mode === 'inner' ? 'reflection' : 'assistant',
-      content: responseText,
-      meta: { graphPipeline: true, ...(mode === 'inner' ? { type: 'inner_response' } : {}) },
-    }, sessionId);
+    if (responseText) {
+      pushMessage(mode, {
+        role: mode === 'inner' ? 'reflection' : 'assistant',
+        content: responseText,
+        meta: { graphPipeline: true, ...(mode === 'inner' ? { type: 'inner_response' } : {}) },
+      }, sessionId);
+    }
 
     // Canonical persistence is owned by the designated buffer nodes. The
     // in-memory session history below is only a request-runtime cache.
 
     // Send final answer
     const facet = getActiveFacet();
-    yield push('answer', { response: responseText, facet, saved: null, executionTime: duration, tts: ttsOutput });
+    yield push('answer', {
+      response: responseText || '',
+      facet,
+      saved: null,
+      executionTime: duration,
+      tts: ttsOutput,
+      action: actionOnlyTurn ? bridgeOutput.bridgeRecord : null,
+    });
 
   } catch (error) {
     if ((error as Error).message === 'CANCELLATION_REQUESTED') {

@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Response Pipeline (Card Responses)",
   "description": "Focused card-response pipeline with explicit response-context, memory, and Conversation Buffer ownership.",
   "last_modified": "2026-01-09T00:00:00.000Z",

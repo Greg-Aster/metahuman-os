@@ -1,6 +1,13 @@
 {
   "version": "3.1",
   "format": "svelte-flow",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
   "name": "Dual Consciousness Mode (Grounded Refinement)",
   "description": "Memory-grounded, persona-aware dialogue with bounded quality and safety refinement. Command execution remains owned by Agent mode.",
   "cognitiveMode": "dual",
@@ -82,6 +89,15 @@
         "properties": {
           "topK": 8,
           "threshold": 0.5
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "25",
+              "output": "memoryHints.needsMemory",
+              "equals": true
+            }
+          ]
         }
       }
     },
@@ -542,7 +558,12 @@
       "sourceHandle": "feedbackContext",
       "targetHandle": "feedbackContext",
       "data": {
-        "comment": "BACK-EDGE: retry only the response refinement body"
+        "comment": "Retry only the response refinement body",
+        "loop": true,
+        "when": {
+          "output": "routedTo",
+          "equals": "orchestrator"
+        }
       }
     },
     {
@@ -550,14 +571,26 @@
       "source": "34",
       "target": "35",
       "sourceHandle": "response",
-      "targetHandle": "data"
+      "targetHandle": "data",
+      "data": {
+        "when": {
+          "output": "routedTo",
+          "equals": "output"
+        }
+      }
     },
     {
       "id": "e32",
       "source": "34",
       "target": "35",
       "sourceHandle": "shouldContinueLoop",
-      "targetHandle": "open"
+      "targetHandle": "open",
+      "data": {
+        "when": {
+          "output": "routedTo",
+          "equals": "output"
+        }
+      }
     },
     {
       "id": "e33",

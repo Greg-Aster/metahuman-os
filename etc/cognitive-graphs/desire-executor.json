@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Desire Executor",
   "description": "Executes one approved desire plan, durably records the attempt, and hands it to outcome review.",
   "cognitiveMode": "agent",

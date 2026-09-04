@@ -24,6 +24,7 @@ Format: {"tags": [...], "entities": [...]}`;
 export interface OrganizerAnalysis {
   tags: string[];
   entities: string[];
+  summary?: string;
 }
 
 const GENERIC_TAGS = new Set(['ingested', 'inbox', 'ai', 'curated', 'audio', 'transcript']);
@@ -47,7 +48,10 @@ function normalizedValues(value: unknown, label: string): string[] {
   return result;
 }
 
-export function parseOrganizerAnalysis(content: string): OrganizerAnalysis {
+export function parseOrganizerAnalysis(
+  content: string,
+  options: { includeSummary?: boolean } = {},
+): OrganizerAnalysis {
   const withoutFence = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   const firstBrace = withoutFence.indexOf('{');
   const lastBrace = withoutFence.lastIndexOf('}');
@@ -58,10 +62,17 @@ export function parseOrganizerAnalysis(content: string): OrganizerAnalysis {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Organizer LLM response must be a JSON object');
   }
-  return {
+  const result: OrganizerAnalysis = {
     tags: normalizedValues(parsed.tags, 'tags'),
     entities: normalizedValues(parsed.entities, 'entities'),
   };
+  if (options.includeSummary) {
+    if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) {
+      throw new Error('Organizer LLM summary must be a non-empty string');
+    }
+    result.summary = parsed.summary.trim().slice(0, 4_000);
+  }
+  return result;
 }
 
 function mergeValues(existing: unknown, additions: string[]): string[] {
@@ -120,6 +131,27 @@ export async function enrichOrganizerMemory(
     };
   }
 
+  const includeSummary = context.organizerIncludeSummary === true;
+  const extractEntities = context.organizerExtractEntities !== false;
+  if (context.organizerSkipEnrichment === true) {
+    return {
+      memory: {
+        ...memory,
+        tags: mergeValues(memory.tags, []),
+        entities: mergeValues(memory.entities, []),
+        metadata: {
+          ...memory.metadata,
+          processed: true,
+          processedAt: timestamp,
+          organizerStatus: 'skipped',
+        },
+      },
+      success: true,
+      outcome: 'skipped',
+      analysis: { tags: [], entities: [], ...(includeSummary ? { summary: '' } : {}) },
+    };
+  }
+
   throwIfAborted(context.abortSignal);
   const prompt = renderPromptTemplate(promptTemplate, { content: memoryContent, memory });
   const response = await call({
@@ -135,14 +167,17 @@ export async function enrichOrganizerMemory(
   });
   throwIfAborted(context.abortSignal);
 
-  const analysis = parseOrganizerAnalysis(response.content);
+  const analysis = parseOrganizerAnalysis(response.content, { includeSummary });
   const reprocess = context.organizerReprocess === true;
   const baseTags = reprocess
     ? (Array.isArray(memory.tags) ? memory.tags.filter((tag: unknown) =>
       typeof tag === 'string' && GENERIC_TAGS.has(tag.toLowerCase())) : [])
     : memory.tags;
   const tags = mergeValues(baseTags, analysis.tags);
-  const entities = mergeValues(reprocess ? [] : memory.entities, analysis.entities);
+  const entities = mergeValues(
+    reprocess ? [] : memory.entities,
+    extractEntities ? analysis.entities : [],
+  );
   const outcome = analysis.tags.length > 0 || analysis.entities.length > 0 ? 'updated' : 'skipped';
 
   return {

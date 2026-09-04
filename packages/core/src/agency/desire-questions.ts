@@ -1,7 +1,5 @@
 import { randomUUID } from 'node:crypto';
 
-import { callLLMPrompt, type ModelRole } from '../model-router.js';
-import { renderPromptTemplate } from '../nodes/prompt-template.js';
 import type { ClarifyingQuestion, Desire } from './types.js';
 
 export const DEFAULT_QUESTION_PROMPT_TEMPLATE = `You are helping gather context before creating an execution plan for a goal/desire.
@@ -37,13 +35,6 @@ Example:
 ]
 
 Generate questions now:`;
-
-export interface QuestionGenerationOptions {
-  promptTemplate?: string;
-  role?: ModelRole;
-  temperature?: number;
-  maxTokens?: number;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -147,29 +138,4 @@ export function parseDesireQuestionsResponse(response: string): ClarifyingQuesti
       required: candidate.required,
     };
   });
-}
-
-/**
- * Generate clarifying questions through the configured model owner. Provider and
- * contract failures intentionally propagate to Desire Planner for retry/audit.
- */
-export async function generateQuestions(
-  desire: Desire,
-  options: QuestionGenerationOptions = {},
-): Promise<ClarifyingQuestion[]> {
-  const prompt = renderPromptTemplate(options.promptTemplate ?? DEFAULT_QUESTION_PROMPT_TEMPLATE, {
-    title: desire.title,
-    description: desire.description,
-    reason: desire.reason || 'Not specified',
-    source: desire.source,
-    risk: desire.risk || 'unknown',
-    desire,
-  });
-
-  const response = await callLLMPrompt(options.role ?? 'curator', prompt, {
-    temperature: options.temperature ?? 0.5,
-    maxTokens: options.maxTokens ?? 500,
-  });
-
-  return parseDesireQuestionsResponse(response);
 }

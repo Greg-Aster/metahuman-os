@@ -13,6 +13,20 @@ interface Memory {
   content: string;
 }
 
+function numberProperty(
+  value: unknown,
+  fallback: number,
+  name: string,
+  minimum: number,
+  maximum: number,
+): number {
+  const resolved = value ?? fallback;
+  if (typeof resolved !== 'number' || !Number.isFinite(resolved) || resolved < minimum || resolved > maximum) {
+    throw new Error(`${name} must be between ${minimum} and ${maximum}`);
+  }
+  return resolved;
+}
+
 function markBackgroundActivity() {
   try {
     recordSystemActivity();
@@ -53,7 +67,13 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   // inputs is an object keyed by handle name, not an array
   const memoriesInput = inputs.memories?.memories || inputs.memories || [];
   const memories = Array.isArray(memoriesInput) ? memoriesInput : [];
-  const temperature = properties?.temperature ?? 1.0;
+  const temperature = numberProperty(
+    properties?.temperature,
+    1.0,
+    'Dreamer temperature',
+    0,
+    2,
+  );
   const role = properties?.role ?? 'persona';
   const username = context.userId || context.username;
 
@@ -117,6 +137,7 @@ export const DreamerDreamGeneratorNode: NodeDefinition = defineNode({
   properties: {
     temperature: 1.0,
     role: 'persona',
+    timeout: 300000,
     systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
@@ -126,11 +147,24 @@ export const DreamerDreamGeneratorNode: NodeDefinition = defineNode({
       default: 1.0,
       label: 'Temperature',
       description: 'LLM temperature (1.0 for maximum creativity)',
+      min: 0,
+      max: 2,
+      step: 0.1,
     },
     role: {
       type: 'string',
       default: 'persona',
       label: 'LLM Role',
+    },
+    timeout: {
+      type: 'number',
+      default: 300000,
+      label: 'Execution Timeout (ms)',
+      description: 'Maximum time allowed for this model node.',
+      min: 1000,
+      max: 900000,
+      step: 1000,
+      advanced: true,
     },
     systemPrompt: {
       type: 'text_multiline',

@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Curator Workflow",
   "description": "Validates episodic memories into canonical curated conversation records, then marks only durably saved sources",
   "cognitiveMode": "agent",

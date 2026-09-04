@@ -58,6 +58,55 @@ export interface RobotStatusSituation {
   uncertainties: string[]
 }
 
+export interface RobotStatusTaskDecision {
+  outcome: string
+  reason: string
+  objectiveComplete: boolean
+  continuationPolicy?: string
+  requiredCompletionBasis?: string
+  motionClass?: string
+  actionPurpose?: string
+  observationSummary?: string
+  visualEvidenceMode?: string
+  completionEvidence?: string
+  nextInstruction?: string
+}
+
+export interface RobotStatusTaskAction {
+  type: string
+  command?: string
+  direction?: string
+  target?: string
+  description?: string
+}
+
+export interface RobotStatusTaskFeedback {
+  type: string
+  actionId: string
+  message: string
+  observedAt: string
+}
+
+export interface RobotStatusTaskFrame {
+  id: string
+  timestamp: string
+  source?: string
+  correlationId?: string
+}
+
+export interface RobotStatusTask {
+  objective: string
+  instruction: string
+  source: string
+  decision: RobotStatusTaskDecision
+  selectedAction: RobotStatusTaskAction | null
+  actionId: string
+  actionStatus: string
+  feedback: RobotStatusTaskFeedback | null
+  baselineFrame: RobotStatusTaskFrame | null
+  updatedAt: string
+}
+
 export interface RobotStatusHistoryEntry {
   updatedAt: string
   situationalSummary: string
@@ -78,6 +127,7 @@ export interface RobotStatusSnapshot {
   }
   body: RobotStatusBody | null
   lastAction: RobotStatusAction | null
+  task: RobotStatusTask | null
   agency: {
     activeDesires: RobotStatusDesireSummary[]
   }
@@ -89,6 +139,7 @@ export interface RobotStatusSourceFacts {
   sourceUpdatedAt: RobotStatusSnapshot['sourceUpdatedAt']
   body: RobotStatusBody | null
   lastAction: RobotStatusAction | null
+  task?: RobotStatusTask | null
   activeDesires: RobotStatusDesireSummary[]
 }
 
@@ -190,6 +241,88 @@ function normalizeAction(value: unknown): RobotStatusAction | null {
   }
 }
 
+function optionalText(value: unknown, maxLength: number): string | undefined {
+  const normalized = cleanText(value, maxLength)
+  return normalized || undefined
+}
+
+function normalizeTaskAction(value: unknown): RobotStatusTaskAction | null {
+  if (!isRecord(value)) return null
+  const type = cleanText(value.type, 80)
+  if (!type) return null
+  return {
+    type,
+    ...(optionalText(value.command, 160) ? { command: optionalText(value.command, 160) } : {}),
+    ...(optionalText(value.direction, 80) ? { direction: optionalText(value.direction, 80) } : {}),
+    ...(optionalText(value.target, 200) ? { target: optionalText(value.target, 200) } : {}),
+    ...(optionalText(value.description, 500) ? { description: optionalText(value.description, 500) } : {}),
+  }
+}
+
+function normalizeTaskDecision(value: unknown): RobotStatusTaskDecision | null {
+  if (!isRecord(value)) return null
+  const outcome = cleanText(value.outcome, 80)
+  const reason = cleanText(value.reason, 1_000)
+  if (!outcome || !reason || typeof value.objectiveComplete !== 'boolean') return null
+  return {
+    outcome,
+    reason,
+    objectiveComplete: value.objectiveComplete,
+    ...(optionalText(value.continuationPolicy, 80) ? { continuationPolicy: optionalText(value.continuationPolicy, 80) } : {}),
+    ...(optionalText(value.requiredCompletionBasis, 80) ? { requiredCompletionBasis: optionalText(value.requiredCompletionBasis, 80) } : {}),
+    ...(optionalText(value.motionClass, 80) ? { motionClass: optionalText(value.motionClass, 80) } : {}),
+    ...(optionalText(value.actionPurpose, 80) ? { actionPurpose: optionalText(value.actionPurpose, 80) } : {}),
+    ...(optionalText(value.observationSummary, 500) ? { observationSummary: optionalText(value.observationSummary, 500) } : {}),
+    ...(optionalText(value.visualEvidenceMode, 80) ? { visualEvidenceMode: optionalText(value.visualEvidenceMode, 80) } : {}),
+    ...(optionalText(value.completionEvidence, 1_000) ? { completionEvidence: optionalText(value.completionEvidence, 1_000) } : {}),
+    ...(optionalText(value.nextInstruction, 1_000) ? { nextInstruction: optionalText(value.nextInstruction, 1_000) } : {}),
+  }
+}
+
+function normalizeTaskFeedback(value: unknown): RobotStatusTaskFeedback | null {
+  if (!isRecord(value)) return null
+  const type = cleanText(value.type, 80)
+  if (!type) return null
+  return {
+    type,
+    actionId: cleanText(value.actionId, 200),
+    message: cleanText(value.message, 500),
+    observedAt: cleanText(value.observedAt, 80),
+  }
+}
+
+function normalizeTaskFrame(value: unknown): RobotStatusTaskFrame | null {
+  if (!isRecord(value)) return null
+  const id = cleanText(value.id, 200)
+  const timestamp = cleanText(value.timestamp, 80)
+  if (!id || !timestamp) return null
+  return {
+    id,
+    timestamp,
+    ...(optionalText(value.source, 160) ? { source: optionalText(value.source, 160) } : {}),
+    ...(optionalText(value.correlationId, 200) ? { correlationId: optionalText(value.correlationId, 200) } : {}),
+  }
+}
+
+function normalizeTask(value: unknown): RobotStatusTask | null {
+  if (!isRecord(value)) return null
+  const decision = normalizeTaskDecision(value.decision)
+  const objective = cleanText(value.objective, 1_000)
+  if (!decision || !objective) return null
+  return {
+    objective,
+    instruction: cleanText(value.instruction, 4_000),
+    source: cleanText(value.source, 80),
+    decision,
+    selectedAction: normalizeTaskAction(value.selectedAction),
+    actionId: cleanText(value.actionId, 200),
+    actionStatus: cleanText(value.actionStatus, 80),
+    feedback: normalizeTaskFeedback(value.feedback),
+    baselineFrame: normalizeTaskFrame(value.baselineFrame),
+    updatedAt: cleanText(value.updatedAt, 80),
+  }
+}
+
 function normalizeDesires(value: unknown): RobotStatusDesireSummary[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).slice(0, 5).flatMap(item => {
@@ -251,7 +384,10 @@ export function loadRobotStatus(username: string): RobotStatusSnapshot | null {
   if (parsed.version !== 1 || !parsed.updatedAt || !parsed.situation) {
     throw new Error(`Invalid Robot Status snapshot for ${username}`)
   }
-  return parsed
+  return {
+    ...parsed,
+    task: normalizeTask(parsed.task),
+  }
 }
 
 function previousHistoryEntry(snapshot: RobotStatusSnapshot): RobotStatusHistoryEntry {
@@ -286,6 +422,9 @@ export function saveRobotStatus(
     },
     body: normalizeBody(sources.body),
     lastAction: normalizeAction(sources.lastAction),
+    task: sources.task === undefined
+      ? previous?.task ?? null
+      : normalizeTask(sources.task),
     agency: { activeDesires: normalizeDesires(sources.activeDesires) },
     situation: parseRobotStatusSituation(situation),
     history,

@@ -855,11 +855,11 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
   name: 'Response Synthesizer',
   category: 'operator',
   inputs: [
-    { name: 'goal', type: 'string' },
-    { name: 'scratchpad', type: 'array' },
-    { name: 'context', type: 'context' },
+    { name: 'goal', type: 'string', optional: true },
+    { name: 'scratchpad', type: 'array', optional: true },
+    { name: 'context', type: 'context', optional: true },
     { name: 'persona', type: 'object', optional: true, description: 'Raw persona object (values, personality, identity)' },
-    { name: 'personaText', type: 'object', optional: true, description: 'Formatted persona text for voice synthesis' },
+    { name: 'personaText', type: 'string', optional: true, description: 'Formatted persona text for voice synthesis' },
   ],
   outputs: [
     { name: 'response', type: 'string', description: 'Final natural language response' },

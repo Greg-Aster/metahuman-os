@@ -9,7 +9,7 @@
  *
  * Options:
  *   --username <name>  Process specific user
- *   --single-user      Process only the default user
+ *   --desire-id <id>   Process one specific desire
  */
 
 import { initGlobalLogger } from '@metahuman/core';
@@ -21,6 +21,9 @@ async function main() {
   try {
     const result = await runCycle(parseDesirePlannerArgs(process.argv.slice(2)));
     console.log(`[desire-planner] Completed:`, result.stats);
+    if (!result.success) {
+      console.error('[desire-planner] Failed:', result.errors.join('; '));
+    }
     process.exit(result.success ? 0 : 1);
   } catch (error) {
     console.error('[desire-planner] Fatal error:', error);

@@ -484,7 +484,10 @@ Consider:
         inputs: step.inputs,
         expectedOutcome: step.expectedOutcome,
         risk: step.risk as DesireRisk,
-        requiresApproval: step.requiresApproval || step.risk === 'medium' || step.risk === 'high',
+        requiresApproval: step.requiresApproval
+          || step.risk === 'medium'
+          || step.risk === 'high'
+          || step.risk === 'critical',
       })),
       estimatedRisk: parsed.estimatedRisk as DesireRisk,
       requiredSkills: parsed.requiredSkills || [],
@@ -523,8 +526,8 @@ export const DesirePlanGeneratorNode: NodeDefinition = defineNode({
   description: 'Uses LLM to generate an execution plan for a desire',
   inputs: [
     { name: 'desire', type: 'object', description: 'Desire to create plan for' },
-    { name: 'toolCatalog', type: 'string', optional: true, description: 'Available skills/tools' },
-    { name: 'decisionRules', type: 'string', optional: true, description: 'Policy constraints' },
+    { name: 'toolCatalog', type: 'string', description: 'Canonical available skills/tools' },
+    { name: 'decisionRules', type: 'string', description: 'Loaded policy constraints' },
     { name: 'relevantMemories', type: 'array', optional: true, description: 'Context from memory' },
   ],
   outputs: [

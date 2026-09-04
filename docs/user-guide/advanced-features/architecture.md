@@ -53,9 +53,10 @@ Reactive, Semi, and Full mode transitions; Full policy proposals are not a
 second scheduler.
 
 Sleep Workflow owns its ordered sleep stages. Robot Operator owns boredom,
-movement, and reflection admission for the robot. Environment Task State owns a
-bounded external objective and its evidence; Environment Bridge owns transport
-only.
+movement, and reflection admission for the robot. Robot Status owns task
+continuity and the latest action result; specialized Environment nodes correlate
+feedback and select images. Environment Bridge owns transport and adapter
+observation data only.
 
 ## Data Ownership
 

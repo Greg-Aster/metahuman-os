@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "name": "Desire Check-in",
+  "description": "Loads one long-running desire, retrieves relevant memory evidence, and evaluates its progress",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "agencyNode",
+      "position": { "x": 80, "y": 120 },
+      "data": { "label": "Load Desire", "nodeType": "desire_loader", "properties": {} },
+      "width": 200,
+      "height": 90
+    },
+    {
+      "id": "2",
+      "type": "contextNode",
+      "position": { "x": 340, "y": 120 },
+      "data": { "label": "Find Progress Evidence", "nodeType": "semantic_search", "properties": { "topK": 10, "threshold": 0 } },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "3",
+      "type": "agencyNode",
+      "position": { "x": 620, "y": 120 },
+      "data": { "label": "Evaluate Check-in", "nodeType": "desire_checkin_evaluator", "properties": {} },
+      "width": 230,
+      "height": 130
+    }
+  ],
+  "edges": [
+    { "id": "e-1-query-2-query", "source": "1", "target": "2", "sourceHandle": "query", "targetHandle": "query" },
+    { "id": "e-1-desire-3-desire", "source": "1", "target": "3", "sourceHandle": "desire", "targetHandle": "desire" },
+    { "id": "e-2-memories-3-memories", "source": "2", "target": "3", "sourceHandle": "memories", "targetHandle": "memories" }
+  ]
+}

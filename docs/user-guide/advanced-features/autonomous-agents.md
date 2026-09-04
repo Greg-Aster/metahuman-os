@@ -1,7 +1,7 @@
 # Autonomous Work
 
 MetaHuman OS uses one work coordinator for user requests, scheduled agents,
-memory indexing, Active Operator policy, and Ainekio environment work. The
+memory indexing, and Ainekio environment work. The
 coordinator is owned by `packages/core/src/queue` and is visible in the Queue
 panel.
 
@@ -15,10 +15,10 @@ claimed it.
   inactivity-based producers are paused.
 - **Semi-autonomous** also enables the configured interval, time-of-day, and
   inactivity producers in `etc/agents.json`.
-- **Fully autonomous** adds a bounded Operator Policy Graph. It may select an
-  eligible queued task, wait, request input, or propose one allow-listed
-  low-priority task. It cannot execute work directly or change coordinator
-  priority rules.
+- **Fully autonomous** lets Robot Operator admit one bounded robot workflow
+  chain at a time. A later Robot Goal Review or planner run begins only after
+  the preceding work reaches a terminal state and the configured cooldown has
+  elapsed. All work still uses coordinator priority and lifecycle rules.
 
 Changing mode does not stop the coordinator. Interactive and safety work remain
 available in every mode.
@@ -78,10 +78,10 @@ facet.
 
 ## Active Operator
 
-Active Operator is a mode and policy service above the coordinator. It owns no
-queue, retry loop, process scheduler, or task executor. Full mode is
-event-driven and bounded by cooldown, user-presence, consecutive-work, and
-hourly evaluation limits.
+Active Operator is the mode controller above the coordinator. It owns no queue,
+retry loop, process scheduler, or task executor. In Full mode, Robot Operator
+owns completion/cooldown-driven robot workflow admission; there is no separate
+general Operator Policy graph or LLM scheduling loop.
 
 ## Monitoring and controls
 

@@ -26,6 +26,8 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 import {
   audit,
   acquireLock,
+  cognitiveGraphPath,
+  getFirstFailedNode,
   getTargetUser,
   withUserContext,
   submitInnerReflection,
@@ -33,13 +35,15 @@ import {
   listActiveTasks,
   listEpisodicFiles,
   getActiveBackend,
-  callLLM,
+  loadGraphFile,
   proposeGoalFromDesire,
+  requireGraphNodeOutput,
+  runGraph,
   GOAL_PROPOSAL_THRESHOLDS,
   loadTrustLevel,
   curiosityQuestionStore,
   getUserContext,
-  type RouterMessage,
+  type CachedGraphEntry,
 } from '@metahuman/core';
 
 import {
@@ -60,7 +64,6 @@ import {
   applyReinforcement,
   isAboveThreshold,
   calculateEffectiveStrength,
-  DESIRE_SOURCE_WEIGHTS,
 } from '@metahuman/core';
 
 import {
@@ -85,95 +88,18 @@ import {
 // ─────────────────────────────────────────────────────────────
 
 const LOG_PREFIX = '[desire-generator]';
+const GRAPH_FILE = 'desire-generator.json';
+const graphCache: Record<string, CachedGraphEntry | null> = {};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
 export interface DesireGeneratorOptions {
   username?: string;
   signal?: AbortSignal;
 }
 
-const DESIRE_SOURCES = new Set<DesireSource>([
-  'persona_goal', 'urgent_task', 'task', 'help_ticket', 'memory_pattern',
-  'curiosity', 'reflection', 'dream', 'tool_suggestion',
-]);
-const DESIRE_RISKS = new Set(['none', 'low', 'medium', 'high', 'critical']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function parseDesireCandidates(content: string): DesireCandidate[] {
-  const jsonMatch = content.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error('Desire generation response did not contain a JSON array');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonMatch[0]);
-  } catch (error) {
-    throw new Error(`Desire generation response was not valid JSON: ${(error as Error).message}`);
-  }
-  if (!Array.isArray(parsed)) throw new Error('Desire generation response must be an array');
-  return parsed.map((candidate, index) => {
-    if (!isRecord(candidate)
-      || typeof candidate.title !== 'string' || !candidate.title.trim()
-      || typeof candidate.description !== 'string' || !candidate.description.trim()
-      || typeof candidate.reason !== 'string' || !candidate.reason.trim()
-      || typeof candidate.source !== 'string' || !DESIRE_SOURCES.has(candidate.source as DesireSource)
-      || typeof candidate.initialStrength !== 'number' || !Number.isFinite(candidate.initialStrength)
-      || candidate.initialStrength < 0 || candidate.initialStrength > 1
-      || typeof candidate.risk !== 'string' || !DESIRE_RISKS.has(candidate.risk)
-      || typeof candidate.suggestedAction !== 'string' || !candidate.suggestedAction.trim()
-      || (candidate.sourceId !== undefined && typeof candidate.sourceId !== 'string')) {
-      throw new Error(`Desire candidate ${index} is missing required typed fields`);
-    }
-    return candidate as unknown as DesireCandidate;
-  });
-}
-
-export function parseReinforcementResponse(
-  content: string,
-  validDesireIds: Set<string>,
-): Map<string, string> {
-  const jsonMatch = content.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error('Desire reinforcement response did not contain a JSON array');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonMatch[0]);
-  } catch (error) {
-    throw new Error(`Desire reinforcement response was not valid JSON: ${(error as Error).message}`);
-  }
-  if (!Array.isArray(parsed)) throw new Error('Desire reinforcement response must be an array');
-  const result = new Map<string, string>();
-  parsed.forEach((item, index) => {
-    if (!isRecord(item) || typeof item.id !== 'string' || !validDesireIds.has(item.id)
-      || typeof item.reason !== 'string' || !item.reason.trim()) {
-      throw new Error(`Desire reinforcement ${index} is invalid`);
-    }
-    if (result.has(item.id)) throw new Error(`Duplicate reinforcement for desire ${item.id}`);
-    result.set(item.id, item.reason.trim());
-  });
-  return result;
-}
-
-export function validateCandidateSources(
-  candidates: DesireCandidate[],
-  inputs: DesireGeneratorInputs,
-): DesireCandidate[] {
-  const available = new Set<DesireSource>();
-  if (inputs.personaGoals.length > 0) available.add('persona_goal');
-  if (inputs.urgentTasks.length > 0) available.add('urgent_task');
-  if (inputs.activeTasks.length > 0) available.add('task');
-  if (inputs.memoryPatterns.length > 0) available.add('memory_pattern');
-  if (inputs.pendingCuriosityQuestions.length > 0) available.add('curiosity');
-  if (inputs.recentReflections.length > 0) available.add('reflection');
-  if (inputs.recentDreams.length > 0) available.add('dream');
-  for (const candidate of candidates) {
-    if (!available.has(candidate.source)) {
-      throw new Error(
-        `Desire candidate source '${candidate.source}' has no corresponding input`,
-      );
-    }
-  }
-  return candidates;
-}
 
 export interface DesireGeneratorResult {
   success: boolean;
@@ -591,155 +517,49 @@ export async function gatherInputs(enabledSources: DesireSource[]): Promise<Desi
   };
 }
 
-// ============================================================================
-// LLM Desire Identification
-// ============================================================================
-
-/**
- * Format inputs for LLM prompt
- */
-function formatInputsForPrompt(inputs: DesireGeneratorInputs): string {
-  const sections: string[] = [];
-
-  if (inputs.personaGoals.length > 0) {
-    sections.push(`### Persona Goals (Weight: ${DESIRE_SOURCE_WEIGHTS.persona_goal})
-${inputs.personaGoals.map(g => `- [${g.priority}] ${g.goal} (${g.status})`).join('\n')}`);
+async function runDesireGenerationGraph(
+  operation: 'generate' | 'reinforce',
+  inputs: DesireGeneratorInputs,
+  existingDesires: Desire[] = [],
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const target = getTargetUser()
+  if (!target) throw new Error('Desire Generator graph requires an authenticated user context')
+  const loaded = await loadGraphFile(cognitiveGraphPath(GRAPH_FILE), {
+    cache: graphCache,
+    cacheKey: GRAPH_FILE,
+    logPrefix: LOG_PREFIX,
+  })
+  if (!loaded) throw new Error(`Desire Generator graph ${GRAPH_FILE} could not be loaded`)
+  const graphState = await runGraph({
+    graph: loaded.graph,
+    signal,
+    context: {
+      username: target.username,
+      userId: target.userId,
+      cognitiveMode: 'agent',
+      desireGeneratorInput: { operation, inputs, existingDesires },
+      abortSignal: signal,
+    },
+  })
+  if (graphState.status !== 'completed') {
+    const failed = getFirstFailedNode(graphState)
+    throw new Error(failed
+      ? `Desire Generator graph failed at ${failed.nodeId}: ${failed.error}`
+      : `Desire Generator graph ended with status ${graphState.status}`)
   }
-
-  if (inputs.urgentTasks.length > 0) {
-    sections.push(`### Urgent Tasks (Weight: ${DESIRE_SOURCE_WEIGHTS.urgent_task})
-${inputs.urgentTasks.map(t => `- [${t.priority}] ${t.title}${t.description ? `: ${t.description.substring(0, 100)}` : ''}`).join('\n')}`);
-  }
-
-  if (inputs.activeTasks.length > 0) {
-    sections.push(`### Active Tasks (Weight: ${DESIRE_SOURCE_WEIGHTS.task})
-${inputs.activeTasks.slice(0, 10).map(t => `- ${t.title}`).join('\n')}`);
-  }
-
-  if (inputs.recentMemories.length > 0) {
-    sections.push(`### Recent Memories
-${inputs.recentMemories.slice(0, 10).map(m => `- [${m.type || 'observation'}] ${m.content.substring(0, 100)}...`).join('\n')}`);
-  }
-
-  if (inputs.memoryPatterns.length > 0) {
-    sections.push(`### Detected Memory Patterns (Weight: ${DESIRE_SOURCE_WEIGHTS.memory_pattern})
-These are recurring themes identified from recent experiences:
-${inputs.memoryPatterns.map(p => `- ${p.description} (appears in ${p.relatedMemoryIds.length} memories)`).join('\n')}`);
-  }
-
-  if (inputs.pendingCuriosityQuestions.length > 0) {
-    sections.push(`### Unanswered Questions (Weight: ${DESIRE_SOURCE_WEIGHTS.curiosity})
-${inputs.pendingCuriosityQuestions.map(q => `- ${q.question}`).join('\n')}`);
-  }
-
-  if (inputs.recentReflections.length > 0) {
-    sections.push(`### Recent Reflections (Weight: ${DESIRE_SOURCE_WEIGHTS.reflection})
-${inputs.recentReflections.map(r => `- ${r.content.substring(0, 150)}...`).join('\n')}`);
-  }
-
-  if (inputs.recentDreams.length > 0) {
-    sections.push(`### Recent Dreams (Weight: ${DESIRE_SOURCE_WEIGHTS.dream})
-${inputs.recentDreams.map(d => `- ${d.content.substring(0, 100)}...`).join('\n')}`);
-  }
-
-  if (inputs.activeDesires.length > 0) {
-    sections.push(`### Already Active Desires (avoid duplicates)
-${inputs.activeDesires.map(d => `- ${d.title} [${d.source}]`).join('\n')}`);
-  }
-
-  if (inputs.recentlyRejected.length > 0) {
-    sections.push(`### Recently Rejected (consider if still relevant)
-${inputs.recentlyRejected.map(d => `- ${d.title}`).join('\n')}`);
-  }
-
-  return sections.join('\n\n');
+  return requireGraphNodeOutput(graphState, 'desire_generation')
 }
 
-/**
- * Use LLM to identify desires from inputs
- */
-export async function identifyDesires(inputs: DesireGeneratorInputs): Promise<DesireCandidate[]> {
-  const formattedInputs = formatInputsForPrompt(inputs);
-
-  if (!formattedInputs.trim()) {
-    console.log(`${LOG_PREFIX} No inputs to process`);
-    return [];
+export async function identifyDesires(
+  inputs: DesireGeneratorInputs,
+  signal?: AbortSignal,
+): Promise<DesireCandidate[]> {
+  const output = await runDesireGenerationGraph('generate', inputs, [], signal)
+  if (!Array.isArray(output.candidates)) {
+    throw new Error('Desire Generator graph returned invalid candidates')
   }
-
-  const systemPrompt = `You are the Agency module of MetaHuman OS, responsible for identifying what the system genuinely wants to do based on accumulated experiences, goals, and insights.
-
-A desire is not just a task - it's a motivated intention. It represents something the system authentically wants to accomplish, with a clear reason why.
-
-## Guidelines
-- Focus on desires that are actionable within the system's capabilities
-- Prefer desires that align with persona goals
-- **Pay special attention to Detected Memory Patterns** - these recurring themes represent genuine interests and concerns that have emerged organically from experiences
-- When a pattern appears frequently (3+ times), consider if it suggests a desire to explore, resolve, or build upon that theme
-- Consider patterns in memories and reflections
-- Avoid duplicating already active desires
-- Be selective - only identify 0-5 genuine desires
-- Higher priority sources should have more influence
-
-## Risk Levels
-- none: Read-only, information gathering
-- low: Reversible actions, local file operations
-- medium: External communications, data modifications
-- high: Irreversible actions, external system interactions
-- critical: Financial, security, or privacy implications`;
-
-  const userPrompt = `## Current Context
-
-${formattedInputs}
-
-## Task
-
-Identify 0-5 genuine desires based on the above context. For each desire, provide:
-
-1. title: Brief name (5-10 words)
-2. description: What specifically do I want to do?
-3. reason: Why do I want this? What need does it fulfill?
-4. source: Which input category primarily inspired this? (persona_goal, urgent_task, task, memory_pattern, curiosity, reflection, dream)
-5. sourceId: ID of the specific item if applicable (optional)
-6. initialStrength: 0.0-1.0 based on urgency and alignment
-7. risk: none/low/medium/high/critical
-8. suggestedAction: What would executing this look like?
-
-Respond with a JSON array of desire objects. Return an empty array [] if no genuine desires emerge.
-
-Example response:
-[
-  {
-    "title": "Organize project notes into coherent structure",
-    "description": "Consolidate scattered notes about the ML project into a structured document",
-    "reason": "Multiple memories mention this project and reflections show concern about losing context",
-    "source": "memory_pattern",
-    "initialStrength": 0.6,
-    "risk": "low",
-    "suggestedAction": "Search memories for ML project content, synthesize into document, save to out/"
-  }
-]`;
-
-  const messages: RouterMessage[] = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt },
-  ];
-
-  const response = await callLLM({
-      role: 'persona',  // Use persona model - desires come from identity
-      messages,
-      options: {
-        temperature: 0.6,  // Slightly higher for more creative desire generation
-        responseFormat: 'json',
-      },
-    });
-
-  if (!response.content) throw new Error('Desire generation model returned no content');
-  const candidates = validateCandidateSources(
-    parseDesireCandidates(response.content),
-    inputs,
-  );
-  console.log(`${LOG_PREFIX} LLM identified ${candidates.length} desire candidates`);
-  return candidates;
+  return output.candidates as DesireCandidate[]
 }
 
 // ============================================================================
@@ -827,81 +647,22 @@ function isDuplicate(candidate: DesireCandidate, existing: DesireSummary[]): boo
  */
 async function identifyReinforcedDesires(
   existingDesires: Desire[],
-  inputs: DesireGeneratorInputs
+  inputs: DesireGeneratorInputs,
+  signal?: AbortSignal,
 ): Promise<Map<string, string>> {
-  if (existingDesires.length === 0) {
-    return new Map();
+  const output = await runDesireGenerationGraph('reinforce', inputs, existingDesires, signal)
+  if (!Array.isArray(output.reinforcements)) {
+    throw new Error('Desire Generator graph returned invalid reinforcements')
   }
-
-  const formattedDesires = existingDesires
-    .map(d => `- [${d.id}] "${d.title}" (strength: ${d.strength.toFixed(2)}, source: ${d.source})`)
-    .join('\n');
-
-  const formattedInputs: string[] = [];
-
-  if (inputs.personaGoals.length > 0) {
-    formattedInputs.push(`Goals: ${inputs.personaGoals.map(g => g.goal).join('; ')}`);
+  const result = new Map<string, string>()
+  for (const item of output.reinforcements) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)
+      || typeof item.id !== 'string' || typeof item.reason !== 'string') {
+      throw new Error('Desire Generator graph returned an invalid reinforcement')
+    }
+    result.set(item.id, item.reason)
   }
-  if (inputs.urgentTasks.length > 0) {
-    formattedInputs.push(`Urgent tasks: ${inputs.urgentTasks.map(t => t.title).join('; ')}`);
-  }
-  if (inputs.activeTasks.length > 0) {
-    formattedInputs.push(`Tasks: ${inputs.activeTasks.slice(0, 5).map(t => t.title).join('; ')}`);
-  }
-  if (inputs.recentMemories.length > 0) {
-    formattedInputs.push(`Recent memories: ${inputs.recentMemories.slice(0, 5).map(m => m.content.substring(0, 80)).join('; ')}`);
-  }
-  if (inputs.recentReflections.length > 0) {
-    formattedInputs.push(`Reflections: ${inputs.recentReflections.slice(0, 3).map(r => r.content.substring(0, 80)).join('; ')}`);
-  }
-  if (inputs.recentDreams.length > 0) {
-    formattedInputs.push(`Dreams: ${inputs.recentDreams.slice(0, 2).map(d => d.content.substring(0, 80)).join('; ')}`);
-  }
-
-  if (formattedInputs.length === 0) {
-    return new Map();
-  }
-
-  const systemPrompt = `You are reviewing existing desires to see if current experiences reinforce them.
-A desire is reinforced when current inputs (memories, tasks, goals, reflections) relate to or support that desire.
-Reinforcement means the desire becomes more relevant based on recent experience.`;
-
-  const userPrompt = `## Existing Desires
-${formattedDesires}
-
-## Current Inputs
-${formattedInputs.join('\n')}
-
-## Task
-Identify which desires are reinforced by the current inputs. A desire is reinforced if:
-- A memory, task, or reflection relates to the desire's theme
-- Recent activity supports the desire's goal
-- The desire becomes more relevant based on new information
-
-Return JSON array of reinforced desires:
-[{"id": "desire-xxx", "reason": "Brief reason why this is reinforced"}]
-
-Return empty array [] if no desires are reinforced. Be selective - only reinforce desires with genuine connections.`;
-
-  const messages: RouterMessage[] = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt },
-  ];
-
-  const response = await callLLM({
-      role: 'persona',
-      messages,
-      options: { temperature: 0.3, responseFormat: 'json' },
-    });
-
-  if (!response.content) throw new Error('Desire reinforcement model returned no content');
-  const result = parseReinforcementResponse(
-    response.content,
-    new Set(existingDesires.map(desire => desire.id)),
-  );
-
-    console.log(`${LOG_PREFIX} LLM identified ${result.size} reinforced desires`);
-  return result;
+  return result
 }
 
 /**
@@ -911,7 +672,8 @@ Return empty array [] if no desires are reinforced. Be selective - only reinforc
 async function nurtureExistingDesires(
   username: string,
   inputs: DesireGeneratorInputs,
-  config: Awaited<ReturnType<typeof loadConfig>>
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  signal?: AbortSignal,
 ): Promise<{ reinforced: number; decayed: number; abandoned: number; goalsProposed: number }> {
   // Load ALL nascent and pending desires
   const nascentDesires = await listNascentDesires(username);
@@ -926,7 +688,7 @@ async function nurtureExistingDesires(
   console.log(`${LOG_PREFIX} Nurturing ${allDesires.length} existing desires...`);
 
   // Use LLM to identify which desires are reinforced
-  const reinforcements = await identifyReinforcedDesires(allDesires, inputs);
+  const reinforcements = await identifyReinforcedDesires(allDesires, inputs, signal);
 
   const now = new Date().toISOString();
   let reinforced = 0;
@@ -1126,7 +888,7 @@ async function checkActivations(
 /**
  * Generate desires for a single user
  */
-export async function generateDesiresForUser(username: string): Promise<number> {
+export async function generateDesiresForUser(username: string, signal?: AbortSignal): Promise<number> {
   console.log(`${LOG_PREFIX} Processing user: ${username}`);
 
   // Check if agency is enabled
@@ -1177,7 +939,7 @@ export async function generateDesiresForUser(username: string): Promise<number> 
   // PHASE 1: Nurture existing desires (run-based decay/reinforcement)
   // =========================================================================
   // Even if no new inputs, we still apply decay to existing desires
-  const nurtureResult = await nurtureExistingDesires(username, inputs, config);
+  const nurtureResult = await nurtureExistingDesires(username, inputs, config, signal);
 
   // =========================================================================
   // PHASE 1.5: Check activations (desires that crossed threshold)
@@ -1204,7 +966,7 @@ export async function generateDesiresForUser(username: string): Promise<number> 
   }
 
   // Identify NEW desires using LLM
-  const candidates = await identifyDesires(inputs);
+  const candidates = await identifyDesires(inputs, signal);
   if (candidates.length === 0) {
     console.log(`${LOG_PREFIX} No new desires identified`);
     return nurtureResult.reinforced;
@@ -1351,7 +1113,7 @@ export async function runCycle(options: DesireGeneratorOptions = {}): Promise<De
         { userId: user.userId, username: user.username, role: user.role },
         async () => {
           if (options.signal?.aborted) throw options.signal.reason || new DOMException('Desire generation cancelled', 'AbortError');
-          return generateDesiresForUser(user!.username);
+          return generateDesiresForUser(user!.username, options.signal);
         }
       );
 

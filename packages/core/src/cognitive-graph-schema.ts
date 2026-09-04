@@ -9,10 +9,27 @@
  * - Svelte Flow: string IDs, position objects, edges array with handles
  */
 
+import { getNode } from './nodes/index.js';
+import { validatePropertyValue } from './nodes/types.js';
+import type {
+  GraphNodeActivation,
+  GraphOutputCondition,
+  GraphSchedulerContract,
+} from './cognitive-graph-contract.js';
+import { DEFAULT_GRAPH_SCHEDULER } from './cognitive-graph-contract.js';
+
+export type {
+  GraphConditionValue,
+  GraphNodeActivation,
+  GraphOutputCondition,
+  GraphSchedulerContract,
+} from './cognitive-graph-contract.js';
+export { DEFAULT_GRAPH_SCHEDULER } from './cognitive-graph-contract.js';
+
 const LOG_PREFIX = '[cognitive-graph-schema]';
 
 // ============================================================================
-// LEGACY FORMAT (LiteGraph) - Used by graph-executor
+// LEGACY FORMAT (LiteGraph) - compatibility types only; not executable
 // ============================================================================
 
 export interface CognitiveGraphNode {
@@ -92,6 +109,7 @@ export interface SvelteFlowNode {
     properties: Record<string, any>;
     muted?: boolean;
     comment?: string;
+    activation?: GraphNodeActivation;
     /** Node schema from graph definition (for output detection, validation) */
     schema?: {
       id?: string;
@@ -106,6 +124,11 @@ export interface SvelteFlowNode {
   };
   width?: number;
   height?: number;
+  /** Optional Svelte Flow parent used by editor grouping frames. */
+  parentId?: string;
+  extent?: 'parent';
+  expandParent?: boolean;
+  zIndex?: number;
 }
 
 export interface SvelteFlowEdge {
@@ -117,6 +140,12 @@ export interface SvelteFlowEdge {
   data?: {
     type?: string;
     comment?: string;
+    /** Control dependencies order nodes without copying an output into an input. */
+    kind?: 'data' | 'control';
+    /** Activate this edge only when the source node output matches. */
+    when?: GraphOutputCondition;
+    /** Explicitly removes this edge from the acyclic schedule and bounds re-entry. */
+    loop?: boolean;
   };
 }
 
@@ -127,6 +156,7 @@ export interface SvelteFlowGraph {
   description?: string;
   cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
   last_modified?: string;
+  scheduler: GraphSchedulerContract;
   nodes: SvelteFlowNode[];
   edges: SvelteFlowEdge[];
 }
@@ -255,12 +285,145 @@ export class GraphValidationError extends Error {
   }
 }
 
+function validateOutputCondition(condition: any, label: string, errors: string[]): void {
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) {
+    errors.push(`${label}: condition must be an object`);
+    return;
+  }
+  if (typeof condition.output !== 'string' || !condition.output.trim()) {
+    errors.push(`${label}: condition output must be a non-empty string`);
+  }
+
+  const operators = ['equals', 'notEquals', 'truthy'].filter(operator => operator in condition);
+  if (operators.length !== 1) {
+    errors.push(`${label}: condition must define exactly one of equals, notEquals, or truthy`);
+  }
+  if ('truthy' in condition && typeof condition.truthy !== 'boolean') {
+    errors.push(`${label}: truthy must be boolean`);
+  }
+  for (const operator of ['equals', 'notEquals'] as const) {
+    if (!(operator in condition)) continue;
+    const value = condition[operator];
+    if (value !== null && !['string', 'number', 'boolean'].includes(typeof value)) {
+      errors.push(`${label}: ${operator} must be a string, number, boolean, or null`);
+    }
+  }
+}
+
+function validateRegisteredNodeContracts(graph: any, errors: string[]): void {
+  if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) return;
+  const nodeById = new Map<string, any>();
+  const incomingDataHandles = new Map<string, Set<string>>();
+
+  for (const node of graph.nodes) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) continue;
+    if (nodeById.has(node.id)) errors.push(`Duplicate node id ${node.id}`);
+    nodeById.set(node.id, node);
+  }
+  for (const edge of graph.edges) {
+    if (!edge || typeof edge !== 'object' || Array.isArray(edge)) continue;
+    if (edge.data?.kind === 'control') continue;
+    const handles = incomingDataHandles.get(edge.target) || new Set<string>();
+    handles.add(edge.targetHandle);
+    incomingDataHandles.set(edge.target, handles);
+  }
+
+  for (const node of graph.nodes) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) continue;
+    const definition = getNode(node.data?.nodeType);
+    if (!definition) {
+      errors.push(`Node ${node.id} uses unregistered type "${node.data?.nodeType || 'unknown'}"`);
+      continue;
+    }
+
+    const declaredProperties = definition.propertySchemas || {};
+    for (const property of Object.keys(node.data?.properties || {})) {
+      if (!(property in declaredProperties)) {
+        errors.push(`Node ${node.id} (${definition.id}) persists undeclared property "${property}"`);
+      }
+    }
+    for (const [property, schema] of Object.entries(declaredProperties)) {
+      const configured = node.data?.properties || {};
+      const value = property in configured
+        ? configured[property]
+        : (property in (definition.properties || {}) ? definition.properties?.[property] : schema.default);
+      const validationError = validatePropertyValue(value, schema);
+      if (validationError) {
+        errors.push(`Node ${node.id} (${definition.id}) property "${property}": ${validationError}`);
+      }
+    }
+
+    const configuredRequiredInputs = node.data?.activation?.requiredInputs;
+    const requiredInputs = Array.isArray(configuredRequiredInputs)
+      ? configuredRequiredInputs
+      : definition.execution.requiredInputs;
+    for (const requiredInput of requiredInputs) {
+      if (!definition.inputs.some(input => input.name === requiredInput)) {
+        errors.push(`Node ${node.id} (${definition.id}) requires undeclared input "${requiredInput}"`);
+      }
+    }
+
+    const activationMode = node.data?.activation?.mode ?? definition.execution.activation;
+    if (activationMode === 'required-inputs') {
+      const connectedInputs = incomingDataHandles.get(node.id) || new Set<string>();
+      const missingInputs = requiredInputs.filter((input: string) => !connectedInputs.has(input));
+      if (missingInputs.length > 0) {
+        errors.push(`Node ${node.id} (${definition.id}) has no edge for required input(s): ${missingInputs.join(', ')}`);
+      }
+    }
+
+    const activationConditions = node.data?.activation?.when;
+    for (const condition of Array.isArray(activationConditions) ? activationConditions : []) {
+      if (typeof condition?.output !== 'string') continue;
+      const source = nodeById.get(condition.nodeId);
+      const sourceDefinition = source ? getNode(source.data?.nodeType) : undefined;
+      const output = condition.output.split('.')[0];
+      if (!sourceDefinition?.outputs.some(candidate => candidate.name === output)) {
+        errors.push(`Node ${node.id} activation uses undeclared output ${sourceDefinition?.id || condition.nodeId}.${output}`);
+      }
+    }
+  }
+
+  for (const edge of graph.edges) {
+    if (!edge || typeof edge !== 'object' || Array.isArray(edge)) continue;
+    const source = nodeById.get(edge.source);
+    const target = nodeById.get(edge.target);
+    const sourceDefinition = source ? getNode(source.data?.nodeType) : undefined;
+    const targetDefinition = target ? getNode(target.data?.nodeType) : undefined;
+    if (!source || !target) continue;
+    if (!sourceDefinition || !targetDefinition) continue;
+
+    if (edge.data?.kind !== 'control') {
+      if (!sourceDefinition.outputs.some(output => output.name === edge.sourceHandle)) {
+        errors.push(`Edge ${edge.id} uses undeclared output ${sourceDefinition.id}.${edge.sourceHandle}`);
+      }
+      if (!targetDefinition.inputs.some(input => input.name === edge.targetHandle)) {
+        errors.push(`Edge ${edge.id} uses undeclared input ${targetDefinition.id}.${edge.targetHandle}`);
+      }
+    }
+    if (edge.data?.when) {
+      if (typeof edge.data.when.output !== 'string') continue;
+      const conditionOutput = edge.data.when.output.split('.')[0];
+      if (!sourceDefinition.outputs.some(output => output.name === conditionOutput)) {
+        errors.push(`Edge ${edge.id} condition uses undeclared output ${sourceDefinition.id}.${conditionOutput}`);
+      }
+    }
+    if (edge.data?.loop === true && !edge.data.when) {
+      errors.push(`Loop edge ${edge.id} must declare a branch condition`);
+    }
+  }
+}
+
 /**
  * Validate a Svelte Flow graph structure
  */
 export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
   console.log(`${LOG_PREFIX} Validating Svelte Flow graph: ${graph?.name || 'unnamed'}`);
   const errors: string[] = [];
+
+  if (!graph || typeof graph !== 'object' || Array.isArray(graph)) {
+    throw new GraphValidationError(['Graph must be an object']);
+  }
 
   // Required metadata
   if (!graph.version || typeof graph.version !== 'string') {
@@ -275,11 +438,30 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
     errors.push(`Invalid cognitiveMode: "${graph.cognitiveMode}". Must be one of: dual, agent, emulation, environment, or omit the field entirely for cross-mode graphs.`);
   }
 
+  const scheduler = graph.scheduler;
+  if (!scheduler || typeof scheduler !== 'object') {
+    errors.push('Missing scheduler contract');
+  } else {
+    if (scheduler.version !== 1) errors.push('Scheduler version must be 1');
+    if (scheduler.activation !== 'demand') errors.push('Scheduler activation must be "demand"');
+    if (scheduler.skippedState !== 'explicit') errors.push('Scheduler skippedState must be "explicit"');
+    if (scheduler.sideEffectOrder !== 'serial-topological') {
+      errors.push('Scheduler sideEffectOrder must be "serial-topological"');
+    }
+    if (!Number.isInteger(scheduler.maxLoopIterations) || scheduler.maxLoopIterations < 1 || scheduler.maxLoopIterations > 100) {
+      errors.push('Scheduler maxLoopIterations must be an integer from 1 to 100');
+    }
+  }
+
   // Required structure - nodes
   if (!Array.isArray(graph.nodes)) {
     errors.push('Missing or invalid nodes array');
   } else {
     graph.nodes.forEach((node: any, index: number) => {
+      if (!node || typeof node !== 'object' || Array.isArray(node)) {
+        errors.push(`Node ${index}: must be an object`);
+        return;
+      }
       if (typeof node.id !== 'string') {
         errors.push(`Node ${index}: missing or invalid id (must be string)`);
       }
@@ -289,8 +471,41 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
       if (!node.position || typeof node.position.x !== 'number' || typeof node.position.y !== 'number') {
         errors.push(`Node ${index}: missing or invalid position (must be {x, y})`);
       }
+      if (node.parentId !== undefined && typeof node.parentId !== 'string') {
+        errors.push(`Node ${index}: parentId must be a string`);
+      }
+      if (node.extent !== undefined && node.extent !== 'parent') {
+        errors.push(`Node ${index}: persisted extent must be "parent"`);
+      }
       if (!node.data || typeof node.data !== 'object') {
         errors.push(`Node ${index}: missing or invalid data object`);
+      } else if (node.data.activation !== undefined) {
+        const activation = node.data.activation;
+        if (!activation || typeof activation !== 'object' || Array.isArray(activation)) {
+          errors.push(`Node ${index}: activation must be an object`);
+        } else {
+          if (activation.mode !== undefined && !['required-inputs', 'any-input', 'always'].includes(activation.mode)) {
+            errors.push(`Node ${index}: invalid activation mode`);
+          }
+          if (activation.requiredInputs !== undefined && (
+            !Array.isArray(activation.requiredInputs)
+            || activation.requiredInputs.some((input: unknown) => typeof input !== 'string' || !input.trim())
+          )) {
+            errors.push(`Node ${index}: requiredInputs must contain non-empty strings`);
+          }
+          if (activation.when !== undefined) {
+            if (!Array.isArray(activation.when) || activation.when.length === 0) {
+              errors.push(`Node ${index}: activation when must be a non-empty array`);
+            } else {
+              activation.when.forEach((condition: any, conditionIndex: number) => {
+                validateOutputCondition(condition, `Node ${index} activation condition ${conditionIndex}`, errors);
+                if (typeof condition?.nodeId !== 'string' || !condition.nodeId.trim()) {
+                  errors.push(`Node ${index} activation condition ${conditionIndex}: nodeId must be a non-empty string`);
+                }
+              });
+            }
+          }
+        }
       }
     });
   }
@@ -300,6 +515,10 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
     errors.push('Missing or invalid edges array');
   } else {
     graph.edges.forEach((edge: any, index: number) => {
+      if (!edge || typeof edge !== 'object' || Array.isArray(edge)) {
+        errors.push(`Edge ${index}: must be an object`);
+        return;
+      }
       if (typeof edge.id !== 'string') {
         errors.push(`Edge ${index}: missing or invalid id`);
       }
@@ -315,50 +534,89 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
       if (typeof edge.targetHandle !== 'string') {
         errors.push(`Edge ${index}: missing or invalid targetHandle`);
       }
+      if (edge.data?.kind !== undefined && !['data', 'control'].includes(edge.data.kind)) {
+        errors.push(`Edge ${index}: kind must be "data" or "control"`);
+      }
+      if (edge.data?.loop !== undefined && typeof edge.data.loop !== 'boolean') {
+        errors.push(`Edge ${index}: loop must be boolean`);
+      }
+      if (edge.data?.when !== undefined) {
+        validateOutputCondition(edge.data.when, `Edge ${index}`, errors);
+      }
     });
   }
 
-  // Check for circular dependencies (allowing router back-edges for iterative loops)
-  if (Array.isArray(graph.edges) && graph.edges.length > 0 && Array.isArray(graph.nodes)) {
-    // Identify router nodes that are allowed to create back-edges
-    const routerNodeTypes = [
-      'conditional_router', 'cognitive/conditional_router', 'control_flow/conditional_router',
-      'feedback_router', 'cognitive/feedback_router', 'control_flow/feedback_router'
-    ];
-    const routerNodes = graph.nodes
-      .filter((n: any) => {
-        const nodeType = n.data?.nodeType || n.type;
-        return routerNodeTypes.some(rt => nodeType === rt || nodeType?.includes(rt));
-      })
-      .map((n: any) => n.id);
-    const routerSet = new Set(routerNodes);
-
-    // Identify back-edges (loops from router nodes)
-    const backEdgeHandles = new Set([
-      'loop_back', 'loop', 'back', 'retry', 'refine', 'feedbackContext', 'false'
-    ]);
-    const backEdges = new Set<string>();
-    graph.edges.forEach((edge: any) => {
-      if (routerSet.has(edge.source)) {
-        if (backEdgeHandles.has(edge.sourceHandle) ||
-            edge.data?.comment?.includes('loop') ||
-            edge.data?.comment?.includes('BACK-EDGE')) {
-          backEdges.add(`${edge.source}->${edge.target}`);
-        }
-      }
-    });
-
-    // Build edge map excluding back-edges
+  // Check dependencies using explicit loop declarations only. Node activation
+  // conditions are also dependencies and participate in cycle detection.
+  if (Array.isArray(graph.edges) && Array.isArray(graph.nodes)) {
+    const validNodes = graph.nodes.filter((node: any) => node && typeof node === 'object' && !Array.isArray(node));
+    const nodeIds = new Set(validNodes.map((node: any) => node.id));
+    const validNodeById = new Map(validNodes.map((node: any) => [node.id, node]));
     const edgeMap = new Map<string, string[]>();
     graph.edges.forEach((edge: any) => {
-      const edgeKey = `${edge.source}->${edge.target}`;
-      if (!backEdges.has(edgeKey)) {
-        if (!edgeMap.has(edge.source)) {
-          edgeMap.set(edge.source, []);
-        }
-        edgeMap.get(edge.source)!.push(edge.target);
+      if (!edge || typeof edge !== 'object' || Array.isArray(edge)) return;
+      if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+        errors.push(`Edge ${edge.id || 'unknown'} references a missing node`);
+        return;
+      }
+      if (edge.data?.loop !== true) {
+        const targets = edgeMap.get(edge.source) || [];
+        if (!targets.includes(edge.target)) targets.push(edge.target);
+        edgeMap.set(edge.source, targets);
       }
     });
+
+    validNodes.forEach((node: any, nodeIndex: number) => {
+      if (node.parentId !== undefined) {
+        if (!nodeIds.has(node.parentId)) {
+          errors.push(`Node ${nodeIndex}: parentId references missing node ${node.parentId}`);
+        } else if (node.parentId === node.id) {
+          errors.push(`Node ${nodeIndex}: a node cannot parent itself`);
+        } else {
+          const parent = validNodeById.get(node.parentId) as any;
+          const parentDefinition = parent ? getNode(parent.data?.nodeType) : undefined;
+          if (!parentDefinition?.editorOnly || parent?.data?.properties?.frame !== true) {
+            errors.push(`Node ${nodeIndex}: parentId must reference an editor-only group frame`);
+          }
+        }
+      }
+      if (node.extent === 'parent' && node.parentId === undefined) {
+        errors.push(`Node ${nodeIndex}: extent "parent" requires parentId`);
+      }
+      const activationConditions = node.data?.activation?.when;
+      for (const condition of Array.isArray(activationConditions) ? activationConditions : []) {
+        if (!condition || typeof condition !== 'object' || Array.isArray(condition)) continue;
+        if (!nodeIds.has(condition.nodeId)) {
+          errors.push(`Node ${nodeIndex}: activation references missing node ${condition.nodeId}`);
+          continue;
+        }
+        const targets = edgeMap.get(condition.nodeId) || [];
+        if (!targets.includes(node.id)) targets.push(node.id);
+        edgeMap.set(condition.nodeId, targets);
+      }
+    });
+
+    // Parent frames are a visual hierarchy, not an execution dependency, but
+    // the persisted tree still has to be acyclic so Svelte Flow can resolve
+    // absolute positions deterministically.
+    const parentByNode = new Map<string, string>();
+    for (const node of validNodes) {
+      if (typeof node.parentId === 'string' && nodeIds.has(node.parentId) && node.parentId !== node.id) {
+        parentByNode.set(node.id, node.parentId);
+      }
+    }
+    for (const node of validNodes) {
+      const hierarchyPath = new Set<string>();
+      let current: string | undefined = node.id;
+      while (current !== undefined) {
+        if (hierarchyPath.has(current)) {
+          errors.push(`Node ${node.id}: parent hierarchy contains a cycle`);
+          break;
+        }
+        hierarchyPath.add(current);
+        current = parentByNode.get(current);
+      }
+    }
 
     // Cycle detection using DFS (excluding allowed back-edges)
     const visited = new Set<string>();
@@ -382,11 +640,13 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
 
     for (const nodeId of Array.from(edgeMap.keys())) {
       if (hasCycle(nodeId)) {
-        errors.push('Graph contains invalid circular dependencies (excluding allowed router back-edges)');
+        errors.push('Graph contains an undeclared circular dependency; mark only the intentional re-entry edge with data.loop=true');
         break;
       }
     }
   }
+
+  validateRegisteredNodeContracts(graph, errors);
 
   if (errors.length > 0) {
     console.error(`${LOG_PREFIX} Svelte Flow graph validation failed with ${errors.length} errors:`, errors);
@@ -452,48 +712,18 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
     });
   }
 
-  // Check for circular dependencies (allowing router back-edges for iterative loops)
+  // Legacy links have no scheduler metadata, so every dependency participates
+  // in cycle detection. Executable loops require the Svelte Flow contract.
   if (Array.isArray(graph.links) && graph.links.length > 0 && Array.isArray(graph.nodes)) {
-    // Identify router nodes that are allowed to create back-edges
-    // - conditional_router: for conditional loops
-    // - feedback_router: for quality/safety refinement loops
-    const routerNodes = graph.nodes
-      .filter((n: any) =>
-        n.type === 'conditional_router' ||
-        n.type === 'cognitive/conditional_router' ||
-        n.type === 'control_flow/conditional_router' ||
-        n.type === 'feedback_router' ||
-        n.type === 'cognitive/feedback_router' ||
-        n.type === 'control_flow/feedback_router'
-      )
-      .map((n: any) => n.id);
-    const routerSet = new Set(routerNodes);
-
-    // Identify back-edges (loops from router nodes)
-    const backEdges = new Set<string>();
-    graph.links.forEach((link: any) => {
-      if (routerSet.has(link.origin_id)) {
-        // Slot 1 or 2 = loop back path (feedback/false branch)
-        // Also check for explicit BACK-EDGE comments
-        if (link.origin_slot === 1 || link.origin_slot === 2 || link.comment?.includes('loop') || link.comment?.includes('BACK-EDGE')) {
-          backEdges.add(`${link.origin_id}->${link.target_id}`);
-        }
-      }
-    });
-
-    // Build link map excluding back-edges
     const linkMap = new Map<number, number[]>();
     graph.links.forEach((link: any) => {
-      const edgeKey = `${link.origin_id}->${link.target_id}`;
-      if (!backEdges.has(edgeKey)) {
-        if (!linkMap.has(link.origin_id)) {
-          linkMap.set(link.origin_id, []);
-        }
-        linkMap.get(link.origin_id)!.push(link.target_id);
+      if (!linkMap.has(link.origin_id)) {
+        linkMap.set(link.origin_id, []);
       }
+      linkMap.get(link.origin_id)!.push(link.target_id);
     });
 
-    // Cycle detection using DFS (excluding allowed back-edges)
+    // Cycle detection using every legacy dependency.
     const visited = new Set<number>();
     const recursionStack = new Set<number>();
 
@@ -515,7 +745,7 @@ export function validateCognitiveGraph(graph: any): CognitiveGraph {
 
     for (const nodeId of Array.from(linkMap.keys())) {
       if (hasCycle(nodeId)) {
-        errors.push('Graph contains invalid circular dependencies (excluding allowed router back-edges from conditional_router and feedback_router)');
+        errors.push('Legacy graph contains a circular dependency; migrate it to the Svelte Flow scheduler contract to declare a loop');
         break;
       }
     }

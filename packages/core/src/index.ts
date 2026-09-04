@@ -65,7 +65,6 @@ export * from './audit';
 export {
   buildEnvironmentSelectorEnvelope,
   buildEnvironmentSelectorSystemPrompt,
-  environmentTaskContractFromObservation,
   validateEnvironmentSelectorOutput,
 } from './nodes/environment/helpers.js';
 export type {
@@ -74,8 +73,6 @@ export type {
   EnvironmentSelectorEnvelopeInput,
   EnvironmentSelectorSystemInput,
   EnvironmentSelectorValidationResult,
-  EnvironmentTaskContract,
-  EnvironmentTaskState,
 } from './nodes/environment/helpers.js';
 export * from './ollama';
 export * from './vllm';
@@ -86,7 +83,6 @@ export * from './local-model-service-manager';
 export * from './model-resolver';
 export * from './model-artifacts';
 export * from './model-router';
-export * from './specialist-broker';
 export * from './agent-monitor';
 export * from './agent-executable-resolver';
 export * from './agent-catalog';
@@ -103,7 +99,6 @@ export {
   cosineSimilarity,
   getEmbeddingDimensions,
 } from './embeddings';
-export * from './intelligent-memory-retrieval';
 export * from './locks';
 export * from './logging';
 export * from './runtime-mode';
@@ -147,7 +142,6 @@ export {
   getPendingApprovals as skillGetPendingApprovals,
 } from './skills.js';
 export * from './tool-catalog';
-export * from './reasoning';
 
 // Policy - primary source for queueForApproval and getPendingApprovals
 export type {
@@ -520,7 +514,6 @@ export * from './graph-streaming';
 // Unified Node System (schemas + executors colocated)
 export * from './nodes/index.js';
 
-export * from './graph-error-handler';
 
 // Agency System
 export * from './agency/index.js';
@@ -592,8 +585,6 @@ export {
   // Self-healing
   type TSError,
   type FixProposal,
-  type BigBrotherHealingContext,
-  type BigBrotherHealingResult,
   parseTscOutput,
   runTypeCheck,
   analyzeError,
@@ -602,7 +593,6 @@ export {
   updateProposalStatus,
   runSelfHealing,
   getErrorCount,
-  triggerBigBrotherHealing,
   // Critic (Superego - review and approval)
   type ProposedChange,
   type CriticReview,

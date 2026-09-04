@@ -149,5 +149,9 @@ export const RobotBufferNode = defineNode({
     },
   },
   description: 'Persists robot commands and correlated lifecycle feedback through the canonical shared buffer service.',
+  execution: {
+    activation: 'always',
+    requiredInputs: [],
+  },
   execute,
 });

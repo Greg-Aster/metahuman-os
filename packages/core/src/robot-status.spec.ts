@@ -16,8 +16,11 @@ const {
 } = await import('./robot-status.js')
 const { robotStatusContextBuilderNode } = await import('./nodes/robot-status/context-builder.node.js')
 const { robotStatusNode } = await import('./nodes/robot-status/status.node.js')
+const { robotStatusOutNode } = await import('./nodes/robot-status/out.node.js')
 const { robotStatusWriterNode } = await import('./nodes/robot-status/writer.node.js')
 const { buildEnvironmentSelectorEnvelope } = await import('./nodes/environment/helpers.js')
+const { robotActionResultParserNode } = await import('./nodes/robot-operator/action-result-parser.node.js')
+const { robotGoalReviewParserNode } = await import('./nodes/robot-operator/goal-review-parser.node.js')
 
 after(() => {
   fs.rmSync(testRoot, { recursive: true, force: true })
@@ -269,6 +272,103 @@ test('Robot Status writer and reusable input node share the same canonical snaps
   assert.deepEqual(Object.keys(read.historyContext).sort(), ['history', 'situation', 'updatedAt'])
 })
 
+test('Robot Status Out persists the Environment LLM task and correlated action result without another model call', async () => {
+  const username = 'robot-status-out-owner'
+  const selectedAction = { type: 'robotCommand', command: 'walk_forward' }
+  const initial = await robotStatusOutNode.execute!({
+    observation: {
+      sessionId: 'robot-1',
+      environmentId: 'ainekio',
+      timestamp: '2026-09-02T18:00:00.000Z',
+      state: { posture: 'standing', body: { motionAvailable: true } },
+      capabilities: {
+        actions: ['robotCommand'],
+        robotCommands: ['walk_forward'],
+        movement: true,
+        visual: true,
+      },
+    },
+    instruction: 'Move closer to inspect the object.',
+    userInstruction: 'Move closer to inspect the object.',
+    inputSource: 'user',
+    taskDecision: {
+      objective: 'Inspect the object from closer range.',
+      outcome: 'act',
+      reason: 'The advertised forward walk is the appropriate current step.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      motionClass: 'open_loop_displacement',
+      actionPurpose: 'information_gain',
+      visualEvidenceMode: 'comparison',
+    },
+    actions: [selectedAction],
+    response: 'I will move closer for a better view.',
+    bridgeRecord: {
+      status: 'coordinated_for_adapter',
+      message: 'Queued for the robot adapter.',
+      requestedActions: [selectedAction],
+      commands: [{ id: 'action-2' }],
+    },
+    frames: [{
+      id: 'before-action-2',
+      timestamp: '2026-09-02T18:00:00.000Z',
+      source: 'robot-camera',
+      metadata: { correlationId: 'cycle-2' },
+    }],
+  }, { username })
+
+  assert.equal(initial.persisted, true)
+  assert.equal(initial.task.objective, 'Inspect the object from closer range.')
+  assert.equal(initial.task.selectedAction.command, 'walk_forward')
+  assert.equal(initial.task.actionId, 'action-2')
+  assert.equal(initial.task.baselineFrame.id, 'before-action-2')
+  assert.equal(initial.lastAction.command, 'walk_forward')
+
+  const completed = await robotStatusOutNode.execute!({
+    observation: {
+      sessionId: 'robot-1',
+      environmentId: 'ainekio',
+      timestamp: '2026-09-02T18:00:05.000Z',
+      state: { posture: 'standing', body: { motionAvailable: true } },
+      capabilities: {
+        actions: ['robotCommand'],
+        robotCommands: ['walk_forward'],
+        movement: true,
+        visual: true,
+      },
+    },
+    instruction: 'Move closer to inspect the object.',
+    inputSource: 'user',
+    taskDecision: {
+      objective: 'Inspect the object from closer range.',
+      outcome: 'complete',
+      reason: 'The correlated result and current view satisfy the objective.',
+      objectiveComplete: true,
+      continuationPolicy: 'none',
+      requiredCompletionBasis: 'visual_observation',
+      completionEvidence: 'The object occupies more of the current view.',
+    },
+    terminalFeedback: {
+      id: 'feedback-2',
+      timestamp: '2026-09-02T18:00:05.000Z',
+      type: 'completed',
+      actionId: 'action-2',
+      message: 'Forward walk completed.',
+    },
+    actionContext: { actionId: 'action-2', requested: selectedAction },
+    bridgeRecord: { status: 'no_actions', message: 'No further action selected.' },
+  }, { username })
+
+  assert.equal(completed.task.decision.objectiveComplete, true)
+  assert.equal(completed.task.actionStatus, 'completed')
+  assert.equal(completed.task.feedback.actionId, 'action-2')
+  assert.equal(completed.lastAction.command, 'walk_forward')
+  assert.equal(completed.lastAction.status, 'completed')
+  assert.equal(completed.status.situation.currentGoal, '')
+  assert.equal(loadRobotStatus(username)?.task?.decision.outcome, 'complete')
+})
+
 test('Environment selector receives the decision-bearing Robot Status fields', async () => {
   const username = 'robot-status-environment-owner'
   await robotStatusWriterNode.execute!({
@@ -303,7 +403,7 @@ test('Environment selector receives the decision-bearing Robot Status fields', a
   assert.equal(envelope.robotStatus.agency.activeDesires[0].reason, 'The cat has not been seen recently.')
 })
 
-test('Robot Status has one editable graph and is consumed only after boredom planning', () => {
+test('Robot Status has one editable refresh graph and is read and written by action executors', () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..')
   const graphPath = path.join(repositoryRoot, 'etc/cognitive-graphs/robot-status-mode.json')
   const graph = JSON.parse(fs.readFileSync(graphPath, 'utf8'))
@@ -321,7 +421,17 @@ test('Robot Status has one editable graph and is consumed only after boredom pla
       'utf8',
     ))
     assert.equal(consumer.nodes.filter((node: any) => node.data?.nodeType === 'robot_status').length, 1)
+    assert.equal(consumer.nodes.filter((node: any) => node.data?.nodeType === 'robot_status_out').length, 1)
     assert.equal(consumer.edges.some((edge: any) => edge.targetHandle === 'robotStatus'), true)
+    assert.equal(consumer.edges.some((edge: any) => edge.targetHandle === 'bridgeRecord'
+      && consumer.nodes.find((node: any) => node.id === edge.target)?.data?.nodeType === 'robot_status_out'), true)
+    for (const retired of [
+      'environment_task_input',
+      'environment_task_preparation',
+      'environment_task_reducer',
+    ]) {
+      assert.equal(consumer.nodes.some((node: any) => node.data?.nodeType === retired), false)
+    }
   }
 
   for (const planner of ['boredom-observer', 'boredom-movement', 'boredom-reflection']) {
@@ -332,4 +442,76 @@ test('Robot Status has one editable graph and is consumed only after boredom pla
     assert.equal(graph.nodes.some((node: any) => node.data?.nodeType === 'robot_status'), false)
     assert.equal(graph.edges.some((edge: any) => edge.targetHandle === 'robotStatus'), false)
   }
+})
+
+test('Robot task lifecycle persists one result and delegates at most one later instruction', async () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../..')
+  const readGraph = (name: string) => JSON.parse(fs.readFileSync(
+    path.join(repositoryRoot, `etc/cognitive-graphs/${name}-mode.json`),
+    'utf8',
+  ))
+  const environment = readGraph('environment')
+  const autonomy = readGraph('boredom-autonomy')
+  const resultGraph = readGraph('robot-action-result')
+  const reviewGraph = readGraph('robot-goal-review')
+
+  for (const graph of [environment, autonomy]) {
+    const bridge = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_send_action')
+    assert.equal(bridge?.data?.properties?.feedbackGraph, 'robot-action-result')
+    assert.notEqual(bridge?.data?.properties?.feedbackGraph, graph === environment ? 'environment' : 'boredom-autonomy')
+  }
+
+  const resultTypes = resultGraph.nodes.map((node: any) => node.data?.nodeType)
+  assert.equal(resultTypes.filter((type: string) => type === 'model_router').length, 1)
+  assert.equal(resultTypes.filter((type: string) => type === 'robot_status_out').length, 1)
+  assert.equal(resultTypes.filter((type: string) => type === 'environment_action_context_input').length, 1)
+  assert.equal(
+    resultGraph.nodes.find((node: any) => node.data?.nodeType === 'environment_action_context_input')?.data?.label,
+    'Verify Matched Sent Action',
+  )
+  assert.equal(resultTypes.includes('environment_send_action'), false)
+  assert.equal(resultTypes.includes('robot_operator_environment_dispatch'), false)
+
+  const reviewTypes = reviewGraph.nodes.map((node: any) => node.data?.nodeType)
+  assert.equal(reviewTypes.filter((type: string) => type === 'model_router').length, 1)
+  assert.equal(reviewTypes.filter((type: string) => type === 'robot_status_out').length, 1)
+  assert.equal(reviewTypes.filter((type: string) => type === 'robot_operator_environment_dispatch').length, 1)
+  assert.equal(reviewTypes.includes('environment_send_action'), false)
+  assert.equal(reviewTypes.includes('conditional_branch'), false)
+
+  const interpreted = await robotActionResultParserNode.execute({
+    response: JSON.stringify({
+      response: '',
+      outcome: 'incomplete',
+      reason: 'The requested turn completed, but the target is not visible.',
+      objective: 'Find the cat.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      observationSummary: 'The new view contains no visible cat.',
+      completionEvidence: '',
+    }),
+  }, {})
+  assert.equal(interpreted.taskDecision.objectiveComplete, false)
+  assert.equal('decision' in interpreted, false)
+
+  const reviewed = await robotGoalReviewParserNode.execute({
+    response: JSON.stringify({
+      response: '',
+      outcome: 'continue',
+      reason: 'Another viewpoint may reveal the target.',
+      objective: 'Find the cat.',
+      objectiveComplete: false,
+      continuationPolicy: 'bounded',
+      requiredCompletionBasis: 'visual_observation',
+      observationSummary: 'The last view did not contain the cat.',
+      completionEvidence: '',
+      nextInstruction: 'Inspect a different open area for the cat.',
+    }),
+  }, {})
+  assert.deepEqual(reviewed.decision, {
+    observed: 'The last view did not contain the cat.',
+    instruction: 'Inspect a different open area for the cat.',
+    reason: 'Another viewpoint may reveal the target.',
+  })
 })

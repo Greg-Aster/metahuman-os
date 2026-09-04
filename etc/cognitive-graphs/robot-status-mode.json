@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Robot Status",
   "description": "Builds one bounded situational snapshot from canonical robot, conversation, and Agency sources, then publishes a concise System Buffer event.",
   "cognitiveMode": "environment",

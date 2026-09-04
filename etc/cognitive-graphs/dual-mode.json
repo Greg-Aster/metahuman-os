@@ -1,6 +1,7 @@
 {
   "version": "3.1",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Dual Consciousness Mode (Grounded Refinement)",
   "description": "Memory-grounded, persona-aware dialogue with bounded quality and safety refinement. Command execution remains owned by Agent mode.",
   "cognitiveMode": "dual",
@@ -53,7 +54,8 @@
       "data": {
         "label": "Memory Router",
         "nodeType": "memory_router",
-        "properties": { "topK": 8, "threshold": 0.5 }
+        "properties": { "topK": 8, "threshold": 0.5 },
+        "activation": { "when": [{ "nodeId": "25", "output": "memoryHints.needsMemory", "equals": true }] }
       }
     },
     {
@@ -229,7 +231,13 @@
     { "id": "e1", "source": "1", "target": "24", "sourceHandle": "message", "targetHandle": "message" },
     { "id": "e2", "source": "7", "target": "24", "sourceHandle": "history", "targetHandle": "conversationHistory" },
     { "id": "e3", "source": "24", "target": "25", "sourceHandle": "analysis", "targetHandle": "orchestratorAnalysis" },
-    { "id": "e4", "source": "25", "target": "6", "sourceHandle": "memoryHints", "targetHandle": "orchestratorHints" },
+    {
+      "id": "e4",
+      "source": "25",
+      "target": "6",
+      "sourceHandle": "memoryHints",
+      "targetHandle": "orchestratorHints"
+    },
     { "id": "e5", "source": "1", "target": "6", "sourceHandle": "message", "targetHandle": "userMessage" },
     { "id": "e6", "source": "6", "target": "32", "sourceHandle": "memories", "targetHandle": "searchResults" },
     { "id": "e6a", "source": "25", "target": "32", "sourceHandle": "memoryHints", "targetHandle": "orchestratorIntent" },
@@ -262,10 +270,28 @@
       "target": "8",
       "sourceHandle": "feedbackContext",
       "targetHandle": "feedbackContext",
-      "data": { "comment": "BACK-EDGE: retry only the response refinement body" }
+      "data": {
+        "comment": "Retry only the response refinement body",
+        "loop": true,
+        "when": { "output": "routedTo", "equals": "orchestrator" }
+      }
     },
-    { "id": "e31", "source": "34", "target": "35", "sourceHandle": "response", "targetHandle": "data" },
-    { "id": "e32", "source": "34", "target": "35", "sourceHandle": "shouldContinueLoop", "targetHandle": "open" },
+    {
+      "id": "e31",
+      "source": "34",
+      "target": "35",
+      "sourceHandle": "response",
+      "targetHandle": "data",
+      "data": { "when": { "output": "routedTo", "equals": "output" } }
+    },
+    {
+      "id": "e32",
+      "source": "34",
+      "target": "35",
+      "sourceHandle": "shouldContinueLoop",
+      "targetHandle": "open",
+      "data": { "when": { "output": "routedTo", "equals": "output" } }
+    },
     { "id": "e33", "source": "35", "target": "31", "sourceHandle": "output", "targetHandle": "response" },
     { "id": "e34", "source": "31", "target": "23", "sourceHandle": "stripped", "targetHandle": "response" },
     { "id": "e35", "source": "26", "target": "21", "sourceHandle": "entries", "targetHandle": "entries" },

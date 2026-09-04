@@ -64,7 +64,6 @@
   // Show approval buttons only for awaiting_approval status (or if we haven't loaded yet and it looks like an approval request)
   $: showApprovalButtons = desireId && (
     desireStatus === 'awaiting_approval' ||
-    desireStatus === 'reviewing' ||
     (statusLoading && message.meta?.type === 'approval_request')
   );
 

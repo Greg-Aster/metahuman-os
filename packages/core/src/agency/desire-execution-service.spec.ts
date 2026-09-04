@@ -17,7 +17,7 @@ import {
   buildDesireExecutionGraphContext,
   evaluateDesireExecutionGraph,
 } from './executor.js'
-import type { Desire, DesireExecution } from './types.js'
+import { initializeScratchpadSummary, type Desire, type DesireExecution } from './types.js'
 import type { GraphExecutionState } from '../graph-executor.js'
 
 function approvedDesire(id = 'desire-1'): Desire {
@@ -48,6 +48,18 @@ function approvedDesire(id = 'desire-1'): Desire {
       requiredTrustLevel: 'suggest',
       operatorGoal: 'Complete the test action',
       createdAt: '2026-08-25T00:00:00.000Z',
+    },
+    review: {
+      id: `review-${id}-v1`,
+      verdict: 'approve',
+      reasoning: 'The plan passed review.',
+      riskAssessment: 'Low risk',
+      alignmentScore: 0.9,
+      reviewedAt: '2026-08-25T00:00:30.000Z',
+      planId: 'plan-1',
+      planVersion: 1,
+      autoApprove: true,
+      autoApproveReason: 'Test policy permits it',
     },
   } as unknown as Desire
 }
@@ -140,7 +152,7 @@ test('pre-aborted desire work cannot claim or execute an external action', async
     saveManifest: async () => {
       saveCalls += 1
     },
-    addScratchpadEntry: async () => undefined,
+    addScratchpadEntry: async () => initializeScratchpadSummary(),
     executeGraph: async () => {
       graphCalls += 1
       return { success: true, graphCompleted: true, execution: completedExecution() }
@@ -168,7 +180,7 @@ test('approved desire execution claims once and reports the durable graph result
       savedStatuses.push(desire.status)
       stored = structuredClone(desire)
     },
-    addScratchpadEntry: async () => undefined,
+    addScratchpadEntry: async () => initializeScratchpadSummary(),
     executeGraph: async desire => {
       assert.equal(desire.status, 'executing')
       stored = { ...structuredClone(desire), status: 'awaiting_review', execution: completedExecution() }
@@ -208,7 +220,7 @@ test('concurrent admission cannot execute the same profile desire twice', async 
     saveManifest: async desire => {
       stored = structuredClone(desire)
     },
-    addScratchpadEntry: async () => undefined,
+    addScratchpadEntry: async () => initializeScratchpadSummary(),
     executeGraph: async desire => {
       graphCalls += 1
       releaseExecution()
@@ -241,6 +253,7 @@ test('graph infrastructure failure is durably handed to outcome review and rejec
     },
     addScratchpadEntry: async (_id, entry) => {
       scratchpadTypes.push(entry.type)
+      return initializeScratchpadSummary()
     },
     executeGraph: async () => ({
       success: false,
@@ -257,6 +270,56 @@ test('graph infrastructure failure is durably handed to outcome review and rejec
   assert.equal(stored.execution?.status, 'failed')
   assert.equal(stored.currentStage, 'outcome_review')
   assert.deepEqual(scratchpadTypes, ['execution_failed'])
+})
+
+test('execution rejects understated aggregate risk before claiming or invoking the graph', async () => {
+  const stored = approvedDesire('desire-understated-risk')
+  stored.plan!.steps[0].risk = 'high'
+  stored.plan!.steps[0].requiresApproval = true
+  stored.plan!.estimatedRisk = 'low'
+  stored.review!.autoApprove = false
+  let saveCalls = 0
+  let graphCalls = 0
+  const execute = createApprovedDesireExecutor({
+    loadDesire: async () => structuredClone(stored),
+    listApproved: async () => [structuredClone(stored)],
+    saveManifest: async () => { saveCalls += 1 },
+    addScratchpadEntry: async () => initializeScratchpadSummary(),
+    executeGraph: async () => {
+      graphCalls += 1
+      return { success: true, graphCompleted: true, execution: completedExecution() }
+    },
+  })
+
+  await assert.rejects(
+    execute({ username: 'profile-a', desireId: stored.id }),
+    /aggregate risk understates a plan step/,
+  )
+  assert.equal(saveCalls, 0)
+  assert.equal(graphCalls, 0)
+})
+
+test('execution rejects auto-approval when any step requires explicit user approval', async () => {
+  const stored = approvedDesire('desire-manual-step')
+  stored.plan!.steps[0].requiresApproval = true
+  stored.review!.autoApprove = true
+  let graphCalls = 0
+  const execute = createApprovedDesireExecutor({
+    loadDesire: async () => structuredClone(stored),
+    listApproved: async () => [structuredClone(stored)],
+    saveManifest: async () => undefined,
+    addScratchpadEntry: async () => initializeScratchpadSummary(),
+    executeGraph: async () => {
+      graphCalls += 1
+      return { success: true, graphCompleted: true, execution: completedExecution() }
+    },
+  })
+
+  await assert.rejects(
+    execute({ username: 'profile-a', desireId: stored.id }),
+    /step requiring user approval was auto-approved/,
+  )
+  assert.equal(graphCalls, 0)
 })
 
 test('desire executor graph and coordinator configuration have one valid finalization path', () => {

@@ -10,8 +10,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { systemPaths, ROOT, getProfilePaths } from '../paths.js';
 import { audit } from '../audit.js';
-import { callLLM } from '../model-router.js';
 import { randomUUID } from 'crypto';
+import { getUserContext } from '../context.js';
+import {
+  cognitiveGraphPath,
+  loadGraphFile,
+  requireGraphNodeOutput,
+  runGraph,
+} from '../graph-runtime.js';
+import type { SelfHealingAnalysis } from '../nodes/active-operator/self-healing-analysis.node.js';
 
 /**
  * A TypeScript error from tsc output.
@@ -125,93 +132,50 @@ function getErrorContext(filePath: string, line: number, contextLines: number = 
 /**
  * Analyze an error and generate a fix proposal using LLM.
  */
-export async function analyzeError(error: TSError, username: string): Promise<FixProposal> {
-  const context = getErrorContext(error.file, error.line);
-
-  const messages = [
-    {
-      role: 'system' as const,
-      content: `You are a TypeScript expert analyzing a compile error. Your job is to:
-1. Understand what the error means
-2. Analyze the code context
-3. Suggest a specific fix
-
-Be concise and practical. Focus on the most likely fix.`,
-    },
-    {
-      role: 'user' as const,
-      content: `TypeScript Error:
-File: ${error.file}
-Line: ${error.line}, Column: ${error.column}
-Code: ${error.code}
-Message: ${error.message}
-
-Code Context:
-\`\`\`typescript
-${context}
-\`\`\`
-
-Please analyze this error and suggest a fix. Respond in JSON format:
-{
-  "analysis": "Brief explanation of what's wrong",
-  "suggestedFix": "The specific code change to make",
-  "diff": "A simple before/after showing the change",
-  "confidence": "high" | "medium" | "low"
-}`,
-    },
-  ];
-
-  try {
-    const response = await callLLM({
-      role: 'orchestrator',
-      messages,
-      userId: username,
-      options: {
-        maxTokens: 1024,
-        temperature: 0.2,
-      },
-    });
-
-    // Parse the response
-    const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-    let analysis = 'Unable to analyze';
-    let suggestedFix = 'Manual review required';
-    let diff: string | undefined;
-    let confidence: 'high' | 'medium' | 'low' = 'low';
-
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]);
-        analysis = parsed.analysis || analysis;
-        suggestedFix = parsed.suggestedFix || suggestedFix;
-        diff = parsed.diff;
-        confidence = parsed.confidence || confidence;
-      } catch {
-        // Use defaults
-      }
-    }
-
-    return {
-      id: `fix-${randomUUID().slice(0, 8)}`,
-      createdAt: new Date().toISOString(),
-      error,
-      analysis,
-      suggestedFix,
-      diff,
-      confidence,
-      status: 'pending',
-    };
-  } catch (err) {
-    return {
-      id: `fix-${randomUUID().slice(0, 8)}`,
-      createdAt: new Date().toISOString(),
-      error,
-      analysis: `Error analyzing: ${(err as Error).message}`,
-      suggestedFix: 'Manual review required',
-      confidence: 'low',
-      status: 'pending',
-    };
+export async function analyzeError(
+  error: TSError,
+  username: string,
+  signal?: AbortSignal,
+): Promise<FixProposal> {
+  const activeUser = getUserContext();
+  if (!activeUser || (activeUser.username !== username && activeUser.activeProfile !== username)) {
+    throw new Error(`Self-healing analysis requires an authenticated context for ${username}`);
   }
+  const loaded = await loadGraphFile(cognitiveGraphPath('self-healing-analysis.json'), {
+    cacheKey: 'self-healing-analysis',
+    logPrefix: '[self-healing]',
+  });
+  if (!loaded) throw new Error('Self-healing analysis graph is unavailable');
+  const state = await runGraph({
+    graph: loaded.graph,
+    signal,
+    context: {
+      userId: activeUser.userId,
+      username,
+      typeScriptError: error,
+      errorContext: getErrorContext(error.file, error.line),
+      cognitiveMode: 'agent',
+      allowMemoryWrites: false,
+      recordPersonaMemory: false,
+      abortSignal: signal,
+    },
+  });
+  if (state.status !== 'completed') {
+    throw new Error(`Self-healing analysis graph ended with status ${state.status}`);
+  }
+  const output = requireGraphNodeOutput(state, 'self_healing_analysis');
+  const analysis = output.result as SelfHealingAnalysis | undefined;
+  if (!analysis?.analysis || !analysis.suggestedFix
+    || !['high', 'medium', 'low'].includes(analysis.confidence)) {
+    throw new Error('Self-healing analysis graph returned an invalid proposal');
+  }
+  return {
+    id: `fix-${randomUUID().slice(0, 8)}`,
+    createdAt: new Date().toISOString(),
+    error,
+    ...analysis,
+    status: 'pending',
+  };
 }
 
 /**
@@ -307,19 +271,24 @@ export function updateProposalStatus(
  */
 export async function runSelfHealing(
   username: string,
-  maxErrors: number = 5
+  maxErrors: number = 5,
+  signal?: AbortSignal,
 ): Promise<{
   errorsFound: number;
   proposalsCreated: number;
   proposals: FixProposal[];
+  errors: string[];
 }> {
+  if (!Number.isInteger(maxErrors) || maxErrors < 1 || maxErrors > 50) {
+    throw new Error('Self-healing maxErrors must be an integer from 1 to 50');
+  }
   console.log('[self-healing] Running TypeScript type check...');
 
   const errors = runTypeCheck();
 
   if (errors.length === 0) {
     console.log('[self-healing] No TypeScript errors found');
-    return { errorsFound: 0, proposalsCreated: 0, proposals: [] };
+    return { errorsFound: 0, proposalsCreated: 0, proposals: [], errors: [] };
   }
 
   console.log(`[self-healing] Found ${errors.length} TypeScript errors`);
@@ -327,22 +296,24 @@ export async function runSelfHealing(
   // Limit to maxErrors to avoid overwhelming the system
   const errorsToAnalyze = errors.slice(0, maxErrors);
   const proposals: FixProposal[] = [];
+  const analysisErrors: string[] = [];
 
   for (const error of errorsToAnalyze) {
     console.log(`[self-healing] Analyzing: ${error.file}:${error.line} - ${error.code}`);
 
     try {
-      const proposal = await analyzeError(error, username);
+      const proposal = await analyzeError(error, username, signal);
       proposals.push(proposal);
       saveProposal(proposal, username);
     } catch (err) {
       console.error(`[self-healing] Error analyzing ${error.file}:`, err);
+      analysisErrors.push(`${error.file}:${error.line}: ${(err as Error).message}`);
     }
   }
 
   audit({
     category: 'system',
-    level: 'info',
+    level: analysisErrors.length > 0 ? 'warn' : 'info',
     event: 'self_healing_analysis_complete',
     actor: 'active-operator',
     details: {
@@ -359,6 +330,7 @@ export async function runSelfHealing(
     errorsFound: errors.length,
     proposalsCreated: proposals.length,
     proposals,
+    errors: analysisErrors,
   };
 }
 
@@ -368,143 +340,4 @@ export async function runSelfHealing(
 export function getErrorCount(): number {
   const errors = runTypeCheck();
   return errors.length;
-}
-
-/**
- * Context provided by Big Brother for guided self-healing.
- */
-export interface BigBrotherHealingContext {
-  recentErrors: TSError[];
-  scratchpadContext: string;
-  bigBrotherSuggestions: string[];
-  triggerReason: 'errors' | 'stuck' | 'periodic';
-  cycleNumber: number;
-}
-
-/**
- * Result of Big Brother guided self-healing.
- */
-export interface BigBrotherHealingResult {
-  success: boolean;
-  analysisRequested: boolean;
-  proposalsCreated: number;
-  suggestionsApplied: string[];
-  errorMessage?: string;
-}
-
-/**
- * Trigger self-healing with Big Brother's guidance.
- *
- * This function is called when the Big Brother reviewer detects issues
- * (repeated errors, stuck state, or periodic review). It:
- * 1. Analyzes the error context with Big Brother's suggestions
- * 2. Runs targeted self-healing on the most relevant errors
- * 3. Returns results for logging and scratchpad updates
- */
-export async function triggerBigBrotherHealing(
-  username: string,
-  context: BigBrotherHealingContext
-): Promise<BigBrotherHealingResult> {
-  const suggestionsApplied: string[] = [];
-
-  audit({
-    category: 'system',
-    level: 'info',
-    event: 'big_brother_healing_triggered',
-    actor: 'big-brother-reviewer',
-    details: {
-      username,
-      triggerReason: context.triggerReason,
-      cycleNumber: context.cycleNumber,
-      errorCount: context.recentErrors.length,
-      suggestionCount: context.bigBrotherSuggestions.length,
-    },
-  });
-
-  try {
-    // If Big Brother provided specific suggestions, log them
-    if (context.bigBrotherSuggestions.length > 0) {
-      console.log('[big-brother-healing] Received suggestions:', context.bigBrotherSuggestions);
-
-      // Check for specific actionable suggestions
-      for (const suggestion of context.bigBrotherSuggestions) {
-        const lower = suggestion.toLowerCase();
-
-        if (lower.includes('run type check') || lower.includes('run tsc')) {
-          console.log('[big-brother-healing] Acting on: run type check');
-          suggestionsApplied.push('run_type_check');
-        }
-
-        if (lower.includes('analyze error') || lower.includes('fix error')) {
-          console.log('[big-brother-healing] Acting on: analyze errors');
-          suggestionsApplied.push('analyze_errors');
-        }
-
-        if (lower.includes('clear scratchpad') || lower.includes('reset')) {
-          console.log('[big-brother-healing] Suggestion noted: clear scratchpad');
-          suggestionsApplied.push('clear_scratchpad_suggested');
-        }
-      }
-    }
-
-    // If we have recent TypeScript errors, run self-healing on them
-    if (context.recentErrors.length > 0) {
-      console.log(`[big-brother-healing] Analyzing ${context.recentErrors.length} recent errors`);
-
-      // Run self-healing with guidance from Big Brother
-      const healingResult = await runSelfHealing(username, context.recentErrors.length);
-
-      audit({
-        category: 'system',
-        level: 'info',
-        event: 'big_brother_healing_complete',
-        actor: 'big-brother-reviewer',
-        details: {
-          username,
-          triggerReason: context.triggerReason,
-          proposalsCreated: healingResult.proposalsCreated,
-          suggestionsApplied,
-        },
-      });
-
-      return {
-        success: true,
-        analysisRequested: true,
-        proposalsCreated: healingResult.proposalsCreated,
-        suggestionsApplied,
-      };
-    }
-
-    // No errors to analyze, but log the review
-    console.log('[big-brother-healing] No TypeScript errors to analyze');
-
-    return {
-      success: true,
-      analysisRequested: false,
-      proposalsCreated: 0,
-      suggestionsApplied,
-    };
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-
-    audit({
-      category: 'system',
-      level: 'error',
-      event: 'big_brother_healing_failed',
-      actor: 'big-brother-reviewer',
-      details: {
-        username,
-        triggerReason: context.triggerReason,
-        error: errorMessage,
-      },
-    });
-
-    return {
-      success: false,
-      analysisRequested: false,
-      proposalsCreated: 0,
-      suggestionsApplied,
-      errorMessage,
-    };
-  }
 }

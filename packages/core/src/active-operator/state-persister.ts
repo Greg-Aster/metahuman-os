@@ -1,8 +1,8 @@
 /**
- * Persistence for Active Operator policy configuration.
+ * Persistence for Active Operator mode and Robot Operator Full-mode pacing.
  *
  * Executable work and in-progress recovery live only in packages/core/src/queue.
- * This module persists autonomy policy configuration and nothing else.
+ * This module persists autonomy admission configuration and nothing else.
  */
 
 import fs from 'node:fs';
@@ -19,9 +19,6 @@ function normalizeConfig(loaded: Partial<ActiveOperatorConfig>): ActiveOperatorC
       ? loaded.autonomyMode!
       : DEFAULT_CONFIG.autonomyMode,
     cooldownMs: Math.max(5_000, Number(loaded.cooldownMs ?? DEFAULT_CONFIG.cooldownMs)),
-    maxConsecutiveTasks: Math.max(1, Number(loaded.maxConsecutiveTasks ?? DEFAULT_CONFIG.maxConsecutiveTasks)),
-    maxEvaluationsPerHour: Math.max(1, Number(loaded.maxEvaluationsPerHour ?? DEFAULT_CONFIG.maxEvaluationsPerHour)),
-    userPresenceCooldownMs: Math.max(0, Number(loaded.userPresenceCooldownMs ?? DEFAULT_CONFIG.userPresenceCooldownMs)),
   };
 }
 

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import type { GraphExecutionState, SvelteFlowGraph } from '@metahuman/core';
+import {
+  DEFAULT_GRAPH_SCHEDULER,
+  type GraphExecutionState,
+  type SvelteFlowGraph,
+} from '@metahuman/core';
 import {
   evaluateDaydreamerGraph,
   normalizeTriggerProfile,
@@ -20,6 +24,7 @@ const graph = {
   format: 'svelte-flow',
   name: 'Daydreamer contract fixture',
   cognitiveMode: 'agent',
+  scheduler: { ...DEFAULT_GRAPH_SCHEDULER },
   nodes: Object.entries(nodeIds).map(([nodeType, id]) => ({
     id,
     type: 'cognitiveNode',

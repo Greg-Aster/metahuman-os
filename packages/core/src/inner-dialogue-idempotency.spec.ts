@@ -74,8 +74,12 @@ test('Inner Buffer admission deduplicates one producer execution across buffer a
   const first = await submit()
   const replay = await submit()
   assert.equal(first.admission.persisted, true)
+  assert.equal(first.admission.savedCount, 1)
+  assert.deepEqual(first.admission.roleCounts, { reflection: 1 })
+  assert.equal(first.admission.results.length, 1)
   assert.equal(first.memory.saved, true)
   assert.equal(replay.admission.persisted, true)
+  assert.equal(replay.admission.savedCount, 1)
   assert.equal(replay.memory.saved, true)
   assert.equal(replay.memory.results[0]?.deduplicated, true)
 
@@ -162,4 +166,15 @@ test('Inner Buffer derives a role-scoped key and reuses durable text on retry', 
   const memory = JSON.parse(fs.readFileSync(memories[0], 'utf8')) as Record<string, unknown>
   assert.equal(memory.content, 'The first durable reflection.')
   assert.equal(memory.timestamp, timestamp)
+})
+
+test('Inner Buffer does not release passthrough when admission fails', async () => {
+  const result = await InnerDialogueBufferNode.execute({
+    entries: [{ role: 'dream', content: 'A dream that was not admitted.' }],
+    passthrough: 'A dream that was not admitted.',
+  }, {}, {})
+
+  assert.equal(result.saved, false)
+  assert.equal(result.reason, 'No authenticated username')
+  assert.equal(result.passthrough, undefined)
 })

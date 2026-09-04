@@ -23,24 +23,11 @@ const DIRECT_ACTION_TYPES = new Set<EnvironmentActionType>([
   'visualApproach',
   'sendText',
 ]);
-const PERSISTED_ACTION_TYPES = new Set<EnvironmentActionType>([
-  ...DIRECT_ACTION_TYPES,
-  'robotMotionPlan',
-  'speak',
-]);
-
 export interface EnvironmentMovementRequest {
   description: string;
   sessionId?: string;
   /** Environment LLM-owned motion reference; never authored by the movement model. */
   motionClass: Extract<EnvironmentMotionClass, 'body_local'>;
-}
-
-export interface EnvironmentPendingMovementContract {
-  continuationPolicy: EnvironmentContinuationPolicy;
-  requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'>;
-  actionPurpose?: EnvironmentActionPurpose;
-  visualEvidenceMode?: EnvironmentVisualEvidenceMode;
 }
 
 export const ENVIRONMENT_TASK_OUTCOMES = [
@@ -80,114 +67,10 @@ export const ENVIRONMENT_ACTION_PURPOSES = [
 
 export type EnvironmentActionPurpose = typeof ENVIRONMENT_ACTION_PURPOSES[number];
 
-export interface EnvironmentTaskContract {
-  objective: string;
-  currentInstruction?: string;
-  continuationPolicy: EnvironmentContinuationPolicy;
-  requiredCompletionBasis: EnvironmentCompletionBasis;
-  /** Absent only on legacy or non-motion contracts. */
-  motionClass?: EnvironmentMotionClass;
-  actionPurpose?: EnvironmentActionPurpose;
-  visualEvidenceMode?: EnvironmentVisualEvidenceMode;
-}
-
 export type EnvironmentVisualEvidenceMode = 'single' | 'comparison';
-
-export interface EnvironmentTaskFrameRef {
-  id: string;
-  timestamp: string;
-  source?: string;
-  correlationId?: string;
-}
-
-export interface EnvironmentTaskSelectedAction {
-  type: EnvironmentActionType;
-  command?: string;
-  direction?: string;
-  target?: string;
-  description?: string;
-}
-
-export type EnvironmentTaskPhase =
-  | 'new'
-  | 'awaiting_action'
-  | 'evaluating_evidence'
-  | 'complete'
-  | 'blocked';
-
-/**
- * The one persisted lifecycle record for an Environment objective.
- *
- * It intentionally stores semantic state and frame references only. Image data
- * remains in the bounded in-process frame cache owned by Environment Image Input.
- */
-export interface EnvironmentTaskState {
-  version: 1;
-  objective: string;
-  phase: EnvironmentTaskPhase;
-  step: number;
-  continuationPolicy: EnvironmentContinuationPolicy;
-  requiredCompletionBasis: Exclude<EnvironmentCompletionBasis, 'none'>;
-  motionClass?: EnvironmentMotionClass;
-  actionPurpose?: EnvironmentActionPurpose;
-  visualEvidenceMode?: EnvironmentVisualEvidenceMode;
-  baselineFrame?: EnvironmentTaskFrameRef;
-  selectedAction?: EnvironmentTaskSelectedAction;
-  pendingMovementRequest?: EnvironmentMovementRequest;
-  pendingMovementContract?: EnvironmentPendingMovementContract;
-}
-
-export type EnvironmentTaskContractSource =
-  | 'persisted'
-  | 'environment_decision'
-  | 'router_fallback';
-
-export interface EnvironmentTaskContractConflict {
-  model: Pick<EnvironmentTaskContract, 'continuationPolicy' | 'requiredCompletionBasis'>;
-  routed: Pick<EnvironmentTaskContract, 'continuationPolicy' | 'requiredCompletionBasis'>;
-}
-
-const ENVIRONMENT_TASK_CONTRACT_PREFIX = 'EnvironmentTaskContract:';
-const ENVIRONMENT_TASK_STATE_PREFIX = 'EnvironmentTaskState:';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-export function environmentInputSource(
-  source: unknown,
-  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
-): 'user' | 'autonomy' {
-  if (source === 'autonomy') return 'autonomy';
-  if (source === 'user') return 'user';
-  const robotObserver = isRecord(observation?.metadata?.robotObserver)
-    ? observation.metadata.robotObserver
-    : null;
-  return robotObserver?.triggerSource === 'autonomy' ? 'autonomy' : 'user';
-}
-
-/**
- * The Boredom Movement planner requires one initial physical consequence. The
- * planner still authors only a high-level intention; the Environment selector
- * remains the sole semantic action owner.
- */
-export function robotOperatorActionRequirement(
-  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
-): boolean | null {
-  const cycle = isRecord(observation?.metadata?.robotObserver)
-    ? observation.metadata.robotObserver
-    : null;
-  const requestedBy = typeof cycle?.requestedBy === 'string'
-    ? cycle.requestedBy
-    : observation?.metadata?.autonomousStimulus;
-  return requestedBy === 'boredom-movement' ? true : null;
-}
-
-function normalizedCompletionBasis(value: unknown): EnvironmentCompletionBasis | null {
-  return typeof value === 'string'
-    && ENVIRONMENT_COMPLETION_BASES.includes(value as EnvironmentCompletionBasis)
-    ? value as EnvironmentCompletionBasis
-    : null;
 }
 
 export function normalizedEnvironmentActionPurpose(value: unknown): EnvironmentActionPurpose | null {
@@ -202,292 +85,6 @@ export function normalizedEnvironmentMotionClass(value: unknown): EnvironmentMot
     && ENVIRONMENT_MOTION_CLASSES.includes(value as EnvironmentMotionClass)
     ? value as EnvironmentMotionClass
     : null;
-}
-
-export function environmentTaskContractFromRouting(
-  value: unknown,
-  objective = '',
-): EnvironmentTaskContract | null {
-  if (!isRecord(value) || !isRecord(value.actionParams)) return null;
-  const continuationPolicy = value.actionParams.continuationPolicy;
-  const requiredCompletionBasis = normalizedCompletionBasis(
-    value.actionParams.requiredCompletionBasis,
-  );
-  const motionClass = normalizedEnvironmentMotionClass(value.actionParams.motionClass);
-  const actionPurpose = normalizedEnvironmentActionPurpose(value.actionParams.actionPurpose);
-  const visualEvidenceMode = value.actionParams.visualEvidenceMode === 'single'
-    || value.actionParams.visualEvidenceMode === 'comparison'
-    ? value.actionParams.visualEvidenceMode
-    : undefined;
-  if (
-    (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
-    || !requiredCompletionBasis
-    || requiredCompletionBasis === 'none'
-  ) return null;
-  return {
-    objective: objective.trim().slice(0, 1_000),
-    continuationPolicy,
-    requiredCompletionBasis,
-    ...(motionClass ? { motionClass } : {}),
-    ...(actionPurpose ? { actionPurpose } : {}),
-    ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
-  };
-}
-
-export function environmentTaskContractFromObservation(
-  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
-): EnvironmentTaskContract | null {
-  const taskState = parseEnvironmentTaskState(observation?.metadata?.originatingInstruction);
-  if (taskState) {
-    return {
-      objective: taskState.objective,
-      continuationPolicy: taskState.continuationPolicy,
-      requiredCompletionBasis: taskState.requiredCompletionBasis,
-      ...(taskState.motionClass ? { motionClass: taskState.motionClass } : {}),
-      ...(taskState.actionPurpose ? { actionPurpose: taskState.actionPurpose } : {}),
-      ...(taskState.visualEvidenceMode ? { visualEvidenceMode: taskState.visualEvidenceMode } : {}),
-    };
-  }
-  return parseEnvironmentTaskInstruction(observation?.metadata?.originatingInstruction);
-}
-
-export function encodeEnvironmentTaskState(state: EnvironmentTaskState): string {
-  return `${ENVIRONMENT_TASK_STATE_PREFIX}${JSON.stringify({
-    version: 1,
-    objective: state.objective.trim().slice(0, 1_000),
-    phase: state.phase,
-    step: Math.max(0, Math.floor(state.step)),
-    continuationPolicy: state.continuationPolicy,
-    requiredCompletionBasis: state.requiredCompletionBasis,
-    ...(state.motionClass ? { motionClass: state.motionClass } : {}),
-    ...(state.actionPurpose ? { actionPurpose: state.actionPurpose } : {}),
-    ...(state.visualEvidenceMode ? { visualEvidenceMode: state.visualEvidenceMode } : {}),
-    ...(state.baselineFrame ? { baselineFrame: state.baselineFrame } : {}),
-    ...(state.selectedAction ? { selectedAction: state.selectedAction } : {}),
-    ...(state.pendingMovementRequest
-      ? {
-          pendingMovementRequest: {
-            description: state.pendingMovementRequest.description.trim().slice(0, 500),
-            ...(state.pendingMovementRequest.sessionId
-              ? { sessionId: state.pendingMovementRequest.sessionId.trim().slice(0, 200) }
-              : {}),
-            motionClass: 'body_local',
-          },
-      }
-      : {}),
-    ...(state.pendingMovementContract
-      ? {
-          pendingMovementContract: {
-            continuationPolicy: state.pendingMovementContract.continuationPolicy,
-            requiredCompletionBasis: state.pendingMovementContract.requiredCompletionBasis,
-            ...(state.pendingMovementContract.actionPurpose
-              ? { actionPurpose: state.pendingMovementContract.actionPurpose }
-              : {}),
-            ...(state.pendingMovementContract.visualEvidenceMode
-              ? { visualEvidenceMode: state.pendingMovementContract.visualEvidenceMode }
-              : {}),
-          },
-        }
-      : {}),
-  })}`;
-}
-
-function normalizedTaskFrameRef(value: unknown): EnvironmentTaskFrameRef | null {
-  if (!isRecord(value)) return null;
-  const id = typeof value.id === 'string' ? value.id.trim().slice(0, 200) : '';
-  const timestamp = typeof value.timestamp === 'string'
-    ? value.timestamp.trim().slice(0, 100)
-    : '';
-  if (!id || !timestamp || Number.isNaN(Date.parse(timestamp))) return null;
-  const source = typeof value.source === 'string' ? value.source.trim().slice(0, 100) : '';
-  const correlationId = typeof value.correlationId === 'string'
-    ? value.correlationId.trim().slice(0, 200)
-    : '';
-  return {
-    id,
-    timestamp,
-    ...(source ? { source } : {}),
-    ...(correlationId ? { correlationId } : {}),
-  };
-}
-
-function normalizedSelectedAction(value: unknown): EnvironmentTaskSelectedAction | null {
-  if (!isRecord(value) || typeof value.type !== 'string' || !PERSISTED_ACTION_TYPES.has(value.type as EnvironmentActionType)) {
-    return null;
-  }
-  const clean = (field: unknown, maxLength = 200): string => (
-    typeof field === 'string' ? field.trim().slice(0, maxLength) : ''
-  );
-  const command = clean(value.command);
-  const direction = clean(value.direction, 40);
-  const target = clean(value.target);
-  const description = clean(value.description, 500);
-  return {
-    type: value.type as EnvironmentActionType,
-    ...(command ? { command } : {}),
-    ...(direction ? { direction } : {}),
-    ...(target ? { target } : {}),
-    ...(description ? { description } : {}),
-  };
-}
-
-function normalizedPendingMovementRequest(value: unknown): EnvironmentMovementRequest | null {
-  if (!isRecord(value)) return null;
-  const description = typeof value.description === 'string'
-    ? value.description.trim().slice(0, 500)
-    : '';
-  const sessionId = typeof value.sessionId === 'string'
-    ? value.sessionId.trim().slice(0, 200)
-    : '';
-  if (!description || value.motionClass !== 'body_local') return null;
-  return {
-    description,
-    ...(sessionId ? { sessionId } : {}),
-    motionClass: 'body_local',
-  };
-}
-
-function normalizedPendingMovementContract(value: unknown): EnvironmentPendingMovementContract | null {
-  if (!isRecord(value)) return null;
-  const continuationPolicy = value.continuationPolicy;
-  const requiredCompletionBasis = normalizedCompletionBasis(value.requiredCompletionBasis);
-  const actionPurpose = normalizedEnvironmentActionPurpose(value.actionPurpose);
-  const visualEvidenceMode = value.visualEvidenceMode === 'single'
-    || value.visualEvidenceMode === 'comparison'
-    ? value.visualEvidenceMode
-    : undefined;
-  if (
-    (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
-    || !requiredCompletionBasis
-    || requiredCompletionBasis === 'none'
-    || (value.actionPurpose !== undefined && !actionPurpose)
-    || (value.visualEvidenceMode !== undefined && !visualEvidenceMode)
-  ) return null;
-  return {
-    continuationPolicy,
-    requiredCompletionBasis,
-    ...(actionPurpose ? { actionPurpose } : {}),
-    ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
-  };
-}
-
-export function parseEnvironmentTaskState(value: unknown): EnvironmentTaskState | null {
-  if (typeof value !== 'string' || !value.startsWith(ENVIRONMENT_TASK_STATE_PREFIX)) return null;
-  try {
-    const parsed = JSON.parse(value.slice(ENVIRONMENT_TASK_STATE_PREFIX.length));
-    if (!isRecord(parsed) || parsed.version !== 1) return null;
-    const objective = typeof parsed.objective === 'string'
-      ? parsed.objective.trim().slice(0, 1_000)
-      : '';
-    const phases: EnvironmentTaskPhase[] = ['new', 'awaiting_action', 'evaluating_evidence', 'complete', 'blocked'];
-    const phase = typeof parsed.phase === 'string' && phases.includes(parsed.phase as EnvironmentTaskPhase)
-      ? parsed.phase as EnvironmentTaskPhase
-      : null;
-    const continuationPolicy = parsed.continuationPolicy;
-    const requiredCompletionBasis = normalizedCompletionBasis(parsed.requiredCompletionBasis);
-    const motionClass = normalizedEnvironmentMotionClass(parsed.motionClass);
-    const actionPurpose = normalizedEnvironmentActionPurpose(parsed.actionPurpose);
-    const visualEvidenceMode = parsed.visualEvidenceMode === 'single' || parsed.visualEvidenceMode === 'comparison'
-      ? parsed.visualEvidenceMode
-      : undefined;
-    const step = Number.isInteger(parsed.step) ? Number(parsed.step) : -1;
-    if (
-      !objective
-      || !phase
-      || step < 0
-      || (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
-      || !requiredCompletionBasis
-      || requiredCompletionBasis === 'none'
-      || (parsed.motionClass !== undefined && !motionClass)
-      || (parsed.actionPurpose !== undefined && !actionPurpose)
-    ) return null;
-    const baselineFrame = normalizedTaskFrameRef(parsed.baselineFrame);
-    const selectedAction = normalizedSelectedAction(parsed.selectedAction);
-    const pendingMovementRequest = normalizedPendingMovementRequest(parsed.pendingMovementRequest);
-    const pendingMovementContract = normalizedPendingMovementContract(parsed.pendingMovementContract);
-    if (parsed.pendingMovementRequest !== undefined && !pendingMovementRequest) return null;
-    if (parsed.pendingMovementContract !== undefined && !pendingMovementContract) return null;
-    if (pendingMovementContract && !pendingMovementRequest) return null;
-    return {
-      version: 1,
-      objective,
-      phase,
-      step,
-      continuationPolicy,
-      requiredCompletionBasis,
-      ...(motionClass ? { motionClass } : {}),
-      ...(actionPurpose ? { actionPurpose } : {}),
-      ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
-      ...(baselineFrame ? { baselineFrame } : {}),
-      ...(selectedAction ? { selectedAction } : {}),
-      ...(pendingMovementRequest ? { pendingMovementRequest } : {}),
-      ...(pendingMovementContract ? { pendingMovementContract } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
-export function environmentTaskStateFromObservation(
-  observation: Pick<EnvironmentObservation, 'metadata'> | null | undefined,
-): EnvironmentTaskState | null {
-  return parseEnvironmentTaskState(observation?.metadata?.originatingInstruction);
-}
-
-export function encodeEnvironmentTaskInstruction(contract: EnvironmentTaskContract): string {
-  return `${ENVIRONMENT_TASK_CONTRACT_PREFIX}${JSON.stringify({
-    version: 2,
-    objective: contract.objective.trim().slice(0, 1_000),
-    ...(contract.currentInstruction?.trim()
-      ? { currentInstruction: contract.currentInstruction.trim().slice(0, 500) }
-      : {}),
-    continuationPolicy: contract.continuationPolicy,
-    requiredCompletionBasis: contract.requiredCompletionBasis,
-    ...(contract.motionClass ? { motionClass: contract.motionClass } : {}),
-    ...(contract.actionPurpose ? { actionPurpose: contract.actionPurpose } : {}),
-    ...(contract.visualEvidenceMode ? { visualEvidenceMode: contract.visualEvidenceMode } : {}),
-  })}`;
-}
-
-export function parseEnvironmentTaskInstruction(value: unknown): EnvironmentTaskContract | null {
-  if (typeof value !== 'string' || !value.startsWith(ENVIRONMENT_TASK_CONTRACT_PREFIX)) return null;
-  try {
-    const parsed = JSON.parse(value.slice(ENVIRONMENT_TASK_CONTRACT_PREFIX.length));
-    if (!isRecord(parsed)) return null;
-    const objective = typeof parsed.objective === 'string'
-      ? parsed.objective.trim().slice(0, 1_000)
-      : '';
-    const currentInstruction = typeof parsed.currentInstruction === 'string'
-      ? parsed.currentInstruction.trim().slice(0, 500)
-      : '';
-    const continuationPolicy = parsed.continuationPolicy;
-    const requiredCompletionBasis = normalizedCompletionBasis(parsed.requiredCompletionBasis);
-    const motionClass = normalizedEnvironmentMotionClass(parsed.motionClass);
-    const actionPurpose = normalizedEnvironmentActionPurpose(parsed.actionPurpose);
-    const visualEvidenceMode = parsed.visualEvidenceMode === 'single'
-      || parsed.visualEvidenceMode === 'comparison'
-      ? parsed.visualEvidenceMode
-      : undefined;
-    if (parsed.motionClass !== undefined && !motionClass) return null;
-    if (parsed.actionPurpose !== undefined && !actionPurpose) return null;
-    if (
-      !objective
-      || (continuationPolicy !== 'none' && continuationPolicy !== 'bounded')
-      || !requiredCompletionBasis
-      || requiredCompletionBasis === 'none'
-    ) return null;
-    return {
-      objective,
-      ...(currentInstruction ? { currentInstruction } : {}),
-      continuationPolicy,
-      requiredCompletionBasis,
-      ...(motionClass ? { motionClass } : {}),
-      ...(actionPurpose ? { actionPurpose } : {}),
-      ...(visualEvidenceMode ? { visualEvidenceMode } : {}),
-    };
-  } catch {
-    return null;
-  }
 }
 
 export interface EnvironmentTaskDecision {
@@ -508,10 +105,6 @@ export interface EnvironmentTaskDecision {
   visualEvidenceMode?: EnvironmentVisualEvidenceMode;
   /** Model-authored evidence for a completion claim. Visual evidence must cite the current frame id. */
   completionEvidence?: string;
-  /** Internal provenance added after model output parsing by Environment Task Contract. */
-  taskContractSource?: EnvironmentTaskContractSource;
-  /** Typed disagreement retained for lifecycle telemetry; never model-authored. */
-  taskContractConflict?: EnvironmentTaskContractConflict;
 }
 
 const SELECTOR_MAX_OBJECT_KEYS = 12;
@@ -572,29 +165,53 @@ function projectSelectorState(value: unknown): unknown {
 
 function projectRobotStatusContext(value: unknown): unknown {
   if (!isRecord(value)) return null;
+  const body = isRecord(value.body) ? value.body : null;
+  const lastAction = isRecord(value.lastAction) ? value.lastAction : null;
   const situation = isRecord(value.situation) ? value.situation : null;
   const agency = isRecord(value.agency) ? value.agency : null;
-  const context = {
+  const task = isRecord(value.task) ? value.task : null;
+  return {
     updatedAt: value.updatedAt,
-    ...(situation
-      ? {
-          situation: {
-            currentGoal: situation.currentGoal,
-            currentIntent: situation.currentIntent,
-            userContext: situation.userContext,
-            uncertainties: situation.uncertainties,
-          },
-        }
-      : {}),
-    ...(agency
-      ? {
-          agency: {
-            activeDesires: agency.activeDesires,
-          },
-        }
-      : {}),
+    body: body
+      ? projectSelectorEvidence({
+          sessionId: body.sessionId,
+          environmentId: body.environmentId,
+          connectionStatus: body.connectionStatus,
+          observationAt: body.observationAt,
+          telemetryAt: body.telemetryAt,
+          battery: body.battery,
+          motion: body.motion,
+        }, { remaining: 24 }, 0, 4) ?? null
+      : null,
+    lastAction: lastAction
+      ? projectSelectorEvidence(lastAction, { remaining: 16 }, 0, 3) ?? null
+      : null,
+    task: task
+      ? projectSelectorEvidence({
+          objective: task.objective,
+          instruction: task.instruction,
+          source: task.source,
+          decision: task.decision,
+          selectedAction: task.selectedAction,
+          actionId: task.actionId,
+          actionStatus: task.actionStatus,
+          feedback: task.feedback,
+          baselineFrame: task.baselineFrame,
+          updatedAt: task.updatedAt,
+        }, { remaining: 40 }, 0, 5) ?? null
+      : null,
+    situation: situation
+      ? projectSelectorEvidence({
+          currentGoal: situation.currentGoal,
+          currentIntent: situation.currentIntent,
+          userContext: situation.userContext,
+          uncertainties: situation.uncertainties,
+        }, { remaining: 20 }, 0, 3) ?? null
+      : null,
+    agency: agency
+      ? projectSelectorEvidence({ activeDesires: agency.activeDesires }, { remaining: 24 }, 0, 4) ?? null
+      : null,
   };
-  return projectSelectorEvidence(context, { remaining: 32 }, 0, 4) ?? null;
 }
 
 /**
@@ -624,41 +241,31 @@ export function projectRobotCommandDescriptions(
 
 export interface EnvironmentSelectorEnvelopeInput {
   instruction: string;
-  observation: EnvironmentObservation;
-  taskState?: EnvironmentTaskState | null;
+  observation?: EnvironmentObservation | null;
   recentConversation?: Array<{ role: string; content: string }>;
   memories?: string[];
   personaText?: string;
   robotStatus?: unknown;
   replyToContent?: string;
-  mustSelectAction?: boolean;
-  mustAdvanceTask?: boolean;
   inputSource?: 'user' | 'autonomy';
+  routing?: Record<string, boolean>;
+  currentObservation?: boolean;
+  currentVisionAvailable?: boolean;
 }
 
 export interface EnvironmentSelectorSystemInput {
   systemPrompt: string;
-  queuedContinuation?: boolean;
-  mustAdvanceTask?: boolean;
 }
 
 export function buildEnvironmentSelectorSystemPrompt(
   input: EnvironmentSelectorSystemInput,
 ): string {
-  return [
-    input.systemPrompt.trim(),
-    input.queuedContinuation
-      ? 'This is a continuation of the one persisted taskState in the user envelope; preserve its objective and evidence contract.'
-      : '',
-    input.mustAdvanceTask
-      ? 'This bounded continuation must advance the persisted task: either complete it from the exact required evidence or return one next advertised action now. An incomplete response with no action is invalid.'
-      : '',
-  ].filter(Boolean).join('\n\n');
+  return input.systemPrompt.trim();
 }
 
-function selectorCapabilityRules(observation: EnvironmentObservation): string[] {
-  const actions = new Set(observation.capabilities.actions);
-  const commandDescriptions = projectRobotCommandDescriptions(observation.capabilities);
+function selectorCapabilityRules(capabilities: EnvironmentCapabilities): string[] {
+  const actions = new Set(capabilities.actions);
+  const commandDescriptions = projectRobotCommandDescriptions(capabilities);
   return [
     actions.has('robotCommand')
       ? Object.keys(commandDescriptions).length > 0
@@ -696,8 +303,11 @@ export function buildEnvironmentSelectorEnvelope(
   input: EnvironmentSelectorEnvelopeInput,
 ): string {
   const observation = input.observation;
-  const robotCommandDescriptions = projectRobotCommandDescriptions(observation.capabilities);
-  const frames = [observation.visual, ...(observation.visuals ?? [])]
+  const robotCommandDescriptions = observation
+    ? projectRobotCommandDescriptions(observation.capabilities)
+    : {};
+  const frames = observation
+    ? [observation.visual, ...(observation.visuals ?? [])]
     .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
     .slice(-2)
     .map(frame => ({
@@ -710,8 +320,9 @@ export function buildEnvironmentSelectorEnvelope(
       actionId: typeof frame.metadata?.actionId === 'string'
         ? frame.metadata.actionId
         : undefined,
-    }));
-  const feedback = (observation.feedback ?? []).slice(-3).map(event => ({
+    }))
+    : [];
+  const feedback = (observation?.feedback ?? []).slice(-3).map(event => ({
     type: event.type,
     actionId: event.actionId,
     message: event.message.slice(0, SELECTOR_MAX_STRING_LENGTH),
@@ -719,21 +330,20 @@ export function buildEnvironmentSelectorEnvelope(
       ? event.data.command.slice(0, SELECTOR_MAX_STRING_LENGTH)
       : undefined,
   }));
-  const state = projectSelectorState(observation.state ?? {});
-  const location = projectSelectorEvidence(observation.location, { remaining: 6 });
-  const map = projectSelectorEvidence(observation.map, { remaining: 6 });
-  const robotObserver = isRecord(observation.metadata?.robotObserver)
-    ? observation.metadata.robotObserver
-    : null;
+  const state = observation ? projectSelectorState(observation.state ?? {}) : null;
+  const location = projectSelectorEvidence(observation?.location, { remaining: 6 });
+  const map = projectSelectorEvidence(observation?.map, { remaining: 6 });
   return JSON.stringify({
     currentInstruction: input.instruction.slice(0, 4_000),
-    inputSource: input.inputSource
-      ?? (robotObserver?.triggerSource === 'autonomy' ? 'autonomy' : 'user'),
-    decisionRequirements: {
-      mustSelectAction: input.mustSelectAction === true,
-      mustAdvanceTask: input.mustAdvanceTask === true,
+    inputSource: input.inputSource ?? 'user',
+    selectedRoutes: input.routing ?? {},
+    evidenceAvailability: {
+      environmentObservation: observation
+        ? input.currentObservation === true ? 'triggering' : 'saved'
+        : 'none',
+      currentVision: input.currentVisionAvailable === true,
     },
-    currentEnvironment: {
+    currentEnvironment: observation ? {
       sessionId: observation.sessionId,
       timestamp: observation.timestamp,
       state,
@@ -759,9 +369,8 @@ export function buildEnvironmentSelectorEnvelope(
       correlationId: typeof observation.metadata?.correlationId === 'string'
         ? observation.metadata.correlationId
         : undefined,
-    },
-    capabilityRules: selectorCapabilityRules(observation),
-    taskState: input.taskState ?? null,
+    } : null,
+    capabilityRules: observation ? selectorCapabilityRules(observation.capabilities) : [],
     activePersona: input.personaText?.trim().slice(0, 2_000) || null,
     robotStatus: projectRobotStatusContext(input.robotStatus),
     ...(input.replyToContent?.trim()
@@ -1052,6 +661,7 @@ function selectorActionItemSchema(
 export interface EnvironmentSelectorJsonSchemaInput {
   actions?: readonly string[];
   robotCommands?: readonly string[];
+  actionRouteSelected?: boolean;
   requireAction?: boolean;
   requireObjective?: boolean;
   requireProgress?: boolean;
@@ -1063,28 +673,38 @@ export interface EnvironmentSelectorJsonSchemaInput {
  * It constrains output to the current adapter capability contract without
  * encoding scene content or phrase-specific behavior.
  *
- * Ollama's structured decoder reliably enforces this flat schema. Cross-field
- * lifecycle consistency remains in Task State, its canonical runtime owner.
+ * Ollama's structured decoder reliably enforces this flat schema. Core validates
+ * route consistency before Robot Status Out persists the model-authored decision.
  */
 export function buildEnvironmentSelectorJsonSchema(
   input: EnvironmentSelectorJsonSchemaInput = {},
 ): Record<string, unknown> {
   const capabilityBound = Array.isArray(input.actions);
   const advertisedActions = new Set(input.actions ?? []);
+  const actionRouteSelected = input.actionRouteSelected !== false;
   const robotCommands = [...new Set((input.robotCommands ?? [])
     .map(command => command.trim())
     .filter(Boolean))].slice(0, 64);
   const directActionTypes = [...DIRECT_ACTION_TYPES].filter(type => (
-    (!capabilityBound || advertisedActions.has(type))
+    actionRouteSelected
+    && (!capabilityBound || advertisedActions.has(type))
     && (type !== 'robotCommand' || !capabilityBound || robotCommands.length > 0)
   ));
-  const movementSupported = !capabilityBound || advertisedActions.has('robotMotionPlan');
+  const movementSupported = actionRouteSelected
+    && (!capabilityBound || advertisedActions.has('robotMotionPlan'));
   const progressBranches: Record<string, unknown>[] = [];
   const autonomyWorkBranches: Record<string, unknown>[] = [];
+  const nonActionOutcomes = ENVIRONMENT_TASK_OUTCOMES.filter(outcome => outcome !== 'act');
   const outputRouteBranches: Record<string, unknown>[] = [{
     properties: {
       actions: { maxItems: 0 },
       movementRequest: { type: 'null' },
+      taskDecision: {
+        required: ['outcome'],
+        properties: {
+          outcome: { type: 'string', enum: nonActionOutcomes },
+        },
+      },
     },
   }];
   if (directActionTypes.length > 0) {
@@ -1092,13 +712,6 @@ export function buildEnvironmentSelectorJsonSchema(
       properties: {
         actions: { minItems: 1 },
         movementRequest: { type: 'null' },
-      },
-    };
-    outputRouteBranches.push(directActionBranch);
-    progressBranches.push(directActionBranch);
-    autonomyWorkBranches.push({
-      properties: {
-        ...directActionBranch.properties,
         taskDecision: {
           required: ['outcome', 'objectiveComplete'],
           properties: {
@@ -1107,20 +720,16 @@ export function buildEnvironmentSelectorJsonSchema(
           },
         },
       },
-    });
+    };
+    outputRouteBranches.push(directActionBranch);
+    progressBranches.push(directActionBranch);
+    autonomyWorkBranches.push(directActionBranch);
   }
   if (movementSupported) {
     const generatedMovementBranch = {
       properties: {
         actions: { maxItems: 0 },
         movementRequest: { type: 'object' },
-      },
-    };
-    outputRouteBranches.push(generatedMovementBranch);
-    progressBranches.push(generatedMovementBranch);
-    autonomyWorkBranches.push({
-      properties: {
-        ...generatedMovementBranch.properties,
         taskDecision: {
           required: ['outcome', 'objectiveComplete'],
           properties: {
@@ -1130,7 +739,10 @@ export function buildEnvironmentSelectorJsonSchema(
           },
         },
       },
-    });
+    };
+    outputRouteBranches.push(generatedMovementBranch);
+    progressBranches.push(generatedMovementBranch);
+    autonomyWorkBranches.push(generatedMovementBranch);
   }
   progressBranches.push({
     properties: {
@@ -1210,7 +822,15 @@ export function buildEnvironmentSelectorJsonSchema(
           ...SELECTOR_SCHEMA_DECISION_REQUIRED,
           ...(input.requireObjective === true ? ['objective'] : []),
         ],
-        properties: SELECTOR_SCHEMA_DECISION_PROPERTIES,
+        properties: {
+          ...SELECTOR_SCHEMA_DECISION_PROPERTIES,
+          outcome: {
+            type: 'string',
+            enum: directActionTypes.length > 0 || movementSupported
+              ? [...ENVIRONMENT_TASK_OUTCOMES]
+              : nonActionOutcomes,
+          },
+        },
       },
     },
   };
@@ -1371,6 +991,13 @@ export function validateEnvironmentSelectorOutput(
   if (task.error) errors.push(task.error);
 
   const decision = task.decision;
+  const physicalWorkSelected = normalizedActions.length > 0 || Boolean(movement.request);
+  if (decision && physicalWorkSelected && (decision.outcome !== 'act' || decision.objectiveComplete)) {
+    errors.push('physical work requires taskDecision outcome=act and objectiveComplete=false');
+  }
+  if (decision && !physicalWorkSelected && decision.outcome === 'act') {
+    errors.push('taskDecision outcome=act requires an action or movementRequest');
+  }
   if (errors.length > 0 || !decision) {
     return { jsonValid: true, valid: false, errors };
   }

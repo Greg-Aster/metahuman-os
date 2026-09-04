@@ -1,8 +1,8 @@
 /**
  * Inner Curiosity Agent — Module Definition
  *
- * Exports the AgentModule for registration with agent-runtime.
- * This is the entry point for in-process execution on mobile.
+ * Exports the AgentModule for registration with agent-runtime. The run
+ * function is a thin adapter to the catalog-owned cognitive graph.
  */
 
 import type { AgentModule, AgentMeta } from '@metahuman/agent-runtime';
@@ -30,7 +30,7 @@ const agent: AgentModule = {
 
 export default agent;
 
-// Re-export core functions for direct usage
+// Re-export the one canonical execution contract for interface adapters.
 export {
   runCycle,
   runInnerCuriosity,

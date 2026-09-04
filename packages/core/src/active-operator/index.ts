@@ -29,8 +29,6 @@ export {
 export {
   type TSError,
   type FixProposal,
-  type BigBrotherHealingContext,
-  type BigBrotherHealingResult,
   parseTscOutput,
   runTypeCheck,
   analyzeError,
@@ -39,7 +37,6 @@ export {
   updateProposalStatus,
   runSelfHealing,
   getErrorCount,
-  triggerBigBrotherHealing,
 } from './self-healing.js';
 
 // Critic (Superego - review and approval)

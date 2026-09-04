@@ -1,16 +1,15 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import assert from 'node:assert/strict'
+import test from 'node:test'
 
-import type { EnvironmentObservation } from '../../environment-interface/index.js';
-import { environmentActionParserNode } from './action-parser.node.js';
-import { environmentContextBuilderNode } from './context-builder.node.js';
-import { environmentTaskStateNode } from './task-state.node.js';
+import type { EnvironmentObservation } from '../../environment-interface/index.js'
+import { environmentActionParserNode } from './action-parser.node.js'
+import { environmentContextBuilderNode } from './context-builder.node.js'
 
-const staleAutonomyObservation: EnvironmentObservation = {
+const observation: EnvironmentObservation = {
   environmentId: 'robot-environment',
   adapter: 'robot-adapter',
   sessionId: 'robot-1',
-  timestamp: '2026-08-24T21:29:29.153Z',
+  timestamp: '2026-09-02T12:00:00.000Z',
   capabilities: {
     actions: ['captureImage'],
     robotCommands: [],
@@ -20,104 +19,72 @@ const staleAutonomyObservation: EnvironmentObservation = {
     map: false,
   },
   feedback: [],
-  metadata: {
-    robotObserver: {
-      cycleId: 'previous-boredom-cycle',
-      step: 2,
-      triggerSource: 'autonomy',
-      graph: 'boredom-autonomy',
-      requestedBy: 'boredom-movement',
+  metadata: { correlationId: 'current-turn' },
+}
+
+test('a current user instruction owns provenance over an unfinished autonomous Robot Status task', async () => {
+  const result = await environmentContextBuilderNode.execute({
+    observation,
+    instruction: 'What do you see?',
+    userInstruction: 'What do you see?',
+    inputSource: 'autonomy',
+    robotStatus: {
+      task: {
+        objective: 'Continue an earlier boredom movement.',
+        instruction: 'Move toward the light.',
+        source: 'autonomy',
+        decision: {
+          outcome: 'act',
+          reason: 'Earlier autonomous choice.',
+          objectiveComplete: false,
+        },
+      },
     },
-  },
-};
+  }, { username: 'owner' }, {
+    systemPrompt: 'Return one Environment decision.',
+    recentHistoryLimit: 4,
+  })
 
-const userContext = {
-  userMessage: 'what do you see?',
-  username: 'Ainekio',
-};
+  const envelope = JSON.parse(String(result.message))
+  const requiredDecisionFields = (result.jsonSchema as any).properties.taskDecision.required
+  assert.equal(result.currentInstruction, 'What do you see?')
+  assert.equal(result.instructionSource, 'user')
+  assert.equal(envelope.inputSource, 'user')
+  assert.equal(requiredDecisionFields.includes('objective'), false)
+})
 
-test('a direct user turn overrides stale autonomous observation provenance', async () => {
-  const prepared = await environmentTaskStateNode.execute({
-    observation: staleAutonomyObservation,
-    instruction: userContext.userMessage,
-    userInstruction: userContext.userMessage,
-    inputSource: 'user',
-  }, userContext, { phase: 'prepare' });
-
+test('explicit autonomous provenance requires the Environment LLM to author its objective', async () => {
   const context = await environmentContextBuilderNode.execute({
-    observation: staleAutonomyObservation,
-    instruction: prepared.instruction,
-    taskState: prepared.taskState,
-    routingAnalysis: prepared.routingAnalysis,
-    userInstruction: userContext.userMessage,
-    inputSource: 'user',
-  }, userContext, { systemPrompt: 'Return strict Environment JSON.', recentHistoryLimit: 4 });
-  const selectorEnvelope = JSON.parse(String(context.message));
-  const requiredDecisionFields = (context.jsonSchema as any).properties.taskDecision.required;
-
-  assert.equal(selectorEnvelope.inputSource, 'user');
-  assert.equal(requiredDecisionFields.includes('objective'), false);
+    observation,
+    instruction: 'Choose one contextual consequence.',
+    inputSource: 'autonomy',
+  }, { username: 'owner' }, {
+    systemPrompt: 'Return one Environment decision.',
+    recentHistoryLimit: 4,
+  })
+  const requiredDecisionFields = (context.jsonSchema as any).properties.taskDecision.required
+  assert.equal(context.instructionSource, 'autonomy')
+  assert.equal(requiredDecisionFields.includes('objective'), true)
 
   const parsed = await environmentActionParserNode.execute({
     response: JSON.stringify({
-      response: 'I need one fresh camera frame before I can answer.',
+      response: 'I will request a fresh frame.',
       actions: [{ type: 'captureImage' }],
       movementRequest: null,
       taskDecision: {
         outcome: 'act',
-        reason: 'Current visual evidence is required.',
+        reason: 'Current visual evidence is needed.',
         objectiveComplete: false,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
-        motionClass: 'open_loop_displacement',
         actionPurpose: 'information_gain',
       },
     }),
-    observation: staleAutonomyObservation,
-    sessionId: staleAutonomyObservation.sessionId,
-    routingAnalysis: prepared.routingAnalysis,
-    userInstruction: userContext.userMessage,
-    inputSource: 'user',
-  }, userContext, {});
-
-  assert.equal(parsed.taskDecisionError, '');
-  assert.equal(parsed.actions[0]?.type, 'captureImage');
-
-  const reduced = await environmentTaskStateNode.execute({
-    observation: staleAutonomyObservation,
-    instruction: prepared.instruction,
-    taskState: prepared.taskState,
-    actions: parsed.actions,
-    taskDecision: parsed.taskDecision,
-    taskDecisionError: parsed.taskDecisionError,
-    response: parsed.response,
-    actionAdmission: parsed.actionAdmission,
-    userInstruction: userContext.userMessage,
-    inputSource: 'user',
-  }, userContext, { phase: 'reduce' });
-
-  assert.equal(reduced.actions[0]?.type, 'captureImage');
-});
-
-test('an explicit autonomous turn still requires an authored objective', async () => {
-  const context = await environmentContextBuilderNode.execute({
-    observation: staleAutonomyObservation,
-    instruction: 'Choose one bounded autonomous response.',
-    routingAnalysis: {
-      needsAction: false,
-      needsEnvironment: true,
-      needsVision: false,
-      needsMemory: false,
-      isFollowUp: false,
-    },
-    userInstruction: '',
+    observation,
+    sessionId: observation.sessionId,
     inputSource: 'autonomy',
-  }, {
-    userMessage: 'Autonomous stimulus text.',
-  }, { systemPrompt: 'Return strict Environment JSON.', recentHistoryLimit: 4 });
-  const selectorEnvelope = JSON.parse(String(context.message));
-  const requiredDecisionFields = (context.jsonSchema as any).properties.taskDecision.required;
+  }, {}, {})
 
-  assert.equal(selectorEnvelope.inputSource, 'autonomy');
-  assert.equal(requiredDecisionFields.includes('objective'), true);
-});
+  assert.deepEqual(parsed.actions, [])
+  assert.match(parsed.taskDecisionError, /objective must be a non-empty string/i)
+})

@@ -13,6 +13,7 @@ import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-run
 export interface MoodOptions {
   baseline?: boolean;
   triggerData?: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 export interface MoodReviewResult {
@@ -93,7 +94,10 @@ export function evaluateMoodGraph(
   };
 }
 
-async function reviewMoodForUser(username: string, options: MoodOptions = {}): Promise<MoodReviewResult> {
+async function reviewMoodForUser(
+  target: { userId: string; username: string },
+  options: MoodOptions = {},
+): Promise<MoodReviewResult> {
   const loaded = await loadGraphFile(cognitiveGraphPath('mood-review.json'), { logPrefix: '[mood]' });
   if (!loaded) return { success: false, changed: false, error: 'Mood Review graph could not be loaded' };
   try {
@@ -103,13 +107,15 @@ async function reviewMoodForUser(username: string, options: MoodOptions = {}): P
   }
   const state = await runGraph({
     graph: loaded.graph,
+    signal: options.signal,
     context: {
-      userId: username,
-      username,
+      userId: target.userId,
+      username: target.username,
       cognitiveMode: 'agent',
       allowMemoryWrites: false,
       forceBaseline: options.baseline === true,
       triggerData: options.triggerData || {},
+      abortSignal: options.signal,
     },
   });
   return evaluateMoodGraph(loaded.graph, state);
@@ -121,7 +127,7 @@ async function runForTarget(
 ): Promise<MoodReviewResult> {
   return withUserContext(
     { userId: target.userId, username: target.username, role: target.role },
-    () => reviewMoodForUser(target.username, options),
+    () => reviewMoodForUser(target, options),
   );
 }
 
@@ -156,6 +162,7 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
     const options: MoodOptions = {
       baseline: parsedArgs.baseline || structured.baseline === true,
       triggerData: parseMoodTriggerData(structured.triggerData),
+      signal: ctx.signal,
     };
     const target = getTargetUser({ username: ctx.username });
     const result = target

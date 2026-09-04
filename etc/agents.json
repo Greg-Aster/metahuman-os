@@ -117,10 +117,31 @@
       "maxRetries": 1,
       "comment": "Finite Robot Operator child. Its graph gathers canonical status inputs, performs one semantic update, writes the profile Robot Status snapshot, and publishes through System Buffer."
     },
+    "robot-goal-review": {
+      "id": "robot-goal-review",
+      "displayName": "Robot Goal Review",
+      "description": "Reads Robot Status, uses one LLM decision to close an objective or author one high-level next instruction, and optionally delegates that instruction to Robot Autonomy Executor.",
+      "enabled": true,
+      "type": "manual",
+      "lifecycle": "workflow",
+      "runtimeOwner": "robot-operator",
+      "handler": "workflow.robot-goal-review",
+      "priority": "low",
+      "agentPath": "coordinator:workflow.robot-goal-review",
+      "usesLLM": true,
+      "allowedModes": [
+        "reactive",
+        "semi",
+        "full"
+      ],
+      "startupPolicy": "skip",
+      "maxRetries": 1,
+      "comment": "Finite Robot Operator child. Reactive permits explicit manual runs only; Semi uses its configured idle timer; Full prioritizes it while Robot Status contains an unfinished objective."
+    },
     "boredom-observer": {
       "id": "boredom-observer",
       "displayName": "Boredom Observer",
-      "description": "Triggers the editable Boredom Observer workflow, which requests one current camera image and routes the result to Boredom Autonomy.",
+      "description": "Triggers the editable Boredom Observer workflow, which requests one current camera image and routes the result to Robot Autonomy Executor.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -136,12 +157,12 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Finite trigger owned and scheduled by Robot Operator. The named workflow contains the camera request and editable observation stimulus; Boredom Autonomy makes the semantic decision."
+      "comment": "Finite trigger owned and scheduled by Robot Operator. The named workflow contains the camera request and editable observation stimulus; Robot Autonomy Executor makes the semantic decision."
     },
     "boredom-movement": {
       "id": "boredom-movement",
       "displayName": "Boredom Movement",
-      "description": "Triggers the editable Boredom Movement workflow, which prompts Boredom Autonomy to select one advertised movement.",
+      "description": "Triggers the editable Boredom Movement workflow, which prompts Robot Autonomy Executor to select one advertised movement.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -157,12 +178,12 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Finite trigger owned and scheduled by Robot Operator. Its named workflow contains the editable movement policy; Boredom Autonomy selects and evaluates the consequence through canonical execution nodes."
+      "comment": "Finite trigger owned and scheduled by Robot Operator. Its named workflow contains the editable movement policy; Robot Autonomy Executor selects and evaluates the consequence through canonical execution nodes."
     },
     "boredom-reflection": {
       "id": "boredom-reflection",
       "displayName": "Boredom Reflection",
-      "description": "Triggers the editable Boredom Reflection workflow, which samples memory and prompts Boredom Autonomy for a meaningful consequence.",
+      "description": "Triggers the editable Boredom Reflection workflow, which samples memory and prompts Robot Autonomy Executor for a meaningful consequence.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -178,7 +199,7 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Finite trigger owned and scheduled by Robot Operator. Its named workflow contains memory sampling and the editable reflection stimulus; Boredom Autonomy owns the semantic consequence."
+      "comment": "Finite trigger owned and scheduled by Robot Operator. Its named workflow contains memory sampling and the editable reflection stimulus; Robot Autonomy Executor owns the semantic consequence."
     },
     "reflector": {
       "id": "reflector",

@@ -9,7 +9,8 @@ import {
   type DesireProgressCallback,
   type ExecuteDesireResult,
 } from './executor.js'
-import type { Desire, DesireExecution } from './types.js'
+import type { Desire, DesireExecution, DesirePlan, DesireReview } from './types.js'
+import { planRequiresManualApproval, planRiskCoversEveryStep } from './plan-risk.js'
 
 export interface ApprovedDesireExecutionOptions {
   username: string
@@ -52,12 +53,26 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw cancellationError(signal)
 }
 
-function validateExecutableDesire(desire: Desire): void {
+export type ExecutableDesire = Desire & { plan: DesirePlan; review: DesireReview }
+
+export function assertDesireExecutable(desire: Desire): asserts desire is ExecutableDesire {
   if (desire.status !== 'approved') {
     throw new Error(`Cannot execute desire ${desire.id} in '${desire.status}' status; expected 'approved'`)
   }
   if (!desire.plan?.steps?.length) {
     throw new Error(`Cannot execute desire ${desire.id} without an approved plan`)
+  }
+  if (!desire.review
+    || desire.review.planId !== desire.plan.id
+    || desire.review.planVersion !== desire.plan.version
+    || desire.review.verdict === 'reject') {
+    throw new Error(`Cannot execute desire ${desire.id} without a matching plan-version review`)
+  }
+  if (!planRiskCoversEveryStep(desire.plan)) {
+    throw new Error(`Cannot execute desire ${desire.id} because its aggregate risk understates a plan step`)
+  }
+  if (planRequiresManualApproval(desire.plan) && desire.review.autoApprove === true) {
+    throw new Error(`Cannot execute desire ${desire.id} because a step requiring user approval was auto-approved`)
   }
 }
 
@@ -135,7 +150,7 @@ async function executeOne(
     throwIfAborted(options.signal)
     const current = await deps.loadDesire(desire.id, options.username)
     if (!current || current.status !== 'approved') return null
-    validateExecutableDesire(current)
+    assertDesireExecutable(current)
 
     const now = new Date().toISOString()
     const claimed: Desire = {

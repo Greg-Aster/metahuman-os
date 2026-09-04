@@ -1,0 +1,468 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
+  "name": "Inner Curiosity Workflow",
+  "description": "Generates and answers one private self-directed question, durably saves it, and optionally admits a seeded Train of Thought follow-on",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "state",
+      "type": "inputNode",
+      "position": { "x": 60, "y": 160 },
+      "width": 240,
+      "height": 120,
+      "data": {
+        "label": "Execution and Retry State",
+        "nodeType": "inner_curiosity_state",
+        "properties": {}
+      }
+    },
+    {
+      "id": "sample",
+      "type": "memoryNode",
+      "position": { "x": 360, "y": 80 },
+      "width": 240,
+      "height": 120,
+      "data": {
+        "label": "Sample Recent Memories",
+        "nodeType": "curiosity_weighted_sampler",
+        "properties": { "sampleSize": 5, "decayFactor": 14 },
+        "activation": {
+          "when": [{ "nodeId": "state", "output": "shouldGenerate", "equals": true }]
+        }
+      }
+    },
+    {
+      "id": "persona",
+      "type": "personaNode",
+      "position": { "x": 360, "y": 280 },
+      "width": 220,
+      "height": 100,
+      "data": {
+        "label": "Load Active Persona",
+        "nodeType": "persona_loader",
+        "properties": {},
+        "activation": {
+          "when": [{ "nodeId": "sample", "output": "hasMemories", "equals": true }]
+        }
+      }
+    },
+    {
+      "id": "question",
+      "type": "cognitiveNode",
+      "position": { "x": 680, "y": 160 },
+      "width": 280,
+      "height": 180,
+      "data": {
+        "label": "Generate Private Question",
+        "nodeType": "inner_curiosity_question_generator",
+        "properties": {
+          "temperature": 0.8,
+          "maxTokens": 192,
+          "timeout": 300000
+        }
+      }
+    },
+    {
+      "id": "no-memories",
+      "type": "outputNode",
+      "position": { "x": 680, "y": -60 },
+      "width": 270,
+      "height": 110,
+      "data": {
+        "label": "Skip Without Memories",
+        "nodeType": "inner_curiosity_no_memories",
+        "properties": {},
+        "activation": {
+          "when": [{ "nodeId": "sample", "output": "hasMemories", "equals": false }]
+        }
+      }
+    },
+    {
+      "id": "search",
+      "type": "memoryNode",
+      "position": { "x": 1040, "y": 160 },
+      "width": 260,
+      "height": 130,
+      "data": {
+        "label": "Find Related Memories",
+        "nodeType": "inner_curiosity_memory_search",
+        "properties": { "maxTerms": 3, "resultsPerTerm": 3, "maxResults": 9 }
+      }
+    },
+    {
+      "id": "answer",
+      "type": "cognitiveNode",
+      "position": { "x": 1380, "y": 160 },
+      "width": 290,
+      "height": 180,
+      "data": {
+        "label": "Answer Private Question",
+        "nodeType": "inner_curiosity_answer_generator",
+        "properties": {
+          "temperature": 0.7,
+          "maxTokens": 768,
+          "timeout": 300000
+        }
+      }
+    },
+    {
+      "id": "prepare",
+      "type": "cognitiveNode",
+      "position": { "x": 1750, "y": 160 },
+      "width": 260,
+      "height": 120,
+      "data": {
+        "label": "Checkpoint Exact Result",
+        "nodeType": "inner_curiosity_prepare",
+        "properties": {}
+      }
+    },
+    {
+      "id": "entry",
+      "type": "cognitiveNode",
+      "position": { "x": 2090, "y": 160 },
+      "width": 250,
+      "height": 110,
+      "data": {
+        "label": "Build Private Entry",
+        "nodeType": "inner_curiosity_entry",
+        "properties": {}
+      }
+    },
+    {
+      "id": "buffer",
+      "type": "outputNode",
+      "position": { "x": 2420, "y": 160 },
+      "width": 250,
+      "height": 120,
+      "data": {
+        "label": "Inner Dialogue Buffer",
+        "nodeType": "inner_dialogue_buffer",
+        "properties": {
+          "tags": ["inner-curiosity", "self-directed-question", "inner"],
+          "displayColor": "#8b5cf6",
+          "dialogueSource": "inner-curiosity",
+          "role": "reflection"
+        }
+      }
+    },
+    {
+      "id": "memory",
+      "type": "outputNode",
+      "position": { "x": 2750, "y": 160 },
+      "width": 260,
+      "height": 120,
+      "data": {
+        "label": "Save Private Memory",
+        "nodeType": "inner_dialogue_saver",
+        "properties": {
+          "tags": ["inner-curiosity", "self-directed-question", "inner"],
+          "roles": ["reflection"]
+        }
+      }
+    },
+    {
+      "id": "train-of-thought",
+      "type": "cognitiveNode",
+      "position": { "x": 3090, "y": 160 },
+      "width": 260,
+      "height": 120,
+      "data": {
+        "label": "Optional Thought Follow-on",
+        "nodeType": "agent_trigger",
+        "properties": {
+          "agentName": "train-of-thought",
+          "sourceAgent": "inner-curiosity",
+          "probability": 0.2
+        }
+      }
+    },
+    {
+      "id": "complete",
+      "type": "outputNode",
+      "position": { "x": 3430, "y": 160 },
+      "width": 270,
+      "height": 140,
+      "data": {
+        "label": "Complete Durable Cycle",
+        "nodeType": "inner_curiosity_complete",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-state-no-memories-execution",
+      "source": "state",
+      "target": "no-memories",
+      "sourceHandle": "execution",
+      "targetHandle": "execution",
+      "data": { "type": "object", "comment": "Preserve authenticated execution identity on the empty sample branch" }
+    },
+    {
+      "id": "e-sample-no-memories-count",
+      "source": "sample",
+      "target": "no-memories",
+      "sourceHandle": "count",
+      "targetHandle": "memoryCount",
+      "data": { "type": "number", "comment": "The explicit skip branch accepts only an exact zero sample" }
+    },
+    {
+      "id": "e-sample-memories-question",
+      "source": "sample",
+      "target": "question",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": { "type": "array", "comment": "Bounded profile memories seed the private question" }
+    },
+    {
+      "id": "e-persona-success-question",
+      "source": "persona",
+      "target": "question",
+      "sourceHandle": "success",
+      "targetHandle": "personaLoaded",
+      "data": { "type": "boolean", "comment": "Require canonical persona loading before generation" }
+    },
+    {
+      "id": "e-persona-identity-question",
+      "source": "persona",
+      "target": "question",
+      "sourceHandle": "identity",
+      "targetHandle": "identity",
+      "data": { "type": "object", "comment": "Canonical persona identity supplies the private voice" }
+    },
+    {
+      "id": "e-question-search",
+      "source": "question",
+      "target": "search",
+      "sourceHandle": "question",
+      "targetHandle": "question",
+      "data": { "type": "string", "comment": "Search only after a usable private question exists" }
+    },
+    {
+      "id": "e-question-answer-question",
+      "source": "question",
+      "target": "answer",
+      "sourceHandle": "question",
+      "targetHandle": "question",
+      "data": { "type": "string", "comment": "Answer the exact generated question" }
+    },
+    {
+      "id": "e-question-answer-persona",
+      "source": "question",
+      "target": "answer",
+      "sourceHandle": "personaName",
+      "targetHandle": "personaName",
+      "data": { "type": "string", "comment": "Preserve the canonical persona identity" }
+    },
+    {
+      "id": "e-sample-answer-memories",
+      "source": "sample",
+      "target": "answer",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": { "type": "array", "comment": "Ground the answer in the original bounded sample" }
+    },
+    {
+      "id": "e-search-answer-results",
+      "source": "search",
+      "target": "answer",
+      "sourceHandle": "searchResults",
+      "targetHandle": "searchResults",
+      "data": { "type": "array", "comment": "Add reconciled semantically related memories" }
+    },
+    {
+      "id": "e-state-prepare-execution",
+      "source": "state",
+      "target": "prepare",
+      "sourceHandle": "execution",
+      "targetHandle": "execution",
+      "data": { "type": "object", "comment": "Stable coordinator identity owns the checkpoint" }
+    },
+    {
+      "id": "e-question-prepare-question",
+      "source": "question",
+      "target": "prepare",
+      "sourceHandle": "question",
+      "targetHandle": "question",
+      "data": { "type": "string", "comment": "Checkpoint the exact question" }
+    },
+    {
+      "id": "e-answer-prepare-answer",
+      "source": "answer",
+      "target": "prepare",
+      "sourceHandle": "answer",
+      "targetHandle": "answer",
+      "data": { "type": "string", "comment": "Checkpoint the exact answer" }
+    },
+    {
+      "id": "e-sample-prepare-memories",
+      "source": "sample",
+      "target": "prepare",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": { "type": "array", "comment": "Record source-memory provenance" }
+    },
+    {
+      "id": "e-search-prepare-results",
+      "source": "search",
+      "target": "prepare",
+      "sourceHandle": "searchResults",
+      "targetHandle": "searchResults",
+      "data": { "type": "array", "comment": "Record related-memory provenance" }
+    },
+    {
+      "id": "e-sample-prepare-diagnostics",
+      "source": "sample",
+      "target": "prepare",
+      "sourceHandle": "diagnostics",
+      "targetHandle": "sampling",
+      "data": { "type": "object", "comment": "Retain bounded-sampling diagnostics" }
+    },
+    {
+      "id": "e-state-entry-prepared",
+      "source": "state",
+      "target": "entry",
+      "sourceHandle": "prepared",
+      "targetHandle": "prepared",
+      "data": { "type": "object", "comment": "Retry a previously checkpointed exact result without repeating model calls" }
+    },
+    {
+      "id": "e-prepare-entry-prepared",
+      "source": "prepare",
+      "target": "entry",
+      "sourceHandle": "prepared",
+      "targetHandle": "prepared",
+      "data": { "type": "object", "comment": "New exact result proceeds only after its checkpoint" }
+    },
+    {
+      "id": "e-entry-buffer",
+      "source": "entry",
+      "target": "buffer",
+      "sourceHandle": "entry",
+      "targetHandle": "entry",
+      "data": { "type": "message", "comment": "Admit the private result to the Inner Dialogue Buffer" }
+    },
+    {
+      "id": "e-buffer-memory",
+      "source": "buffer",
+      "target": "memory",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "data": { "type": "array", "comment": "Long-term saving consumes only exact buffer-admitted entries" }
+    },
+    {
+      "id": "e-memory-trigger",
+      "source": "memory",
+      "target": "train-of-thought",
+      "sourceHandle": "text",
+      "targetHandle": "seed",
+      "data": { "type": "string", "comment": "Only a durably saved result may seed Train of Thought" }
+    },
+    {
+      "id": "e-entry-complete-prepared",
+      "source": "entry",
+      "target": "complete",
+      "sourceHandle": "prepared",
+      "targetHandle": "prepared",
+      "data": { "type": "object", "comment": "Complete the same checkpointed result" }
+    },
+    {
+      "id": "e-state-complete-deduplicated",
+      "source": "state",
+      "target": "complete",
+      "sourceHandle": "deduplicated",
+      "targetHandle": "deduplicated",
+      "data": { "type": "boolean", "comment": "Prepared retries report deduplicated execution" }
+    },
+    {
+      "id": "e-buffer-complete-persisted",
+      "source": "buffer",
+      "target": "complete",
+      "sourceHandle": "persisted",
+      "targetHandle": "bufferPersisted",
+      "data": { "type": "boolean", "comment": "Require short-term buffer persistence" }
+    },
+    {
+      "id": "e-buffer-complete-count",
+      "source": "buffer",
+      "target": "complete",
+      "sourceHandle": "savedCount",
+      "targetHandle": "bufferSavedCount",
+      "data": { "type": "number", "comment": "Require exactly one buffer entry" }
+    },
+    {
+      "id": "e-memory-complete-saved",
+      "source": "memory",
+      "target": "complete",
+      "sourceHandle": "saved",
+      "targetHandle": "memorySaved",
+      "data": { "type": "boolean", "comment": "Require long-term memory persistence" }
+    },
+    {
+      "id": "e-memory-complete-count",
+      "source": "memory",
+      "target": "complete",
+      "sourceHandle": "savedCount",
+      "targetHandle": "memorySavedCount",
+      "data": { "type": "number", "comment": "Require exactly one long-term memory" }
+    },
+    {
+      "id": "e-trigger-complete-admitted",
+      "source": "train-of-thought",
+      "target": "complete",
+      "sourceHandle": "admitted",
+      "targetHandle": "followOnAdmitted",
+      "data": { "type": "boolean", "comment": "Record whether follow-on work was admitted" }
+    },
+    {
+      "id": "e-trigger-complete-skipped",
+      "source": "train-of-thought",
+      "target": "complete",
+      "sourceHandle": "skipped",
+      "targetHandle": "followOnSkipped",
+      "data": { "type": "boolean", "comment": "Record whether follow-on work was skipped" }
+    },
+    {
+      "id": "e-trigger-complete-reason",
+      "source": "train-of-thought",
+      "target": "complete",
+      "sourceHandle": "reason",
+      "targetHandle": "followOnReason",
+      "data": { "type": "string", "comment": "Retain the explicit skip reason" }
+    },
+    {
+      "id": "e-trigger-complete-task",
+      "source": "train-of-thought",
+      "target": "complete",
+      "sourceHandle": "taskId",
+      "targetHandle": "followOnTaskId",
+      "data": { "type": "string", "comment": "Retain the coordinator task identity when admitted" }
+    },
+    {
+      "id": "e-trigger-complete-probability",
+      "source": "train-of-thought",
+      "target": "complete",
+      "sourceHandle": "probability",
+      "targetHandle": "followOnProbability",
+      "data": { "type": "number", "comment": "Retain the configured decision probability" }
+    },
+    {
+      "id": "e-trigger-complete-roll",
+      "source": "train-of-thought",
+      "target": "complete",
+      "sourceHandle": "roll",
+      "targetHandle": "followOnRoll",
+      "data": { "type": "number", "comment": "Retain the deterministic decision roll" }
+    }
+  ]
+}

@@ -156,8 +156,8 @@ pnpm train:environment-action-selector:0.8b -- --dry-run
 
 The current candidates are evaluation artifacts, not automatically deployable
 models. Deployment is a deliberate maintainer action only after evaluation;
-Core capability validation and environment task state remain the safety
-boundary even when a candidate is accepted.
+Core capability validation and the canonical Robot Status task record remain
+authoritative even when a candidate is accepted.
 
 ## Before Launching
 

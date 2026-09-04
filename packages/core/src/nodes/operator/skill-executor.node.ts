@@ -25,7 +25,7 @@ const execute: NodeExecutor = async (inputs, context) => {
   }
 
   // Handle Big Brother Router output
-  let planInput = inputs[0] || '';
+  let planInput = inputs.plan ?? inputs[0] ?? '';
   if (planInput && typeof planInput === 'object' && 'localPath' in planInput && 'claudePath' in planInput) {
     if (planInput.localPath === null || planInput.localPath === undefined) {
       console.log('[SkillExecutor] Skipping - routed to Claude path');
@@ -192,8 +192,7 @@ export const SkillExecutorNode: NodeDefinition = defineNode({
   name: 'Skill Executor',
   category: 'operator',
   inputs: [
-    { name: 'skillName', type: 'string' },
-    { name: 'arguments', type: 'object' },
+    { name: 'plan', type: 'any', description: 'Planner action or complete ReAct plan to execute' },
   ],
   outputs: [
     { name: 'result', type: 'skill_result', description: 'Skill execution result' },

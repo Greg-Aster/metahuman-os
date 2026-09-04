@@ -213,10 +213,6 @@ export class ExecutionEngine {
       const { executeChatWork } = await import('./chat-work-handler.js');
       return executeChatWork('response-pipeline', task, context);
     });
-    this.registerHandler('operator.policy', async (task, context) => {
-      const { executeOperatorPolicyWork } = await import('./operator-policy-handler.js');
-      return executeOperatorPolicyWork(task, context);
-    });
     this.registerHandler('agency.desire-checkin', async (task, context) => {
       const { executeDesireCheckinWork } = await import('./desire-checkin-handler.js');
       return executeDesireCheckinWork(task, context);
@@ -322,6 +318,7 @@ export class ExecutionEngine {
     });
     for (const handler of [
       'workflow.robot-status',
+      'workflow.robot-goal-review',
       'workflow.boredom-observer',
       'workflow.boredom-movement',
       'workflow.boredom-reflection',

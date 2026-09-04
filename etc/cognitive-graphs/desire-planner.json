@@ -1,59 +1,74 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Desire Plan Generator",
-  "description": "Generates execution plans for activated desires using LLM-based planning",
+  "description": "Assesses, clarifies, generates, validates, and persists one desire plan through one conditional workflow",
   "cognitiveMode": "agent",
-  "last_modified": "2026-01-08",
+  "last_modified": "2026-09-03",
   "nodes": [
     {
       "id": "1",
       "type": "genericNode",
-      "position": {
-        "x": 100,
-        "y": 150
-      },
-      "data": {
-        "label": "Load Desire",
-        "nodeType": "desire_loader",
-        "properties": {
-          "filterStatus": "planning"
-        }
-      },
+      "position": { "x": 80, "y": 220 },
+      "data": { "label": "Load Desire", "nodeType": "desire_loader", "properties": {} },
       "width": 200,
       "height": 80
     },
     {
       "id": "2",
       "type": "genericNode",
-      "position": {
-        "x": 350,
-        "y": 50
-      },
-      "data": {
-        "label": "Build Tool Catalog",
-        "nodeType": "tool_catalog_builder",
-        "properties": {
-          "filterByTrust": true
-        }
-      },
+      "position": { "x": 80, "y": 60 },
+      "data": { "label": "Build Tool Catalog", "nodeType": "tool_catalog_builder", "properties": {} },
       "width": 200,
       "height": 80
     },
     {
+      "id": "8",
+      "type": "agencyNode",
+      "position": { "x": 340, "y": 130 },
+      "data": { "label": "Assess Feasibility", "nodeType": "desire_feasibility", "properties": {} },
+      "width": 220,
+      "height": 120
+    },
+    {
+      "id": "9",
+      "type": "agencyNode",
+      "position": { "x": 620, "y": 40 },
+      "data": {
+        "label": "Generate Clarifying Questions",
+        "nodeType": "desire_question_generator",
+        "properties": {},
+        "activation": { "when": [{ "nodeId": "8", "output": "feasible", "equals": true }] }
+      },
+      "width": 240,
+      "height": 140
+    },
+    {
+      "id": "10",
+      "type": "agencyNode",
+      "position": { "x": 920, "y": 20 },
+      "data": {
+        "label": "Persist Clarifying Questions",
+        "nodeType": "desire_question_transition",
+        "properties": {},
+        "activation": { "when": [{ "nodeId": "9", "output": "needsQuestions", "equals": true }] }
+      },
+      "width": 230,
+      "height": 110
+    },
+    {
       "id": "3",
       "type": "genericNode",
-      "position": {
-        "x": 350,
-        "y": 150
-      },
+      "position": { "x": 620, "y": 230 },
       "data": {
         "label": "Load Policies",
         "nodeType": "policy_loader",
-        "properties": {
-          "include": [
-            "decision-rules",
-            "hard-rules"
+        "properties": { "include": ["decision-rules", "hard-rules"] },
+        "activation": {
+          "when": [
+            { "nodeId": "8", "output": "feasible", "equals": true },
+            { "nodeId": "9", "output": "needsQuestions", "equals": false }
           ]
         }
       },
@@ -63,15 +78,16 @@
     {
       "id": "4",
       "type": "contextNode",
-      "position": {
-        "x": 350,
-        "y": 250
-      },
+      "position": { "x": 620, "y": 360 },
       "data": {
         "label": "Search Relevant Memories",
         "nodeType": "semantic_search",
-        "properties": {
-          "topK": 5
+        "properties": { "topK": 5 },
+        "activation": {
+          "when": [
+            { "nodeId": "8", "output": "feasible", "equals": true },
+            { "nodeId": "9", "output": "needsQuestions", "equals": false }
+          ]
         }
       },
       "width": 200,
@@ -80,15 +96,16 @@
     {
       "id": "5",
       "type": "genericNode",
-      "position": {
-        "x": 600,
-        "y": 150
-      },
+      "position": { "x": 920, "y": 250 },
       "data": {
         "label": "Generate Plan",
         "nodeType": "desire_plan_generator",
-        "properties": {
-          "temperature": 0.3
+        "properties": { "temperature": 0.3 },
+        "activation": {
+          "when": [
+            { "nodeId": "8", "output": "feasible", "equals": true },
+            { "nodeId": "9", "output": "needsQuestions", "equals": false }
+          ]
         }
       },
       "width": 220,
@@ -97,191 +114,42 @@
     {
       "id": "6",
       "type": "genericNode",
-      "position": {
-        "x": 870,
-        "y": 150
-      },
-      "data": {
-        "label": "Validate Plan",
-        "nodeType": "plan_validator",
-        "properties": {
-          "checkSkillAvailability": true,
-          "checkTrustLevel": true
-        }
-      },
+      "position": { "x": 1200, "y": 250 },
+      "data": { "label": "Validate Plan", "nodeType": "plan_validator", "properties": { "checkSkillAvailability": true, "checkTrustLevel": true } },
       "width": 200,
       "height": 100
     },
     {
       "id": "7",
       "type": "agencyNode",
-      "position": {
-        "x": 1120,
-        "y": 150
-      },
-      "data": {
-        "label": "Update Desire with Plan",
-        "nodeType": "desire_updater",
-        "properties": {}
-      },
-      "width": 200,
-      "height": 100
-    },
-    {
-      "id": "8",
-      "type": "outputNode",
-      "position": {
-        "x": 1370,
-        "y": 150
-      },
-      "data": {
-        "label": "Audit Log",
-        "nodeType": "audit_logger",
-        "properties": {
-          "category": "agency",
-          "event": "plan_generated"
-        }
-      },
-      "width": 180,
-      "height": 60
-    },
-    {
-      "id": "9",
-      "type": "genericNode",
-      "position": {
-        "x": 350,
-        "y": 350
-      },
-      "data": {
-        "label": "Load Desire Conversation",
-        "nodeType": "desire_conversation_loader",
-        "properties": {}
-      },
+      "position": { "x": 1460, "y": 250 },
+      "data": { "label": "Persist Validated Plan", "nodeType": "desire_updater", "properties": { "newStatus": "reviewing" } },
       "width": 220,
-      "height": 80
+      "height": 100
     }
   ],
   "edges": [
-    {
-      "id": "e-1-slot_0-4-query",
-      "source": "1",
-      "target": "4",
-      "sourceHandle": "slot_0",
-      "targetHandle": "query",
-      "data": {
-        "type": "object",
-        "comment": "Desire → Semantic Search (for query)"
-      }
-    },
-    {
-      "id": "e-1-slot_0-5-slot_0",
-      "source": "1",
-      "target": "5",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_0",
-      "data": {
-        "type": "object",
-        "comment": "Desire → Plan Generator"
-      }
-    },
-    {
-      "id": "e-2-slot_0-5-slot_1",
-      "source": "2",
-      "target": "5",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_1",
-      "data": {
-        "type": "string",
-        "comment": "Tool Catalog → Plan Generator"
-      }
-    },
-    {
-      "id": "e-3-slot_0-5-slot_2",
-      "source": "3",
-      "target": "5",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_2",
-      "data": {
-        "type": "string",
-        "comment": "Decision Rules → Plan Generator"
-      }
-    },
-    {
-      "id": "e-4-memories-5-slot_3",
-      "source": "4",
-      "target": "5",
-      "sourceHandle": "memories",
-      "targetHandle": "slot_3",
-      "data": {
-        "type": "string",
-        "comment": "Relevant Memories → Plan Generator"
-      }
-    },
-    {
-      "id": "e-5-slot_0-6-slot_0",
-      "source": "5",
-      "target": "6",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_0",
-      "data": {
-        "type": "object",
-        "comment": "Plan → Validator"
-      }
-    },
-    {
-      "id": "e-1-slot_0-7-desire",
-      "source": "1",
-      "target": "7",
-      "sourceHandle": "slot_0",
-      "targetHandle": "desire",
-      "data": {
-        "type": "object",
-        "comment": "Desire → Updater"
-      }
-    },
-    {
-      "id": "e-6-slot_0-7-newStatus",
-      "source": "6",
-      "target": "7",
-      "sourceHandle": "slot_0",
-      "targetHandle": "newStatus",
-      "data": {
-        "type": "object",
-        "comment": "Validated Plan → Updater"
-      }
-    },
-    {
-      "id": "e-7-desire-8-eventType",
-      "source": "7",
-      "target": "8",
-      "sourceHandle": "desire",
-      "targetHandle": "eventType",
-      "data": {
-        "type": "object",
-        "comment": "Updated Desire → Audit"
-      }
-    },
-    {
-      "id": "e-1-slot_0-9-slot_0",
-      "source": "1",
-      "target": "9",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_0",
-      "data": {
-        "type": "object",
-        "comment": "Desire → Conversation Loader"
-      }
-    },
-    {
-      "id": "e-9-conversation-5-slot_4",
-      "source": "9",
-      "target": "5",
-      "sourceHandle": "conversation",
-      "targetHandle": "slot_4",
-      "data": {
-        "type": "string",
-        "comment": "User Discussion → Plan Generator"
-      }
-    }
+    { "id": "e-1-desire-8-desire", "source": "1", "target": "8", "sourceHandle": "desire", "targetHandle": "desire" },
+    { "id": "e-2-catalog-8-toolCatalog", "source": "2", "target": "8", "sourceHandle": "catalog", "targetHandle": "toolCatalog" },
+    { "id": "e-1-desire-9-desire", "source": "1", "target": "9", "sourceHandle": "desire", "targetHandle": "desire" },
+    { "id": "e-9-desire-10-desire", "source": "9", "target": "10", "sourceHandle": "desire", "targetHandle": "desire" },
+    { "id": "e-9-reason-10-reason", "source": "9", "target": "10", "sourceHandle": "reason", "targetHandle": "reason" },
+    { "id": "e-1-query-4-query", "source": "1", "target": "4", "sourceHandle": "query", "targetHandle": "query" },
+    { "id": "e-1-desire-5-desire", "source": "1", "target": "5", "sourceHandle": "desire", "targetHandle": "desire" },
+    { "id": "e-2-catalog-5-toolCatalog", "source": "2", "target": "5", "sourceHandle": "catalog", "targetHandle": "toolCatalog" },
+    { "id": "e-3-formatted-5-decisionRules", "source": "3", "target": "5", "sourceHandle": "formatted", "targetHandle": "decisionRules" },
+    { "id": "e-4-memories-5-relevantMemories", "source": "4", "target": "5", "sourceHandle": "memories", "targetHandle": "relevantMemories" },
+    { "id": "e-5-plan-6-plan", "source": "5", "target": "6", "sourceHandle": "plan", "targetHandle": "plan" },
+    { "id": "e-5-goalType-6-goalType", "source": "5", "target": "6", "sourceHandle": "goalType", "targetHandle": "goalType" },
+    { "id": "e-5-completionCriteria-6-completionCriteria", "source": "5", "target": "6", "sourceHandle": "completionCriteria", "targetHandle": "completionCriteria" },
+    { "id": "e-5-milestones-6-milestones", "source": "5", "target": "6", "sourceHandle": "milestones", "targetHandle": "milestones" },
+    { "id": "e-5-goalProgress-6-goalProgress", "source": "5", "target": "6", "sourceHandle": "goalProgress", "targetHandle": "goalProgress" },
+    { "id": "e-1-desire-7-desire", "source": "1", "target": "7", "sourceHandle": "desire", "targetHandle": "desire" },
+    { "id": "e-6-valid-7-valid", "source": "6", "target": "7", "sourceHandle": "valid", "targetHandle": "valid" },
+    { "id": "e-6-plan-7-plan", "source": "6", "target": "7", "sourceHandle": "plan", "targetHandle": "plan" },
+    { "id": "e-6-goalType-7-goalType", "source": "6", "target": "7", "sourceHandle": "goalType", "targetHandle": "goalType" },
+    { "id": "e-6-completionCriteria-7-completionCriteria", "source": "6", "target": "7", "sourceHandle": "completionCriteria", "targetHandle": "completionCriteria" },
+    { "id": "e-6-milestones-7-milestones", "source": "6", "target": "7", "sourceHandle": "milestones", "targetHandle": "milestones" },
+    { "id": "e-6-goalProgress-7-goalProgress", "source": "6", "target": "7", "sourceHandle": "goalProgress", "targetHandle": "goalProgress" }
   ]
 }

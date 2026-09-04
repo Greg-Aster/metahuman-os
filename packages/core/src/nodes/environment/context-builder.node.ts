@@ -1,16 +1,9 @@
 import { defineNode } from '../types.js';
-import type {
-  EnvironmentLocationData,
-  EnvironmentMapData,
-  EnvironmentObservation,
-  EnvironmentVisualFrame,
-} from '../../environment-interface/index.js';
-import { parseRobotObserverCycle } from '../../robot-operator.js';
+import type { EnvironmentObservation } from '../../environment-interface/index.js';
 import {
   buildEnvironmentSelectorEnvelope,
   buildEnvironmentSelectorJsonSchema,
   buildEnvironmentSelectorSystemPrompt,
-  type EnvironmentTaskState,
 } from './helpers.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -62,53 +55,29 @@ function relevantMemoryItems(value: unknown): string[] {
     .slice(0, 3);
 }
 
-function coerceVisualFrames(visual: unknown, visuals: unknown): EnvironmentVisualFrame[] {
-  const frames: EnvironmentVisualFrame[] = [];
-  if (isRecord(visual)) {
-    frames.push(visual as unknown as EnvironmentVisualFrame);
-  }
-  if (Array.isArray(visuals)) {
-    frames.push(...visuals.filter(isRecord).map(frame => frame as unknown as EnvironmentVisualFrame));
-  }
-
-  const seen = new Set<string>();
-  return frames.filter(frame => {
-    const key = frame.id ?? frame.url ?? frame.dataUrl;
-    if (!key) return true;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
 export const environmentContextBuilderNode = defineNode({
   id: 'environment_context_builder',
   name: 'Environment Context Builder',
   category: 'environment',
   inputs: [
-    { name: 'observation', type: 'object', description: 'Environment observation' },
+    { name: 'observation', type: 'object', optional: true, description: 'Environment observation selected for this turn' },
+    { name: 'observationCurrent', type: 'boolean', optional: true, description: 'Whether the observation directly triggered this graph execution' },
     { name: 'instruction', type: 'string', optional: true, description: 'Additional task instruction' },
     { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
-    { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
-    { name: 'location', type: 'object', optional: true, description: 'Optional graph-supplied location data' },
-    { name: 'map', type: 'object', optional: true, description: 'Optional graph-supplied map data' },
-    { name: 'visual', type: 'object', optional: true, description: 'Optional graph-supplied visual frame' },
-    { name: 'visuals', type: 'array', optional: true, description: 'Optional graph-supplied visual frames' },
     { name: 'images', type: 'array', optional: true, description: 'Validated model image content parts' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Shared rolling conversation history' },
     { name: 'memories', type: 'array', optional: true, description: 'Relevant long-term conversational memories' },
     { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona supplied once to the selector' },
-    { name: 'routingAnalysis', type: 'object', optional: true, description: 'LLM-selected context policy for the current instruction' },
-    { name: 'taskState', type: 'object', optional: true, description: 'Single typed Environment objective lifecycle state' },
-    { name: 'preparedMovementRequest', type: 'object', optional: true, description: 'Already-authorized off-script request ready for Movement Generator' },
+    { name: 'routingAnalysis', type: 'object', description: 'Intent Orchestrator route switches for this turn' },
     { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
-    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
   ],
   outputs: [
     { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
     { name: 'messages', type: 'array', description: 'Compact action-selector message array' },
     { name: 'jsonSchema', type: 'object', description: 'Provider schema constrained to currently advertised capabilities' },
     { name: 'context', type: 'object', description: 'Structured environment context package' },
+    { name: 'currentInstruction', type: 'string', description: 'Current unchanged user instruction' },
+    { name: 'instructionSource', type: 'string', description: 'Instruction provenance for this interactive workflow: user' },
     { name: 'location', type: 'object', description: 'Resolved location data' },
     { name: 'map', type: 'object', description: 'Resolved map data' },
     { name: 'images', type: 'array', description: 'Visual frames suitable for image-capable models' },
@@ -135,136 +104,75 @@ export const environmentContextBuilderNode = defineNode({
       step: 1,
     },
   },
-  description: 'Builds environment context and attaches only fresh event-correlated robot vision.',
+  description: 'Packages only the context selected by Intent Orchestrator for one Environment Action Selector call.',
   async execute(inputs, context, properties) {
-    const observation = inputs.observation as EnvironmentObservation | undefined;
-    if (!observation) {
-      return {
-        message: '',
-        messages: [],
-        jsonSchema: null,
-        context: null,
-        location: null,
-        map: null,
-        images: [],
-        availableActions: [],
-      };
-    }
+    const routingAnalysis = isRecord(inputs.routingAnalysis)
+      ? Object.fromEntries(Object.entries(inputs.routingAnalysis).filter(([, value]) => typeof value === 'boolean'))
+      : {};
+    const environmentSelected = routingAnalysis.needsEnvironment === true
+      || routingAnalysis.needsVision === true
+      || routingAnalysis.needsAction === true;
+    const observation = environmentSelected && isRecord(inputs.observation)
+      ? inputs.observation as unknown as EnvironmentObservation
+      : null;
 
-    const location = isRecord(inputs.location)
-      ? inputs.location as EnvironmentLocationData
-      : observation.location ?? null;
-    const map = isRecord(inputs.map)
-      ? inputs.map as EnvironmentMapData
-      : observation.map ?? null;
-    const visualFrames = coerceVisualFrames(inputs.visual ?? observation.visual, inputs.visuals ?? observation.visuals);
+    const location = observation?.location ?? null;
+    const map = observation?.map ?? null;
     const images = Array.isArray(inputs.images)
       ? inputs.images.filter(part => isRecord(part) && part.type === 'image_url')
       : [];
-    const effectiveObservation: EnvironmentObservation = {
-      ...observation,
-      ...(location ? { location } : {}),
-      ...(map ? { map } : {}),
-      ...(visualFrames[0] ? { visual: visualFrames[0] } : {}),
-      ...(visualFrames.length ? { visuals: visualFrames } : {}),
-    };
+    const effectiveObservation: EnvironmentObservation | null = observation;
 
     const systemPrompt = String(properties?.systemPrompt ?? '');
     const conversationalInstruction = typeof inputs.instruction === 'string'
       ? inputs.instruction.trim()
       : '';
-    const rawInstruction = conversationalInstruction;
-    const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : {};
-    const taskState = isRecord(inputs.taskState)
-      ? inputs.taskState as unknown as EnvironmentTaskState
-      : null;
-    const resumePreparedMovement = isRecord(inputs.preparedMovementRequest);
     const personaText = typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 2_000)
       : '';
     const robotStatus = isRecord(inputs.robotStatus) ? inputs.robotStatus : null;
-    const inputSource = inputs.inputSource === 'autonomy' ? 'autonomy' : 'user';
-    const autonomous = inputSource === 'autonomy';
     const userInstruction = typeof inputs.userInstruction === 'string'
       ? inputs.userInstruction.trim()
       : '';
-    const directUserTurn = inputSource === 'user' && Boolean(userInstruction);
+    const rawInstruction = conversationalInstruction || userInstruction;
+    const inputSource = 'user';
+    const directUserTurn = Boolean(userInstruction);
     const replyToContent = directUserTurn && typeof context.replyToContent === 'string'
       ? context.replyToContent.trim().slice(0, 500)
       : '';
-    const queuedContinuation = Boolean(taskState?.phase === 'evaluating_evidence' || taskState?.phase === 'awaiting_action');
-    const boundedContinuation = queuedContinuation
-      && taskState?.continuationPolicy === 'bounded';
-    // Context routing may select history, memory, and vision, but it never owns
-    // semantic action authority. The Environment LLM must always see the
-    // adapter-advertised action contract so it can decide whether and how to act.
-    const hasTypedContextAdmission = typeof routingAnalysis.needsAction === 'boolean'
-      && typeof routingAnalysis.needsEnvironment === 'boolean'
-      && typeof routingAnalysis.needsVision === 'boolean';
-    const includeActionContracts = true;
-    const includeEnvironmentContext = !hasTypedContextAdmission
-      || routingAnalysis.needsEnvironment === true
-      || routingAnalysis.needsVision === true
-      || includeActionContracts;
-    const requestedRecentHistory = routingAnalysis.isFollowUp === true && !queuedContinuation;
-    const includeSemanticMemory = routingAnalysis.needsMemory === true;
     const recentHistoryLimit = Number.isInteger(properties?.recentHistoryLimit)
       ? Math.max(0, Number(properties?.recentHistoryLimit))
       : 4;
-    const correlatedVisual = visualFrames.some(frame => (
-      typeof frame.metadata?.correlationId === 'string'
-    )) || typeof effectiveObservation.metadata?.correlationId === 'string';
-    const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
-    const includeRecentHistory = requestedRecentHistory && !autonomous;
-    // environment-perception metadata is attached to ordinary correlated audio
-    // so later work can retain lifecycle identity. It is not, by itself, a request
-    // to inspect the camera. Only an explicit boredom observation run bypasses typed
-    // vision admission; ordinary audio remains owned by needsVision.
-    const observerVisualEvidence = !directUserTurn
-      && robotObserver?.requestedBy === 'boredom-observer';
-    const visualRequiredByTask = taskState?.requiredCompletionBasis === 'visual_observation';
-    const visualContinuation = queuedContinuation && visualRequiredByTask;
-    const useImages = correlatedVisual && (
-      !hasTypedContextAdmission
-      || routingAnalysis.needsVision === true
-      || visualRequiredByTask
-      || observerVisualEvidence
-    );
+    const includeRecentHistory = routingAnalysis.needsConversationHistory === true
+      && directUserTurn;
+    const useImages = routingAnalysis.needsVision === true
+      && inputs.observationCurrent === true
+      && images.length > 0;
     const selectedImages = useImages ? images : [];
-    const visualPromptObservation = useImages
-      ? effectiveObservation
-      : { ...effectiveObservation, visual: undefined, visuals: undefined };
-    // Direct conversation starts a new Environment objective. Retain current
-    // body state and capabilities, but do not project unrelated action lineage
-    // from the adapter's latest observation into the selector prompt. During a
-    // visual continuation, Task State owns motor lifecycle feedback; exposing
-    // "completed" or "done" beside the frame can be mistaken for visual proof.
-    const promptObservation = directUserTurn
+    const withoutUnselectedVision = effectiveObservation
+      ? useImages
+        ? effectiveObservation
+        : { ...effectiveObservation, visual: undefined, visuals: undefined }
+      : null;
+    const promptObservation = withoutUnselectedVision && inputs.observationCurrent !== true
       ? {
-          ...visualPromptObservation,
+          ...withoutUnselectedVision,
           feedback: [],
           metadata: {},
         }
-      : visualContinuation
-        ? {
-            ...visualPromptObservation,
-            feedback: [],
-          }
-      : visualPromptObservation;
+      : withoutUnselectedVision;
     const history = conversationMessages(
       inputs.conversationHistory,
       includeRecentHistory,
       recentHistoryLimit,
       rawInstruction,
     );
-    const routedMemories = includeSemanticMemory ? inputs.memories : [];
+    const routedMemories = routingAnalysis.needsMemory === true ? inputs.memories : [];
     const memoryItems = [...new Set([
       ...relevantMemoryItems(routedMemories),
     ])].slice(0, 3);
     const selectorContext = buildEnvironmentSelectorSystemPrompt({
       systemPrompt,
-      queuedContinuation,
-      mustAdvanceTask: boundedContinuation,
     });
     const renderedContent = (content: string) => selectedImages.length
       ? [{
@@ -277,48 +185,44 @@ export const environmentContextBuilderNode = defineNode({
     const message = buildEnvironmentSelectorEnvelope({
       instruction: rawInstruction,
       observation: promptObservation,
-      taskState,
       recentConversation: history,
       memories: memoryItems,
       personaText,
-      robotStatus,
+      robotStatus: routingAnalysis.needsRobotStatus === true ? robotStatus : null,
       replyToContent,
-      mustSelectAction: routingAnalysis.needsAction === true,
-      mustAdvanceTask: boundedContinuation,
       inputSource,
+      routing: routingAnalysis as Record<string, boolean>,
+      currentObservation: inputs.observationCurrent === true,
+      currentVisionAvailable: selectedImages.length > 0,
     });
-    const jsonSchema = resumePreparedMovement
-      ? null
-      : buildEnvironmentSelectorJsonSchema({
-          actions: promptObservation.capabilities.actions,
-          robotCommands: promptObservation.capabilities.robotCommands,
-          requireAction: routingAnalysis.needsAction === true,
-          requireObjective: autonomous,
-          requireProgress: boundedContinuation,
-        });
+    const jsonSchema = buildEnvironmentSelectorJsonSchema({
+      actions: promptObservation?.capabilities.actions ?? [],
+      robotCommands: promptObservation?.capabilities.robotCommands ?? [],
+      actionRouteSelected: routingAnalysis.needsAction === true
+        || (routingAnalysis.needsVision === true && selectedImages.length === 0),
+      requireObjective: false,
+    });
 
     return {
       message,
       jsonSchema,
-      messages: resumePreparedMovement
-        ? []
-        : [
-            { role: 'system', content: selectorContext },
-            {
-              role: 'user',
-              content: renderedContent(message),
-            },
-          ],
+      messages: [
+        { role: 'system', content: selectorContext },
+        {
+          role: 'user',
+          content: renderedContent(message),
+        },
+      ],
       context: {
         kind: 'environment',
         observation: effectiveObservation,
-        state: effectiveObservation.state ?? {},
-        text: effectiveObservation.text ?? [],
+        state: effectiveObservation?.state ?? {},
+        text: effectiveObservation?.text ?? [],
         location,
         map,
-        visual: effectiveObservation.visual ?? null,
-        visuals: effectiveObservation.visuals ?? [],
-        feedback: effectiveObservation.feedback ?? [],
+        visual: useImages ? effectiveObservation?.visual ?? null : null,
+        visuals: useImages ? effectiveObservation?.visuals ?? [] : [],
+        feedback: effectiveObservation?.feedback ?? [],
         conversationHistory: history,
         memories: Array.isArray(routedMemories)
           ? routedMemories
@@ -326,30 +230,32 @@ export const environmentContextBuilderNode = defineNode({
             ? routedMemories.memories
             : [],
         personaIncluded: Boolean(personaText),
-        robotStatusIncluded: Boolean(robotStatus),
+        robotStatusIncluded: routingAnalysis.needsRobotStatus === true && Boolean(robotStatus),
         routingAnalysis,
         contextSelection: {
           recentHistory: includeRecentHistory,
           recentHistoryCount: history.length,
-          semanticMemory: includeSemanticMemory,
+          semanticMemory: memoryItems.length > 0,
         },
         contextAdmission: {
-          typed: hasTypedContextAdmission,
-          environment: includeEnvironmentContext,
+          environment: Boolean(effectiveObservation),
           vision: useImages,
-          actionContracts: includeActionContracts,
-          selector: !resumePreparedMovement,
+          actionContracts: routingAnalysis.needsAction === true
+            || (routingAnalysis.needsVision === true && !useImages),
+          selector: true,
         },
         imageSelection: {
-          requested: routingAnalysis.needsVision === true || visualRequiredByTask || observerVisualEvidence,
+          requested: routingAnalysis.needsVision === true,
           available: images.length,
           used: selectedImages.length,
         },
       },
+      currentInstruction: rawInstruction,
+      instructionSource: inputSource,
       location,
       map,
       images: selectedImages,
-      availableActions: effectiveObservation.capabilities.actions,
+      availableActions: effectiveObservation?.capabilities.actions ?? [],
     };
   },
 });

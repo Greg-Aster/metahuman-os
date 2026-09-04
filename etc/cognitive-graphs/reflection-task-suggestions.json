@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "name": "Reflection Task Suggestions",
+  "description": "Admits one reflection and extracts typed task suggestions for user review",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "inputNode",
+      "position": { "x": 100, "y": 100 },
+      "data": { "label": "Reflection Input", "nodeType": "reflection_input", "properties": {} },
+      "width": 210,
+      "height": 90
+    },
+    {
+      "id": "2",
+      "type": "agentNode",
+      "position": { "x": 380, "y": 100 },
+      "data": { "label": "Extract Task Suggestions", "nodeType": "task_suggestion_extractor", "properties": {} },
+      "width": 250,
+      "height": 110
+    }
+  ],
+  "edges": [
+    { "id": "e-1-content-2-content", "source": "1", "target": "2", "sourceHandle": "content", "targetHandle": "content" }
+  ]
+}

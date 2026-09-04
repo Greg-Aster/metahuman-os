@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Reflector Agent Workflow",
   "description": "Loads the authenticated persona, samples multiple historical memories, builds a grounded reflection prompt, generates a concise reflection, and saves it as inner dialogue",
   "cognitiveMode": "agent",

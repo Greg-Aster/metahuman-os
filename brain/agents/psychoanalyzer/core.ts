@@ -7,10 +7,14 @@ import {
   applyPersonaLearningProposal,
   archivePersonaCore,
   audit,
-  callLLM,
+  cognitiveGraphPath,
+  getFirstFailedNode,
   getTargetUser,
+  loadGraphFile,
   loadPersonaCore,
   loadPsychoanalyzerConfig,
+  requireGraphNodeOutput,
+  runGraph,
   safeWriteJSON,
   savePersonaCore,
   scanEpisodicMemoryRecords,
@@ -19,6 +23,7 @@ import {
   validatePsychoanalyzerConfig,
   withUserContext,
   type AppliedPersonaLearningChange,
+  type CachedGraphEntry,
   type PersonaCore,
   type PersonaLearningApplyResult,
   type PersonaLearningProposal,
@@ -33,6 +38,8 @@ const ANALYSIS_ALGORITHM_VERSION = 'psychoanalyzer-v2'
 const MAX_EXECUTION_STATE_BYTES = 2 * 1024 * 1024
 const MAX_INSIGHTS_BYTES = 2 * 1024 * 1024
 const MAX_RECEIPTS = 100
+const PSYCHOANALYZER_GRAPH_FILE = 'psychoanalyzer.json'
+const psychoanalyzerGraphCache: Record<string, CachedGraphEntry | null> = {}
 
 export interface PsychoanalyzerMemory {
   id: string
@@ -287,52 +294,6 @@ function computeInputDigest(
   })
 }
 
-function buildAnalysisPrompt(memories: PsychoanalyzerMemory[], persona: PersonaCore): string {
-  const evidence = memories.map(memory => ({
-    id: memory.id,
-    timestamp: memory.timestamp,
-    type: memory.type,
-    tags: memory.tags,
-    content: memory.content,
-  }))
-
-  return `You are the evidence-review stage of a persona learning system.
-
-Review only the supplied user evidence. Propose the smallest set of durable persona changes supported by repeated or explicit evidence. Identity is protected and must never be changed. Do not infer a removal merely because an item is absent from recent evidence; removals require explicit contradiction, abandonment, or completion evidence.
-
-Allowed paths and values:
-- personality.traits: update only, value {"trait":"openness|conscientiousness|extraversion|agreeableness|neuroticism","score":0..1}
-- personality.communicationStyle: add/remove a concise tone string
-- personality.interests: add/remove a broad stable interest string
-- values.core: add/remove a durable value string
-- goals: add/remove an identity-level aspiration string, not a task or project
-- context.domains: add/remove a broad life domain string
-- context.currentFocus: add/remove a durable psychological focus string
-- context.projects: add/remove a project name string
-- decisionHeuristics: add {"signal":"...","response":"..."}; remove by exact signal string
-- writingStyle.motifs: add/remove a concise motif string
-
-Every change must cite one or more IDs from EVIDENCE. Return only valid JSON with this exact shape:
-{"summary":"...","confidence":0.0,"changes":[{"operation":"add|remove|update","path":"allowed.path","value":"or allowed object","evidenceIds":["memory-id"],"reason":"..."}]}
-
-CURRENT LEARNABLE PERSONA:
-${JSON.stringify(learnablePersona(persona), null, 2)}
-
-EVIDENCE:
-${JSON.stringify(evidence, null, 2)}`
-}
-
-function parseModelJson(content: string): unknown {
-  const trimmed = content.trim()
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)
-  const json = fenced ? fenced[1] : trimmed
-  try {
-    return JSON.parse(json)
-  } catch (error) {
-    throw new Error(`Psychotherapist returned invalid JSON: ${(error as Error).message}`)
-  }
-}
-
 export async function analyzePersonaEvidence(
   memories: PsychoanalyzerMemory[],
   persona: PersonaCore,
@@ -340,20 +301,34 @@ export async function analyzePersonaEvidence(
   signal?: AbortSignal,
 ): Promise<PersonaLearningProposal> {
   throwIfAborted(signal)
-  const response = await callLLM({
-    role: config.analysis.model,
-    messages: [{ role: 'user', content: buildAnalysisPrompt(memories, persona) }],
-    options: {
-      temperature: config.analysis.temperature,
-      maxTokens: config.analysis.maxTokens,
+  const target = getTargetUser()
+  if (!target) throw new Error('Psychoanalyzer graph requires an authenticated user context')
+  const loaded = await loadGraphFile(cognitiveGraphPath(PSYCHOANALYZER_GRAPH_FILE), {
+    cache: psychoanalyzerGraphCache,
+    cacheKey: PSYCHOANALYZER_GRAPH_FILE,
+    logPrefix: '[psychoanalyzer]',
+  })
+  if (!loaded) throw new Error(`Psychoanalyzer graph ${PSYCHOANALYZER_GRAPH_FILE} could not be loaded`)
+  const graphState = await runGraph({
+    graph: loaded.graph,
+    signal,
+    context: {
+      username: target.username,
+      userId: target.userId,
+      cognitiveMode: 'agent',
+      psychoanalyzerInput: { memories, persona, config },
+      abortSignal: signal,
     },
-    keepAlive: 0,
   })
   throwIfAborted(signal)
-  return validatePersonaLearningProposal(
-    parseModelJson(response.content),
-    new Set(memories.map(memory => memory.id)),
-  )
+  if (graphState.status !== 'completed') {
+    const failed = getFirstFailedNode(graphState)
+    throw new Error(failed
+      ? `Psychoanalyzer graph failed at ${failed.nodeId}: ${failed.error}`
+      : `Psychoanalyzer graph ended with status ${graphState.status}`)
+  }
+  const output = requireGraphNodeOutput(graphState, 'psychoanalyzer_analysis')
+  return validatePersonaLearningProposal(output.proposal, new Set(memories.map(memory => memory.id)))
 }
 
 function resolveInsightsPath(): string {

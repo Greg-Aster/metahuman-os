@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "name": "Persona Extraction",
+  "description": "Admits an authenticated interview transcript and extracts one validated persona draft",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "inputNode",
+      "position": { "x": 100, "y": 100 },
+      "data": { "label": "Persona Transcript", "nodeType": "persona_transcript_input", "properties": {} },
+      "width": 220,
+      "height": 90
+    },
+    {
+      "id": "2",
+      "type": "personaNode",
+      "position": { "x": 390, "y": 100 },
+      "data": { "label": "Extract Persona", "nodeType": "persona_profile_extractor", "properties": {} },
+      "width": 230,
+      "height": 110
+    }
+  ],
+  "edges": [
+    { "id": "e-1-messages-2-messages", "source": "1", "target": "2", "sourceHandle": "messages", "targetHandle": "messages" }
+  ]
+}

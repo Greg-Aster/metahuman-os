@@ -11,6 +11,7 @@ export const ROBOT_OPERATOR_RUNTIME_FILE = path.join(systemPaths.logs, 'run', 'r
 export type RobotObserverTriggerSource = 'user' | 'autonomy'
 export type RobotOperatorStimulusAgent =
   | 'robot-status'
+  | 'robot-goal-review'
   | 'boredom-observer'
   | 'boredom-movement'
   | 'boredom-reflection'
@@ -20,6 +21,7 @@ export type RobotOperatorCycleRequester =
 
 const ROBOT_AUTONOMY_HANDLERS = new Set([
   'workflow.robot-status',
+  'workflow.robot-goal-review',
   'workflow.boredom-observer',
   'workflow.boredom-movement',
   'workflow.boredom-reflection',
@@ -37,6 +39,8 @@ export interface RobotOperatorConfig {
   enabled: boolean
   robotStatusInactivityThresholdSeconds: number
   robotStatusJitterMs: number
+  robotGoalReviewInactivityThresholdSeconds: number
+  robotGoalReviewJitterMs: number
   boredomObserverInactivityThresholdSeconds: number
   boredomObserverJitterMs: number
   boredomMovementInactivityThresholdSeconds: number
@@ -44,6 +48,7 @@ export interface RobotOperatorConfig {
   boredomReflectionInactivityThresholdSeconds: number
   boredomReflectionJitterMs: number
   robotStatusGraph: string
+  robotGoalReviewGraph: string
   boredomObserverGraph: string
   boredomMovementGraph: string
   boredomReflectionGraph: string
@@ -78,6 +83,8 @@ const DEFAULT_CONFIG: RobotOperatorConfig = {
   enabled: true,
   robotStatusInactivityThresholdSeconds: 300,
   robotStatusJitterMs: 60_000,
+  robotGoalReviewInactivityThresholdSeconds: 60,
+  robotGoalReviewJitterMs: 0,
   boredomObserverInactivityThresholdSeconds: 300,
   boredomObserverJitterMs: 60_000,
   boredomMovementInactivityThresholdSeconds: 600,
@@ -85,6 +92,7 @@ const DEFAULT_CONFIG: RobotOperatorConfig = {
   boredomReflectionInactivityThresholdSeconds: 900,
   boredomReflectionJitterMs: 180_000,
   robotStatusGraph: 'robot-status',
+  robotGoalReviewGraph: 'robot-goal-review',
   boredomObserverGraph: 'boredom-observer',
   boredomMovementGraph: 'boredom-movement',
   boredomReflectionGraph: 'boredom-reflection',
@@ -135,6 +143,18 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
       0,
       3_600_000,
     ),
+    robotGoalReviewInactivityThresholdSeconds: boundedNumber(
+      configured.robotGoalReviewInactivityThreshold,
+      DEFAULT_CONFIG.robotGoalReviewInactivityThresholdSeconds,
+      1,
+      86_400,
+    ),
+    robotGoalReviewJitterMs: boundedNumber(
+      configured.robotGoalReviewJitterMs,
+      DEFAULT_CONFIG.robotGoalReviewJitterMs,
+      0,
+      3_600_000,
+    ),
     boredomObserverInactivityThresholdSeconds: boundedNumber(
       configured.boredomObserverInactivityThreshold ?? configured.inactivityThreshold,
       DEFAULT_CONFIG.boredomObserverInactivityThresholdSeconds,
@@ -172,6 +192,7 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
       3_600_000,
     ),
     robotStatusGraph: configuredGraph(configured.robotStatusGraph, DEFAULT_CONFIG.robotStatusGraph),
+    robotGoalReviewGraph: configuredGraph(configured.robotGoalReviewGraph, DEFAULT_CONFIG.robotGoalReviewGraph),
     boredomObserverGraph: configuredGraph(configured.boredomObserverGraph, DEFAULT_CONFIG.boredomObserverGraph),
     boredomMovementGraph: configuredGraph(configured.boredomMovementGraph, DEFAULT_CONFIG.boredomMovementGraph),
     boredomReflectionGraph: configuredGraph(configured.boredomReflectionGraph, DEFAULT_CONFIG.boredomReflectionGraph),
@@ -210,6 +231,7 @@ export function isBoredomReflectionEnabled(): boolean {
 
 export function isRobotOperatorChildEnabled(agent: RobotOperatorStimulusAgent): boolean {
   if (agent === 'robot-status') return isRobotStatusEnabled()
+  if (agent === 'robot-goal-review') return isConfiguredAgentEnabled('robot-goal-review')
   if (agent === 'boredom-observer') return isBoredomObserverEnabled()
   if (agent === 'boredom-movement') return isBoredomMovementEnabled()
   return isBoredomReflectionEnabled()
@@ -220,6 +242,7 @@ export function robotOperatorChildGraph(
   agent: RobotOperatorStimulusAgent,
 ): string {
   if (agent === 'robot-status') return config.robotStatusGraph
+  if (agent === 'robot-goal-review') return config.robotGoalReviewGraph
   if (agent === 'boredom-observer') return config.boredomObserverGraph
   if (agent === 'boredom-movement') return config.boredomMovementGraph
   return config.boredomReflectionGraph
@@ -249,7 +272,12 @@ export function robotOperatorFullDueAt(
 function hasRobotObserverMetadata(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const record = value as Record<string, any>
-  return Boolean(record.metadata?.robotObserver || record.observation?.metadata?.robotObserver)
+  return Boolean(
+    record.metadata?.robotObserver
+    || record.observation?.metadata?.robotObserver
+    || record.actionContext?.robotObserver
+    || record.robotOperatorContext?.robotObserver,
+  )
 }
 
 export function isRobotAutonomyWorkItem(
@@ -288,6 +316,7 @@ export function readRobotOperatorRuntimeState(): RobotOperatorRuntimeState | nul
     if (!['starting', 'armed', 'dormant', 'admitting', 'stopped'].includes(parsed.lifecycle)) return null
     const childIds: RobotOperatorStimulusAgent[] = [
       'robot-status',
+      'robot-goal-review',
       'boredom-observer',
       'boredom-movement',
       'boredom-reflection',
@@ -372,6 +401,7 @@ export function parseRobotObserverCycle(value: unknown): RobotObserverCycleMetad
     || (triggerSource !== 'user' && triggerSource !== 'autonomy')
     || (
       requestedBy !== 'boredom-observer'
+      && requestedBy !== 'robot-goal-review'
       && requestedBy !== 'boredom-movement'
       && requestedBy !== 'boredom-reflection'
       && requestedBy !== 'environment-perception'

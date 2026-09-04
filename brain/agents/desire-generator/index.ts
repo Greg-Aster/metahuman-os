@@ -24,10 +24,7 @@ export {
   generateDesiresForUser,
   gatherInputs,
   identifyDesires,
-  parseDesireCandidates,
   parseDesireGeneratorArgs,
-  parseReinforcementResponse,
-  validateCandidateSources,
   type DesireGeneratorOptions,
   type DesireGeneratorResult,
 } from './core.js';

@@ -15,10 +15,22 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { storageClient } from './storage-client.js';
-import { callLLM } from './model-router.js';
 import { audit } from './audit.js';
 import { listEpisodicFiles, type EpisodicEvent } from './memory.js';
 import { safeWriteJSON } from './safe-file.js';
+import { getUserContext } from './context.js';
+import {
+  cognitiveGraphPath,
+  loadGraphFile,
+  requireGraphNodeOutput,
+  runGraph,
+} from './graph-runtime.js';
+import type { SvelteFlowGraph } from './cognitive-graph-schema.js';
+import type {
+  ExtractedPreference,
+  PreferenceContradiction,
+  PreferenceLearningOperation,
+} from './nodes/persona/preference-learning.node.js';
 
 // ============================================================================
 // Types
@@ -87,6 +99,8 @@ export interface LearningOptions {
   minConfidence?: number;
   /** Categories to extract */
   categories?: PreferenceCategory[];
+  username?: string;
+  signal?: AbortSignal;
 }
 
 // ============================================================================
@@ -221,92 +235,73 @@ function loadRecentEvents(options: LearningOptions = {}): EpisodicEvent[] {
   return events;
 }
 
-// ============================================================================
-// LLM Extraction
-// ============================================================================
-
-const EXTRACTION_PROMPT = `You are analyzing conversations and observations to extract user preferences.
-
-Look for patterns in:
-- Communication style preferences (formal/casual, brevity, humor)
-- Decision-making patterns (quick decisions, thorough analysis, risk tolerance)
-- Workflow preferences (batching tasks, immediate responses, async work)
-- Interaction style (direct feedback, gentle suggestions, detailed explanations)
-- Content preferences (topics of interest, writing style, format preferences)
-- Timing preferences (response times, meeting preferences, focus hours)
-- Style preferences (code style, documentation level, emoji usage)
-- Avoidances (topics to avoid, patterns that frustrate)
-
-For each preference:
-1. Describe the preference clearly
-2. Specify the concrete behavior
-3. Rate confidence (0.0-1.0) based on evidence strength
-4. Categorize appropriately
-
-Only extract preferences with clear evidence. Be conservative.
-
-Respond in JSON:
-{
-  "preferences": [
-    {
-      "category": "communication|decision|workflow|interaction|content|timing|style|avoidance",
-      "description": "Brief description of the preference",
-      "behavior": "Specific behavior or pattern to follow",
-      "confidence": 0.75
-    }
-  ]
+async function loadPreferenceGraph(): Promise<SvelteFlowGraph> {
+  const loaded = await loadGraphFile(cognitiveGraphPath('preference-learning.json'), {
+    cacheKey: 'preference-learning',
+    logPrefix: '[preference-learner]',
+  });
+  if (!loaded) throw new Error('Preference learning graph is unavailable');
+  return loaded.graph;
 }
 
-If no clear preferences found, respond: {"preferences": []}`;
-
-interface ExtractedPreference {
-  category: PreferenceCategory;
-  description: string;
-  behavior: string;
-  confidence: number;
+async function runPreferenceGraph(
+  graph: SvelteFlowGraph,
+  username: string,
+  operation: PreferenceLearningOperation,
+  input: {
+    events?: EpisodicEvent[];
+    categories?: PreferenceCategory[];
+    preference1?: LearnedPreference;
+    preference2?: LearnedPreference;
+  },
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const activeUser = getUserContext();
+  if (!activeUser || (activeUser.username !== username && activeUser.activeProfile !== username)) {
+    throw new Error(`Preference learning requires an authenticated context for ${username}`);
+  }
+  const state = await runGraph({
+    graph,
+    signal,
+    context: {
+      userId: activeUser.userId,
+      username,
+      preferenceOperation: operation,
+      events: input.events,
+      preferenceCategories: input.categories,
+      preference1: input.preference1,
+      preference2: input.preference2,
+      cognitiveMode: 'agent',
+      allowMemoryWrites: false,
+      recordPersonaMemory: false,
+      abortSignal: signal,
+    },
+  });
+  if (state.status !== 'completed') {
+    throw new Error(`Preference learning graph ended with status ${state.status}`);
+  }
+  return requireGraphNodeOutput(state, 'preference_learning');
 }
 
 async function extractPreferencesFromEvents(
-  events: EpisodicEvent[]
+  events: EpisodicEvent[],
+  graph: SvelteFlowGraph,
+  username: string,
+  categories?: PreferenceCategory[],
+  signal?: AbortSignal,
 ): Promise<ExtractedPreference[]> {
   if (events.length === 0) return [];
-
-  // Build context from events
-  const context = events
-    .slice(0, 20)
-    .map((e) => {
-      const type = e.type || 'unknown';
-      const content = e.content?.substring(0, 500) || '';
-      return `[${type}] ${content}`;
-    })
-    .join('\n\n---\n\n');
-
-  try {
-    const response = await callLLM({
-      role: 'curator',
-      messages: [
-        { role: 'system', content: EXTRACTION_PROMPT },
-        {
-          role: 'user',
-          content: `Analyze these events for user preferences:\n\n${context}`,
-        },
-      ],
-      options: {
-        temperature: 0.3,
-        responseFormat: { type: 'json_object' },
-      },
-    });
-
-    if (!response.content) {
-      return [];
-    }
-
-    const parsed = JSON.parse(response.content);
-    return parsed.preferences || [];
-  } catch (error) {
-    console.warn('[preference-learner] Extraction failed:', (error as Error).message);
-    return [];
+  const output = await runPreferenceGraph(
+    graph,
+    username,
+    'extract',
+    { events: events.slice(0, 20), categories },
+    signal,
+  );
+  if (!Array.isArray(output.preferences)) {
+    throw new Error('Preference learning graph returned no preferences array');
   }
+  return output.preferences as ExtractedPreference[];
 }
 
 // ============================================================================
@@ -365,61 +360,34 @@ function mergePreference(
 // Contradiction Detection
 // ============================================================================
 
-const CONTRADICTION_PROMPT = `You are checking if two preferences contradict each other.
-
-Preference 1:
-Category: {cat1}
-Description: {desc1}
-Behavior: {beh1}
-
-Preference 2:
-Category: {cat2}
-Description: {desc2}
-Behavior: {beh2}
-
-Do these preferences contradict each other? Consider:
-- Direct conflicts (e.g., "be brief" vs "provide detailed explanations")
-- Implicit conflicts (e.g., "respond immediately" vs "batch communications")
-- Partial conflicts (e.g., conflict only in certain contexts)
-
-Respond in JSON:
-{
-  "contradicts": true|false,
-  "explanation": "Brief explanation if they contradict"
-}`;
-
 async function checkContradiction(
   pref1: LearnedPreference,
-  pref2: LearnedPreference
-): Promise<{ contradicts: boolean; explanation?: string }> {
-  try {
-    const prompt = CONTRADICTION_PROMPT.replace('{cat1}', pref1.category)
-      .replace('{desc1}', pref1.description)
-      .replace('{beh1}', pref1.behavior)
-      .replace('{cat2}', pref2.category)
-      .replace('{desc2}', pref2.description)
-      .replace('{beh2}', pref2.behavior);
-
-    const response = await callLLM({
-      role: 'curator',
-      messages: [{ role: 'user', content: prompt }],
-      options: {
-        temperature: 0.1,
-        responseFormat: { type: 'json_object' },
-      },
-    });
-
-    if (!response.content) {
-      return { contradicts: false };
-    }
-
-    return JSON.parse(response.content);
-  } catch {
-    return { contradicts: false };
+  pref2: LearnedPreference,
+  graph: SvelteFlowGraph,
+  username: string,
+  signal?: AbortSignal,
+): Promise<PreferenceContradiction> {
+  const output = await runPreferenceGraph(
+    graph,
+    username,
+    'contradiction',
+    { preference1: pref1, preference2: pref2 },
+    signal,
+  );
+  const contradiction = output.contradiction;
+  if (!contradiction || typeof contradiction !== 'object' || Array.isArray(contradiction)
+    || typeof (contradiction as PreferenceContradiction).contradicts !== 'boolean') {
+    throw new Error('Preference learning graph returned an invalid contradiction decision');
   }
+  return contradiction as PreferenceContradiction;
 }
 
-async function detectContradictions(preferences: LearnedPreference[]): Promise<void> {
+async function detectContradictions(
+  preferences: LearnedPreference[],
+  graph: SvelteFlowGraph,
+  username: string,
+  signal?: AbortSignal,
+): Promise<void> {
   // Only check pending/confirmed preferences
   const active = preferences.filter(
     (p) => p.validationStatus === 'pending' || p.validationStatus === 'confirmed'
@@ -428,7 +396,7 @@ async function detectContradictions(preferences: LearnedPreference[]): Promise<v
   // Check each pair
   for (let i = 0; i < active.length; i++) {
     for (let j = i + 1; j < active.length; j++) {
-      const result = await checkContradiction(active[i], active[j]);
+      const result = await checkContradiction(active[i], active[j], graph, username, signal);
       if (result.contradicts) {
         const iContradicts = active[i].contradicts || [];
         const jContradicts = active[j].contradicts || [];
@@ -457,10 +425,20 @@ export async function learnPreferences(
   options: LearningOptions = {}
 ): Promise<ExtractionResult> {
   const { minConfidence = 0.5 } = options;
+  const activeUser = getUserContext();
+  const username = options.username?.trim() || activeUser?.activeProfile || activeUser?.username || '';
+  if (!username) throw new Error('Preference learning requires an authenticated profile');
 
   const events = loadRecentEvents(options);
   const existingPrefs = loadPreferences();
-  const extracted = await extractPreferencesFromEvents(events);
+  const graph = await loadPreferenceGraph();
+  const extracted = await extractPreferencesFromEvents(
+    events,
+    graph,
+    username,
+    options.categories,
+    options.signal,
+  );
 
   let newCount = 0;
   let updatedCount = 0;
@@ -707,11 +685,15 @@ export function getConfirmedPreferences(): LearnedPreference[] {
 /**
  * Find contradicting preferences.
  */
-export async function findContradictions(): Promise<
+export async function findContradictions(options: { username?: string; signal?: AbortSignal } = {}): Promise<
   Array<{ pref1: LearnedPreference; pref2: LearnedPreference; explanation?: string }>
 > {
+  const activeUser = getUserContext();
+  const username = options.username?.trim() || activeUser?.activeProfile || activeUser?.username || '';
+  if (!username) throw new Error('Preference contradiction detection requires an authenticated profile');
   const prefs = loadPreferences();
-  await detectContradictions(prefs);
+  const graph = await loadPreferenceGraph();
+  await detectContradictions(prefs, graph, username, options.signal);
   savePreferences(prefs);
 
   const contradictions: Array<{

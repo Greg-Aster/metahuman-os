@@ -23,21 +23,15 @@ import { renderPromptTemplate } from '../prompt-template.js';
 
 const SYSTEM_PROMPT = `You are the Safety Review module of MetaHuman OS. Your job is to evaluate plans for safety, risk, and policy compliance.
 
-## Hard Rules (Never Violate)
-- Never send messages without explicit approval
-- Never make financial transactions (except pre-approved <$10)
-- Never delete important data without explicit approval
-- Always maintain complete audit logs
-- Never share private data externally
-
 ## Risk Assessment Criteria
 - Is the action reversible?
 - What is the worst-case outcome?
 - Are there unintended consequences?
-- Does it violate any hard rules?
+- Does it violate any supplied decision rule or hard rule?
 - Is user data protected?
 
-Be conservative with safety. When in doubt, flag concerns.
+The decision rules supplied with the request are authoritative. Do not invent,
+weaken, or replace them. Be conservative with safety. When in doubt, flag concerns.
 
 Respond with valid JSON matching the schema.`;
 
@@ -77,27 +71,10 @@ Respond with JSON:
 }`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Inputs come via slot positions from graph links:
-  // slot 0: {desire, found} from desire_loader
-  // slot 2: formatted decision rules string from policy_loader
-  const slot0 = (inputs.slot_0 ?? inputs.desire ?? inputs[0]) as { desire?: Desire; found?: boolean } | Desire | undefined;
-  const slot2 = (inputs.slot_2 ?? inputs.decisionRules ?? inputs[2]) as string | { formatted?: string } | undefined;
-  const username = context.userId || context.username;
-
-  // Extract desire and plan (plan is embedded in desire)
-  const desire: Desire | undefined = (slot0 as { desire?: Desire } | undefined)?.desire
-    ?? slot0 as Desire | undefined;
-  const plan = desire?.plan || (inputs.plan as DesirePlan | undefined);
-
-  // Get decision rules from slot or named input
-  let decisionRules = '';
-  if (typeof slot2 === 'string') {
-    decisionRules = slot2;
-  } else if (slot2 && typeof slot2 === 'object' && 'formatted' in slot2) {
-    decisionRules = slot2.formatted || '';
-  } else if (inputs.decisionRules) {
-    decisionRules = inputs.decisionRules as string;
-  }
+  const desire = inputs.desire as Desire | undefined;
+  const plan = inputs.plan as DesirePlan | undefined;
+  const decisionRules = typeof inputs.decisionRules === 'string' ? inputs.decisionRules.trim() : '';
+  const userId = typeof context.userId === 'string' ? context.userId.trim() : '';
 
   const temperature = (properties?.temperature as number) ?? 0.1;
   const role = normalizeModelRole(properties?.role, 'orchestrator');
@@ -105,14 +82,10 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 
   if (!desire || !plan) {
-    return {
-      safetyScore: 0,
-      risks: ['Missing desire or plan'],
-      mitigations: [],
-      approved: false,
-      reasoning: `Cannot review safety without desire and plan. Got desire: ${!!desire}, plan: ${!!plan}`,
-    };
+    throw new Error('Safety Review requires a desire and validated plan');
   }
+  if (!decisionRules) throw new Error('Safety Review requires loaded decision rules');
+  if (!userId) throw new Error('Safety Review requires authenticated account identity');
 
   const userPrompt = renderPromptTemplate(userPromptTemplate, {
     title: desire.title,
@@ -135,7 +108,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     const response = await callLLM({
       role,
       messages,
-      userId: username,
+      userId,
       options: {
         temperature,
         responseFormat: 'json',
@@ -143,44 +116,36 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     });
 
     if (!response.content) {
-      return {
-        safetyScore: 0,
-        risks: ['Empty LLM response'],
-        mitigations: [],
-        approved: false,
-        reasoning: 'Failed to get safety review',
-      };
+      throw new Error('Safety Review received an empty model response');
     }
 
     const content = response.content.trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return {
-        safetyScore: 0,
-        risks: ['Invalid response format'],
-        mitigations: [],
-        approved: false,
-        reasoning: 'Could not parse safety review',
-      };
+      throw new Error('Safety Review response did not contain a JSON object');
     }
 
     const parsed = JSON.parse(jsonMatch[0]) as SafetyReviewOutput;
-
-    return {
+    if (!Number.isFinite(parsed.safetyScore)
+        || !Array.isArray(parsed.risks)
+        || parsed.risks.some(risk => typeof risk !== 'string')
+        || !Array.isArray(parsed.mitigations)
+        || parsed.mitigations.some(mitigation => typeof mitigation !== 'string')
+        || typeof parsed.approved !== 'boolean'
+        || typeof parsed.reasoning !== 'string'
+        || !parsed.reasoning.trim()) {
+      throw new Error('Safety Review response is missing required typed fields');
+    }
+    const review = {
       safetyScore: Math.max(0, Math.min(1, parsed.safetyScore)),
-      risks: parsed.risks || [],
-      mitigations: parsed.mitigations || [],
+      risks: parsed.risks,
+      mitigations: parsed.mitigations,
       approved: parsed.approved,
-      reasoning: parsed.reasoning,
+      reasoning: parsed.reasoning.trim(),
     };
+    return { ...review, review };
   } catch (error) {
-    return {
-      safetyScore: 0,
-      risks: [`Review error: ${(error as Error).message}`],
-      mitigations: [],
-      approved: false,
-      reasoning: 'Safety review failed due to error',
-    };
+    throw new Error(`Safety Review failed: ${(error as Error).message}`, { cause: error });
   }
 };
 
@@ -192,7 +157,7 @@ export const DesireSafetyReviewerNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'desire', type: 'object', description: 'Desire being reviewed' },
     { name: 'plan', type: 'object', description: 'Plan to review' },
-    { name: 'decisionRules', type: 'string', optional: true, description: 'Hard rules and constraints' },
+    { name: 'decisionRules', type: 'string', description: 'Canonical loaded decision rules and constraints' },
   ],
   outputs: [
     { name: 'safetyScore', type: 'number', description: 'Score from 0-1' },
@@ -200,6 +165,7 @@ export const DesireSafetyReviewerNode: NodeDefinition = defineNode({
     { name: 'mitigations', type: 'array', description: 'Suggested mitigations' },
     { name: 'approved', type: 'boolean', description: 'Whether safety check passed' },
     { name: 'reasoning', type: 'string', description: 'Explanation of verdict' },
+    { name: 'review', type: 'object', description: 'Typed aggregate safety review' },
   ],
   properties: {
     temperature: 0.1,

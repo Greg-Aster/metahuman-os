@@ -372,7 +372,6 @@ export interface EnvironmentActionContext {
     type?: string;
     message?: string;
   };
-  taskInstruction?: string;
   robotObserver?: Record<string, unknown>;
   actionTiming?: EnvironmentActionTiming;
 }
@@ -382,6 +381,9 @@ export interface RobotOperatorContext {
   robotObserver: Record<string, unknown>;
   plannerDecision?: Record<string, unknown>;
   memories?: string[];
+  stimulusAgent?: string;
+  sourceObservationAt?: string;
+  currentVisualEvidence?: boolean;
 }
 
 export interface EnvironmentSessionState {

@@ -80,6 +80,55 @@ Output JSON:
 
 const DEFAULT_USER_PROMPT_TEMPLATE = `Analyze this message: "{{userMessage}}"`;
 
+const ENVIRONMENT_INTENT_FIELDS = [
+  'needsResponse',
+  'needsConversationHistory',
+  'needsMemory',
+  'needsRobotStatus',
+  'needsEnvironment',
+  'needsVision',
+  'needsAction',
+] as const;
+
+export type EnvironmentIntentRouting = Record<typeof ENVIRONMENT_INTENT_FIELDS[number], boolean>;
+
+export const ENVIRONMENT_INTENT_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [...ENVIRONMENT_INTENT_FIELDS],
+  properties: Object.fromEntries(ENVIRONMENT_INTENT_FIELDS.map(field => [field, { type: 'boolean' }])),
+} as const;
+
+export function parseEnvironmentIntentRouting(value: unknown): EnvironmentIntentRouting {
+  if (typeof value !== 'string') {
+    throw new Error('Environment intent output must be strict JSON text');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value.trim());
+  } catch {
+    throw new Error('Environment intent output is not strict JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Environment intent output must be one JSON object');
+  }
+  const record = parsed as Record<string, unknown>;
+  const unexpected = Object.keys(record).filter(field => (
+    !ENVIRONMENT_INTENT_FIELDS.includes(field as typeof ENVIRONMENT_INTENT_FIELDS[number])
+  ));
+  if (unexpected.length > 0) {
+    throw new Error(`Environment intent output contains unsupported field(s): ${unexpected.join(', ')}`);
+  }
+  for (const field of ENVIRONMENT_INTENT_FIELDS) {
+    if (typeof record[field] !== 'boolean') {
+      throw new Error(`Environment intent output requires boolean ${field}`);
+    }
+  }
+  return Object.fromEntries(
+    ENVIRONMENT_INTENT_FIELDS.map(field => [field, record[field] as boolean]),
+  ) as EnvironmentIntentRouting;
+}
+
 function withAnalysis<T extends Record<string, any>>(result: T): T & { analysis: T } {
   return {
     ...result,
@@ -110,12 +159,15 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   ],
   outputs: [
     { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
+    { name: 'needsResponse', type: 'boolean', description: 'Whether this turn needs a conversational response' },
+    { name: 'needsConversationHistory', type: 'boolean', description: 'Whether downstream reasoning needs recent dialogue context' },
     { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },
     { name: 'memoryTier', type: 'string', description: 'Memory tier to search' },
     { name: 'memoryQuery', type: 'string', description: 'Optimized search query' },
     { name: 'memoryTypes', type: 'array', description: 'Exact stored memory types selected semantically by the LLM; empty for broad recall' },
     { name: 'needsEnvironment', type: 'boolean', description: 'Whether current environment state or capabilities are needed' },
     { name: 'needsVision', type: 'boolean', description: 'Whether fresh correlated visual evidence is needed' },
+    { name: 'needsRobotStatus', type: 'boolean', description: 'Whether downstream reasoning needs the current Robot Status snapshot' },
     { name: 'needsAction', type: 'boolean', description: 'Whether an action/skill is needed (routes to Big Brother)' },
     { name: 'actionType', type: 'string', description: 'Type of action to perform' },
     { name: 'actionParams', type: 'object', description: 'Parameters for the action' },
@@ -128,12 +180,23 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   description: 'Enhanced intent analysis with action detection and conversation awareness',
 
   properties: {
+    outputContract: 'general',
     systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
     temperature: 0.2,
     maxTokens: 768,
   },
   propertySchemas: {
+    outputContract: {
+      type: 'select',
+      default: 'general',
+      label: 'Routing Contract',
+      description: 'Selects the typed intent fields this instance must return. Environment routing emits route switches only.',
+      options: [
+        { value: 'general', label: 'General' },
+        { value: 'environment', label: 'Environment' },
+      ],
+    },
     systemPrompt: {
       type: 'text_multiline',
       default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
@@ -175,6 +238,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     const userMessage = typeof inputData === 'string'
       ? inputData
       : (inputData?.message || context.userMessage || '');
+    const environmentContract = properties?.outputContract === 'environment';
 
     // Analyze conversation context
     const conversationLength = Array.isArray(conversationHistory) ? conversationHistory.length : 0;
@@ -185,6 +249,9 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     const currentIteration = feedbackContext?.iteration ?? 1;
 
     if (!userMessage || typeof userMessage !== 'string' || userMessage.trim().length === 0) {
+      if (environmentContract) {
+        throw new Error('Environment Intent Orchestrator requires a user message');
+      }
       return withAnalysis({
         needsMemory: false,
         memoryTier: 'hot',
@@ -207,10 +274,17 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
 
     // Build conversation context summary for the LLM
     const recentMessages = Array.isArray(conversationHistory)
-      ? conversationHistory.slice(-4).map((m: any) => {
-          const role = m.role === 'user' ? 'User' : 'Assistant';
-          const content = typeof m.content === 'string' ? m.content.substring(0, 150) : '';
-          return `${role}: ${content}${content.length >= 150 ? '...' : ''}`;
+      ? conversationHistory
+        .filter((message: any) => (
+          (message?.role === 'user' || message?.role === 'assistant')
+          && typeof message?.content === 'string'
+          && message.content.trim()
+        ))
+        .slice(-4)
+        .map((message: any) => {
+          const role = message.role === 'user' ? 'User' : 'Assistant';
+          const content = message.content.trim().substring(0, 150);
+          return `${role}: ${content}${message.content.trim().length > 150 ? '...' : ''}`;
         }).join('\n')
       : '';
 
@@ -257,9 +331,21 @@ Adjust your routing based on this feedback. If memory search already failed, con
           maxTokens: properties?.maxTokens || 768,
           repeatPenalty: 1.15,
           temperature: properties?.temperature ?? 0.2,
+          format: environmentContract ? 'json' : undefined,
+          jsonSchema: environmentContract ? ENVIRONMENT_INTENT_JSON_SCHEMA : undefined,
         },
         onProgress: context.emitProgress,
       });
+
+      if (environmentContract) {
+        const routing = parseEnvironmentIntentRouting(response.content);
+        return {
+          ...routing,
+          analysis: routing,
+          raw: response.content,
+          thinking: response.thinking,
+        };
+      }
 
       try {
         const parsed = JSON.parse(response.content);
@@ -357,6 +443,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
       }
     } catch (error) {
       console.error('[OrchestratorLLM] Error:', error);
+      if (environmentContract) throw error;
       return withAnalysis({
         needsMemory: false,
         memoryTier: 'hot',

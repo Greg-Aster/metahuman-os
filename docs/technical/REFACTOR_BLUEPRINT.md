@@ -59,8 +59,8 @@ brain/*
   -> call public engine interfaces
 
 packages/agent-runtime
-  -> shared agent execution interfaces and adapters
-  -> does not own persistent-process supervision
+  -> shared finite-agent execution interfaces only
+  -> does not load, register, execute, or supervise agents
 
 packages/core
   -> engine/domain logic, storage abstraction, auth, policy, memory,

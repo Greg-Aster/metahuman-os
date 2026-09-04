@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "name": "Semantic Turn Detection",
+  "description": "Admits a voice transcript and classifies whether the utterance is complete",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "inputNode",
+      "position": { "x": 80, "y": 100 },
+      "data": { "label": "Voice Transcript", "nodeType": "semantic_turn_input", "properties": {} },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "2",
+      "type": "agentNode",
+      "position": { "x": 380, "y": 100 },
+      "data": { "label": "Classify Turn", "nodeType": "semantic_turn_classifier", "properties": {} },
+      "width": 230,
+      "height": 110
+    }
+  ],
+  "edges": [
+    { "id": "e-1-transcript-2-transcript", "source": "1", "target": "2", "sourceHandle": "transcript", "targetHandle": "transcript" },
+    { "id": "e-1-context-2-context", "source": "1", "target": "2", "sourceHandle": "previousContext", "targetHandle": "previousContext" }
+  ]
+}

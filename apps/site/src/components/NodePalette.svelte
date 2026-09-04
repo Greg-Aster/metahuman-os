@@ -1,18 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
-
-  interface NodeSchema {
-    id: string;
-    name: string;
-    category: string;
-    description: string;
-    color: string;
-    bgColor: string;
-    inputs: Array<{ name: string; type: string; optional?: boolean; description?: string }>;
-    outputs: Array<{ name: string; type: string; optional?: boolean; description?: string }>;
-    properties?: Record<string, any>;
-  }
+  import type { NodeSchema } from '@metahuman/core/nodes/types';
+  import { schemaSearchText } from '../lib/client/flow-editor/graph-authoring';
 
   let { onNodeSelected, collapsed = false }: {
     onNodeSelected: (nodeType: string) => void;
@@ -54,26 +44,29 @@
   // Category display names and order
   const categoryInfo: Record<string, { name: string; icon: string; order: number }> = {
     input: { name: 'Input', icon: '📥', order: 1 },
-    router: { name: 'Router', icon: '🔀', order: 2 },
-    context: { name: 'Context', icon: '📚', order: 3 },
-    operator: { name: 'Operator', icon: '⚙️', order: 4 },
-    chat: { name: 'Chat', icon: '💬', order: 5 },
-    model: { name: 'Model', icon: '🤖', order: 6 },
-    skill: { name: 'Skill', icon: '🔧', order: 7 },
-    output: { name: 'Output', icon: '📤', order: 8 },
-    control_flow: { name: 'Control Flow', icon: '🔄', order: 9 },
-    memory: { name: 'Memory', icon: '🧠', order: 10 },
-    utility: { name: 'Utility', icon: '🛠️', order: 11 },
-    cognitive: { name: 'Cognitive', icon: '💡', order: 12 },
-    safety: { name: 'Safety', icon: '🛡️', order: 13 },
-    persona: { name: 'Persona', icon: '👤', order: 14 },
-    agent: { name: 'Agent', icon: '🤖', order: 15 },
-    thought: { name: 'Thought', icon: '💭', order: 16 },
-    dreamer: { name: 'Dreamer', icon: '🌙', order: 17 },
-    curiosity: { name: 'Curiosity', icon: '❓', order: 18 },
-    curator: { name: 'Curator', icon: '📋', order: 19 },
-    emulation: { name: 'Emulation', icon: '🎭', order: 20 },
-    agency: { name: 'Agency', icon: '🎯', order: 21 },
+    environment: { name: 'Environment', icon: '🤖', order: 2 },
+    router: { name: 'Router', icon: '🔀', order: 3 },
+    context: { name: 'Context', icon: '📚', order: 4 },
+    operator: { name: 'Operator', icon: '⚙️', order: 5 },
+    'active-operator': { name: 'Active Operator', icon: '⚡', order: 6 },
+    chat: { name: 'Chat', icon: '💬', order: 7 },
+    model: { name: 'Model', icon: '🤖', order: 8 },
+    skill: { name: 'Skill', icon: '🔧', order: 9 },
+    output: { name: 'Output', icon: '📤', order: 10 },
+    control_flow: { name: 'Control Flow', icon: '🔄', order: 11 },
+    memory: { name: 'Memory', icon: '🧠', order: 12 },
+    utility: { name: 'Utility', icon: '🛠️', order: 13 },
+    config: { name: 'Configuration', icon: '🎛️', order: 14 },
+    cognitive: { name: 'Cognitive', icon: '💡', order: 15 },
+    safety: { name: 'Safety', icon: '🛡️', order: 16 },
+    persona: { name: 'Persona', icon: '👤', order: 17 },
+    agent: { name: 'Agent', icon: '🤖', order: 18 },
+    thought: { name: 'Thought', icon: '💭', order: 19 },
+    dreamer: { name: 'Dreamer', icon: '🌙', order: 20 },
+    curiosity: { name: 'Curiosity', icon: '❓', order: 21 },
+    curator: { name: 'Curator', icon: '📋', order: 22 },
+    emulation: { name: 'Emulation', icon: '🎭', order: 23 },
+    agency: { name: 'Agency', icon: '🎯', order: 24 },
   };
 
   // Get sorted categories (reactive)
@@ -88,8 +81,7 @@
     sortedCategories.map(category => ({
       category,
       nodes: nodesByCategory[category].filter(node =>
-        node.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        node.description.toLowerCase().includes(searchQuery.toLowerCase())
+        schemaSearchText(node).includes(searchQuery.toLowerCase())
       )
     })).filter(cat => cat.nodes.length > 0)
   );
@@ -185,8 +177,13 @@
                 >
                   <div class="w-[3px] h-8 rounded-sm flex-shrink-0" style="background: {node.color};"></div>
                   <div class="flex-1 min-w-0">
-                    <div class="text-sm font-medium text-white truncate">{node.name}</div>
+                    <div class="flex items-center gap-2 text-sm font-medium text-white truncate">
+                      <span class="truncate">{node.name}</span>
+                      {#if node.deprecated}<span class="rounded bg-amber-950 px-1 text-[9px] uppercase text-amber-300">deprecated</span>{/if}
+                      {#if node.documentation && !node.documentation.complete}<span class="rounded bg-slate-800 px-1 text-[9px] uppercase text-slate-500">docs</span>{/if}
+                    </div>
                     <div class="text-xs text-neutral-500 truncate mt-0.5">{node.description}</div>
+                    <div class="mt-1 text-[10px] text-neutral-600">{node.inputs.length} in · {node.outputs.length} out</div>
                   </div>
                 </button>
               {/each}

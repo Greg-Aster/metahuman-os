@@ -15,8 +15,18 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { storageClient } from './storage-client.js';
-import { callLLM } from './model-router.js';
 import { audit } from './audit.js';
+import { getUserContext } from './context.js';
+import {
+  cognitiveGraphPath,
+  loadGraphFile,
+  requireGraphNodeOutput,
+  runGraph,
+} from './graph-runtime.js';
+import {
+  parseGoalReviewInsights,
+  type GoalReviewInsights,
+} from './nodes/agent/goal-review-insights.node.js';
 import {
   listProjects,
   getProject,
@@ -71,6 +81,8 @@ export interface ReviewOptions {
   weeksBack?: number;
   /** Generate AI-powered insights */
   generateInsights?: boolean;
+  username?: string;
+  signal?: AbortSignal;
 }
 
 // ============================================================================
@@ -142,113 +154,40 @@ function calculateGoalProgress(project: Project, tasks: Task[]): GoalProgress {
   };
 }
 
-// ============================================================================
-// LLM Insights
-// ============================================================================
-
-const INSIGHTS_PROMPT = `You are analyzing a weekly goal review to provide insights and recommendations.
-
-Given the following project/goal progress data:
-{data}
-
-Provide:
-1. 2-3 key insights about overall progress patterns
-2. 2-3 specific recommendations for the coming week
-3. 1-2 focus areas that need attention
-4. Any wins worth celebrating (tasks completed, progress made)
-5. Any concerning areas (stalled projects, many blockers)
-
-Be specific and actionable. Reference actual project names and task counts.
-
-Respond in JSON:
-{
-  "insights": ["insight 1", "insight 2"],
-  "recommendations": ["recommendation 1", "recommendation 2"],
-  "focusAreas": ["area 1"],
-  "celebrateWins": ["win 1"],
-  "concernAreas": ["concern 1"] or []
-}`;
-
-interface LLMInsights {
-  insights: string[];
-  recommendations: string[];
-  focusAreas: string[];
-  celebrateWins: string[];
-  concernAreas: string[];
-}
-
 async function generateInsights(
   projects: GoalProgress[],
-  overall: WeeklyReview['overallProgress']
-): Promise<LLMInsights> {
-  const defaultInsights: LLMInsights = {
-    insights: [],
-    recommendations: [],
-    focusAreas: [],
-    celebrateWins: [],
-    concernAreas: [],
-  };
-
-  if (projects.length === 0) {
-    return {
-      ...defaultInsights,
-      insights: ['No active projects to review.'],
-      recommendations: ['Consider creating projects to organize your goals.'],
-    };
+  overall: WeeklyReview['overallProgress'],
+  username: string,
+  signal?: AbortSignal,
+): Promise<GoalReviewInsights> {
+  const activeUser = getUserContext();
+  if (!activeUser || (activeUser.username !== username && activeUser.activeProfile !== username)) {
+    throw new Error(`Goal review requires an authenticated context for ${username}`);
   }
-
-  const dataContext = JSON.stringify(
-    {
-      projects: projects.map((p) => ({
-        title: p.title,
-        progress: `${p.progressPercent}%`,
-        completed: p.tasksCompleted,
-        inProgress: p.tasksInProgress,
-        blocked: p.tasksBlocked,
-        blockers: p.blockers,
-      })),
-      overall: {
-        activeProjects: overall.activeProjects,
-        totalTasks: overall.totalTasks,
-        completed: overall.completedTasks,
-        blocked: overall.blockedTasks,
-      },
+  const loaded = await loadGraphFile(cognitiveGraphPath('goal-review.json'), {
+    cacheKey: 'goal-review',
+    logPrefix: '[goal-review]',
+  });
+  if (!loaded) throw new Error('Goal review graph is unavailable');
+  const state = await runGraph({
+    graph: loaded.graph,
+    signal,
+    context: {
+      userId: activeUser.userId,
+      username,
+      projects,
+      overallProgress: overall,
+      cognitiveMode: 'agent',
+      allowMemoryWrites: false,
+      recordPersonaMemory: false,
+      abortSignal: signal,
     },
-    null,
-    2
-  );
-
-  try {
-    const response = await callLLM({
-      role: 'curator',
-      messages: [
-        {
-          role: 'user',
-          content: INSIGHTS_PROMPT.replace('{data}', dataContext),
-        },
-      ],
-      options: {
-        temperature: 0.5,
-        responseFormat: { type: 'json_object' },
-      },
-    });
-
-    if (!response.content) {
-      return defaultInsights;
-    }
-
-    const parsed = JSON.parse(response.content);
-    return {
-      insights: parsed.insights || [],
-      recommendations: parsed.recommendations || [],
-      focusAreas: parsed.focusAreas || [],
-      celebrateWins: parsed.celebrateWins || [],
-      concernAreas: parsed.concernAreas || [],
-    };
-  } catch (error) {
-    console.warn('[goal-review] Failed to generate insights:', (error as Error).message);
-    return defaultInsights;
+  });
+  if (state.status !== 'completed') {
+    throw new Error(`Goal review graph ended with status ${state.status}`);
   }
+  const output = requireGraphNodeOutput(state, 'goal_review_insights');
+  return parseGoalReviewInsights(JSON.stringify(output.result));
 }
 
 // ============================================================================
@@ -262,6 +201,9 @@ export async function generateWeeklyReview(
   options: ReviewOptions = {}
 ): Promise<WeeklyReview> {
   const { includeArchived = false, generateInsights: shouldGenerateInsights = true } = options;
+  const activeUser = getUserContext();
+  const username = options.username?.trim() || activeUser?.activeProfile || activeUser?.username || '';
+  if (!username) throw new Error('Goal review requires an authenticated profile');
 
   const weekOf = getWeekStart();
   const projects = listProjects(includeArchived);
@@ -298,7 +240,7 @@ export async function generateWeeklyReview(
   };
 
   // Generate LLM insights if requested
-  let insights: LLMInsights = {
+  let insights: GoalReviewInsights = {
     insights: [],
     recommendations: [],
     focusAreas: [],
@@ -307,7 +249,7 @@ export async function generateWeeklyReview(
   };
 
   if (shouldGenerateInsights) {
-    insights = await generateInsights(projectProgress, overallProgress);
+    insights = await generateInsights(projectProgress, overallProgress, username, options.signal);
   }
 
   // Build review

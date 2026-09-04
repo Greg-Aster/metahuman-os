@@ -79,12 +79,10 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
   description: 'Generates response using persona with conversation history',
 
   execute: async (inputs, context, properties) => {
-    if (context.useOperator === true) {
-      return {};
-    }
-
     const personaInput = inputs.persona || inputs[0] || {};
-    const personaText = personaInput.formatted || personaInput.text || '';
+    const personaText = typeof personaInput === 'string'
+      ? personaInput
+      : (personaInput.formatted || personaInput.text || '');
     const conversationHistoryInput = inputs.conversationHistory || inputs[1] || [];
     const conversationHistory = conversationHistoryInput.messages || conversationHistoryInput || context.conversationHistory || [];
     const memoriesInput = inputs.memories || inputs[2] || [];

@@ -55,6 +55,12 @@ function createEmptyBuffer(): ConversationBuffer {
   };
 }
 
+function resolveUserMessageCount(value: unknown, messages: ConversationMessage[]): number {
+  return Number.isInteger(value) && Number(value) >= 0
+    ? Number(value)
+    : messages.filter(message => message.role === 'user').length;
+}
+
 // ============================================================================
 // Agent-friendly functions (don't require AsyncLocalStorage context)
 // ============================================================================
@@ -103,10 +109,11 @@ export function loadBufferForUser(username: string, mode: CanonicalBufferMode): 
       return createEmptyBuffer();
     }
     const parsed = JSON.parse(raw) as Partial<ConversationBuffer>;
+    const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
     return {
-      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+      messages,
       lastUpdated: typeof parsed.lastUpdated === 'string' ? parsed.lastUpdated : new Date().toISOString(),
-      userMessageCount: typeof parsed.userMessageCount === 'number' ? parsed.userMessageCount : 0,
+      userMessageCount: resolveUserMessageCount(parsed.userMessageCount, messages),
     };
   } catch (error) {
     recoverCorruptedBufferForUser(bufferPath, username, mode, error as Error);
@@ -118,7 +125,12 @@ export function loadBufferForUser(username: string, mode: CanonicalBufferMode): 
 export async function clearBufferForUser(username: string, mode: CanonicalBufferMode): Promise<boolean> {
   const result = await withBufferLock(username, mode, 'clear_buffer', async () => {
     const bufferPath = getBufferPathForUser(username, mode);
-    fs.writeFileSync(bufferPath, JSON.stringify(createEmptyBuffer(), null, 2));
+    const emptyBuffer = createEmptyBuffer();
+    if (mode === 'conversation') {
+      const current = loadBufferForUser(username, mode);
+      emptyBuffer.userMessageCount = resolveUserMessageCount(current.userMessageCount, current.messages);
+    }
+    fs.writeFileSync(bufferPath, JSON.stringify(emptyBuffer, null, 2));
     touchBufferNotification(username, mode);
     return true;
   });
@@ -246,9 +258,7 @@ export async function writeBufferEntry(
       };
 
       buffer.messages.push(newMessage);
-      const existingUserCount = Number.isInteger(buffer.userMessageCount)
-        ? Number(buffer.userMessageCount)
-        : buffer.messages.slice(0, -1).filter(item => item.role === 'user').length;
+      const existingUserCount = resolveUserMessageCount(buffer.userMessageCount, buffer.messages.slice(0, -1));
       if (mode === 'conversation' && message.role === 'user') {
         buffer.userMessageCount = existingUserCount + 1;
         appendedUserMessageCount = buffer.userMessageCount;

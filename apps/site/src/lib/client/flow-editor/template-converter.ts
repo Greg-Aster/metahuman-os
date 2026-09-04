@@ -9,8 +9,13 @@
 
 import type { Node, Edge } from '@xyflow/svelte';
 import type { NodeSchema, NodeCategory } from '@metahuman/core/nodes/types';
+import {
+  DEFAULT_GRAPH_SCHEDULER,
+  type GraphSchedulerContract,
+} from '@metahuman/core/cognitive-graph-contract';
 import { apiFetch } from '../api-config';
 import { getNodeComponentType } from './node-component-map';
+import { decorateEdge } from './graph-authoring';
 
 // Svelte Flow format
 export interface SvelteFlowGraph {
@@ -18,10 +23,13 @@ export interface SvelteFlowGraph {
   name: string;
   description: string;
   cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
+  scheduler: GraphSchedulerContract;
   nodes: Node[];
   edges: Edge[];
   viewport?: { x: number; y: number; zoom: number };
 }
+
+export { DEFAULT_GRAPH_SCHEDULER };
 
 const schemaCache: Map<string, NodeSchema> = new Map();
 let schemaLoadPromise: Promise<void> | null = null;
@@ -109,7 +117,7 @@ export async function loadSchemas(): Promise<void> {
 /**
  * Get schema for a node type
  */
-function getSchema(nodeType: string): NodeSchema | undefined {
+export function getCachedSchema(nodeType: string): NodeSchema | undefined {
   // Try exact match
   let schema = schemaCache.get(nodeType);
   if (schema) return schema;
@@ -155,6 +163,7 @@ function createFallbackSchema(nodeType: string): NodeSchema {
     inputs: [{ name: 'input', type: 'any' }],
     outputs: [{ name: 'output', type: 'any' }],
     description: `Unknown node type: ${nodeType}`,
+    execution: { activation: 'required-inputs', requiredInputs: ['input'] },
   };
 }
 
@@ -165,7 +174,7 @@ function createFallbackSchema(nodeType: string): NodeSchema {
 export function enrichGraphWithSchemas(sfGraph: any): SvelteFlowGraph {
   const nodes: Node[] = sfGraph.nodes.map((sfNode: any) => {
     const nodeType = sfNode.data?.nodeType || sfNode.type;
-    const schema = getSchema(nodeType);
+    const schema = getCachedSchema(nodeType);
     const category = schema?.category || inferCategoryFromType(nodeType);
     const existingProperties = sfNode.data?.properties || sfNode.properties || {};
     const title = sfNode.data?.label || sfNode.data?.title || sfNode.title;
@@ -179,6 +188,11 @@ export function enrichGraphWithSchemas(sfGraph: any): SvelteFlowGraph {
       type: getNodeComponentType(category, nodeType),
       position,
       width: sfNode.width || sfNode.size?.[0],
+      ...(existingProperties.frame === true && sfNode.height !== undefined ? { height: sfNode.height } : {}),
+      parentId: sfNode.parentId,
+      extent: sfNode.extent,
+      expandParent: sfNode.expandParent,
+      zIndex: sfNode.zIndex,
       data: {
         nodeType: nodeType,
         schema: schema || createFallbackSchema(nodeType),
@@ -186,12 +200,13 @@ export function enrichGraphWithSchemas(sfGraph: any): SvelteFlowGraph {
         title,
         muted: sfNode.data?.muted,
         comment: sfNode.data?.comment,
+        activation: sfNode.data?.activation,
         executionState: 'idle' as const,
       },
     };
   });
 
-  const edges: Edge[] = (sfGraph.edges || []).map((edge: any) => ({
+  const edges: Edge[] = (sfGraph.edges || []).map((edge: any) => decorateEdge({
     id: edge.id,
     source: String(edge.source),
     target: String(edge.target),
@@ -206,6 +221,7 @@ export function enrichGraphWithSchemas(sfGraph: any): SvelteFlowGraph {
     name: sfGraph.name || 'Untitled Graph',
     description: sfGraph.description || '',
     cognitiveMode: sfGraph.cognitiveMode,
+    scheduler: sfGraph.scheduler || { ...DEFAULT_GRAPH_SCHEDULER },
     nodes,
     edges,
     viewport: sfGraph.viewport,
@@ -218,10 +234,11 @@ export function serializeGraphForPersistence(sfGraph: SvelteFlowGraph): SvelteFl
     name: sfGraph.name || 'Untitled Graph',
     description: sfGraph.description || '',
     cognitiveMode: sfGraph.cognitiveMode,
+    scheduler: sfGraph.scheduler || { ...DEFAULT_GRAPH_SCHEDULER },
     nodes: sfGraph.nodes.map((node) => {
       const data = node.data as any;
       const nodeType = data.nodeType || node.type;
-      const schema = getSchema(nodeType) || data.schema;
+      const schema = getCachedSchema(nodeType) || data.schema;
       const properties = schema
         ? materializeSchemaProperties(schema, data.properties || {})
         : (data.properties || {});
@@ -232,12 +249,18 @@ export function serializeGraphForPersistence(sfGraph: SvelteFlowGraph): SvelteFl
         type: node.type,
         position: node.position,
         width: node.width,
+        ...(data.properties?.frame === true && node.height !== undefined ? { height: node.height } : {}),
+        parentId: node.parentId,
+        extent: node.extent,
+        expandParent: node.expandParent,
+        zIndex: node.zIndex,
         data: {
           label: title,
           nodeType,
           properties,
           muted: data.muted,
           comment: data.comment,
+          activation: data.activation,
         },
       };
     }),
@@ -254,68 +277,5 @@ export function serializeGraphForPersistence(sfGraph: SvelteFlowGraph): SvelteFl
   };
 }
 
-/**
- * Get slot index from handle name
- */
-function getSlotIndexFromHandle(
-  handleName: string,
-  nodeId: string,
-  nodes: Node[],
-  isOutput: boolean
-): number {
-  const node = nodes.find((n) => n.id === nodeId);
-  const nodeData = node?.data as { schema?: NodeSchema } | undefined;
-  if (!nodeData?.schema) {
-    // Try to parse from slot_N format
-    const match = handleName.match(/slot_(\d+)/);
-    return match ? parseInt(match[1]) : 0;
-  }
-
-  const slots = isOutput ? nodeData.schema.outputs : nodeData.schema.inputs;
-  const index = slots?.findIndex((s: any) => s.name === handleName);
-  return index >= 0 ? index : 0;
-}
-
-// Node data interface for type safety
-interface FlowNodeData {
-  nodeType: string;
-  schema?: NodeSchema;
-  properties: Record<string, any>;
-  title?: string;
-  muted?: boolean;
-  executionState: 'idle' | 'running' | 'complete' | 'error';
-}
-
-/**
- * Convert Svelte Flow graph to executor format
- * (Used when sending graph to backend for execution)
- */
-export function convertToExecutorFormat(sfGraph: SvelteFlowGraph): any {
-  return {
-    version: sfGraph.version,
-    name: sfGraph.name,
-    description: sfGraph.description,
-    cognitiveMode: sfGraph.cognitiveMode,
-    nodes: sfGraph.nodes.map((node) => {
-      const data = node.data as unknown as FlowNodeData;
-      return {
-        id: parseInt(node.id) || 0,
-        type: data.nodeType,
-        pos: [node.position.x, node.position.y],
-        properties: materializeSchemaProperties(data.schema, data.properties),
-        muted: data.muted,
-      };
-    }),
-    links: sfGraph.edges.map((edge, index) => ({
-      id: index,
-      origin_id: parseInt(edge.source),
-      origin_slot: getSlotIndexFromHandle(edge.sourceHandle || '', edge.source, sfGraph.nodes, true),
-      target_id: parseInt(edge.target),
-      target_slot: getSlotIndexFromHandle(edge.targetHandle || '', edge.target, sfGraph.nodes, false),
-    })),
-  };
-}
-
 // Legacy export alias for compatibility
 export const convertLiteGraphToSvelteFlow = enrichGraphWithSchemas;
-export const convertSvelteFlowToExecutor = convertToExecutorFormat;

@@ -22,29 +22,27 @@ import {
   audit,
   acquireLock,
   getTargetUser,
+  getUserContext,
   withUserContext,
   runGraph,
   cognitiveGraphPath,
-  getCachedCatalog,
   loadGraphFile,
   requireGraphNodeOutput,
   getActiveBackend,
-  callLLMText,
   loadConfig as loadAgencyConfig,
+  type DesireFeasibilityResult,
   type SvelteFlowGraph,
+  type GraphExecutionState,
   type Desire,
+  type DesirePlan,
+  type DesireReview,
   listDesiresByStatus,
   listPendingDesires,
+  loadDesire,
   moveDesire,
-  saveDesire,
-  saveDesireManifest,
   isAgencyEnabled,
   submitSystemEvent,
   submitInnerReflection,
-} from '@metahuman/core';
-import {
-  needsClarifyingQuestions,
-  generateQuestions,
 } from '@metahuman/core';
 
 const LOCK_NAME = 'desire-planner';
@@ -71,6 +69,7 @@ export interface PlannerConfig {
 
 export interface DesirePlannerOptions {
   username?: string;
+  desireId?: string;
   signal?: AbortSignal;
 }
 
@@ -90,10 +89,6 @@ export interface DesirePlannerResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function isGraphFilename(value: unknown): value is string {
@@ -146,142 +141,6 @@ export async function loadPlannerConfig(): Promise<PlannerConfig> {
 }
 
 // ============================================================================
-// Feasibility Check
-// ============================================================================
-
-export interface FeasibilityResult {
-  feasible: boolean;
-  confidence: number; // 0-1
-  reasoning: string;
-  suggestedApproach?: string;
-  blockers?: string[];
-}
-
-export function parseFeasibilityResponse(response: string): FeasibilityResult {
-  const jsonMatch = response.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error('Feasibility response did not contain a JSON object');
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonMatch[0]);
-  } catch (error) {
-    throw new Error(`Feasibility response was not valid JSON: ${(error as Error).message}`);
-  }
-
-  if (!isRecord(parsed)
-    || typeof parsed.feasible !== 'boolean'
-    || !isFiniteNumber(parsed.confidence) || parsed.confidence < 0 || parsed.confidence > 1
-    || typeof parsed.reasoning !== 'string' || parsed.reasoning.trim().length === 0) {
-    throw new Error('Feasibility response is missing required typed fields');
-  }
-
-  if (parsed.suggestedApproach !== undefined && typeof parsed.suggestedApproach !== 'string') {
-    throw new Error('Feasibility response suggestedApproach must be a string');
-  }
-  if (parsed.blockers !== undefined
-    && (!Array.isArray(parsed.blockers) || parsed.blockers.some(blocker => typeof blocker !== 'string'))) {
-    throw new Error('Feasibility response blockers must be an array of strings');
-  }
-
-  return {
-    feasible: parsed.feasible,
-    confidence: parsed.confidence,
-    reasoning: parsed.reasoning.trim(),
-    suggestedApproach: parsed.suggestedApproach?.trim(),
-    blockers: parsed.blockers?.map(blocker => blocker.trim()),
-  };
-}
-
-/**
- * Check if a desire is feasible before planning.
- * Uses LLM to assess whether the desire can be reasonably achieved
- * with available tools and constraints.
- */
-async function checkFeasibility(
-  desire: Desire,
-  username: string,
-  signal?: AbortSignal,
-): Promise<FeasibilityResult> {
-  if (signal?.aborted) throw signal.reason || new DOMException('Planning cancelled', 'AbortError');
-  const toolCatalog = getCachedCatalog();
-  // Build goal type context
-  const isLongRunning = desire.goalType === 'long_running';
-  const goalTypeContext = isLongRunning
-    ? `
-## IMPORTANT: Long-Running Goal Context
-**Goal Type**: long_running
-**Completion Criteria**: ${desire.completionCriteria || 'Not specified'}
-**Milestones**: ${desire.milestones?.length || 0} defined
-
-This is a LONG-RUNNING goal that may take weeks, months, or longer. The user will accomplish the goal themselves.
-**The system's role is to SUPPORT the user, NOT to directly execute the goal.**
-
-For long-running goals, feasibility means: "Can the system meaningfully help the user progress toward this goal?"
-Support activities include:
-- Research and information gathering
-- Creating task lists and reminders
-- Setting up calendar events for milestones
-- Tracking progress and sending check-in questions
-- Organizing relevant information
-- Helping with logistics (bookings, permits, etc.)
-
-Do NOT reject because the goal requires physical action by the user. If the system can help with planning/research/tracking, it's feasible.
-`
-    : '';
-
-  const prompt = `You are assessing the feasibility of an autonomous agent's desire.
-
-## Desire to Assess
-**Title**: ${desire.title}
-**Description**: ${desire.description}
-**Reason**: ${desire.reason || 'Not specified'}
-**Source**: ${desire.source}
-**Goal Type**: ${desire.goalType || 'one_time'}
-${goalTypeContext}
-## Available Capabilities
-The following canonical tool catalog is the complete capability inventory for this assessment.
-Do not infer access, permissions, tools, or external effects that are not listed here.
-
-${toolCatalog}
-
-## Assessment Criteria
-${isLongRunning ? `For this LONG-RUNNING goal, assess if the system can meaningfully SUPPORT the user:
-1. **Supportable**: Can the system help with research, planning, tracking, or logistics?
-2. **Progressive**: Can the system help track progress through milestones?
-3. **Safe**: Are the support activities within acceptable boundaries?
-4. **Clear**: Are the milestones and completion criteria clear enough to track?` : `1. **Achievable**: Can this be accomplished with available tools and capabilities?
-2. **Time-bounded**: Can meaningful progress be made in a single execution session?
-3. **Safe**: Does this not require actions outside acceptable boundaries?
-4. **Clear**: Are the success criteria clear enough to verify completion?`}
-
-## Instructions
-${isLongRunning ? `Assess whether this long-running goal can be SUPPORTED by the system. Remember: the user will do the physical work; the system helps with planning, research, tracking, and logistics. If the system can meaningfully help, mark it as feasible.` : `Assess whether this desire is feasible. Consider:
-- Is this something that can be done with computer-based tools?
-- Does it require physical action that cannot be automated?
-- Does it require access or permissions the system doesn't have?
-- Is it too vague to create an actionable plan?`}
-
-Respond in this JSON format:
-{
-  "feasible": true/false,
-  "confidence": 0.0-1.0,
-  "reasoning": "Brief explanation of your assessment",
-  "suggestedApproach": "If feasible, brief suggestion for how to approach it",
-  "blockers": ["list of specific blockers if not feasible"]
-}`;
-
-  const response = await callLLMText({
-    role: 'orchestrator',
-    messages: [{ role: 'user', content: prompt }],
-    userId: username,
-  });
-
-  return parseFeasibilityResponse(response);
-}
-
-// ============================================================================
 // Graph Loading
 // ============================================================================
 
@@ -292,6 +151,255 @@ export async function loadGraph(filename: string): Promise<SvelteFlowGraph> {
   });
   if (!loaded) throw new Error(`Desire Planner graph not found: ${filename}`);
   return loaded.graph;
+}
+
+export function buildDesirePlannerGraphContext(
+  desire: Desire,
+  username: string,
+  signal?: AbortSignal,
+  feasibilityCheckEnabled = true,
+): Record<string, unknown> {
+  const activeUser = getUserContext();
+  if (!activeUser) throw new Error('Desire planning requires an authenticated user context');
+  if (activeUser.username !== username && activeUser.activeProfile !== username) {
+    throw new Error(`Desire planning context does not own profile ${username}`);
+  }
+  return {
+    userId: activeUser.userId,
+    username,
+    desire,
+    desireId: desire.id,
+    allowMemoryWrites: true,
+    recordPersonaMemory: true,
+    cognitiveMode: 'agent' as const,
+    feasibilityCheckEnabled,
+    abortSignal: signal,
+  };
+}
+
+export function buildDesireReviewGraphContext(
+  desire: Desire,
+  username: string,
+  signal?: AbortSignal,
+): Record<string, unknown> {
+  const activeUser = getUserContext();
+  if (!activeUser) throw new Error('Desire review requires an authenticated user context');
+  if (activeUser.username !== username && activeUser.activeProfile !== username) {
+    throw new Error(`Desire review context does not own profile ${username}`);
+  }
+  if (desire.status !== 'reviewing' || !desire.plan) {
+    throw new Error(`Desire review requires a persisted reviewing plan for ${desire.id}`);
+  }
+  return {
+    userId: activeUser.userId,
+    username,
+    desireId: desire.id,
+    allowMemoryWrites: true,
+    recordPersonaMemory: true,
+    cognitiveMode: 'agent' as const,
+    idempotencyKey: `desire-plan-review:${username}:${desire.id}:v${desire.plan.version}`,
+    memoryTimestamp: desire.plan.createdAt,
+    abortSignal: signal,
+  };
+}
+
+export interface DesirePlanGraphReceipt {
+  desire: Desire;
+  plan: DesirePlan;
+}
+
+export type DesirePlanningAdmission =
+  | { status: 'infeasible'; feasibility: DesireFeasibilityResult }
+  | { status: 'questions'; desire: Desire; questions: NonNullable<Desire['clarifyingQuestions']>['questions']; reason: string }
+  | { status: 'planned'; receipt: DesirePlanGraphReceipt }
+
+function feasibilityFromOutput(value: unknown): DesireFeasibilityResult {
+  if (!isRecord(value)
+    || typeof value.feasible !== 'boolean'
+    || typeof value.confidence !== 'number' || !Number.isFinite(value.confidence)
+    || value.confidence < 0 || value.confidence > 1
+    || typeof value.reasoning !== 'string' || !value.reasoning.trim()
+    || (value.suggestedApproach !== undefined && typeof value.suggestedApproach !== 'string')
+    || (value.blockers !== undefined
+      && (!Array.isArray(value.blockers) || value.blockers.some(blocker => typeof blocker !== 'string')))) {
+    throw new Error('Desire feasibility node returned an invalid result')
+  }
+  return {
+    feasible: value.feasible,
+    confidence: value.confidence,
+    reasoning: value.reasoning.trim(),
+    ...(typeof value.suggestedApproach === 'string' && value.suggestedApproach.trim()
+      ? { suggestedApproach: value.suggestedApproach.trim() }
+      : {}),
+    ...(Array.isArray(value.blockers) ? { blockers: value.blockers as string[] } : {}),
+  }
+}
+
+export function evaluateDesirePlanningAdmission(result: GraphExecutionState): DesirePlanningAdmission {
+  const feasibility = feasibilityFromOutput(
+    requireGraphNodeOutput(result, 'desire_feasibility').result,
+  )
+  if (!feasibility.feasible) return { status: 'infeasible', feasibility }
+
+  const questionResult = requireGraphNodeOutput(result, 'desire_question_generator')
+  if (questionResult.needsQuestions === true) {
+    const transition = requireGraphNodeOutput(result, 'desire_question_transition')
+    const desire = transition.desire as Desire | undefined
+    if (transition.success !== true || !desire?.clarifyingQuestions
+      || desire.status !== 'questioning' || !Array.isArray(transition.questions)
+      || transition.questions.length === 0) {
+      throw new Error('Desire question graph did not persist generated questions')
+    }
+    return {
+      status: 'questions',
+      desire,
+      questions: desire.clarifyingQuestions.questions,
+      reason: typeof transition.reason === 'string' ? transition.reason : '',
+    }
+  }
+  if (questionResult.needsQuestions !== false) {
+    throw new Error('Desire question graph returned no typed decision')
+  }
+  return { status: 'planned', receipt: evaluateDesirePlanGraph(result) }
+}
+
+export function evaluateDesirePlanGraph(result: GraphExecutionState): DesirePlanGraphReceipt {
+  const generator = requireGraphNodeOutput(result, 'desire_plan_generator');
+  const validator = requireGraphNodeOutput(result, 'plan_validator');
+  const persistence = requireGraphNodeOutput(result, 'desire_updater');
+  const generatedPlan = generator.plan as DesirePlan | undefined;
+  const validatedPlan = validator.plan as DesirePlan | undefined;
+  const persistedDesire = persistence.desire as Desire | undefined;
+
+  if (generator.success !== true || !generatedPlan) {
+    throw new Error(`Plan generation failed: ${generator.error || 'no typed plan receipt'}`);
+  }
+  if (validator.valid !== true || !validatedPlan || validatedPlan.id !== generatedPlan.id) {
+    const details = Array.isArray(validator.errors) ? validator.errors.join('; ') : 'no validated plan receipt';
+    throw new Error(`Plan validation failed: ${details}`);
+  }
+  if (persistence.success !== true
+    || !persistedDesire?.plan
+    || persistedDesire.plan.id !== validatedPlan.id
+    || persistedDesire.status !== 'reviewing') {
+    throw new Error(`Plan persistence failed: ${persistence.error || 'durable reviewing state not confirmed'}`);
+  }
+
+  return { desire: persistedDesire, plan: validatedPlan };
+}
+
+export interface DesireReviewGraphReceipt {
+  desire: Desire;
+  review: DesireReview;
+  action: 'rejected' | 'auto_approved' | 'awaiting_approval';
+  reasoning: string;
+}
+
+export function evaluateDesireReviewGraph(result: GraphExecutionState): DesireReviewGraphReceipt {
+  requireGraphNodeOutput(result, 'desire_verdict');
+  const recorder = requireGraphNodeOutput(result, 'desire_plan_review_recorder');
+  const buffer = requireGraphNodeOutput(result, 'inner_dialogue_buffer');
+  const memory = requireGraphNodeOutput(result, 'inner_dialogue_saver');
+  const transition = requireGraphNodeOutput(result, 'desire_plan_review_transition');
+  const review = recorder.review as DesireReview | undefined;
+  const reasoning = recorder.reasoning;
+  const admittedCount = Number(buffer.savedCount);
+  const savedCount = Number(memory.savedCount);
+  const updatedDesire = transition.desire as Desire | undefined;
+  const action = transition.action;
+
+  if (!review
+    || !['approve', 'reject', 'revise'].includes(review.verdict)
+    || recorder.success !== true
+    || recorder.persisted !== true
+    || typeof recorder.autoApprove !== 'boolean'
+    || typeof reasoning !== 'string'
+    || !reasoning.trim()) {
+    throw new Error('Plan reviewer did not produce a typed verdict');
+  }
+  if (buffer.saved !== true || buffer.persisted !== true
+    || !Number.isInteger(admittedCount) || admittedCount < 1
+    || buffer.text !== reasoning) {
+    throw new Error(`Plan review inner-dialogue persistence failed: ${buffer.error || buffer.reason || 'not admitted'}`);
+  }
+  if (memory.success !== true || memory.saved !== true
+    || !Number.isInteger(savedCount) || savedCount !== admittedCount) {
+    throw new Error(`Plan review Persona Memory persistence failed: expected ${admittedCount}, received ${savedCount || 0}`);
+  }
+  if (transition.success !== true
+    || !updatedDesire
+    || updatedDesire.review?.id !== review.id
+    || !['rejected', 'auto_approved', 'awaiting_approval'].includes(action)) {
+    throw new Error(`Plan review transition failed: ${transition.error || 'durable transition not confirmed'}`);
+  }
+
+  const expectedStatus = action === 'rejected'
+    ? 'rejected'
+    : action === 'auto_approved' ? 'approved' : 'awaiting_approval';
+  if (updatedDesire.status !== expectedStatus) {
+    throw new Error(`Plan review transition reported ${action} but persisted '${updatedDesire.status}'`);
+  }
+
+  return {
+    desire: updatedDesire,
+    review,
+    action: action as DesireReviewGraphReceipt['action'],
+    reasoning: reasoning.trim(),
+  };
+}
+
+type DesireProcessingResult = {
+  success: boolean;
+  outcome: 'planned' | 'approved' | 'needs_approval' | 'rejected' | 'failed' | 'needs_questions';
+  error?: string;
+  feasibilityResult?: DesireFeasibilityResult;
+};
+
+async function reviewPlannedDesire(
+  desire: Desire,
+  reviewerGraph: SvelteFlowGraph,
+  username: string,
+  signal?: AbortSignal,
+): Promise<DesireProcessingResult> {
+  const reviewContext = buildDesireReviewGraphContext(desire, username, signal);
+
+  console.log(`${LOG_PREFIX}     Executing reviewer graph...`);
+  const reviewResult = await runGraph({ graph: reviewerGraph, context: reviewContext, signal });
+
+  if (reviewResult.status !== 'completed') {
+    const error = `Reviewer graph ended with status: ${reviewResult.status}`;
+    console.error(`${LOG_PREFIX}     ${error}`);
+    return { success: false, outcome: 'failed', error };
+  }
+
+  const reviewReceipt = evaluateDesireReviewGraph(reviewResult);
+
+  if (reviewReceipt.action === 'rejected') {
+    console.log(`${LOG_PREFIX}     Plan rejected by review`);
+    await submitSystemEvent(
+      username,
+      `❌ **Plan Rejected:** "${desire.title}"\n\n` +
+      `**Reason:** ${reviewReceipt.reasoning}\n\n` +
+      `_The plan was reviewed but did not pass alignment or safety checks. You can provide feedback to adjust the approach._`,
+      {
+        dialogueSource: 'agency-system',
+        source: 'agency',
+        displayColor: '#ef4444',
+        type: 'plan_rejected',
+        desireId: desire.id,
+        desireTitle: desire.title,
+      },
+    );
+    return { success: true, outcome: 'rejected' };
+  }
+
+  if (reviewReceipt.action === 'auto_approved') {
+    console.log(`${LOG_PREFIX}     Plan auto-approved (high alignment + safety)`);
+    return { success: true, outcome: 'approved' };
+  }
+
+  console.log(`${LOG_PREFIX}     Plan queued for manual approval`);
+  return { success: true, outcome: 'needs_approval' };
 }
 
 // ============================================================================
@@ -307,213 +415,20 @@ async function processDesire(
   reviewerGraph: SvelteFlowGraph,
   username: string,
   signal?: AbortSignal,
-): Promise<{
-  success: boolean;
-  outcome: 'planned' | 'approved' | 'needs_approval' | 'rejected' | 'failed' | 'needs_questions';
-  error?: string;
-  feasibilityResult?: FeasibilityResult;
-}> {
+): Promise<DesireProcessingResult> {
   console.log(`${LOG_PREFIX}   Planning: ${desire.title}`);
 
   try {
-    // =========================================================================
-    // PHASE 0: Feasibility Check (if enabled)
-    // =========================================================================
     const agencyConfig = await loadAgencyConfig(username);
     if (!agencyConfig.execution) {
       throw new Error('Agency configuration is missing the execution section');
     }
-
-    if (agencyConfig.execution.feasibilityCheckEnabled) {
-      console.log(`${LOG_PREFIX}     Running feasibility check...`);
-
-      const feasibility = await checkFeasibility(desire, username, signal);
-
-      audit({
-        category: 'agent',
-        level: 'info',
-        event: 'desire_feasibility_check',
-        actor: 'desire-planner',
-        details: {
-          desireId: desire.id,
-          title: desire.title,
-          feasible: feasibility.feasible,
-          confidence: feasibility.confidence,
-          reasoning: feasibility.reasoning,
-          blockers: feasibility.blockers,
-          username,
-        },
-      });
-
-      if (!feasibility.feasible) {
-        console.log(`${LOG_PREFIX}     ❌ Not feasible: ${feasibility.reasoning}`);
-        if (feasibility.blockers?.length) {
-          console.log(`${LOG_PREFIX}        Blockers: ${feasibility.blockers.join(', ')}`);
-        }
-
-        const rejectedAt = new Date().toISOString();
-        const rejectedDesire: Desire = {
-          ...desire,
-          status: 'rejected',
-          completedAt: rejectedAt,
-          updatedAt: rejectedAt,
-          rejectionHistory: [
-            ...(desire.rejectionHistory || []),
-            {
-              rejectedAt,
-              rejectedBy: 'system',
-              reason: feasibility.reasoning,
-              canRetry: true,
-            },
-          ],
-        };
-        await moveDesire(rejectedDesire, desire.status, 'rejected', username);
-
-        // Log to inner dialogue so user can see why it was rejected
-        await submitInnerReflection(
-          username,
-          `I assessed "${desire.title}" and determined it's not feasible: ${feasibility.reasoning}${feasibility.blockers?.length ? ` Blockers: ${feasibility.blockers.join(', ')}` : ''}`,
-          {
-            type: 'desire_feasibility_review',
-            tags: ['agency', 'feasibility', 'rejected', 'inner'],
-            source: 'desire-planner',
-            desireId: desire.id,
-            feasibility: {
-              feasible: feasibility.feasible,
-              confidence: feasibility.confidence,
-              reasoning: feasibility.reasoning,
-              blockers: feasibility.blockers ?? [],
-              suggestedApproach: feasibility.suggestedApproach ?? null,
-            },
-          }
-        );
-
-        // Agency state changes are system events. Conversational text is owned
-        // by a cognitive graph and must not be injected into its rolling buffer.
-        await submitSystemEvent(
-          username,
-          `❌ **Desire Not Feasible:** "${desire.title}"\n\n` +
-          `**Reason:** ${feasibility.reasoning}\n\n` +
-          `${feasibility.blockers?.length ? `**Blockers:**\n${feasibility.blockers.map(b => `• ${b}`).join('\n')}\n\n` : ''}` +
-          `_You can provide feedback to clarify or adjust this desire, or create a new one._`,
-          {
-            dialogueSource: 'agency-system',
-            source: 'agency',
-            displayColor: '#ef4444',
-            type: 'desire_rejected',
-            desireId: desire.id,
-            desireTitle: desire.title,
-            feasibility,
-          }
-        );
-
-        return {
-          success: true,
-          outcome: 'rejected',
-          error: `Not feasible: ${feasibility.reasoning}`,
-          feasibilityResult: feasibility,
-        };
-      }
-
-      console.log(`${LOG_PREFIX}     ✓ Feasible (confidence: ${(feasibility.confidence * 100).toFixed(0)}%)`);
-      if (feasibility.suggestedApproach) {
-        console.log(`${LOG_PREFIX}        Suggested: ${feasibility.suggestedApproach}`);
-      }
-    }
-
-    // =========================================================================
-    // PHASE 0.5: Clarifying Questions (if needed)
-    // =========================================================================
-    const questionsCheck = needsClarifyingQuestions(desire);
-
-    if (questionsCheck.needs) {
-      console.log(`${LOG_PREFIX}     Questions needed: ${questionsCheck.reason}`);
-
-      // Generate and store questions
-      console.log(`${LOG_PREFIX}     Generating clarifying questions...`);
-      const questions = await generateQuestions(desire);
-
-      const now = new Date().toISOString();
-      const updatedDesire: Desire = {
-        ...desire,
-        clarifyingQuestions: {
-          phase: 'before_planning',
-          questions,
-          answers: [],
-          askedAt: now,
-        },
-        status: 'questioning',
-        currentStage: 'questioning',
-        updatedAt: now,
-      };
-
-      // Save desire with questions
-      await saveDesireManifest(updatedDesire, username);
-
-      // Publish the questions with Agency state without fabricating a chat turn.
-      const questionsList = questions
-        .map((q, i) => `${i + 1}. ${q.text}${q.required ? ' *' : ''}`)
-        .join('\n');
-
-      await submitSystemEvent(
-        username,
-        `I'm working on planning "${desire.title}" and would like to ask a few questions to make sure I understand what you're looking for:\n\n${questionsList}\n\n_Please answer these questions to help me create a better plan._`,
-        {
-          type: 'clarifying_questions',
-          source: 'agency',
-          desireId: desire.id,
-          desireTitle: desire.title,
-          questions: questions.map((q) => ({ id: q.id, text: q.text, type: q.type, required: q.required })),
-        }
-      );
-
-      audit({
-        category: 'agent',
-        level: 'info',
-        event: 'desire_questions_generated',
-        actor: 'desire-planner',
-        details: {
-          desireId: desire.id,
-          title: desire.title,
-          questionCount: questions.length,
-          reason: questionsCheck.reason,
-          username,
-        },
-      });
-
-      console.log(`${LOG_PREFIX}     ✓ Generated ${questions.length} questions, waiting for answers`);
-
-      return {
-        success: true,
-        outcome: 'needs_questions',
-      };
-    }
-
-    // If questions were already answered, include them in planning context
-    const answeredContext = desire.clarifyingQuestions?.completedAt
-      ? desire.clarifyingQuestions.answers.map((a) => {
-          const question = desire.clarifyingQuestions?.questions.find((q) => q.id === a.questionId);
-          return question ? `Q: ${question.text}\nA: ${a.answer}` : null;
-        }).filter(Boolean).join('\n\n')
-      : null;
-
-    if (answeredContext) {
-      console.log(`${LOG_PREFIX}     Including ${desire.clarifyingQuestions?.answers.length} answered questions in plan context`);
-    }
-
-    // =========================================================================
-    // PHASE 1: Generate Plan
-    // =========================================================================
-    const planContext = {
-      userId: username,
-      username,
+    const planContext = buildDesirePlannerGraphContext(
       desire,
-      desireId: desire.id,
-      allowMemoryWrites: true,
-      cognitiveMode: 'agent' as const,
-      // Include user's answers to clarifying questions for better plan generation
-      clarifyingQuestionsContext: answeredContext,
-    };
+      username,
+      signal,
+      agencyConfig.execution.feasibilityCheckEnabled,
+    );
 
     console.log(`${LOG_PREFIX}     Executing planner graph...`);
     const planResult = await runGraph({ graph: plannerGraph, context: planContext, signal });
@@ -527,79 +442,81 @@ async function processDesire(
       };
     }
 
-    // Extract plan from graph output (node IDs are strings in Svelte Flow format)
-    const planGeneratorOutput = requireGraphNodeOutput(planResult, 'desire_plan_generator');
-    const plan = planGeneratorOutput.plan;
-
-    if (!plan) {
-      console.error(`${LOG_PREFIX}     No plan generated`);
-      return {
-        success: false,
-        outcome: 'failed',
-        error: 'Plan generator produced no output',
-      };
-    }
-
-    console.log(`${LOG_PREFIX}     Plan generated: ${plan.steps?.length || 0} step(s)`);
-
-    // =========================================================================
-    // PHASE 2: Review Plan
-    // =========================================================================
-    const reviewContext = {
-      userId: username,
-      username,
-      desire: { ...desire, plan },
-      desireId: desire.id,
-      allowMemoryWrites: true,
-      cognitiveMode: 'agent' as const,
-    };
-
-    console.log(`${LOG_PREFIX}     Executing reviewer graph...`);
-    const reviewResult = await runGraph({ graph: reviewerGraph, context: reviewContext, signal });
-
-    if (reviewResult.status !== 'completed') {
-      const error = `Reviewer graph ended with status: ${reviewResult.status}`;
-      console.error(`${LOG_PREFIX}     ${error}`);
-      return { success: false, outcome: 'failed', error };
-    }
-
-    // Extract verdict from graph output (node IDs are strings in Svelte Flow format)
-    const verdictOutput = requireGraphNodeOutput(reviewResult, 'desire_verdict');
-    const verdict = verdictOutput.verdict;
-    const autoApprove = verdictOutput.autoApprove;
-
-    if (verdict === 'reject') {
-      console.log(`${LOG_PREFIX}     Plan rejected by review`);
-
-      // Extract rejection reason if available
-      const reviewReason = verdictOutput.reasoning || verdictOutput.concerns?.join(', ') || 'Plan did not pass safety/alignment review';
-
-      // Publish the rejected plan as an Agency system event.
+    const admission = evaluateDesirePlanningAdmission(planResult);
+    if (admission.status === 'infeasible') {
+      const feasibility = admission.feasibility;
+      const rejectedAt = new Date().toISOString();
+      await moveDesire({
+        ...desire,
+        status: 'rejected',
+        completedAt: rejectedAt,
+        updatedAt: rejectedAt,
+        rejectionHistory: [
+          ...(desire.rejectionHistory || []),
+          { rejectedAt, rejectedBy: 'system', reason: feasibility.reasoning, canRetry: true },
+        ],
+      }, desire.status, 'rejected', username);
+      await submitInnerReflection(
+        username,
+        `I assessed "${desire.title}" and determined it's not feasible: ${feasibility.reasoning}${feasibility.blockers?.length ? ` Blockers: ${feasibility.blockers.join(', ')}` : ''}`,
+        {
+          type: 'desire_feasibility_review',
+          tags: ['agency', 'feasibility', 'rejected', 'inner'],
+          source: 'desire-planner',
+          desireId: desire.id,
+          feasibility,
+        },
+      );
       await submitSystemEvent(
         username,
-        `❌ **Plan Rejected:** "${desire.title}"\n\n` +
-        `**Reason:** ${reviewReason}\n\n` +
-        `_The plan was reviewed but did not pass alignment or safety checks. You can provide feedback to adjust the approach._`,
+        `❌ **Desire Not Feasible:** "${desire.title}"\n\n**Reason:** ${feasibility.reasoning}\n\n${feasibility.blockers?.length ? `**Blockers:**\n${feasibility.blockers.map(blocker => `• ${blocker}`).join('\n')}\n\n` : ''}_You can provide feedback to clarify or adjust this desire, or create a new one._`,
         {
           dialogueSource: 'agency-system',
           source: 'agency',
           displayColor: '#ef4444',
-          type: 'plan_rejected',
+          type: 'desire_rejected',
           desireId: desire.id,
           desireTitle: desire.title,
-        }
+          feasibility,
+        },
       );
-
-      return { success: true, outcome: 'rejected' };
+      return {
+        success: true,
+        outcome: 'rejected',
+        error: `Not feasible: ${feasibility.reasoning}`,
+        feasibilityResult: feasibility,
+      };
     }
 
-    if (autoApprove) {
-      console.log(`${LOG_PREFIX}     Plan auto-approved (high alignment + safety)`);
-      return { success: true, outcome: 'approved' };
+    if (admission.status === 'questions') {
+      const questionsList = admission.questions
+        .map((question, index) => `${index + 1}. ${question.text}${question.required ? ' *' : ''}`)
+        .join('\n');
+      await submitSystemEvent(
+        username,
+        `I'm working on planning "${desire.title}" and would like to ask a few questions to make sure I understand what you're looking for:\n\n${questionsList}\n\n_Please answer these questions to help me create a better plan._`,
+        {
+          type: 'clarifying_questions',
+          source: 'agency',
+          desireId: desire.id,
+          desireTitle: desire.title,
+          questions: admission.questions.map(question => ({
+            id: question.id,
+            text: question.text,
+            type: question.type,
+            required: question.required,
+          })),
+        },
+      );
+      return { success: true, outcome: 'needs_questions' };
     }
 
-    console.log(`${LOG_PREFIX}     Plan queued for manual approval`);
-    return { success: true, outcome: 'needs_approval' };
+    const planReceipt = admission.receipt;
+    const plan = planReceipt.plan;
+
+    console.log(`${LOG_PREFIX}     Plan generated: ${plan.steps?.length || 0} step(s)`);
+
+    return await reviewPlannedDesire(planReceipt.desire, reviewerGraph, username, signal);
 
   } catch (error) {
     console.error(`${LOG_PREFIX}     Error:`, error);
@@ -688,13 +605,19 @@ export async function promotePendingDesires(
   return promoted;
 }
 
+export function isReviewResumeCandidate(desire: Desire): boolean {
+  return desire.status === 'reviewing' && Boolean(desire.plan);
+}
+
 /**
- * Process all desires in 'planning' status for a user
+ * Process planning desires and resume any persisted review that has not yet
+ * reached its lifecycle transition.
  */
 export async function processPlanningDesires(
   username: string,
   plannerConfig: PlannerConfig,
   signal?: AbortSignal,
+  desireId?: string,
 ): Promise<{
   planned: number;
   approved: number;
@@ -709,15 +632,33 @@ export async function processPlanningDesires(
     return { planned: 0, approved: 0, needsApproval: 0, needsQuestions: 0, rejected: 0, failed: 0, errors: [] };
   }
 
-  const planningDesires = await listDesiresByStatus('planning', username);
-  console.log(`${LOG_PREFIX} Found ${planningDesires.length} desires in planning status`);
+  const candidateDesires = desireId
+    ? [await loadDesire(desireId, username)].filter((desire): desire is Desire => desire !== null)
+    : [
+        ...await listDesiresByStatus('reviewing', username),
+        ...await listDesiresByStatus('planning', username),
+      ];
+  if (desireId && candidateDesires.length === 0) {
+    throw new Error(`Target desire not found: ${desireId}`);
+  }
+  if (desireId
+    && candidateDesires[0].status !== 'planning'
+    && !isReviewResumeCandidate(candidateDesires[0])) {
+    throw new Error(
+      `Target desire ${desireId} is in '${candidateDesires[0].status}' status, not planning or resumable review`,
+    );
+  }
+  console.log(`${LOG_PREFIX} Found ${candidateDesires.length} planning or resumable-review desires`);
 
-  if (planningDesires.length === 0) {
+  if (candidateDesires.length === 0) {
     return { planned: 0, approved: 0, needsApproval: 0, needsQuestions: 0, rejected: 0, failed: 0, errors: [] };
   }
 
-  // Load graphs
-  const plannerGraph = await loadGraph(plannerConfig.graph.planner);
+  // A resumed review does not load the planner graph or repeat feasibility and
+  // plan generation work.
+  const plannerGraph = candidateDesires.some(desire => desire.status === 'planning')
+    ? await loadGraph(plannerConfig.graph.planner)
+    : null;
   const reviewerGraph = await loadGraph(plannerConfig.graph.reviewer);
 
   let planned = 0;
@@ -729,17 +670,29 @@ export async function processPlanningDesires(
   const errors: string[] = [];
 
   // Process up to batchSize desires
-  const batch = planningDesires.slice(0, plannerConfig.processing.batchSize);
+  const batch = desireId
+    ? candidateDesires
+    : candidateDesires.slice(0, plannerConfig.processing.batchSize);
 
   for (const desire of batch) {
     if (signal?.aborted) throw signal.reason || new DOMException('Planning cancelled', 'AbortError');
-    const result = await processDesire(
-      desire,
-      plannerGraph,
-      reviewerGraph,
-      username,
-      signal,
-    );
+    let result: DesireProcessingResult;
+    if (isReviewResumeCandidate(desire)) {
+      try {
+        result = await reviewPlannedDesire(desire, reviewerGraph, username, signal);
+      } catch (error) {
+        result = { success: false, outcome: 'failed', error: (error as Error).message };
+      }
+    } else {
+      if (!plannerGraph) throw new Error('Planner graph was not loaded for a planning desire');
+      result = await processDesire(
+        desire,
+        plannerGraph,
+        reviewerGraph,
+        username,
+        signal,
+      );
+    }
 
     switch (result.outcome) {
       case 'planned':
@@ -811,6 +764,64 @@ export async function processPlanningDesires(
 // Agent Runtime Entry Points
 // ============================================================================
 
+export async function prepareTargetDesire(username: string, desireId: string): Promise<Desire> {
+  const desire = await loadDesire(desireId, username);
+  if (!desire) throw new Error(`Target desire not found: ${desireId}`);
+  if (desire.status === 'planning' || isReviewResumeCandidate(desire)) return desire;
+  if (desire.status === 'reviewing') {
+    throw new Error(`Cannot resume review for desire ${desireId} without a persisted plan`);
+  }
+
+  const canPromotePending = desire.status === 'pending';
+  const canRepairApprovedWithoutPlan = desire.status === 'approved' && !desire.plan;
+  if (!canPromotePending && !canRepairApprovedWithoutPlan) {
+    throw new Error(
+      `Cannot generate a plan for desire ${desireId} in '${desire.status}' status; reset or revise it to planning first`,
+    );
+  }
+
+  const now = new Date().toISOString();
+  const planningDesire: Desire = {
+    ...desire,
+    status: 'planning',
+    currentStage: 'planning',
+    completedAt: undefined,
+    updatedAt: now,
+  };
+  await moveDesire(planningDesire, desire.status, 'planning', username);
+  return planningDesire;
+}
+
+function existingTargetResult(desire: Desire): Awaited<ReturnType<typeof processPlanningDesires>> | null {
+  const result = {
+    planned: 0,
+    approved: 0,
+    needsApproval: 0,
+    needsQuestions: 0,
+    rejected: 0,
+    failed: 0,
+    errors: [] as string[],
+  };
+  if (desire.status === 'questioning' && desire.clarifyingQuestions) {
+    result.needsQuestions = 1;
+    return result;
+  }
+  if (desire.status === 'approved' && desire.plan && desire.review) {
+    result.approved = 1;
+    return result;
+  }
+  if (desire.status === 'awaiting_approval' && desire.plan && desire.review) {
+    result.needsApproval = 1;
+    return result;
+  }
+  if (desire.status === 'rejected'
+    && (desire.review || (desire.rejectionHistory?.length ?? 0) > 0)) {
+    result.rejected = 1;
+    return result;
+  }
+  return null;
+}
+
 /**
  * Run a single planning cycle - entry point for CLI and Trigger Manager
  */
@@ -850,14 +861,32 @@ export async function runCycle(options: DesirePlannerOptions = {}): Promise<Desi
     try {
       console.log(`${LOG_PREFIX} --- Processing user: ${user.username} ---`);
       await withUserContext(user, async () => {
-        // Step 1: Promote pending desires to planning
-        const promoted = await promotePendingDesires(user!.username, config.processing.batchSize);
-        if (promoted > 0) {
-          console.log(`${LOG_PREFIX} Promoted ${promoted} pending desire(s) to planning`);
+        if (!await isAgencyEnabled(user!.username)) {
+          throw new Error(`Agency is disabled for profile ${user!.username}`);
         }
-
-        // Step 2: Process desires in planning status
-        const r = await processPlanningDesires(user!.username, config, options.signal);
+        let r: Awaited<ReturnType<typeof processPlanningDesires>>;
+        if (options.desireId) {
+          const existing = await loadDesire(options.desireId, user!.username);
+          if (!existing) throw new Error(`Target desire not found: ${options.desireId}`);
+          const completed = existingTargetResult(existing);
+          if (completed) {
+            r = completed;
+          } else {
+            await prepareTargetDesire(user!.username, options.desireId);
+            r = await processPlanningDesires(
+              user!.username,
+              config,
+              options.signal,
+              options.desireId,
+            );
+          }
+        } else {
+          const promoted = await promotePendingDesires(user!.username, config.processing.batchSize);
+          if (promoted > 0) {
+            console.log(`${LOG_PREFIX} Promoted ${promoted} pending desire(s) to planning`);
+          }
+          r = await processPlanningDesires(user!.username, config, options.signal);
+        }
         result.stats.planned += r.planned;
         result.stats.approved += r.approved;
         result.stats.needsApproval += r.needsApproval;
@@ -912,6 +941,7 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
   const parsed = parseDesirePlannerArgs(args);
   const options: DesirePlannerOptions = {
     username: typeof opts.username === 'string' ? opts.username : parsed.username || ctx.username,
+    desireId: typeof opts.desireId === 'string' ? opts.desireId : parsed.desireId,
     signal: ctx.signal,
   };
 
@@ -926,9 +956,20 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
 }
 
 export function parseDesirePlannerArgs(args: string[]): DesirePlannerOptions {
-  if (args.length === 0) return {};
-  if (args.length !== 2 || args[0] !== '--username' || !args[1]?.trim()) {
-    throw new Error('Desire Planner accepts only --username <profile>');
+  const result: DesirePlannerOptions = {};
+  const supported = new Set(['--username', '--desire-id']);
+  for (let index = 0; index < args.length; index += 2) {
+    const argument = args[index];
+    const value = args[index + 1]?.trim();
+    if (!supported.has(argument)) throw new Error(`Unknown Desire Planner argument: ${argument}`);
+    if (!value || value.startsWith('--')) throw new Error(`${argument} requires a value`);
+    if (argument === '--username') {
+      if (result.username) throw new Error('Desire Planner received duplicate --username');
+      result.username = value;
+    } else {
+      if (result.desireId) throw new Error('Desire Planner received duplicate --desire-id');
+      result.desireId = value;
+    }
   }
-  return { username: args[1].trim() };
+  return result;
 }

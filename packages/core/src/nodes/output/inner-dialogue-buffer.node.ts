@@ -65,16 +65,27 @@ const admitSingle: NodeExecutor = async (inputs, context, properties) => {
   const passthrough = inputs.passthrough;
 
   if (!username || username === 'anonymous') {
-    return { saved: false, persisted: false, entries: [], text: '', reason: 'No authenticated username', passthrough };
+    return {
+      saved: false,
+      persisted: false,
+      savedCount: 0,
+      roleCounts: {},
+      results: [],
+      entries: [],
+      text: '',
+      reason: 'No authenticated username',
+    };
   }
   if (!text) {
     return {
       saved: false,
       persisted: false,
+      savedCount: 0,
+      roleCounts: {},
+      results: [],
       entries: [],
       text: '',
       reason: 'No inner-dialogue text to admit',
-      passthrough,
       bufferPath: getBufferPathForUser(username, 'inner'),
     };
   }
@@ -118,10 +129,12 @@ const admitSingle: NodeExecutor = async (inputs, context, properties) => {
       return {
         saved: false,
         persisted: false,
+        savedCount: 0,
+        roleCounts: {},
+        results: [],
         entries: [],
         text: '',
         reason: 'Inner-dialogue buffer rejected the entry',
-        passthrough,
         bufferPath: getBufferPathForUser(username, 'inner'),
       };
     }
@@ -141,7 +154,7 @@ const admitSingle: NodeExecutor = async (inputs, context, properties) => {
     };
     const durableText = admittedEntry.content;
 
-    return {
+    const result = {
       saved: persisted,
       persisted,
       text: durableText,
@@ -150,6 +163,12 @@ const admitSingle: NodeExecutor = async (inputs, context, properties) => {
       entries: [admittedEntry],
       bufferPath: getBufferPathForUser(username, 'inner'),
       passthrough,
+    };
+    return {
+      ...result,
+      savedCount: 1,
+      roleCounts: { [role]: 1 },
+      results: [result],
     };
   } catch (error) {
     console.error('[InnerDialogueBuffer] Error:', error);
@@ -172,7 +191,6 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       entries: [],
       text: '',
       reason: 'No inner-dialogue entries to admit',
-      passthrough: inputs.passthrough,
     };
   }
 
@@ -209,7 +227,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     entry: admittedEntries[0],
     entries: admittedEntries,
     text: savedResults[0]?.text || '',
-    passthrough: inputs.passthrough,
+    ...(saved ? { passthrough: inputs.passthrough } : {}),
     ...(firstFailure?.error ? { error: firstFailure.error } : {}),
     ...(firstFailure?.reason ? { reason: firstFailure.reason } : {}),
     bufferPath: results[0]?.bufferPath,
@@ -239,7 +257,7 @@ export const InnerDialogueBufferNode = defineNode({
     { name: 'results', type: 'array', description: 'Per-entry short-term admission results' },
     { name: 'savedCount', type: 'number' },
     { name: 'roleCounts', type: 'object' },
-    { name: 'passthrough', type: 'any' },
+    { name: 'passthrough', type: 'any', optional: true, description: 'Input released only after complete buffer admission' },
     { name: 'bufferPath', type: 'string' },
   ],
   properties: {

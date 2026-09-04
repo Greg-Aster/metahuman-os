@@ -58,6 +58,17 @@ export interface DesireExecutionSubmission {
   metadata?: Record<string, any>;
 }
 
+export interface DesirePlanningSubmission {
+  username: string;
+  source: WorkSource;
+  desireId: string;
+  priority?: Priority;
+  parentTaskId?: string;
+  correlationId?: string;
+  idempotencyKey?: string;
+  metadata?: Record<string, any>;
+}
+
 export interface DesireOutcomeReviewSubmission {
   username: string;
   source: WorkSource;
@@ -139,6 +150,41 @@ export function buildAgentFollowOnTaskInput(input: AgentFollowOnSubmission): Tas
 
 export function submitAgentFollowOn(input: AgentFollowOnSubmission): Promise<QueuedTask> {
   return submitCoordinatorWork(buildAgentFollowOnTaskInput(input));
+}
+
+/** Admit one targeted Desire planning run through the coordinator-owned agent lane. */
+export function buildDesirePlanningTaskInput(input: DesirePlanningSubmission): TaskInput {
+  const username = input.username.trim();
+  const desireId = input.desireId.trim();
+  if (!PROFILE_USERNAME_PATTERN.test(username)) {
+    throw new Error('Desire planning requires a valid profile username');
+  }
+  if (!/^desire-[a-zA-Z0-9_-]+$/.test(desireId)) {
+    throw new Error('Desire planning requires a valid desire ID');
+  }
+
+  return {
+    type: 'generic',
+    handler: 'agent.desire-planner',
+    resource: 'remote-llm',
+    source: input.source,
+    username,
+    priority: input.priority ?? 'high',
+    input: {
+      agentId: 'desire-planner',
+      args: ['--desire-id', desireId],
+      triggeredBy: input.metadata?.producer || input.source,
+    },
+    parentTaskId: input.parentTaskId,
+    correlationId: input.correlationId,
+    idempotencyKey: input.idempotencyKey || `desire-plan:${desireId}`,
+    maxAttempts: 2,
+    metadata: { producer: 'desire-planner', ...input.metadata },
+  };
+}
+
+export function submitDesirePlanning(input: DesirePlanningSubmission): Promise<QueuedTask> {
+  return submitCoordinatorWork(buildDesirePlanningTaskInput(input));
 }
 
 /** Admit outcome review to the coordinator; the Core Agency graph owns all transitions. */

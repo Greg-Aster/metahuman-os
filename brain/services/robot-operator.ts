@@ -15,6 +15,7 @@ import {
   loadActiveOperatorConfig,
   loadQueueState,
   loadRobotOperatorConfig,
+  loadRobotStatus,
   nextRobotOperatorFullChild,
   randomizedRobotOperatorIdleMs,
   readSystemActivityTimestamp,
@@ -37,6 +38,7 @@ const FULL_CYCLE_POLL_MS = 1_000
 const FULL_IDLE_CONFIRMATIONS = 2
 const CHILDREN: RobotOperatorStimulusAgent[] = [
   'robot-status',
+  'robot-goal-review',
   'boredom-observer',
   'boredom-movement',
   'boredom-reflection',
@@ -119,6 +121,12 @@ function randomizedChildIdleMs(child: RobotOperatorStimulusAgent): number {
       jitterMs: config.robotStatusJitterMs,
     })
   }
+  if (child === 'robot-goal-review') {
+    return randomizedRobotOperatorIdleMs({
+      inactivityThresholdSeconds: config.robotGoalReviewInactivityThresholdSeconds,
+      jitterMs: config.robotGoalReviewJitterMs,
+    })
+  }
   if (child === 'boredom-observer') {
     return randomizedRobotOperatorIdleMs({
       inactivityThresholdSeconds: config.boredomObserverInactivityThresholdSeconds,
@@ -139,6 +147,11 @@ function randomizedChildIdleMs(child: RobotOperatorStimulusAgent): number {
 
 function robotAutonomyCycleActive(): boolean {
   return hasActiveRobotAutonomyCycle(loadQueueState()?.items ?? [])
+}
+
+function robotGoalNeedsReview(username: string): boolean {
+  const task = loadRobotStatus(username)?.task
+  return Boolean(task?.objective.trim() && task.decision.objectiveComplete === false)
 }
 
 function dormantReason(): string | null {
@@ -169,7 +182,15 @@ function armFull(reason: string, minimumDelayMs = 1_000): void {
   fullTimer = null
   for (const child of CHILDREN) schedules[child].nextRunAt = 0
   if (shuttingDown || getOperatorMode() !== 'full') return
-  const enabled = CHILDREN.filter(isRobotOperatorChildEnabled)
+  const configured = CHILDREN.filter(isRobotOperatorChildEnabled)
+  const activeUser = getCurrentlyActiveUser()
+  const goalReviewPending = Boolean(
+    activeUser?.role === 'owner'
+    && robotGoalNeedsReview(activeUser.username),
+  )
+  const enabled = goalReviewPending && configured.includes('robot-goal-review')
+    ? ['robot-goal-review'] as RobotOperatorStimulusAgent[]
+    : configured.filter(child => child !== 'robot-goal-review')
   if (enabled.length === 0) return
   const child = nextRobotOperatorFullChild(enabled, fullCursor)
   if (!child) return
@@ -279,6 +300,15 @@ async function onDeadline(
     console.log(`[${SERVICE_ID}] ${child} waiting because no authorized owner is active`)
     if (expectedMode === 'full') armFull('no-active-user', RETRY_DELAY_MS)
     else armSemiChild(child, 'no-active-user', RETRY_DELAY_MS)
+    publishRuntime()
+    return
+  }
+  if (child === 'robot-goal-review' && !robotGoalNeedsReview(activeUser.username)) {
+    schedule.lastOutcome = 'no_unfinished_goal'
+    lifecycle = 'armed'
+    lifecycleReason = 'goal-review-not-needed'
+    if (expectedMode === 'full') armFull('goal-review-not-needed')
+    else armSemiChild(child, 'goal-review-not-needed')
     publishRuntime()
     return
   }

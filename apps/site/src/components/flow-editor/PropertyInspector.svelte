@@ -2,6 +2,8 @@
   import type { Edge, Node } from '@xyflow/svelte';
   import type { NodeSlot, PropertySchema } from '@metahuman/core/nodes/types';
   import NodePropertyField from './NodePropertyField.svelte';
+  import NodeActivationEditor from './NodeActivationEditor.svelte';
+  import { safeOutputPreview } from '../../lib/client/flow-editor/execution-observability';
   import {
     getConnectedOutputConfigurationWarnings,
     getNodeStatusRows,
@@ -51,6 +53,11 @@
     typeof selectedNode?.data?.executionState === 'string'
       ? selectedNode.data.executionState
       : 'idle'
+  );
+  const executionSkipReason = $derived(
+    typeof selectedNode?.data?.executionSkipReason === 'string'
+      ? selectedNode.data.executionSkipReason
+      : ''
   );
   const incomingEdges = $derived(
     selectedNode ? graphEdges.filter((edge) => edge.target === selectedNode.id) : []
@@ -166,23 +173,7 @@
   }
 
   function formatOutputPreview(value: unknown): string {
-    try {
-      const rendered = JSON.stringify(value, (_key, nestedValue) => {
-        if (typeof nestedValue === 'string' && /^data:(?:image|audio)\//.test(nestedValue)) {
-          return `[embedded media omitted: ${nestedValue.length} characters]`;
-        }
-        if (typeof nestedValue === 'string' && nestedValue.length > 2_000) {
-          return `${nestedValue.slice(0, 2_000)}… [${nestedValue.length - 2_000} characters omitted]`;
-        }
-        return nestedValue;
-      }, 2);
-      if (!rendered) return String(value);
-      return rendered.length > 8_000
-        ? `${rendered.slice(0, 8_000)}\n… [output preview truncated]`
-        : rendered;
-    } catch {
-      return String(value);
-    }
+    return safeOutputPreview(value, 8_000);
   }
 
 </script>
@@ -192,10 +183,17 @@
     <div class="p-4 border-b border-slate-700 bg-slate-900">
       <div class="mb-1 flex items-start justify-between gap-3">
         <h3 class="m-0 text-base font-semibold text-slate-50">{nodeTitle}</h3>
-        <span class="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide {executionState === 'failed' ? 'bg-red-950 text-red-300' : executionState === 'completed' ? 'bg-emerald-950 text-emerald-300' : executionState === 'running' ? 'bg-blue-950 text-blue-300' : 'bg-slate-800 text-slate-500'}">{executionState}</span>
+        <span class="rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide {executionState === 'failed' ? 'bg-red-950 text-red-300' : executionState === 'completed' ? 'bg-emerald-950 text-emerald-300' : executionState === 'running' ? 'bg-blue-950 text-blue-300' : executionState === 'skipped' ? 'bg-slate-700 text-slate-300' : 'bg-slate-800 text-slate-500'}">{executionState}</span>
       </div>
       <span class="text-[11px] text-slate-500 font-mono">ID: {selectedNode.id}</span>
       <span class="block mt-1 text-[11px] text-slate-400 font-mono">Type: {nodeType}{nodeCategory ? ` · ${nodeCategory}` : ''}</span>
+      {#if selectedNode.data?.schema?.version || selectedNode.data?.schema?.deprecated || selectedNode.data?.schema?.editorOnly}
+        <div class="mt-2 flex flex-wrap gap-1.5 text-[9px] font-semibold uppercase tracking-wide">
+          {#if selectedNode.data?.schema?.version}<span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400">v{selectedNode.data.schema.version}</span>{/if}
+          {#if selectedNode.data?.schema?.editorOnly}<span class="rounded bg-cyan-950 px-1.5 py-0.5 text-cyan-300">editor only</span>{/if}
+          {#if selectedNode.data?.schema?.deprecated}<span class="rounded bg-amber-950 px-1.5 py-0.5 text-amber-300">deprecated</span>{/if}
+        </div>
+      {/if}
     </div>
 
     <section class="py-3 px-4 border-b border-slate-700">
@@ -216,6 +214,14 @@
             <span class="presentation-badge badge-{badge.tone || 'neutral'}">{badge.label}</span>
           {/each}
         </div>
+      {/if}
+      {#if selectedNode.data?.schema?.documentation && !selectedNode.data.schema.documentation.complete}
+        <details class="mt-3 rounded border border-slate-700 bg-slate-900/50 p-2.5 text-[10px] text-slate-500">
+          <summary class="cursor-pointer text-slate-400">Schema documentation gaps</summary>
+          {#if selectedNode.data.schema.documentation.missingInputs.length}<p class="mb-0 mt-2">Inputs: {selectedNode.data.schema.documentation.missingInputs.join(', ')}</p>{/if}
+          {#if selectedNode.data.schema.documentation.missingOutputs.length}<p class="mb-0 mt-2">Outputs: {selectedNode.data.schema.documentation.missingOutputs.join(', ')}</p>{/if}
+          {#if selectedNode.data.schema.documentation.missingProperties.length}<p class="mb-0 mt-2">Settings: {selectedNode.data.schema.documentation.missingProperties.join(', ')}</p>{/if}
+        </details>
       {/if}
     </section>
 
@@ -306,6 +312,13 @@
         </div>
       </div>
     </section>
+
+    <NodeActivationEditor
+      {selectedNode}
+      {graphNodes}
+      {graphEdges}
+      {onUpdateNodeData}
+    />
 
     {#if outputWarnings.length}
       <section class="py-3 px-4 border-b border-amber-900/70 bg-amber-950/25">
@@ -408,6 +421,9 @@
           <span class="text-slate-500">State</span>
           <span class="font-mono text-slate-300">{executionState}</span>
         </div>
+        {#if executionSkipReason}
+          <p class="mt-2 mb-0 rounded border border-slate-700 bg-slate-900 p-2 text-[11px] text-slate-400">{executionSkipReason}</p>
+        {/if}
         {#if lastRunDurationMs !== null}
           <div class="mt-2 flex items-center justify-between text-[11px]">
             <span class="text-slate-500">Graph duration</span>

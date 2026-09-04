@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
+  "name": "Desire Generator",
+  "description": "Generates new desires or evaluates reinforcement from canonical Agency inputs",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "input",
+      "type": "inputNode",
+      "position": { "x": 80, "y": 140 },
+      "data": { "label": "Gathered Agency Inputs", "nodeType": "desire_generation_input", "properties": {} }
+    },
+    {
+      "id": "generate",
+      "type": "agentNode",
+      "position": { "x": 470, "y": 120 },
+      "width": 370,
+      "height": 240,
+      "data": { "label": "Generate or Reinforce Desires", "nodeType": "desire_generation", "properties": {} }
+    }
+  ],
+  "edges": [
+    { "id": "input-operation-generate-operation", "source": "input", "target": "generate", "sourceHandle": "operation", "targetHandle": "operation", "data": {} },
+    { "id": "input-inputs-generate-inputs", "source": "input", "target": "generate", "sourceHandle": "inputs", "targetHandle": "inputs", "data": {} },
+    { "id": "input-existing-generate-existing", "source": "input", "target": "generate", "sourceHandle": "existingDesires", "targetHandle": "existingDesires", "data": {} }
+  ]
+}

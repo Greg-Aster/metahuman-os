@@ -21,7 +21,7 @@ function jsonFiles(directory: string): string[] {
   })
 }
 
-test('the distinct Inner Buffer admission workflow saves its entry without an agent gateway', async t => {
+test('the canonical Inner Buffer nodes save an entry without an agent gateway', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-buffer-admission-memory-'))
   const username = `buffer-admission-memory-${process.pid}`
   const originalFetch = globalThis.fetch
@@ -41,19 +41,29 @@ test('the distinct Inner Buffer admission workflow saves its entry without an ag
     ? { path: root, type: 'internal' }
     : undefined)
 
-  assert.equal(await submitInnerDialogue(username, {
-    role: 'thought',
-    content: 'An inner thought admitted through its own graph.',
-    meta: { source: 'user', type: 'user_thought' },
-  }, {
+  const options = {
     idempotencyKey: 'admission:test:inner',
     memoryTimestamp: '2026-08-30T13:01:00.000Z',
-  }), true)
+  }
+  const originalContent = 'An inner thought admitted through the canonical nodes.'
+  assert.equal(await submitInnerDialogue(username, {
+    role: 'thought',
+    content: originalContent,
+    meta: { source: 'user', type: 'user_thought' },
+  }, options), true)
+  assert.equal(await submitInnerDialogue(username, {
+    role: 'thought',
+    content: 'A changed retry that must not replace the durable thought.',
+    meta: { source: 'user', type: 'user_thought' },
+  }, options), true)
 
-  assert.equal(loadBufferForUser(username, 'inner').messages.length, 1)
+  const buffer = loadBufferForUser(username, 'inner')
+  assert.equal(buffer.messages.length, 1)
+  assert.equal(buffer.messages[0]?.content, originalContent)
   const memories = jsonFiles(getProfilePaths(username).episodic)
     .map(file => JSON.parse(fs.readFileSync(file, 'utf8')))
   assert.equal(memories.length, 1)
   assert.deepEqual(memories.map(memory => memory.type), ['inner_dialogue'])
   assert.deepEqual(memories.map(memory => memory.metadata.role), ['thought'])
+  assert.deepEqual(memories.map(memory => memory.content), [originalContent])
 })

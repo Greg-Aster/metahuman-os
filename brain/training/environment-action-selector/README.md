@@ -3,7 +3,7 @@
 This lane trains a small system model for the current typed Environment output:
 `response`, `actions`, `movementRequest`, and `taskDecision`. It does not revive
 the retired 14-field Context Router, create action aliases, generate servo
-commands, or replace deterministic capability and task-state validation.
+commands, or replace Core capability and route validation.
 
 Ownership:
 
@@ -16,7 +16,7 @@ immutable held-out lock.
 - Profile, persona, memory, and user LoRA data are not inputs.
 - `out/environment-action-selector/` owns generated checkpoints and reports.
 
-The corpus contains 129 development source cases. Each case produces twelve
+The corpus contains 124 development source cases. Each case produces twelve
 controlled records from four reviewed instruction surfaces and three context
 conditions. A source case and all its variants remain in one fold. Training
 reads the retired classifier's completed lock and one-shot receipt only as
@@ -43,7 +43,7 @@ Omitting `--fold` launches all four independent development folds in two
 successive pairs so normal system testing retains GPU headroom.
 Use `--fold 0` for a single pilot. Fold adapters are validation rotations, not
 models to merge together. After development scoring selects one recipe, train
-one final adapter on all 129 development cases and run one separately frozen,
+one final adapter on all 124 development cases and run one separately frozen,
 system-owned deployment evaluation. The retired 16-case set remains closed and
 must not be used for training, prompt tuning, checkpoint selection, or another
 evaluation pass.
@@ -51,7 +51,7 @@ evaluation pass.
 Deployment remains conditional on strict JSON, Core-contract validity, semantic
 selection accuracy, false-positive and missed actions, unnecessary captures,
 and latency. The model is not the safety boundary: Core capability admission
-and Environment Task State remain authoritative.
+and the canonical Robot Status task record remain authoritative.
 
 Current development status: `qwen3.5-0.8b-cv-004` completed in two trainer
 pairs but was rejected. Its better epoch-two checkpoint reached 87.0% exact

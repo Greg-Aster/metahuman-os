@@ -494,7 +494,7 @@ export function calculateEffectiveTrustLevel(
  * @param currentTrustLevel - Current user trust level (from identity kernel)
  * @param username - Optional username for user-specific config
  * @param desire - Optional desire for trust degradation calculation
- * @returns Whether the desire can skip the approval queue
+ * @returns Whether the desire can skip the manifest-owned user approval state
  */
 export async function canAutoApprove(
   risk: string,

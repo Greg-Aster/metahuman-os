@@ -13,7 +13,7 @@ Agent Monitor and Boot Manager own persistent services configured in
 | `organizer` | Runs the editable Organizer graph to enrich selected episodic memories |
 | `reflector` | Runs the editable reflection graph over bounded, profile-scoped historical evidence and persists inner dialogue plus episodic memory |
 | `curiosity` (`curiosity-service` source) | Asks questions in chat (user-facing) |
-| `inner-curiosity` | Self-directed Q&A (saves as `inner_dialogue`) |
+| `inner-curiosity` | Runs the editable Inner Curiosity graph for private, memory-grounded self-directed Q&A |
 | `mood` | Reviews recent conversation or inner dialogue and selects an enabled persona facet through the editable Mood Review graph |
 | `dreamer` | Creates surreal dreams from memory fragments |
 | `sleep-workflow` | Coordinator workflow that admits bounded dream and persona-review children |
@@ -22,17 +22,17 @@ Agent Monitor and Boot Manager own persistent services configured in
 | `boredom-movement` | Authors one embodied intention from current state and advertised capabilities |
 | `boredom-reflection` | Authors one memory-inspired intention from bounded historical context |
 | `ingestor` | Finite generic inbox worker for validated TXT, Markdown, and JSON imports; manually runnable or registerable with Trigger Manager |
-| `desire-generator` | Finite Sleep/manual work that synthesizes and nurtures desires from canonical profile inputs |
-| `desire-planner` | Finite Sleep/manual work that checks real registered capabilities and runs the planning/review graphs |
+| `desire-generator` | Runs the editable Desire Generator graph to synthesize and nurture desires from canonical profile inputs |
+| `desire-planner` | Runs the editable Desire Planner graph to check capabilities and policies, gather clarification, validate and persist one plan, and apply one manifest-owned approval transition |
 | `desire-executor` | Admits approved plans to the Work Coordinator; Core Agency executes and durably records them via the editable graph |
 | `desire-outcome-reviewer` | Admits review to the Work Coordinator; Core Agency owns the review graph and durable state transition |
 | `curator` | Curates memories for training dataset preparation |
-| `psychoanalyzer` | Reviews deterministic memory evidence and applies validated, provenance-tracked persona learning |
-| `audio-organizer` | Converts existing completed audio transcripts into structured memories |
+| `psychoanalyzer` | Runs the editable Psychoanalyzer graph over deterministic evidence, then applies validated, provenance-tracked persona learning |
+| `audio-organizer` | Runs the editable Audio Organizer graph to convert completed audio transcripts into structured memories |
 | `profile-sync` | Finite remote pull coordinator for validated profile files, credentials, and idempotent memories |
 | `train-of-thought` | Extends a supplied result or bounded memory seed through related historical memories and persists one reasoning chain |
 | `daydreamer` | Creates daydream narratives (lighter than dreams) |
-| `curiosity-researcher` | Independently researches pending user-facing questions using local memory |
+| `curiosity-researcher` | Runs the editable Curiosity Researcher graph to investigate pending user-facing questions using local memory |
 
 ## Persistent Services
 
@@ -70,8 +70,12 @@ its own hourly schedule, and `inner-curiosity` generates and answers private
 self-directed questions. Curiosity Service stops before model execution when the
 authenticated profile has reached `maxOpenQuestions`; user answers and skips
 durably resolve those pending records through the shared Core question store.
-The two generative curiosity paths share Core's bounded profile-memory sampler,
-while Inner Curiosity alone persists private Q&A through the Inner Buffer graph.
+The two generative curiosity paths share Core's bounded profile-memory sampler.
+Inner Curiosity's canonical graph contains its complete private path:
+sampling, persona context, question generation, related-memory search, answer
+generation, Inner Dialogue Buffer admission, long-term memory capture, and the
+optional Train of Thought trigger. Its Brain adapter does not call a model or
+maintain a second pipeline.
 
 `train-of-thought` remains manually runnable. It is also an optional follow-on:
 after Reflector or Inner Curiosity durably persists a result, an editable graph

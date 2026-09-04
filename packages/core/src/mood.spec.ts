@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { setAuditEnabled } from './audit.js';
-import { loadMoodState } from './mood-settings.js';
-import { getProfilePaths } from './path-builder.js';
+import { invalidateModelCache } from './model-resolver.js';
+import { isPersonaSummaryGloballyEnabled, loadMoodState } from './mood-settings.js';
+import { getProfilePaths, systemPaths } from './path-builder.js';
 import { loadPersonaFacetConfig, PersonaFacetConfigurationError } from './persona-facets.js';
 import { MoodClassifierNode } from './nodes/persona/mood-classifier.node.js';
 import { MoodContextLoaderNode } from './nodes/persona/mood-context-loader.node.js';
@@ -15,6 +16,24 @@ const profileRoot = paths.root;
 
 setAuditEnabled(false);
 try {
+  const profileModels = JSON.parse(fs.readFileSync(path.join(systemPaths.etc, 'models.json'), 'utf8'));
+  const rootPersonaSummaryEnabled = typeof profileModels.globalSettings?.includePersonaSummary === 'boolean'
+    ? profileModels.globalSettings.includePersonaSummary
+    : true;
+  const profilePersonaSummaryEnabled = !rootPersonaSummaryEnabled;
+  profileModels.globalSettings = {
+    ...profileModels.globalSettings,
+    includePersonaSummary: profilePersonaSummaryEnabled,
+  };
+  fs.mkdirSync(paths.etc, { recursive: true });
+  fs.writeFileSync(path.join(paths.etc, 'models.json'), `${JSON.stringify(profileModels, null, 2)}\n`, 'utf8');
+  invalidateModelCache();
+  assert.equal(
+    isPersonaSummaryGloballyEnabled(username),
+    profilePersonaSummaryEnabled,
+    'Mood must read the target profile model registry instead of the root template',
+  );
+
   const facetsPath = path.join(profileRoot, 'persona', 'facets.json');
   fs.mkdirSync(path.dirname(facetsPath), { recursive: true });
   fs.writeFileSync(facetsPath, '', 'utf8');
@@ -95,6 +114,7 @@ try {
   fs.writeFileSync(path.join(paths.state, 'mood-state.json'), '{invalid', 'utf8');
   assert.throws(() => loadMoodState(username), /JSON|Expected property name|Unexpected token/);
 } finally {
+  invalidateModelCache();
   setAuditEnabled(true);
   fs.rmSync(profileRoot, { recursive: true, force: true });
 }

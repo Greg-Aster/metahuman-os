@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import { responsePipelineCardTypeForReply } from '../apps/site/src/lib/client/conversation-transport.js';
 import { ModelRouterNode } from '../packages/core/src/nodes/llm/model-router.node.js';
+import { parseEnvironmentIntentRouting } from '../packages/core/src/nodes/llm/orchestrator-llm.node.js';
 
 const graph = JSON.parse(fs.readFileSync(
   new URL('../etc/cognitive-graphs/environment-mode.json', import.meta.url),
@@ -15,9 +16,10 @@ const graph = JSON.parse(fs.readFileSync(
       nodeType: string;
       comment?: string;
       properties?: Record<string, unknown>;
+      activation?: { when?: Array<{ nodeId: string; output: string; truthy?: boolean }> };
     };
   }>;
-  edges: Array<{ source: string; target: string; sourceHandle: string; targetHandle: string }>;
+  edges: Array<{ source: string; target: string; sourceHandle: string; targetHandle: string; data?: { kind?: string; when?: { output: string; truthy?: boolean; notEquals?: unknown } } }>;
 };
 
 function hasEdge(source: string, sourceHandle: string, target: string, targetHandle: string): boolean {
@@ -34,78 +36,119 @@ test('Environment Mode has one explicit off-script generation branch that rejoin
   assert.equal(generators.length, 1);
   const generator = generators[0]!;
   const parser = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')!;
-  const prepare = graph.nodes.find(node => (
-    node.data.nodeType === 'environment_task_state'
-    && node.data.properties?.phase === 'prepare'
-  ))!;
-  const reducer = graph.nodes.find(node => (
-    node.data.nodeType === 'environment_task_state'
-    && node.data.properties?.phase === 'reduce'
-  ))!;
   const bridge = graph.nodes.find(node => node.data.nodeType === 'environment_send_action')!;
+  const statusOut = graph.nodes.find(node => node.data.nodeType === 'robot_status_out')!;
 
-  assert.equal(hasEdge(parser.id, 'actions', reducer.id, 'actions'), true);
+  assert.equal(hasEdge(parser.id, 'actions', bridge.id, 'actions'), true);
   assert.equal(hasEdge(parser.id, 'movementRequest', generator.id, 'movementRequest'), true);
-  assert.equal(hasEdge(prepare.id, 'movementRequest', generator.id, 'preparedMovementRequest'), true);
-  assert.equal(hasEdge(prepare.id, 'movementRequest', '3', 'preparedMovementRequest'), true);
-  assert.equal(hasEdge(generator.id, 'actions', reducer.id, 'generatedActions'), true);
-  assert.equal(hasEdge(generator.id, 'response', reducer.id, 'generatedResponse'), true);
-  assert.equal(hasEdge(reducer.id, 'actions', bridge.id, 'actions'), true);
+  assert.deepEqual(generator.data.activation?.when, [
+    { nodeId: parser.id, output: 'movementRequest', truthy: true },
+  ]);
+  assert.deepEqual(bridge.data.activation?.when, [
+    { nodeId: parser.id, output: 'valid', truthy: true },
+  ]);
+  assert.equal(hasEdge(generator.id, 'actions', bridge.id, 'generatedActions'), true);
+  assert.equal(hasEdge(generator.id, 'response', bridge.id, 'generatedResponse'), false);
+  assert.equal(hasEdge(parser.id, 'taskDecision', statusOut.id, 'taskDecision'), true);
+  assert.equal(hasEdge(bridge.id, 'bridgeRecord', statusOut.id, 'bridgeRecord'), true);
   assert.equal(
     (bridge.data.properties?.allowedActions as string[]).includes('robotMotionPlan'),
     true,
   );
 });
 
-test('Environment Mode sends one action selector directly to parser and one task-state owner', () => {
+test('Environment Mode uses one route-only orchestrator before selected context and one action selector', () => {
+  const orchestrator = graph.nodes.find(node => node.data.nodeType === 'orchestrator_llm')!;
   const memoryRouter = graph.nodes.find(node => node.data.nodeType === 'memory_router')!;
   const contextBuilder = graph.nodes.find(node => node.data.nodeType === 'environment_context_builder')!;
   const actionParser = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')!;
   const userInput = graph.nodes.find(node => node.data.nodeType === 'user_input')!;
   const bridgeInput = graph.nodes.find(node => node.data.nodeType === 'environment_bridge_input')!;
   const history = graph.nodes.find(node => node.data.nodeType === 'conversation_history')!;
-  const taskNodes = graph.nodes.filter(node => node.data.nodeType === 'environment_task_state');
-  const prepare = taskNodes.find(node => node.data.properties?.phase === 'prepare')!;
-  const reducer = taskNodes.find(node => node.data.properties?.phase === 'reduce')!;
+  const imageInput = graph.nodes.find(node => node.data.nodeType === 'environment_image_input')!;
+  const statusInput = graph.nodes.find(node => node.data.nodeType === 'robot_status')!;
+  const statusOut = graph.nodes.find(node => node.data.nodeType === 'robot_status_out')!;
+  const bridge = graph.nodes.find(node => node.data.nodeType === 'environment_send_action')!;
   const environmentLlm = graph.nodes.find(node => node.data.nodeType === 'model_router')!;
-  const thinkingStripper = graph.nodes.find(node => node.data.nodeType === 'thinking_stripper')!;
 
   assert.ok(memoryRouter);
-  assert.equal(taskNodes.length, 2);
+  assert.ok(imageInput);
+  assert.ok(orchestrator);
+  assert.ok(statusInput);
+  assert.ok(statusOut);
   assert.equal(graph.nodes.filter(node => node.data.nodeType === 'model_router').length, 1);
   assert.equal(environmentLlm.data.properties?.role, 'environmentActionSelector');
+  assert.equal(orchestrator.data.properties?.outputContract, 'environment');
+  assert.equal(orchestrator.data.properties?.maxTokens, 768);
+  const intentPrompt = String(orchestrator.data.properties?.systemPrompt);
+  assert.match(intentPrompt, /needsResponse exposes user-visible natural-language expression/i);
+  assert.match(intentPrompt, /needsRobotStatus exposes the canonical current snapshot/i);
+  assert.match(intentPrompt, /Routes are independent/i);
+  assert.match(intentPrompt, /Infer which information and capabilities are relevant/i);
+  assert.deepEqual(parseEnvironmentIntentRouting(JSON.stringify({
+    needsResponse: true,
+    needsConversationHistory: false,
+    needsMemory: false,
+    needsRobotStatus: true,
+    needsEnvironment: true,
+    needsVision: false,
+    needsAction: true,
+  })), {
+    needsResponse: true,
+    needsConversationHistory: false,
+    needsMemory: false,
+    needsRobotStatus: true,
+    needsEnvironment: true,
+    needsVision: false,
+    needsAction: true,
+  });
+  assert.throws(
+    () => parseEnvironmentIntentRouting('{"needsResponse":true}'),
+    /requires boolean needsConversationHistory/,
+  );
   assert.equal(contextBuilder.data.properties?.recentHistoryLimit, 4);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /terminal action result proves execution/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /action result proves execution/i);
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /visual observation proves only visible facts/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /neither invent extra steps nor impose a fixed action count/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /response is optional, never execution/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /one or two concise sentences/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Preserve taskState/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Make one semantic routing decision/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /selectedRoutes is the Intent Orchestrator's decision/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /response field carries the user-visible natural-language expression/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Use those selected capabilities without deciding the routes again/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /current visual evidence is useful but absent/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /saved environment observation supplies last-known state and capabilities/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Advertised actions are proven capabilities/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /movementRequest is available for a novel movement/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /actions and movementRequest are exclusive/i);
   assert.match(
     String(contextBuilder.data.properties?.systemPrompt),
-    /currentEnvironment contains current physical state and capabilities/i,
+    /outcome act means that actions or movementRequest is non-empty and objectiveComplete is false/i,
   );
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /choose an advertised action when its description performs the current step/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Use movementRequest only when the current movement itself is uncovered/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /actions and movementRequest are exclusive/i);
 
   assert.equal(graph.nodes.some(node => node.data.nodeType === 'instruction_resolver'), false);
-  assert.equal(hasEdge(bridgeInput.id, 'observation', prepare.id, 'observation'), true);
-  assert.equal(hasEdge(userInput.id, 'message', prepare.id, 'instruction'), true);
-  assert.equal(hasEdge(userInput.id, 'message', prepare.id, 'userInstruction'), true);
-  assert.equal(hasEdge(userInput.id, 'instructionSource', prepare.id, 'inputSource'), true);
-  assert.equal(hasEdge(prepare.id, 'memoryHints', memoryRouter.id, 'orchestratorHints'), true);
+  assert.equal(hasEdge(userInput.id, 'message', orchestrator.id, 'message'), true);
+  assert.equal(hasEdge(history.id, 'history', orchestrator.id, 'conversationHistory'), true);
+  assert.equal(hasEdge(orchestrator.id, 'analysis', contextBuilder.id, 'routingAnalysis'), true);
+  assert.equal(hasEdge(orchestrator.id, 'analysis', memoryRouter.id, 'orchestratorHints'), true);
+  assert.equal(hasEdge(bridgeInput.id, 'isTriggeringObservation', imageInput.id, 'observationCurrent'), true);
+  assert.deepEqual(memoryRouter.data.activation?.when, [
+    { nodeId: orchestrator.id, output: 'needsMemory', truthy: true },
+  ]);
+  assert.deepEqual(statusInput.data.activation?.when, [
+    { nodeId: orchestrator.id, output: 'needsRobotStatus', truthy: true },
+  ]);
+  assert.deepEqual(imageInput.data.activation?.when, [
+    { nodeId: orchestrator.id, output: 'needsVision', truthy: true },
+  ]);
+  assert.equal(hasEdge(userInput.id, 'message', contextBuilder.id, 'instruction'), true);
+  assert.equal(hasEdge(userInput.id, 'message', contextBuilder.id, 'userInstruction'), true);
+  assert.equal(hasEdge(userInput.id, 'message', memoryRouter.id, 'userMessage'), true);
   assert.equal(hasEdge(memoryRouter.id, 'memories', contextBuilder.id, 'memories'), true);
   assert.equal(hasEdge(history.id, 'history', contextBuilder.id, 'conversationHistory'), true);
-  assert.equal(hasEdge(prepare.id, 'routingAnalysis', contextBuilder.id, 'routingAnalysis'), true);
-  assert.equal(hasEdge(prepare.id, 'routingAnalysis', actionParser.id, 'routingAnalysis'), true);
-  assert.equal(hasEdge(prepare.id, 'precomputedResponse', environmentLlm.id, 'precomputedResponse'), false);
-  assert.equal(hasEdge(environmentLlm.id, 'response', thinkingStripper.id, 'response'), true);
-  assert.equal(hasEdge(thinkingStripper.id, 'response', actionParser.id, 'response'), true);
-  assert.equal(hasEdge(actionParser.id, 'actions', reducer.id, 'actions'), true);
+  assert.equal(hasEdge(statusInput.id, 'context', contextBuilder.id, 'robotStatus'), true);
+  assert.equal(graph.nodes.some(node => node.data.nodeType === 'thinking_stripper'), false);
+  assert.equal(hasEdge(environmentLlm.id, 'response', actionParser.id, 'response'), true);
+  assert.equal(hasEdge(actionParser.id, 'actions', bridge.id, 'actions'), true);
+  assert.equal(hasEdge(actionParser.id, 'taskDecision', statusOut.id, 'taskDecision'), true);
+  assert.equal(hasEdge(bridge.id, 'bridgeRecord', statusOut.id, 'bridgeRecord'), true);
   for (const retired of [
-    'orchestrator_llm',
     'smart_router',
     'search_interpreter',
     'environment_task_refiner',
@@ -113,6 +156,15 @@ test('Environment Mode sends one action selector directly to parser and one task
     'environment_observation',
     'environment_instruction_interpreter',
     'environment_prompt',
+    'environment_task_input',
+    'environment_task_preparation',
+    'environment_task_reducer',
+    'robot_operator_input',
+    'environment_action_context_input',
+    'environment_feedback',
+    'environment_map_input',
+    'debug_output_viewer',
+    'environment_chat',
   ]) {
     assert.equal(graph.nodes.some(node => node.data.nodeType === retired), false);
   }
@@ -120,8 +172,8 @@ test('Environment Mode sends one action selector directly to parser and one task
 
 test('Environment Action Selector documents its role and exposes every consumed setting', () => {
   const environmentLlm = graph.nodes.find(node => node.data.nodeType === 'model_router')!;
-  assert.match(String(environmentLlm.data.comment), /Semantic Environment decision point/i);
-  assert.match(String(environmentLlm.data.comment), /does not execute or authorize physical work/i);
+  assert.match(String(environmentLlm.data.comment), /executes the chosen routes/i);
+  assert.match(String(environmentLlm.data.comment), /does not decide which context branches run/i);
 
   const defaults = Object.keys(ModelRouterNode.properties ?? {}).sort();
   const editable = Object.keys(ModelRouterNode.propertySchemas ?? {}).sort();

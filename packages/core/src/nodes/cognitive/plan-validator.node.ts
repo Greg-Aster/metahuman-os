@@ -4,42 +4,36 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import type {
+  DesireGoalProgress,
+  DesireGoalType,
+  DesireMilestone,
+  DesirePlan,
+  DesireRisk,
+} from '../../agency/types.js';
+import { getCatalogEntries } from '../../tool-catalog.js';
+import { loadTrustLevel, type TrustLevel } from '../../skills.js';
+import { meetsMinimumTrust } from '../../policy.js';
+import { highestPlanStepRisk, planRiskCoversEveryStep } from '../../agency/plan-risk.js';
 
-interface PlanStep {
-  id?: string;
-  description: string;
-  skill?: string;
-  inputs?: Record<string, unknown>;
-  dependsOn?: string[];
-}
-
-interface Plan {
-  id?: string;
-  steps: PlanStep[];
-  estimatedDuration?: string;
-  requiredTools?: string[];
-}
+const DESIRE_RISKS = new Set<DesireRisk>(['none', 'low', 'medium', 'high', 'critical']);
+const DESIRE_GOAL_TYPES = new Set<DesireGoalType>(['one_time', 'recurring', 'long_running']);
+const MILESTONE_STATUSES = new Set(['pending', 'in_progress', 'completed', 'skipped']);
+const TRUST_LEVELS = new Set<TrustLevel>([
+  'observe',
+  'suggest',
+  'supervised_auto',
+  'bounded_auto',
+  'adaptive_auto',
+]);
+const GENERIC_SKILLS = new Set(['general', 'manual', 'none']);
 
 const execute: NodeExecutor = async (inputs, _context, properties) => {
-  // Input comes via NAMED handle from graph links (not positional index!)
-  // In desire-planner.json: edge e-5-slot_0-6-slot_0 -> inputs.slot_0
-  // The plan generator outputs {plan, success, error, goalType, completionCriteria, milestones, goalProgress}
-  const slot0 = (inputs.slot_0 || inputs[0]) as {
-    plan?: Plan;
-    success?: boolean;
-    goalType?: string;
-    completionCriteria?: string;
-    milestones?: unknown[];
-    goalProgress?: unknown;
-  } | Plan | undefined;
-
-  const plan = (slot0 && 'plan' in slot0 ? slot0.plan : slot0) as Plan | undefined;
-
-  // Extract long-running goal fields to pass through
-  const goalType = slot0 && 'goalType' in slot0 ? slot0.goalType : undefined;
-  const completionCriteria = slot0 && 'completionCriteria' in slot0 ? slot0.completionCriteria : undefined;
-  const milestones = slot0 && 'milestones' in slot0 ? slot0.milestones : undefined;
-  const goalProgress = slot0 && 'goalProgress' in slot0 ? slot0.goalProgress : undefined;
+  const plan = inputs.plan as DesirePlan | undefined;
+  const goalType = inputs.goalType as DesireGoalType | undefined;
+  const completionCriteria = inputs.completionCriteria as string | undefined;
+  const milestones = inputs.milestones as DesireMilestone[] | undefined;
+  const goalProgress = inputs.goalProgress as DesireGoalProgress | undefined;
 
   const checkSkillAvailability = properties?.checkSkillAvailability ?? true;
   const checkTrustLevel = properties?.checkTrustLevel ?? true;
@@ -55,37 +49,122 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  // Check plan structure
-  if (!plan.steps || !Array.isArray(plan.steps)) {
+  if (!Array.isArray(plan.steps)) {
     errors.push('Plan must have a steps array');
   } else if (plan.steps.length === 0) {
     errors.push('Plan must have at least one step');
+  } else if (plan.steps.length > 10) {
+    errors.push('Plan must not have more than 10 steps');
   } else {
-    // Validate each step - plans are flexible for Big Brother execution
-    // The 'skill' field is OPTIONAL - Big Brother will determine specific tools
+    const orders = new Set<number>();
     for (let i = 0; i < plan.steps.length; i++) {
-      const step = plan.steps[i] as PlanStep & { action?: string };
-      // Check for either description OR action (plan generator uses 'action')
-      if (!step.description && !step.action) {
-        errors.push(`Step ${i + 1} is missing a description or action`);
+      const step = plan.steps[i];
+      if (!Number.isInteger(step.order) || step.order < 1 || orders.has(step.order)) {
+        errors.push(`Step ${i + 1} has an invalid or duplicate order`);
+      } else {
+        orders.add(step.order);
       }
-      // Note: skill field is NOT required - plans can be high-level and Big Brother
-      // will figure out the specific execution approach
-
-      // Check for circular dependencies
-      if (step.dependsOn) {
-        const stepId = step.id || `step_${i}`;
-        for (const dep of step.dependsOn) {
-          if (dep === stepId) {
-            errors.push(`Step ${i + 1} has circular dependency on itself`);
-          }
-        }
+      if (typeof step.action !== 'string' || !step.action.trim()) {
+        errors.push(`Step ${i + 1} is missing an action`);
+      }
+      if (typeof step.expectedOutcome !== 'string' || !step.expectedOutcome.trim()) {
+        errors.push(`Step ${i + 1} is missing an expected outcome`);
+      }
+      if (!DESIRE_RISKS.has(step.risk)) {
+        errors.push(`Step ${i + 1} has unsupported risk '${String(step.risk)}'`);
+      }
+      if (typeof step.requiresApproval !== 'boolean') {
+        errors.push(`Step ${i + 1} requires an explicit requiresApproval decision`);
       }
     }
   }
 
-  // Skill availability checking is DISABLED - Big Brother handles this dynamically
-  // Trust level checking is DISABLED - handled at execution time
+  if (!DESIRE_RISKS.has(plan.estimatedRisk)) {
+    errors.push(`Plan has unsupported estimated risk '${String(plan.estimatedRisk)}'`);
+  } else if (Array.isArray(plan.steps)
+      && plan.steps.every(step => DESIRE_RISKS.has(step.risk))
+      && !planRiskCoversEveryStep(plan)) {
+    errors.push(
+      `Plan estimated risk '${plan.estimatedRisk}' is lower than highest step risk '${highestPlanStepRisk(plan)}'`,
+    );
+  }
+  if (typeof plan.operatorGoal !== 'string' || !plan.operatorGoal.trim()) {
+    errors.push('Plan requires a non-empty operator goal');
+  }
+  if (!Array.isArray(plan.requiredSkills)
+      || plan.requiredSkills.some(skill => typeof skill !== 'string' || !skill.trim())) {
+    errors.push('Plan requiredSkills must be an array of non-empty strings');
+  }
+  if (!TRUST_LEVELS.has(plan.requiredTrustLevel)) {
+    errors.push(`Plan has unsupported trust level '${String(plan.requiredTrustLevel)}'`);
+  }
+
+  if (goalType !== undefined && !DESIRE_GOAL_TYPES.has(goalType)) {
+    errors.push(`Plan has unsupported goal type '${String(goalType)}'`);
+  }
+  if (completionCriteria !== undefined
+      && (typeof completionCriteria !== 'string' || !completionCriteria.trim())) {
+    errors.push('Plan completion criteria must be a non-empty string when supplied');
+  }
+  if (milestones !== undefined && !Array.isArray(milestones)) {
+    errors.push('Plan milestones must be an array when supplied');
+  } else if (Array.isArray(milestones)) {
+    const orders = new Set<number>();
+    for (let index = 0; index < milestones.length; index++) {
+      const milestone = milestones[index];
+      if (!milestone?.id?.trim() || !milestone.title?.trim()) {
+        errors.push(`Milestone ${index + 1} requires an id and title`);
+      }
+      if (!Number.isInteger(milestone?.order) || milestone.order < 1 || orders.has(milestone.order)) {
+        errors.push(`Milestone ${index + 1} has an invalid or duplicate order`);
+      } else {
+        orders.add(milestone.order);
+      }
+      if (!MILESTONE_STATUSES.has(milestone?.status)) {
+        errors.push(`Milestone ${index + 1} has unsupported status '${String(milestone?.status)}'`);
+      }
+    }
+  }
+
+  if (goalType === 'long_running') {
+    if (!completionCriteria?.trim()) errors.push('Long-running plans require completion criteria');
+    if (!Array.isArray(milestones) || milestones.length === 0) {
+      errors.push('Long-running plans require milestones');
+    }
+    if (!goalProgress
+      || !Number.isInteger(goalProgress.currentMilestone)
+      || goalProgress.currentMilestone < 0
+      || goalProgress.totalMilestones !== milestones?.length
+      || !Number.isInteger(goalProgress.completedMilestones)
+      || goalProgress.completedMilestones < 0
+      || !Number.isFinite(goalProgress.progressPercent)
+      || goalProgress.progressPercent < 0
+      || goalProgress.progressPercent > 100) {
+      errors.push('Long-running plans require consistent initialized goal progress');
+    }
+  }
+
+  if (checkSkillAvailability) {
+    const availableSkills = new Set(getCatalogEntries().map(entry => entry.skill));
+    const claimedSkills = new Set([
+      ...(Array.isArray(plan.requiredSkills) ? plan.requiredSkills : []),
+      ...(Array.isArray(plan.steps) ? plan.steps.map(step => step.skill).filter(Boolean) as string[] : []),
+    ]);
+    for (const skill of claimedSkills) {
+      if (!GENERIC_SKILLS.has(skill) && !availableSkills.has(skill)) {
+        errors.push(`Plan requires unavailable skill '${skill}'`);
+      }
+    }
+  }
+
+  if (checkTrustLevel && TRUST_LEVELS.has(plan.requiredTrustLevel)) {
+    const currentTrust = loadTrustLevel({ strict: true });
+    if (!meetsMinimumTrust(currentTrust, plan.requiredTrustLevel)) {
+      warnings.push(
+        `Current trust level '${currentTrust}' does not meet plan requirement '${plan.requiredTrustLevel}'; user approval is required`,
+      );
+    }
+  }
 
   const valid = errors.length === 0;
 
@@ -109,6 +188,10 @@ export const PlanValidatorNode: NodeDefinition = defineNode({
   category: 'cognitive',
   inputs: [
     { name: 'plan', type: 'object', description: 'Plan to validate' },
+    { name: 'goalType', type: 'string', optional: true, description: 'Generated desire goal type' },
+    { name: 'completionCriteria', type: 'string', optional: true, description: 'Generated completion criteria' },
+    { name: 'milestones', type: 'array', optional: true, description: 'Generated long-running milestones' },
+    { name: 'goalProgress', type: 'object', optional: true, description: 'Initialized long-running goal progress' },
   ],
   outputs: [
     { name: 'valid', type: 'boolean', description: 'Whether plan is valid' },
@@ -119,6 +202,7 @@ export const PlanValidatorNode: NodeDefinition = defineNode({
     { name: 'completionCriteria', type: 'string', optional: true, description: 'Verifiable completion condition' },
     { name: 'milestones', type: 'array', optional: true, description: 'Milestones for long_running goals' },
     { name: 'goalProgress', type: 'object', optional: true, description: 'Progress tracking for long_running goals' },
+    { name: 'stepCount', type: 'number', description: 'Number of validated plan steps' },
   ],
   properties: {
     checkSkillAvailability: true,

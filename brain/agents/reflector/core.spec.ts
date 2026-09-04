@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { setAuditEnabled, type GraphExecutionState, type SvelteFlowGraph } from '@metahuman/core'
+import {
+  DEFAULT_GRAPH_SCHEDULER,
+  setAuditEnabled,
+  type GraphExecutionState,
+  type SvelteFlowGraph,
+} from '@metahuman/core'
 import {
   evaluateReflectorGraph,
   parseReflectorArgs,
@@ -27,6 +32,7 @@ const graph = {
   format: 'svelte-flow',
   name: 'Reflector contract fixture',
   cognitiveMode: 'agent',
+  scheduler: { ...DEFAULT_GRAPH_SCHEDULER },
   nodes: [
     ...Object.entries(nodeIds)
       .filter(([name]) => name !== 'reflection_buffer' && name !== 'reasoning_buffer')

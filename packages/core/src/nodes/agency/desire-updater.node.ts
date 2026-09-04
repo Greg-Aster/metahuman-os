@@ -26,10 +26,12 @@ import type {
   DesireGoalProgress,
   DesireOutcomeReview,
 } from '../../agency/types.js';
+import { statusToStage } from '../../agency/types.js';
 import {
   saveDesireManifest,
+  loadDesireFromFolder,
   savePlanToFolder,
-  saveOutcomeReviewToFolder,
+  saveDesireReviewToFolder,
   addScratchpadEntryToFolder,
 } from '../../agency/storage.js';
 import { audit } from '../../audit.js';
@@ -41,60 +43,38 @@ interface RejectionInput {
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Inputs come via NAMED handles from graph links (not positional indices!)
-  // The graph executor maps edge.targetHandle -> inputs[handle]
-  //
-  // In planner graph (desire-planner.json):
-  //   inputs.desire = {desire, found} from desire_loader (edge e-1-slot_0-7-desire)
-  //   inputs.newStatus = {valid, plan, errors, warnings} from plan_validator (edge e-6-slot_0-7-newStatus)
-  //
-  // In reviewer graph (desire-reviewer.json):
-  //   inputs.desire = {desire, found} from desire_loader
-  //   inputs.review = {verdict, review, ...} from verdict node
-  //
-  // IMPORTANT: Graph executor uses named properties, not array indices!
-  // inputs[0], inputs[1] etc. will be undefined - always use named properties.
-
-  // Try named properties first, then fall back to positional for legacy compatibility
-  const loaderOutput = (inputs.desire || inputs.slot_0 || inputs[0]) as { desire?: Desire; found?: boolean } | undefined;
-  const validatorOutput = (inputs.newStatus || inputs.slot_1 || inputs[1]) as {
-    valid?: boolean;
-    plan?: DesirePlan;
-    // New fields for long-running goal support
-    goalType?: DesireGoalType;
-    completionCriteria?: string;
-    milestones?: DesireMilestone[];
-    goalProgress?: DesireGoalProgress;
-  } | undefined;
-  const reviewerOutput = (inputs.review || inputs.slot_2 || inputs[2]) as { review?: DesireReview; verdict?: string } | undefined;
-
-  // Extract desire from loader output OR from context (desire-planner agent passes desire in context)
-  const contextDesire = (context as { desire?: Desire }).desire;
-  const desire = loaderOutput?.desire || contextDesire;
-
-  // Extract plan from validator output (planner graph) or from desire itself
-  const plan = validatorOutput?.plan || desire?.plan;
-
-  // Extract review from reviewer output or named input
-  const review = reviewerOutput?.review || (inputs.review as DesireReview | undefined);
+  const desireInput = inputs.desire as Desire | { desire?: Desire } | undefined;
+  const desire = desireInput && 'desire' in desireInput
+    ? desireInput.desire
+    : desireInput as Desire | undefined;
+  const plan = inputs.plan as DesirePlan | undefined;
+  const review = inputs.review as DesireReview | undefined;
   const outcomeReview = (inputs.outcomeReview
     || (inputs.review as DesireOutcomeReview | undefined)) as DesireOutcomeReview | undefined;
   const rejection = inputs.rejection as RejectionInput | undefined;
 
   // Status can come from:
   // 1. properties?.newStatus (set in the graph node definition)
-  // 2. inputs.status (explicit status input)
-  // 3. NOT from inputs.newStatus - that's used for validator output in current graphs
-  // Note: inputs.newStatus is an object {valid, plan, ...} from plan_validator, not a status string
-  const statusInput = typeof inputs.status === 'string' ? inputs.status : undefined;
+  // 2. inputs.newStatus (explicit status input)
+  const statusInput = typeof inputs.newStatus === 'string' ? inputs.newStatus : undefined;
   const newStatus = (properties?.newStatus || statusInput) as DesireStatus | undefined;
-  const username = context.userId;
+  const username = typeof context.username === 'string' ? context.username.trim() : '';
 
   if (!desire) {
     return {
       desire: null,
       success: false,
       error: 'No desire provided',
+    };
+  }
+  if (!username) {
+    throw new Error('Desire update requires an authenticated profile username');
+  }
+  if (inputs.valid === false) {
+    return {
+      desire: null,
+      success: false,
+      error: 'Refusing to persist an invalid desire plan',
     };
   }
 
@@ -124,6 +104,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     // Update status if provided
     if (newStatus && newStatus !== oldStatus) {
       updatedDesire.status = newStatus;
+      updatedDesire.currentStage = statusToStage(newStatus);
       updatedDesire.updatedAt = now;
 
       // Set completion time for terminal states
@@ -169,17 +150,17 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       }
 
       // Apply long-running goal fields from plan generator output
-      if (validatorOutput?.goalType) {
-        updatedDesire.goalType = validatorOutput.goalType;
+      if (inputs.goalType) {
+        updatedDesire.goalType = inputs.goalType as DesireGoalType;
       }
-      if (validatorOutput?.completionCriteria) {
-        updatedDesire.completionCriteria = validatorOutput.completionCriteria;
+      if (inputs.completionCriteria) {
+        updatedDesire.completionCriteria = inputs.completionCriteria as string;
       }
-      if (validatorOutput?.milestones && validatorOutput.milestones.length > 0) {
-        updatedDesire.milestones = validatorOutput.milestones;
+      if (Array.isArray(inputs.milestones) && inputs.milestones.length > 0) {
+        updatedDesire.milestones = inputs.milestones as DesireMilestone[];
       }
-      if (validatorOutput?.goalProgress) {
-        updatedDesire.goalProgress = validatorOutput.goalProgress;
+      if (inputs.goalProgress) {
+        updatedDesire.goalProgress = inputs.goalProgress as DesireGoalProgress;
       }
 
       // Save plan to folder
@@ -215,7 +196,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       // Save review to folder
       // For outcome reviews, use the outcome review folder function
       if ('verdict' in review) {
-        await saveOutcomeReviewToFolder(updatedDesire.id, review as unknown as import('../../agency/types.js').DesireOutcomeReview, username);
+        await saveDesireReviewToFolder(updatedDesire.id, review as unknown as import('../../agency/types.js').DesireOutcomeReview, username);
       }
       await addScratchpadEntryToFolder(updatedDesire.id, {
         type: 'review_completed',
@@ -255,6 +236,12 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         },
       }, username);
     }
+
+    // Scratchpad writes update the manifest summary as they persist their
+    // individual entry files. Preserve that canonical summary when attaching
+    // the plan and lifecycle state in the final manifest write.
+    const currentManifest = await loadDesireFromFolder(updatedDesire.id, username);
+    if (currentManifest?.scratchpad) updatedDesire.scratchpad = currentManifest.scratchpad;
 
     // Save desire manifest to folder
     await saveDesireManifest(updatedDesire, username);
@@ -299,6 +286,11 @@ export const DesireUpdaterNode: NodeDefinition = defineNode({
     { name: 'desire', type: 'object', description: 'Desire to update' },
     { name: 'newStatus', type: 'string', optional: true, description: 'New status to set' },
     { name: 'plan', type: 'object', optional: true, description: 'Plan to attach' },
+    { name: 'valid', type: 'boolean', optional: true, description: 'Whether the supplied plan passed validation' },
+    { name: 'goalType', type: 'string', optional: true, description: 'Validated desire goal type' },
+    { name: 'completionCriteria', type: 'string', optional: true, description: 'Validated completion criteria' },
+    { name: 'milestones', type: 'array', optional: true, description: 'Validated long-running milestones' },
+    { name: 'goalProgress', type: 'object', optional: true, description: 'Validated long-running goal progress' },
     { name: 'review', type: 'object', optional: true, description: 'Review to attach' },
     { name: 'outcomeReview', type: 'object', optional: true, description: 'Validated execution outcome review' },
     { name: 'rejection', type: 'object', optional: true, description: 'Rejection info' },
@@ -314,8 +306,20 @@ export const DesireUpdaterNode: NodeDefinition = defineNode({
   ],
   properties: {
     applyOutcomePolicy: false,
+    newStatus: '',
   },
   propertySchemas: {
+    newStatus: {
+      type: 'select',
+      default: '',
+      label: 'New Status',
+      description: 'Optional explicit lifecycle status applied with this update',
+      options: [
+        '', 'nascent', 'pending', 'evaluating', 'planning', 'questioning',
+        'reviewing', 'awaiting_approval', 'approved', 'executing',
+        'awaiting_review', 'completed', 'rejected', 'abandoned', 'failed',
+      ],
+    },
     applyOutcomePolicy: {
       type: 'boolean',
       default: false,

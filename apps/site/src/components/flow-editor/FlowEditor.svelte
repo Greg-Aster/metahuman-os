@@ -18,12 +18,26 @@
   import {
     loadSchemas,
     convertLiteGraphToSvelteFlow,
-    convertSvelteFlowToExecutor,
+    DEFAULT_GRAPH_SCHEDULER,
+    getCachedSchema,
+    materializeSchemaProperties,
     type SvelteFlowGraph,
   } from '../../lib/client/flow-editor/template-converter';
   import { provideFlowEditorActions } from '../../lib/client/flow-editor/flow-editor-context';
   import { withUpdatedNodeProperty } from '../../lib/client/flow-editor/node-property-state';
   import { apiFetch } from '../../lib/client/api-config';
+  import {
+    autoLayoutNodes,
+    connectionProblem,
+    decorateEdge,
+  } from '../../lib/client/flow-editor/graph-authoring';
+  import {
+    emptyGraphHistory,
+    recordGraphHistory,
+    redoGraphHistory,
+    undoGraphHistory,
+    type GraphHistory,
+  } from '../../lib/client/flow-editor/graph-history';
 
   // Props
   let {
@@ -31,11 +45,13 @@
     onExecute = null,
     onGraphChange = null,
     onSelectionChange = null,
+    onHistoryChange = null,
   }: {
     cognitiveMode?: string | null;
     onExecute?: ((graph: SvelteFlowGraph) => Promise<void>) | null;
     onGraphChange?: ((graph: SvelteFlowGraph) => void) | null;
-    onSelectionChange?: ((node: Node | null) => void) | null;
+    onSelectionChange?: ((node: Node | null, edge: Edge | null) => void) | null;
+    onHistoryChange?: ((state: { canUndo: boolean; canRedo: boolean; canPaste: boolean }) => void) | null;
   } = $props();
 
   // State - use regular $state for two-way binding with Svelte Flow
@@ -46,8 +62,26 @@
   let flowInstanceKey = $state(0);
   let graphName = $state('Untitled Graph');
   let graphDescription = $state('');
+  let scheduler = $state({ ...DEFAULT_GRAPH_SCHEDULER });
   let isLoading = $state(true);
   let error = $state<string | null>(null);
+  let showMiniMap = $state(false);
+  const miniMapAllowed = $derived(nodes.length <= 40);
+  const miniMapVisible = $derived(showMiniMap && miniMapAllowed);
+
+  type EditorSnapshot = {
+    nodes: Node[];
+    edges: Edge[];
+    viewport: Viewport;
+    graphName: string;
+    graphDescription: string;
+    scheduler: typeof scheduler;
+  };
+
+  let history = $state<GraphHistory<EditorSnapshot>>(emptyGraphHistory());
+  let clipboard = $state<{ nodes: Node[]; edges: Edge[] } | null>(null);
+  let lastHistoryKey = '';
+  let lastHistoryAt = 0;
 
   // Node types registry
   const nodeTypes: NodeTypes = {
@@ -71,6 +105,78 @@
     noteNode: BaseNode, // Preserved persisted type; uses the shared schema renderer
   };
 
+  function cloneValue<T>(value: T): T {
+    // Svelte's deep state proxies cannot be passed directly to
+    // structuredClone. Graph authoring state is deliberately JSON-safe, so
+    // normalize it through the same persisted representation used on save.
+    return JSON.parse(JSON.stringify(value)) as T;
+  }
+
+  function captureSnapshot(): EditorSnapshot {
+    return cloneValue({
+      nodes,
+      edges,
+      viewport,
+      graphName,
+      graphDescription,
+      scheduler,
+    });
+  }
+
+  function resetHistory(): void {
+    history = emptyGraphHistory();
+    lastHistoryKey = '';
+    lastHistoryAt = 0;
+    notifyHistoryChange();
+  }
+
+  function notifyHistoryChange(): void {
+    onHistoryChange?.({
+      canUndo: history.past.length > 0,
+      canRedo: history.future.length > 0,
+      canPaste: Boolean(clipboard?.nodes.length),
+    });
+  }
+
+  function recordHistory(key: string, coalesce = false): void {
+    const now = Date.now();
+    if (coalesce && key === lastHistoryKey && now - lastHistoryAt < 800) {
+      lastHistoryAt = now;
+      return;
+    }
+    history = recordGraphHistory(history, captureSnapshot());
+    lastHistoryKey = key;
+    lastHistoryAt = now;
+    notifyHistoryChange();
+  }
+
+  function restoreSnapshot(snapshot: EditorSnapshot): void {
+    nodes = cloneValue(snapshot.nodes);
+    edges = snapshot.edges.map(edge => decorateEdge(cloneValue(edge)));
+    viewport = { ...snapshot.viewport };
+    graphName = snapshot.graphName;
+    graphDescription = snapshot.graphDescription;
+    scheduler = { ...snapshot.scheduler };
+    onSelectionChange?.(null, null);
+    notifyGraphChange();
+  }
+
+  export function undo(): void {
+    const transition = undoGraphHistory(history, captureSnapshot());
+    if (!transition.value) return;
+    history = transition.history;
+    restoreSnapshot(transition.value);
+    notifyHistoryChange();
+  }
+
+  export function redo(): void {
+    const transition = redoGraphHistory(history, captureSnapshot());
+    if (!transition.value) return;
+    history = transition.history;
+    restoreSnapshot(transition.value);
+    notifyHistoryChange();
+  }
+
   // Load template when cognitive mode changes
   $effect(() => {
     if (cognitiveMode) {
@@ -81,7 +187,37 @@
   onMount(() => {
     if (!cognitiveMode) {
       isLoading = false;
+      notifyGraphChange();
     }
+    const handleKeyboard = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof Element
+        && target.matches('input, textarea, select, [contenteditable="true"]')) return;
+      const command = event.ctrlKey || event.metaKey;
+      if (!command) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z') {
+        event.preventDefault();
+        event.shiftKey ? redo() : undo();
+      } else if (key === 'y') {
+        event.preventDefault();
+        redo();
+      } else if (key === 'c') {
+        event.preventDefault();
+        copySelected();
+      } else if (key === 'v') {
+        event.preventDefault();
+        paste();
+      } else if (key === 'd') {
+        event.preventDefault();
+        duplicateSelected();
+      } else if (key === 'g') {
+        event.preventDefault();
+        event.shiftKey ? ungroupSelected() : groupSelected();
+      }
+    };
+    window.addEventListener('keydown', handleKeyboard);
+    return () => window.removeEventListener('keydown', handleKeyboard);
   });
 
   /**
@@ -114,6 +250,8 @@
       restoreGraphViewport(sfGraph.viewport);
       graphName = sfGraph.name;
       graphDescription = sfGraph.description;
+      scheduler = { ...sfGraph.scheduler };
+      resetHistory();
 
       console.log(`[FlowEditor] Loaded template: ${templateName}`, {
         nodes: nodes.length,
@@ -136,17 +274,19 @@
   /**
    * Handle new connections
    */
-  function handleConnect(event: CustomEvent<Connection>) {
-    const connection = event.detail;
+  function handleConnect(connection: Connection) {
     if (!connection.source || !connection.target) return;
+    if (connectionProblem(nodes, edges, connection)) return;
+    recordHistory('connect');
 
-    const newEdge: Edge = {
+    const newEdge: Edge = decorateEdge({
       id: `e-${connection.source}-${connection.sourceHandle}-${connection.target}-${connection.targetHandle}`,
       source: connection.source,
       target: connection.target,
       sourceHandle: connection.sourceHandle || undefined,
       targetHandle: connection.targetHandle || undefined,
-    };
+      data: { kind: 'data' },
+    });
 
     edges = [...edges, newEdge];
     notifyGraphChange();
@@ -156,7 +296,7 @@
    * Handle edge deletion
    */
   function handleEdgesDelete(event: CustomEvent<Edge[]>) {
-    const deletedEdges = event.detail;
+    const deletedEdges = 'detail' in event ? event.detail : event as unknown as Edge[];
     const deletedIds = new Set(deletedEdges.map((e) => e.id));
     edges = edges.filter((e) => !deletedIds.has(e.id));
     notifyGraphChange();
@@ -166,7 +306,7 @@
    * Handle node deletion
    */
   function handleNodesDelete(event: CustomEvent<Node[]>) {
-    const deletedNodes = event.detail;
+    const deletedNodes = 'detail' in event ? event.detail : event as unknown as Node[];
     const deletedIds = new Set(deletedNodes.map((n) => n.id));
 
     // Remove nodes
@@ -183,12 +323,39 @@
   /**
    * Handle selection changes - notify parent of selected node
    */
-  function handleSelectionChange({ nodes: selectedNodes }: { nodes: Node[]; edges: Edge[] }) {
+  function handleSelectionChange({ nodes: selectedNodes, edges: selectedEdges }: { nodes: Node[]; edges: Edge[] }) {
     const selectedNode = selectedNodes.length === 1 ? selectedNodes[0] : null;
+    const selectedEdge = selectedNodes.length === 0 && selectedEdges.length === 1 ? selectedEdges[0] : null;
 
-    if (onSelectionChange) {
-      onSelectionChange(selectedNode);
-    }
+    onSelectionChange?.(selectedNode, selectedEdge);
+  }
+
+  function handleBeforeDelete(): boolean {
+    recordHistory('delete');
+    return true;
+  }
+
+  function handleNodeDragStart(): void {
+    recordHistory('move');
+  }
+
+  function isConnectionValid(connection: Connection | Edge): boolean {
+    return connectionProblem(nodes, edges, connection as Connection) === null;
+  }
+
+  function handleReconnect(oldEdge: Edge, connection: Connection): void {
+    if (connectionProblem(nodes, edges, connection, oldEdge.id)) return;
+    recordHistory('reconnect');
+    edges = edges.map(edge => edge.id === oldEdge.id
+      ? decorateEdge({
+          ...edge,
+          source: connection.source!,
+          target: connection.target!,
+          sourceHandle: connection.sourceHandle || undefined,
+          targetHandle: connection.targetHandle || undefined,
+        })
+      : edge);
+    notifyGraphChange();
   }
 
   function restoreGraphViewport(nextViewport: SvelteFlowGraph['viewport']) {
@@ -249,6 +416,7 @@
       name: graphName,
       description: graphDescription,
       cognitiveMode: cognitiveMode as 'dual' | 'agent' | 'emulation' | 'environment' | undefined,
+      scheduler: { ...scheduler },
       nodes,
       edges,
       viewport: { ...viewport },
@@ -256,21 +424,16 @@
   }
 
   /**
-   * Get graph in executor format (for backend execution)
-   */
-  export function getExecutorGraph(): any {
-    return convertSvelteFlowToExecutor(getCurrentGraph());
-  }
-
-  /**
    * Load a graph from data
    */
   export function loadGraph(graph: SvelteFlowGraph) {
     nodes = graph.nodes;
-    edges = graph.edges;
+    edges = graph.edges.map(decorateEdge);
     restoreGraphViewport(graph.viewport);
     graphName = graph.name;
     graphDescription = graph.description;
+    scheduler = { ...(graph.scheduler || DEFAULT_GRAPH_SCHEDULER) };
+    resetHistory();
   }
 
   /**
@@ -282,12 +445,15 @@
     restoreGraphViewport(undefined);
     graphName = 'Untitled Graph';
     graphDescription = '';
+    scheduler = { ...DEFAULT_GRAPH_SCHEDULER };
+    resetHistory();
   }
 
   /**
    * Add a node to the graph
    */
   export function addNode(node: Node) {
+    recordHistory('add-node');
     nodes = [...nodes, node];
     notifyGraphChange();
   }
@@ -296,6 +462,7 @@
    * Update node data (used by PropertyInspector)
    */
   export function updateNodeData(nodeId: string, data: Record<string, any>) {
+    recordHistory(`node-data:${nodeId}:${Object.keys(data).sort().join(',')}`, true);
     nodes = nodes.map((n) =>
       n.id === nodeId
         ? { ...n, data: { ...n.data, ...data } }
@@ -310,6 +477,7 @@
    * replacing one another with a stale properties object.
    */
   export function updateNodeProperty(nodeId: string, propertyKey: string, value: unknown) {
+    recordHistory(`node-property:${nodeId}:${propertyKey}`, true);
     nodes = nodes.map((node) =>
       node.id === nodeId
         ? {
@@ -321,13 +489,22 @@
     notifyGraphChange();
   }
 
-  /** Persist the user-controlled horizontal size in the canonical node state. */
-  export function updateNodeWidth(nodeId: string, width: number) {
+  /** Capture dimensions before Svelte Flow starts mutating them during a drag. */
+  export function beginNodeResize(nodeId: string) {
+    recordHistory(`node-size:${nodeId}`);
+  }
+
+  /** Persist user-controlled node dimensions in the canonical node state. */
+  export function updateNodeDimensions(nodeId: string, width: number, height?: number) {
     if (!Number.isFinite(width)) return;
 
     nodes = nodes.map((node) =>
       node.id === nodeId
-        ? { ...node, width: Math.round(width) }
+        ? {
+            ...node,
+            width: Math.round(width),
+            height: Number.isFinite(height) ? Math.round(height!) : node.height,
+          }
         : node
     );
     notifyGraphChange();
@@ -344,7 +521,63 @@
       ...node,
       selected: node.id === nodeId,
     }));
-    onSelectionChange?.(nodes.find((node) => node.id === nodeId) || null);
+    edges = edges.map(edge => ({ ...edge, selected: false }));
+    onSelectionChange?.(nodes.find((node) => node.id === nodeId) || null, null);
+  }
+
+  export function selectEdge(edgeId: string) {
+    nodes = nodes.map(node => ({ ...node, selected: false }));
+    edges = edges.map(edge => ({ ...edge, selected: edge.id === edgeId }));
+    onSelectionChange?.(null, edges.find(edge => edge.id === edgeId) || null);
+  }
+
+  export function clearSelection() {
+    nodes = nodes.map(node => ({ ...node, selected: false }));
+    edges = edges.map(edge => ({ ...edge, selected: false }));
+    onSelectionChange?.(null, null);
+  }
+
+  export function updateEdgeData(edgeId: string, patch: Record<string, unknown>) {
+    recordHistory(`edge-data:${edgeId}:${Object.keys(patch).sort().join(',')}`, true);
+    edges = edges.map(edge => {
+      if (edge.id !== edgeId) return edge;
+      const nextData = { ...(edge.data || {}) } as Record<string, unknown>;
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined || value === '' || value === false && key === 'loop') delete nextData[key];
+        else nextData[key] = value;
+      }
+      return decorateEdge({ ...edge, data: nextData });
+    });
+    notifyGraphChange();
+  }
+
+  export function updateGraphMetadata(patch: {
+    name?: string;
+    description?: string;
+    maxLoopIterations?: number;
+  }) {
+    recordHistory(`graph:${Object.keys(patch).sort().join(',')}`, true);
+    if (patch.name !== undefined) graphName = patch.name;
+    if (patch.description !== undefined) graphDescription = patch.description;
+    if (patch.maxLoopIterations !== undefined) {
+      scheduler = { ...scheduler, maxLoopIterations: patch.maxLoopIterations };
+    }
+    notifyGraphChange();
+  }
+
+  function refreshExecutionEdges(): void {
+    const stateByNode = new Map(nodes.map(node => [node.id, node.data?.executionState]));
+    edges = edges.map(edge => {
+      const decorated = decorateEdge(edge);
+      const sourceState = stateByNode.get(edge.source);
+      const targetState = stateByNode.get(edge.target);
+      const executionClass = targetState === 'skipped'
+        ? ' inactive-execution-edge'
+        : sourceState === 'completed' && (targetState === 'running' || targetState === 'completed')
+          ? ' active-execution-edge'
+          : '';
+      return { ...decorated, class: `${decorated.class || ''}${executionClass}`.trim() };
+    });
   }
 
   /**
@@ -352,13 +585,22 @@
    */
   export function setNodeExecutionState(
     nodeId: string,
-    state: 'idle' | 'running' | 'completed' | 'failed'
+    state: 'idle' | 'running' | 'completed' | 'skipped' | 'failed',
+    skipReason?: string,
   ) {
     nodes = nodes.map((n) =>
       n.id === nodeId
-        ? { ...n, data: { ...n.data, executionState: state } }
+        ? {
+            ...n,
+            data: {
+              ...n.data,
+              executionState: state,
+              executionSkipReason: state === 'skipped' ? skipReason : undefined,
+            },
+          }
         : n
     );
+    refreshExecutionEdges();
   }
 
   /**
@@ -367,8 +609,9 @@
   export function resetExecutionStates() {
     nodes = nodes.map((n) => ({
       ...n,
-      data: { ...n.data, executionState: 'idle', executionOutput: undefined },
+      data: { ...n.data, executionState: 'idle', executionOutput: undefined, executionSkipReason: undefined },
     }));
+    edges = edges.map(decorateEdge);
   }
 
   /**
@@ -382,6 +625,7 @@
       console.log('[FlowEditor] No nodes or edges selected for deletion');
       return;
     }
+    recordHistory('delete');
 
     // Remove selected nodes
     nodes = nodes.filter(n => !selectedNodeIds.has(n.id));
@@ -471,53 +715,6 @@
   }
 
   /**
-   * Update unconnected status for all nodes
-   * Nodes with no incoming AND no outgoing edges are marked as unconnected (yellow)
-   */
-  export function updateUnconnectedStatus() {
-    // Build sets of connected node IDs
-    const connectedNodeIds = new Set<string>();
-    for (const edge of edges) {
-      connectedNodeIds.add(edge.source);
-      connectedNodeIds.add(edge.target);
-    }
-
-    nodes = nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        isUnconnected: !connectedNodeIds.has(node.id),
-      },
-    }));
-  }
-
-  /**
-   * Mark all nodes as running (start of execution)
-   */
-  export function markAllNodesRunning() {
-    nodes = nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        executionState: 'running' as const,
-      },
-    }));
-  }
-
-  /**
-   * Mark all nodes as completed
-   */
-  export function markAllNodesCompleted() {
-    nodes = nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        executionState: 'completed' as const,
-      },
-    }));
-  }
-
-  /**
    * Mark all nodes as failed
    */
   export function markAllNodesFailed() {
@@ -528,28 +725,158 @@
         executionState: 'failed' as const,
       },
     }));
+    refreshExecutionEdges();
   }
 
-  /**
-   * Mark specific nodes with their execution results
-   */
-  export function updateNodeResults(nodeResults: Record<string, { success: boolean; error?: string }>) {
-    nodes = nodes.map((node) => {
-      const result = nodeResults[node.id];
-      if (result) {
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            executionState: result.success ? 'completed' as const : 'failed' as const,
-          },
-        };
-      }
-      return node;
+  export function copySelected(): void {
+    const directlySelected = nodes.filter(node => node.selected);
+    if (directlySelected.length === 0) return;
+    const selectedIds = new Set(directlySelected.map(node => node.id));
+    for (const node of nodes) {
+      if (node.parentId && selectedIds.has(node.parentId)) selectedIds.add(node.id);
+    }
+    const selected = nodes.filter(node => selectedIds.has(node.id));
+    clipboard = cloneValue({
+      nodes: selected,
+      edges: edges.filter(edge => selectedIds.has(edge.source) && selectedIds.has(edge.target)),
     });
+    notifyHistoryChange();
   }
 
-  provideFlowEditorActions({ updateNodeProperty, updateNodeWidth, selectNode });
+  function uniqueNodeId(prefix = 'node'): string {
+    let suffix = 0;
+    let id = `${prefix}-${Date.now()}`;
+    while (nodes.some(node => node.id === id)) id = `${prefix}-${Date.now()}-${++suffix}`;
+    return id;
+  }
+
+  export function paste(): void {
+    if (!clipboard?.nodes.length) return;
+    recordHistory('paste');
+    const idMap = new Map<string, string>();
+    clipboard.nodes.forEach((node, index) => idMap.set(node.id, uniqueNodeId(`node-${index + 1}`)));
+    const pastedNodes = clipboard.nodes.map(node => ({
+      ...cloneValue(node),
+      id: idMap.get(node.id)!,
+      parentId: node.parentId ? (idMap.get(node.parentId) || node.parentId) : undefined,
+      position: { x: node.position.x + 48, y: node.position.y + 48 },
+      selected: true,
+    }));
+    const pastedEdges = clipboard.edges.map((edge, index) => decorateEdge({
+      ...cloneValue(edge),
+      id: `e-paste-${Date.now()}-${index}`,
+      source: idMap.get(edge.source)!,
+      target: idMap.get(edge.target)!,
+      selected: false,
+    }));
+    nodes = [
+      ...nodes.map(node => ({ ...node, selected: false })),
+      ...pastedNodes,
+    ];
+    edges = [...edges.map(edge => ({ ...edge, selected: false })), ...pastedEdges];
+    clipboard = cloneValue({ nodes: pastedNodes, edges: pastedEdges });
+    notifyGraphChange();
+    notifyHistoryChange();
+  }
+
+  export function duplicateSelected(): void {
+    copySelected();
+    paste();
+  }
+
+  export function autoLayout(): void {
+    if (nodes.length === 0) return;
+    recordHistory('auto-layout');
+    nodes = autoLayoutNodes(nodes, edges);
+    notifyGraphChange();
+  }
+
+  export function groupSelected(): void {
+    const selected = nodes.filter(node => node.selected && !node.parentId);
+    if (selected.length === 0) return;
+    const frameSchema = getCachedSchema('graph_note');
+    if (!frameSchema) return;
+    recordHistory('group');
+
+    const left = Math.min(...selected.map(node => node.position.x));
+    const top = Math.min(...selected.map(node => node.position.y));
+    const right = Math.max(...selected.map(node => node.position.x + (node.width || (node.measured as any)?.width || 360)));
+    const bottom = Math.max(...selected.map(node => node.position.y + (node.height || (node.measured as any)?.height || 220)));
+    const frameId = uniqueNodeId('group');
+    const frame: Node = {
+      id: frameId,
+      type: 'noteNode',
+      position: { x: left - 40, y: top - 64 },
+      width: Math.max(440, right - left + 80),
+      height: Math.max(280, bottom - top + 104),
+      zIndex: -1,
+      selected: false,
+      data: {
+        nodeType: 'cognitive/graph_note',
+        schema: frameSchema,
+        properties: materializeSchemaProperties(frameSchema, {
+          title: 'Node Group',
+          content: '',
+          style: 'info',
+          frame: true,
+        }),
+        executionState: 'idle',
+      },
+    };
+    const selectedIds = new Set(selected.map(node => node.id));
+    const children = nodes.map(node => selectedIds.has(node.id)
+      ? {
+          ...node,
+          position: {
+            x: node.position.x - frame.position.x,
+            y: node.position.y - frame.position.y,
+          },
+          parentId: frameId,
+          extent: 'parent' as const,
+          expandParent: true,
+          zIndex: 1,
+        }
+      : node);
+    nodes = [frame, ...children];
+    notifyGraphChange();
+  }
+
+  export function ungroupSelected(): void {
+    const selected = nodes.filter(node => node.selected);
+    const groupIds = new Set<string>();
+    for (const node of selected) {
+      const isFrame = node.data?.schema?.id === 'graph_note' && node.data?.properties?.frame === true;
+      if (isFrame) groupIds.add(node.id);
+      if (node.parentId) groupIds.add(node.parentId);
+    }
+    if (groupIds.size === 0) return;
+    recordHistory('ungroup');
+    const groups = new Map(nodes.filter(node => groupIds.has(node.id)).map(node => [node.id, node]));
+    const nextNodes: Node[] = [];
+    for (const node of nodes) {
+      if (groupIds.has(node.id)) continue;
+      if (!node.parentId || !groupIds.has(node.parentId)) {
+        nextNodes.push(node);
+        continue;
+      }
+      const parent = groups.get(node.parentId)!;
+      const { parentId: _parentId, extent: _extent, expandParent: _expandParent, ...rest } = node;
+      nextNodes.push({
+        ...rest,
+        position: {
+          x: parent.position.x + node.position.x,
+          y: parent.position.y + node.position.y,
+        },
+        zIndex: undefined,
+        selected: true,
+      });
+    }
+    nodes = nextNodes;
+    edges = edges.filter(edge => !groupIds.has(edge.source) && !groupIds.has(edge.target));
+    notifyGraphChange();
+  }
+
+  provideFlowEditorActions({ updateNodeProperty, beginNodeResize, updateNodeDimensions, selectNode });
 </script>
 
 <div class="flow-editor-container">
@@ -572,12 +899,15 @@
         bind:nodes
         bind:edges
         {nodeTypes}
+        colorMode="dark"
         fitView={!hasStoredViewport}
         initialViewport={hasStoredViewport ? viewport : undefined}
         snapToGrid
         snapGrid={[15, 15]}
         minZoom={0.1}
         maxZoom={2}
+        onlyRenderVisibleElements
+        selectionOnDrag
         deleteKeyCode={['Delete', 'Backspace']}
         selectionKeyCode="Shift"
         multiSelectionKeyCode="Shift"
@@ -585,19 +915,35 @@
         onedgesdelete={handleEdgesDelete}
         onnodesdelete={handleNodesDelete}
         onselectionchange={handleSelectionChange}
+        onbeforedelete={handleBeforeDelete}
+        onnodedragstart={handleNodeDragStart}
+        onreconnect={handleReconnect}
+        isValidConnection={isConnectionValid}
         onmove={handleViewportMove}
         onmoveend={handleViewportMoveEnd}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} color="#333" />
         <Controls />
-        <!-- MiniMap disabled - was causing 100% CPU with large graphs (26+ nodes)
-        <MiniMap
-          nodeColor={(node) => node.data?.schema?.bgColor || '#475569'}
-          maskColor="rgba(0, 0, 0, 0.8)"
-        />
-        -->
+        {#if miniMapVisible}
+          <MiniMap
+            nodeColor={(node) => node.data?.schema?.bgColor || '#475569'}
+            maskColor="rgba(0, 0, 0, 0.8)"
+            pannable
+            zoomable
+          />
+        {/if}
       </SvelteFlow>
     {/key}
+    <button
+      type="button"
+      class="minimap-toggle"
+      class:active={miniMapVisible}
+      disabled={!miniMapAllowed}
+      title={miniMapAllowed
+        ? 'Toggle overview map'
+        : 'Overview map is disabled above 40 nodes to protect canvas performance'}
+      onclick={() => (showMiniMap = !showMiniMap)}
+    >Map{miniMapAllowed ? '' : ' · large graph'}</button>
   {/if}
 </div>
 
@@ -607,6 +953,15 @@
     height: 100%;
     background: #0a0a0a;
     position: relative;
+  }
+  .minimap-toggle {
+    @apply absolute right-3 top-3 z-10 rounded border border-neutral-700 bg-neutral-900/90 px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-500 shadow;
+  }
+  .minimap-toggle.active {
+    @apply border-blue-700 text-blue-300;
+  }
+  .minimap-toggle:disabled {
+    @apply cursor-not-allowed opacity-60;
   }
 
   .loading-overlay,
@@ -706,6 +1061,33 @@
 
   :global(.svelte-flow__edge.selected .svelte-flow__edge-path) {
     stroke: #3b82f6 !important;
+  }
+  :global(.svelte-flow__edge.control-edge .svelte-flow__edge-path) {
+    stroke-dasharray: 6 5;
+    stroke: #a78bfa;
+  }
+  :global(.svelte-flow__edge.loop-edge .svelte-flow__edge-path) {
+    stroke: #f59e0b;
+  }
+  :global(.svelte-flow__edge.active-execution-edge .svelte-flow__edge-path) {
+    stroke: #22c55e;
+    stroke-width: 3;
+  }
+  :global(.svelte-flow__edge.inactive-execution-edge .svelte-flow__edge-path) {
+    opacity: 0.25;
+  }
+  :global(.svelte-flow__edge-label) {
+    max-width: 220px;
+    padding: 3px 6px;
+    overflow-wrap: anywhere;
+    border: 1px solid #374151;
+    border-radius: 4px;
+    background: rgba(17, 24, 39, 0.94);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    color: #d1d5db;
+    font-size: 10px;
+    line-height: 1.3;
+    white-space: normal;
   }
 
   :global(.svelte-flow__connection-path) {

@@ -59,7 +59,6 @@ import {
   handleGenerateDesirePlanStream,
   handleOutcomeReview,
   handleOutcomeReviewStream,
-  handleReviewDesirePlan,
   handleRunDesire,
   handleRunDesireStream,
 } from './handlers/agency-workflows.js';
@@ -728,7 +727,6 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: /^\/api\/agency\/desires\/[^\/]+\/outcome-review-stream$/, handler: handleOutcomeReviewStream },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/ready-to-plan$/, handler: handleReadyToPlanDesire, requiresAuth: true },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/request-revision$/, handler: handleRequestDesireRevision, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/review$/, handler: handleReviewDesirePlan, requiresAuth: true },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/revise$/, handler: handleReviseDesire, requiresAuth: true },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/run$/, handler: handleRunDesire, requiresAuth: true },
   { method: 'POST', pattern: /^\/api\/agency\/desires\/[^\/]+\/run-stream$/, handler: handleRunDesireStream, requiresAuth: true },

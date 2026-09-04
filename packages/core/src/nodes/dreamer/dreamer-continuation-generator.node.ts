@@ -3,6 +3,7 @@
  * Generates continuation dreams that build on previous dream narrative
  */
 
+import { createHash } from 'node:crypto';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { audit } from '../../audit.js';
@@ -24,6 +25,38 @@ export interface DreamContinuation {
   index: number;
 }
 
+const MAX_CONTINUATIONS = 20;
+const MAX_DELAY_SECONDS = 3_600;
+const MAX_TOKENS = 32_768;
+
+function numberProperty(
+  value: unknown,
+  fallback: number,
+  name: string,
+  minimum: number,
+  maximum: number,
+): number {
+  const resolved = value ?? fallback;
+  if (typeof resolved !== 'number' || !Number.isFinite(resolved) || resolved < minimum || resolved > maximum) {
+    throw new Error(`${name} must be between ${minimum} and ${maximum}`);
+  }
+  return resolved;
+}
+
+function integerProperty(
+  value: unknown,
+  fallback: number,
+  name: string,
+  minimum: number,
+  maximum: number,
+): number {
+  const resolved = value ?? fallback;
+  if (!Number.isInteger(resolved) || (resolved as number) < minimum || (resolved as number) > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return resolved as number;
+}
+
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException('Dream continuation cancelled', 'AbortError');
 }
@@ -32,13 +65,34 @@ export function resolveContinuationLimit(
   configuredMax: unknown,
   runDreamLimit: unknown,
 ): number {
-  const propertyLimit = typeof configuredMax === 'number' && Number.isFinite(configuredMax)
-    ? Math.max(0, Math.floor(configuredMax))
-    : 4;
-  const totalLimit = typeof runDreamLimit === 'number' && Number.isFinite(runDreamLimit)
-    ? Math.max(1, Math.floor(runDreamLimit))
-    : propertyLimit + 1;
+  const propertyLimit = integerProperty(
+    configuredMax,
+    4,
+    'Dreamer maxContinuations',
+    0,
+    MAX_CONTINUATIONS,
+  );
+  const totalLimit = integerProperty(
+    runDreamLimit,
+    propertyLimit + 1,
+    'Dreamer maxDreams',
+    1,
+    Number.MAX_SAFE_INTEGER,
+  );
   return Math.min(propertyLimit, totalLimit - 1);
+}
+
+export function resolveContinuationRoll(
+  executionKey: unknown,
+  continuationIndex: number,
+  fallback: () => number = Math.random,
+): number {
+  const key = typeof executionKey === 'string' ? executionKey.trim() : '';
+  if (!key) return fallback();
+  const digest = createHash('sha256')
+    .update(`${key}:dream-continuation:${continuationIndex}`)
+    .digest();
+  return digest.readUInt32BE(0) / 0x1_0000_0000;
 }
 
 async function waitForDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -72,11 +126,29 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const previousDreamInput = inputs.previousDream;
   let lastDream = previousDreamInput?.dream || previousDreamInput;
   const username = context.userId || context.username;
-  const temperature = properties?.temperature ?? 1.0;
-  const continuationChance = Math.min(1, Math.max(0, Number(properties?.continuationChance ?? 0.75)));
+  const temperature = numberProperty(properties?.temperature, 1.0, 'Dreamer temperature', 0, 2);
+  const continuationChance = numberProperty(
+    properties?.continuationChance,
+    0.75,
+    'Dreamer continuationChance',
+    0,
+    1,
+  );
   const maxContinuations = resolveContinuationLimit(properties?.maxContinuations, context.maxDreams);
-  const delaySeconds = Math.max(0, Number(properties?.delaySeconds ?? 60));
-  const maxTokens = properties?.maxTokens ?? 800;
+  const delaySeconds = numberProperty(
+    properties?.delaySeconds,
+    60,
+    'Dreamer delaySeconds',
+    0,
+    MAX_DELAY_SECONDS,
+  );
+  const maxTokens = integerProperty(
+    properties?.maxTokens,
+    800,
+    'Dreamer maxTokens',
+    1,
+    MAX_TOKENS,
+  );
   const role = properties?.role ?? 'persona';
   const systemPrompt = properties?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
@@ -94,7 +166,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
   while (continuationIndex < maxContinuations) {
     throwIfAborted(context.signal);
-    const roll = Math.random();
+    const roll = resolveContinuationRoll(context.idempotencyKey, continuationIndex + 1);
 
     if (roll >= continuationChance) break;
 
@@ -168,6 +240,7 @@ export const DreamerContinuationGeneratorNode: NodeDefinition = defineNode({
     delaySeconds: 60,
     maxTokens: 800,
     role: 'persona',
+    timeout: 300000,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
@@ -176,33 +249,58 @@ export const DreamerContinuationGeneratorNode: NodeDefinition = defineNode({
       type: 'number',
       default: 1.0,
       label: 'Temperature',
+      min: 0,
+      max: 2,
+      step: 0.1,
     },
     continuationChance: {
       type: 'number',
       default: 0.75,
       label: 'Continuation Chance',
       description: 'Probability to continue (0-1)',
+      min: 0,
+      max: 1,
+      step: 0.05,
     },
     maxContinuations: {
       type: 'number',
       default: 4,
       label: 'Max Continuations',
+      min: 0,
+      max: MAX_CONTINUATIONS,
+      step: 1,
     },
     delaySeconds: {
       type: 'number',
       default: 60,
       label: 'Delay (seconds)',
+      min: 0,
+      max: MAX_DELAY_SECONDS,
+      step: 1,
     },
     maxTokens: {
       type: 'number',
       default: 800,
       label: 'Max Tokens',
       description: 'Maximum tokens for each continuation response',
+      min: 1,
+      max: MAX_TOKENS,
+      step: 1,
     },
     role: {
       type: 'string',
       default: 'persona',
       label: 'LLM Role',
+    },
+    timeout: {
+      type: 'number',
+      default: 300000,
+      label: 'Execution Timeout (ms)',
+      description: 'Maximum time allowed for this model node.',
+      min: 1000,
+      max: 900000,
+      step: 1000,
+      advanced: true,
     },
     systemPrompt: {
       type: 'text_multiline',

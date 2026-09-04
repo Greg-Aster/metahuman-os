@@ -5,7 +5,13 @@
  * using native Svelte Flow format (string IDs, edges with handles).
  */
 
-import type { SvelteFlowGraph, SvelteFlowNode, SvelteFlowEdge } from './cognitive-graph-schema.js';
+import {
+  validateSvelteFlowGraph,
+  type GraphOutputCondition,
+  type SvelteFlowGraph,
+  type SvelteFlowNode,
+  type SvelteFlowEdge,
+} from './cognitive-graph-schema.js';
 import { createLogger } from './logger.js';
 import { loadOperatorConfig } from './config.js';
 import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
@@ -26,6 +32,7 @@ const LLM_NODE_TYPES = new Set([
   'unified_decision_llm', 'big_brother_reviewer', 'big_brother_decision', 'llm',
   'claude_full_task', 'orchestrator_llm', 'persona_llm', 'response_synthesizer',
   'movement_generator', 'llm_enricher',
+  'inner_curiosity_question_generator', 'inner_curiosity_answer_generator',
 ]);
 
 /**
@@ -52,7 +59,7 @@ function writeGraphTrace(trace: {
   }
 }
 
-export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'skipped' | 'failed';
 
 export interface NodeExecutionState {
   nodeId: string;
@@ -61,6 +68,7 @@ export interface NodeExecutionState {
   endTime?: number;
   inputs?: Record<string, any>;
   outputs?: Record<string, any>;
+  skipReason?: string;
   error?: Error;
   /** Node definition from graph (schema) - used for output node detection */
   definition?: {
@@ -79,7 +87,7 @@ export interface GraphExecutionState {
 }
 
 export interface ExecutionEvent {
-  type: 'node_start' | 'node_complete' | 'node_error' | 'node_reasoning' | 'graph_complete' | 'graph_error';
+  type: 'node_start' | 'node_complete' | 'node_skip' | 'node_error' | 'node_reasoning' | 'graph_complete' | 'graph_error';
   nodeId?: string;
   data?: any;
   timestamp: number;
@@ -87,87 +95,30 @@ export interface ExecutionEvent {
 
 export type ExecutionEventHandler = (event: ExecutionEvent) => void;
 
-// Back-edge handle names that indicate loop paths
-// These are explicit handle names that always indicate a back-edge
-const BACK_EDGE_HANDLES = new Set([
-  'loop_back', 'loop', 'back', 'retry', 'refine', 'feedbackContext', 'false'
-]);
-
 /**
  * Generate unique edge key that includes source handle
  * This allows distinguishing between edges with same source/target but different handles
  */
 function getEdgeKey(edge: SvelteFlowEdge): string {
-  return `${edge.source}:${edge.sourceHandle || 'default'}->${edge.target}`;
+  return edge.id;
 }
 
-/**
- * Check if an edge is a back-edge (creates intentional loop)
- */
-function isBackEdge(edge: SvelteFlowEdge, routerNodeIds: Set<string>): boolean {
-  // Only router nodes can have back-edges
-  if (!routerNodeIds.has(edge.source)) return false;
-
-  // Check by handle name (explicit back-edge handles)
-  if (BACK_EDGE_HANDLES.has(edge.sourceHandle)) return true;
-
-  // Check by explicit back-edge marker in comment
-  // Only 'BACK-EDGE' or 'back_edge' are explicit markers
-  // Do NOT match generic words like 'loop' or 'back' which may appear in descriptions
-  if (edge.data?.comment?.includes('BACK-EDGE') ||
-      edge.data?.comment?.includes('back_edge') ||
-      edge.data?.comment?.includes('back-edge')) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Identify back-edges (edges that would create cycles)
- * These are allowed from conditional_router and feedback_router nodes
- */
 function identifyBackEdges(graph: SvelteFlowGraph): Set<string> {
-  const backEdges = new Set<string>();
-
-  // Find all router nodes that can create back-edges
-  const routerNodeIds = new Set<string>();
-  graph.nodes.forEach(node => {
-    const nodeType = node.data.nodeType;
-    if (nodeType === 'conditional_router' || nodeType === 'cognitive/conditional_router' ||
-        nodeType === 'control_flow/conditional_router' ||
-        nodeType === 'feedback_router' || nodeType === 'cognitive/feedback_router' ||
-        nodeType === 'control_flow/feedback_router') {
-      routerNodeIds.add(node.id);
-      console.log(`[BackEdge] Found router node: ${node.id} (${nodeType})`);
-    }
-  });
-
-  // Identify back-edges (using unique edge keys that include handle)
-  graph.edges.forEach(edge => {
-    if (routerNodeIds.has(edge.source)) {
-      console.log(`[BackEdge] Checking edge from router ${edge.source}: ${getEdgeKey(edge)} (handle: ${edge.sourceHandle})`);
-    }
-    if (isBackEdge(edge, routerNodeIds)) {
-      const edgeKey = getEdgeKey(edge);
-      backEdges.add(edgeKey);
-      console.log(`[BackEdge] IDENTIFIED: ${edgeKey} via handle "${edge.sourceHandle}"`);
-    }
-  });
-
-  return backEdges;
+  return new Set(
+    graph.edges.filter(edge => edge.data?.loop === true).map(getEdgeKey),
+  );
 }
 
 /**
  * Topological sort for determining execution order
- * Supports conditional loops via conditional_router nodes
+ * Supports bounded re-entry through explicitly declared loop edges.
  */
 function topologicalSort(graph: SvelteFlowGraph): string[] {
   const nodeIds = graph.nodes.map(n => n.id);
   const adjacencyList = new Map<string, string[]>();
   const inDegree = new Map<string, number>();
 
-  // Identify back-edges (loop edges from conditional_router)
+  // Explicit loop edges are excluded from the acyclic schedule.
   const backEdges = identifyBackEdges(graph);
 
   // Initialize
@@ -176,13 +127,26 @@ function topologicalSort(graph: SvelteFlowGraph): string[] {
     inDegree.set(id, 0);
   });
 
-  // Build adjacency list and in-degree map (excluding back-edges)
+  const addDependency = (source: string, target: string): void => {
+    const neighbors = adjacencyList.get(source);
+    if (!neighbors || neighbors.includes(target)) return;
+    neighbors.push(target);
+    inDegree.set(target, (inDegree.get(target) || 0) + 1);
+  };
+
+  // Build data/control dependencies, excluding explicit loop edges.
   graph.edges.forEach(edge => {
     const edgeKey = getEdgeKey(edge);
     if (!backEdges.has(edgeKey)) {
-      adjacencyList.get(edge.source)?.push(edge.target);
-      inDegree.set(edge.target, (inDegree.get(edge.target) || 0) + 1);
+      addDependency(edge.source, edge.target);
     }
+  });
+
+  // Cross-node activation conditions are explicit control dependencies.
+  graph.nodes.forEach(node => {
+    node.data.activation?.when?.forEach(condition => {
+      addDependency(condition.nodeId, node.id);
+    });
   });
 
   // Find nodes with no incoming edges
@@ -217,48 +181,99 @@ function topologicalSort(graph: SvelteFlowGraph): string[] {
 }
 
 /**
- * Get input data for a node based on its connections
+ * Read a dotted output path while preserving false, zero, and empty strings.
  */
-function getNodeInputs(
-  nodeId: string,
-  graph: SvelteFlowGraph,
-  executionState: Map<string, NodeExecutionState>
-): Record<string, any> {
-  const inputs: Record<string, any> = {};
-
-  // Find all edges that target this node
-  const incomingEdges = graph.edges.filter(edge => edge.target === nodeId);
-
-  incomingEdges.forEach(edge => {
-    const sourceNode = executionState.get(edge.source);
-
-    if (sourceNode?.outputs) {
-      const sourceNodeDef = graph.nodes.find(n => n.id === edge.source);
-      const targetNodeDef = graph.nodes.find(n => n.id === nodeId);
-
-      if (sourceNodeDef && targetNodeDef) {
-        let value;
-
-        // Special handling for conditional_router: extract routedData for all outputs
-        if (sourceNode.outputs.routedData !== undefined) {
-          value = sourceNode.outputs.routedData;
-        }
-        // Try to get output by handle name
-        else if (sourceNode.outputs[edge.sourceHandle] !== undefined) {
-          value = sourceNode.outputs[edge.sourceHandle];
-        }
-        // Fallback: use entire output object
-        else {
-          value = sourceNode.outputs;
-        }
-
-        // Map to target input by handle name
-        inputs[edge.targetHandle] = value;
-      }
+function readOutputPath(outputs: Record<string, any>, outputPath: string): { found: boolean; value?: any } {
+  const parts = outputPath.split('.');
+  let current: any = outputs;
+  for (const part of parts) {
+    if (!current || typeof current !== 'object' || !Object.prototype.hasOwnProperty.call(current, part)) {
+      return { found: false };
     }
-  });
+    current = current[part];
+  }
+  return { found: true, value: current };
+}
 
-  return inputs;
+function matchesOutputCondition(outputs: Record<string, any>, condition: GraphOutputCondition): boolean {
+  const result = readOutputPath(outputs, condition.output);
+  if (!result.found) return false;
+  if ('equals' in condition) return Object.is(result.value, condition.equals);
+  if ('notEquals' in condition) return !Object.is(result.value, condition.notEquals);
+  return Boolean(result.value) === condition.truthy;
+}
+
+function isEdgeActive(
+  edge: SvelteFlowEdge,
+  executionState: Map<string, NodeExecutionState>,
+): boolean {
+  const sourceState = executionState.get(edge.source);
+  if (sourceState?.status !== 'completed' || !sourceState.outputs) return false;
+  if (edge.data?.when && !matchesOutputCondition(sourceState.outputs, edge.data.when)) return false;
+  if (edge.data?.kind === 'control') return true;
+  const output = readOutputPath(sourceState.outputs, edge.sourceHandle);
+  return output.found && output.value !== undefined && output.value !== null;
+}
+
+interface NodeReadiness {
+  ready: boolean;
+  inputs: Record<string, any>;
+  reason?: string;
+}
+
+function getNodeReadiness(
+  node: SvelteFlowNode,
+  graph: SvelteFlowGraph,
+  executionState: Map<string, NodeExecutionState>,
+): NodeReadiness {
+  const definition = getNode(node.data.nodeType);
+  if (!definition) {
+    return { ready: false, inputs: {}, reason: `No registered definition for ${node.data.nodeType}` };
+  }
+  if (definition.editorOnly) {
+    return { ready: false, inputs: {}, reason: 'Editor-only annotation' };
+  }
+
+  for (const condition of node.data.activation?.when || []) {
+    const conditionState = executionState.get(condition.nodeId);
+    if (conditionState?.status !== 'completed' || !conditionState.outputs
+      || !matchesOutputCondition(conditionState.outputs, condition)) {
+      return {
+        ready: false,
+        inputs: {},
+        reason: `Activation condition from node ${condition.nodeId} was not selected`,
+      };
+    }
+  }
+
+  const incomingEdges = graph.edges.filter(edge => edge.target === node.id);
+  const activeEdges = incomingEdges.filter(edge => isEdgeActive(edge, executionState));
+  const inputs: Record<string, any> = {};
+  const activeInputHandles = new Set<string>();
+
+  // Apply loop values after forward values so re-entry owns a shared handle.
+  const orderedEdges = [...activeEdges].sort((a, b) => Number(a.data?.loop === true) - Number(b.data?.loop === true));
+  for (const edge of orderedEdges) {
+    if (edge.data?.kind === 'control') continue;
+    const output = readOutputPath(executionState.get(edge.source)!.outputs!, edge.sourceHandle);
+    inputs[edge.targetHandle] = output.value;
+    activeInputHandles.add(edge.targetHandle);
+  }
+
+  const activation = node.data.activation?.mode ?? definition.execution.activation;
+  const requiredInputs = node.data.activation?.requiredInputs ?? definition.execution.requiredInputs;
+  if (activation === 'always') return { ready: true, inputs };
+
+  if (activation === 'required-inputs') {
+    const missing = requiredInputs.filter(input => !activeInputHandles.has(input));
+    if (missing.length > 0) {
+      return { ready: false, inputs, reason: `Required input(s) inactive: ${missing.join(', ')}` };
+    }
+    return { ready: true, inputs };
+  }
+
+  if (incomingEdges.length === 0 || activeEdges.length > 0) return { ready: true, inputs };
+  return { ready: false, inputs, reason: 'All incoming branches were inactive' };
 }
 
 /**
@@ -268,6 +283,7 @@ async function executeNode(
   nodeId: string,
   graph: SvelteFlowGraph,
   executionState: Map<string, NodeExecutionState>,
+  inputs: Record<string, any>,
   contextData: Record<string, any>,
   eventHandler?: ExecutionEventHandler
 ): Promise<void> {
@@ -284,36 +300,6 @@ async function executeNode(
     isOutputNode: node.data.schema?.isOutputNode || false,
     ...node.data.schema,
   };
-
-  // Skip muted nodes - pass through inputs directly
-  if (node.data.muted) {
-    log.debug(`   Node ${nodeId} (${nodeType}) MUTED - skipping execution`);
-
-    const inputs = getNodeInputs(nodeId, graph, executionState);
-
-    const state: NodeExecutionState = {
-      nodeId,
-      status: 'completed',
-      startTime: Date.now(),
-      endTime: Date.now(),
-      inputs,
-      outputs: inputs, // Pass through inputs unchanged
-      definition: nodeDefinition,
-    };
-
-    executionState.set(nodeId, state);
-
-    if (eventHandler) {
-      eventHandler({
-        type: 'node_complete',
-        nodeId,
-        data: { outputs: inputs, muted: true },
-        timestamp: Date.now(),
-      });
-    }
-
-    return;
-  }
 
   const state: NodeExecutionState = {
     nodeId,
@@ -334,9 +320,6 @@ async function executeNode(
   }
 
   try {
-    // Get inputs from connected nodes
-    const inputs = getNodeInputs(nodeId, graph, executionState);
-
     // Execute the node based on its type
     const outputs = await executeNodeByType(node, inputs, contextData);
 
@@ -354,7 +337,7 @@ async function executeNode(
       eventHandler({
         type: 'node_complete',
         nodeId,
-        data: { outputs },
+        data: { outputs, durationMs: duration },
         timestamp: Date.now(),
       });
 
@@ -384,13 +367,43 @@ async function executeNode(
       eventHandler({
         type: 'node_error',
         nodeId,
-        data: { error: (error as Error).message },
+        data: { error: (error as Error).message, durationMs: state.endTime - state.startTime! },
         timestamp: Date.now(),
       });
     }
 
     throw error;
   }
+}
+
+function skipNode(
+  node: SvelteFlowNode,
+  executionState: Map<string, NodeExecutionState>,
+  inputs: Record<string, any>,
+  reason: string,
+  eventHandler?: ExecutionEventHandler,
+): void {
+  const now = Date.now();
+  executionState.set(node.id, {
+    nodeId: node.id,
+    status: 'skipped',
+    startTime: now,
+    endTime: now,
+    inputs,
+    skipReason: reason,
+    definition: {
+      type: node.data.schema?.type || node.data.nodeType,
+      isOutputNode: node.data.schema?.isOutputNode || false,
+      ...node.data.schema,
+    },
+  });
+  log.debug(`   Node ${node.id} (${node.data.nodeType}) SKIPPED: ${reason}`);
+  eventHandler?.({
+    type: 'node_skip',
+    nodeId: node.id,
+    data: { nodeType: node.data.nodeType, reason },
+    timestamp: now,
+  });
 }
 
 /**
@@ -502,20 +515,18 @@ async function executeNodeByType(
     }
   }
 
-  // Fallback: pass through inputs if no executor found
-  console.warn(`[Node:${nodeType}] No executor found, passing through inputs`);
-  return inputs;
+  throw new Error(`No executor registered for node type ${nodeType}`);
 }
 
 /**
- * Get nodes reachable from a router's loop-back edge
+ * Get nodes reachable from a loop source's explicit re-entry edge.
  */
-function getLoopNodes(routerId: string, graph: SvelteFlowGraph, backEdges: Set<string>): string[] {
+function getLoopNodes(loopSourceId: string, graph: SvelteFlowGraph, backEdges: Set<string>): string[] {
   const loopTargets: string[] = [];
 
-  // Find all back-edges from this router
+  // Find all re-entry edges from this source.
   graph.edges.forEach(edge => {
-    if (edge.source === routerId) {
+    if (edge.source === loopSourceId) {
       const edgeKey = getEdgeKey(edge);
       if (backEdges.has(edgeKey)) {
         loopTargets.push(edge.target);
@@ -525,21 +536,21 @@ function getLoopNodes(routerId: string, graph: SvelteFlowGraph, backEdges: Set<s
 
   if (loopTargets.length === 0) return [];
 
-  // Find all nodes between loop target and router (the loop body)
+  // Find all nodes between the loop target and source (the loop body).
   const loopBody = new Set<string>();
   const visited = new Set<string>();
   const queue = [...loopTargets];
 
   while (queue.length > 0) {
     const nodeId = queue.shift()!;
-    if (visited.has(nodeId) || nodeId === routerId) continue;
+    if (visited.has(nodeId) || nodeId === loopSourceId) continue;
 
     visited.add(nodeId);
     loopBody.add(nodeId);
 
     // Find downstream nodes
     graph.edges.forEach(edge => {
-      if (edge.source === nodeId && edge.target !== routerId) {
+      if (edge.source === nodeId && edge.target !== loopSourceId) {
         const edgeKey = getEdgeKey(edge);
         if (!backEdges.has(edgeKey)) {
           queue.push(edge.target);
@@ -552,15 +563,15 @@ function getLoopNodes(routerId: string, graph: SvelteFlowGraph, backEdges: Set<s
 }
 
 /**
- * Get nodes downstream of a router via NON-back-edges (the output path)
+ * Get nodes downstream of a loop source via non-loop edges (the output path).
  * These nodes receive data when the loop exits
  */
-function getOutputPathNodes(routerId: string, graph: SvelteFlowGraph, backEdges: Set<string>): string[] {
+function getOutputPathNodes(loopSourceId: string, graph: SvelteFlowGraph, backEdges: Set<string>): string[] {
   const outputTargets: string[] = [];
 
-  // Find all non-back-edges from this router (these are output paths)
+  // Find all non-loop edges from this source (these are output paths).
   graph.edges.forEach(edge => {
-    if (edge.source === routerId) {
+    if (edge.source === loopSourceId) {
       const edgeKey = getEdgeKey(edge);
       if (!backEdges.has(edgeKey)) {
         outputTargets.push(edge.target);
@@ -577,7 +588,7 @@ function getOutputPathNodes(routerId: string, graph: SvelteFlowGraph, backEdges:
 
   while (queue.length > 0) {
     const nodeId = queue.shift()!;
-    if (visited.has(nodeId) || nodeId === routerId) continue;
+    if (visited.has(nodeId) || nodeId === loopSourceId) continue;
 
     visited.add(nodeId);
     outputPath.add(nodeId);
@@ -601,15 +612,15 @@ export function scheduleLoopIteration(
   executionQueue: string[],
   sortedLoopNodes: string[],
   outputPathNodes: string[],
-  routerId: string,
+  loopSourceId: string,
 ): string[] {
   const deferredNodeSet = new Set([
     ...sortedLoopNodes,
     ...outputPathNodes,
-    routerId,
+    loopSourceId,
   ]);
   const remainingQueue = executionQueue.filter(id => !deferredNodeSet.has(id));
-  return [...sortedLoopNodes, routerId, ...remainingQueue];
+  return [...sortedLoopNodes, loopSourceId, ...remainingQueue];
 }
 
 /** @internal Pure queue helper exported for loop-scheduling regression tests. */
@@ -632,6 +643,7 @@ export async function executeGraph(
   eventHandler?: ExecutionEventHandler,
   signal?: AbortSignal,
 ): Promise<GraphExecutionState> {
+  validateSvelteFlowGraph(graph);
   const executionState = new Map<string, NodeExecutionState>();
   const graphState: GraphExecutionState = {
     nodes: executionState,
@@ -670,12 +682,7 @@ export async function executeGraph(
   try {
     // Identify back-edges for conditional loops
     const backEdges = identifyBackEdges(graph);
-    if (backEdges.size > 0) {
-      log.debug(`   Detected ${backEdges.size} conditional loop edge(s)`);
-      console.log(`[GraphExecutor] Back-edges identified: ${Array.from(backEdges).join(', ')}`);
-    } else {
-      console.log(`[GraphExecutor] No back-edges found in graph`);
-    }
+    if (backEdges.size > 0) log.debug(`   Detected ${backEdges.size} explicit loop edge(s)`);
 
     // Get initial execution order (excluding back-edges)
     const executionOrder = topologicalSort(graph);
@@ -684,30 +691,31 @@ export async function executeGraph(
 
     // Dynamic execution queue (supports re-execution for loops)
     const executionQueue: string[] = [...executionOrder];
-    const executedCount = new Map<string, number>(); // Track iteration count per node
-    const maxIterations = 5; // Safety limit - 3 refinement loops should be enough
-
-    console.log(`[GraphExecutor] ========== EXECUTION QUEUE ==========`);
-    console.log(`[GraphExecutor] Initial queue:`, executionQueue.join(', '));
-    console.log(`[GraphExecutor] Total nodes to execute: ${executionQueue.length}`);
+    const executedCount = new Map<string, number>();
+    const maxLoopIterations = graph.scheduler.maxLoopIterations;
 
     while (executionQueue.length > 0) {
       if (signal?.aborted) throw new DOMException('Graph execution cancelled', 'AbortError');
       const nodeId = executionQueue.shift()!;
       const node = graph.nodes.find(n => n.id === nodeId);
-      const nodeType = node?.data.nodeType || 'unknown';
-
-      console.log(`[GraphExecutor] >>> Executing node ${nodeId} (${nodeType})`);
-
-      // Track iteration count (prevent infinite loops)
-      const iterCount = (executedCount.get(nodeId) || 0) + 1;
-      executedCount.set(nodeId, iterCount);
-
-      if (iterCount > maxIterations) {
-        throw new Error(`Node ${nodeId} exceeded maximum iterations (${maxIterations}). Possible infinite loop.`);
-      }
+      if (!node) throw new Error(`Node ${nodeId} not found in graph`);
 
       graphState.currentNodeId = nodeId;
+
+      const readiness = getNodeReadiness(node, graph, executionState);
+      if (node.data.muted || !readiness.ready) {
+        skipNode(
+          node,
+          executionState,
+          readiness.inputs,
+          node.data.muted ? 'Muted by graph configuration' : readiness.reason || 'Node was not activated',
+          eventHandler,
+        );
+        continue;
+      }
+
+      const iterCount = (executedCount.get(nodeId) || 0) + 1;
+      executedCount.set(nodeId, iterCount);
 
       // Inject iteration count into context for feedback_router and other loop-aware nodes
       // Also add emitEvent for nodes to emit arbitrary events (e.g., Claude CLI streaming)
@@ -720,89 +728,47 @@ export async function executeGraph(
       };
 
       // Execute the node
-      await executeNode(nodeId, graph, executionState, nodeContext, eventHandler);
+      await executeNode(nodeId, graph, executionState, readiness.inputs, nodeContext, eventHandler);
       if (signal?.aborted) throw new DOMException('Graph execution cancelled', 'AbortError');
-      console.log(`[GraphExecutor] <<< Completed node ${nodeId} (${nodeType})`);
 
-      // Check if this node is a conditional_router or feedback_router
-      if (node) {
-        const type = node.data.nodeType;
-        if (type === 'conditional_router' || type === 'cognitive/conditional_router' ||
-            type === 'feedback_router' || type === 'cognitive/feedback_router' ||
-            type === 'control_flow/feedback_router') {
-          const nodeState = executionState.get(nodeId);
-          const outputs = nodeState?.outputs;
+      const outgoingLoopEdges = graph.edges.filter(edge => (
+        edge.source === nodeId
+        && edge.data?.loop === true
+      ));
+      if (outgoingLoopEdges.length === 0) continue;
 
-          console.log(`[GraphExecutor] ========== ROUTER DECISION HANDLING ==========`);
-          console.log(`[GraphExecutor] Router node ${nodeId} executed (iteration ${iterCount})`);
-          console.log(`[GraphExecutor] Outputs: branch=${outputs?.branch}, routedTo=${outputs?.routedTo}, shouldContinueLoop=${outputs?.shouldContinueLoop}`);
-
-          // Determine if we should loop back
-          // - conditional_router uses: branch === 'false' to loop
-          // - feedback_router uses: routedTo === 'orchestrator' or shouldContinueLoop === true
-          const shouldLoop = outputs && (
-            outputs.branch === 'false' ||
-            outputs.routedTo === 'orchestrator' ||
-            outputs.shouldContinueLoop === true
-          );
-
-          if (shouldLoop) {
-            // Router decided to loop back
-            log.debug(`   Loop triggered by router ${nodeId} (iteration ${iterCount})`);
-            console.log(`[GraphExecutor] LOOPING BACK - Refinement needed`);
-
-            // Get the loop body nodes and re-add them to execution queue
-            const loopNodes = getLoopNodes(nodeId, graph, backEdges);
-
-            // Sort loop nodes by their original topological order to maintain dependencies
-            // Without this, nodes can execute in wrong order (e.g., response_synthesizer before context_builder)
-            const loopNodeSet = new Set(loopNodes);
-            const sortedLoopNodes = executionOrder.filter((id: string) => loopNodeSet.has(id));
-
-            console.log(`[GraphExecutor] Loop body nodes to re-execute: ${sortedLoopNodes.join(', ')}`);
-
-            if (sortedLoopNodes.length > 0) {
-              // Clear execution state for loop body nodes ONLY
-              sortedLoopNodes.forEach((id: string) => executionState.delete(id));
-
-              // Remove the current output path before scheduling another iteration.
-              // Those nodes may already be queued from the initial topological pass;
-              // allowing them to run here would commit/stream a rejected response.
-              const outputPathNodes = getOutputPathNodes(nodeId, graph, backEdges);
-              const scheduledQueue = scheduleLoopIteration(
-                executionQueue,
-                sortedLoopNodes,
-                outputPathNodes,
-                nodeId,
-              );
-
-              // The loop body and router must stay contiguous. Output nodes are
-              // scheduled only after the router accepts the refined response.
-              executionQueue.length = 0;
-              executionQueue.push(...scheduledQueue);
-              log.debug(`   Re-queued ${sortedLoopNodes.length} nodes + router for iteration`);
-            }
-          } else {
-            log.debug(`   Router ${nodeId} exited loop (branch: ${outputs?.branch}, routedTo: ${outputs?.routedTo})`);
-            console.log(`[GraphExecutor] EXITING LOOP - Proceeding to output`);
-
-            // Re-queue output path nodes so they execute with updated router outputs
-            // This is needed because they may have already executed with old values during loop iterations
-            const outputPathNodes = getOutputPathNodes(nodeId, graph, backEdges);
-            if (outputPathNodes.length > 0) {
-              const outputPathSet = new Set(outputPathNodes);
-              const sortedOutputPathNodes = executionOrder.filter(id => outputPathSet.has(id));
-              console.log(`[GraphExecutor] Re-queuing output path nodes: ${sortedOutputPathNodes.join(', ')}`);
-              // Clear execution state for output nodes so they can re-execute
-              sortedOutputPathNodes.forEach(id => executionState.delete(id));
-              // Remove any existing copies from queue first to prevent duplicates
-              const scheduledQueue = scheduleAcceptedOutput(executionQueue, sortedOutputPathNodes);
-              executionQueue.length = 0;
-              executionQueue.push(...scheduledQueue);
-            }
-          }
-          console.log(`[GraphExecutor] ================================================`);
+      const activeLoopEdges = outgoingLoopEdges.filter(edge => isEdgeActive(edge, executionState));
+      if (activeLoopEdges.length > 0) {
+        if (iterCount >= maxLoopIterations) {
+          throw new Error(`Loop at node ${nodeId} exceeded maximum iterations (${maxLoopIterations})`);
         }
+
+        const loopNodes = getLoopNodes(nodeId, graph, backEdges);
+        const loopNodeSet = new Set(loopNodes);
+        const sortedLoopNodes = executionOrder.filter(id => loopNodeSet.has(id));
+        if (sortedLoopNodes.length === 0) {
+          throw new Error(`Active loop edge from node ${nodeId} has no schedulable loop body`);
+        }
+
+        sortedLoopNodes.forEach(id => executionState.delete(id));
+        const outputPathNodes = getOutputPathNodes(nodeId, graph, backEdges);
+        const scheduledQueue = scheduleLoopIteration(
+          executionQueue,
+          sortedLoopNodes,
+          outputPathNodes,
+          nodeId,
+        );
+        executionQueue.length = 0;
+        executionQueue.push(...scheduledQueue);
+        log.debug(`   Explicit loop ${nodeId}: scheduled iteration ${iterCount + 1}`);
+      } else {
+        const outputPathNodes = getOutputPathNodes(nodeId, graph, backEdges);
+        const outputPathSet = new Set(outputPathNodes);
+        const sortedOutputPathNodes = executionOrder.filter(id => outputPathSet.has(id));
+        sortedOutputPathNodes.forEach(id => executionState.delete(id));
+        const scheduledQueue = scheduleAcceptedOutput(executionQueue, sortedOutputPathNodes);
+        executionQueue.length = 0;
+        executionQueue.push(...scheduledQueue);
       }
     }
 
@@ -812,7 +778,8 @@ export async function executeGraph(
     // Log execution summary
     const duration = graphState.endTime - graphState.startTime;
     const totalExecutions = Array.from(executedCount.values()).reduce((a, b) => a + b, 0);
-    log.info(`COMPLETE: ${totalExecutions} total node executions in ${duration}ms`);
+    const skippedNodes = Array.from(executionState.values()).filter(node => node.status === 'skipped').length;
+    log.info(`COMPLETE: ${totalExecutions} executions, ${skippedNodes} skipped in ${duration}ms`);
 
     // Show iteration counts for looped nodes
     const loopedNodes = Array.from(executedCount.entries()).filter(([_, count]) => count > 1);
@@ -837,12 +804,13 @@ export async function executeGraph(
       durationMs: duration,
       totalExecutions,
       loopedNodes: loopedNodes.length,
+      skippedNodes,
     }, { requestId, sessionId, userId, durationMs: duration });
 
     if (eventHandler) {
       eventHandler({
         type: 'graph_complete',
-        data: { duration: graphState.endTime - graphState.startTime, iterations: totalExecutions },
+        data: { duration: graphState.endTime - graphState.startTime, iterations: totalExecutions, skippedNodes },
         timestamp: Date.now(),
       });
     }
@@ -967,6 +935,9 @@ export function formatExecutionState(state: GraphExecutionState): string {
 
     if (nodeState.error) {
       lines.push(`    Error: ${nodeState.error.message}`);
+    }
+    if (nodeState.skipReason) {
+      lines.push(`    Skip reason: ${nodeState.skipReason}`);
     }
   });
 

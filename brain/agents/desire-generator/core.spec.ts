@@ -4,10 +4,10 @@ import path from 'node:path'
 import test from 'node:test'
 import {
   parseDesireCandidates,
-  parseDesireGeneratorArgs,
   parseReinforcementResponse,
   validateCandidateSources,
-} from './core.js'
+} from '@metahuman/core'
+import { parseDesireGeneratorArgs } from './core.js'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
 
@@ -18,7 +18,6 @@ test('generator model contracts fail closed while accepting an intentional empty
     description: 'Review the current notes',
     reason: 'A goal requires it',
     source: 'persona_goal',
-    initialStrength: 0.7,
     risk: 'none',
     suggestedAction: 'Read the notes',
   }]))
@@ -32,11 +31,11 @@ test('generator model contracts fail closed while accepting an intentional empty
 
 test('reinforcement decisions must name an existing desire exactly once', () => {
   assert.deepEqual(
-    [...parseReinforcementResponse(
+    parseReinforcementResponse(
       '[{"id":"desire-1","reason":"Recent work supports it"}]',
       new Set(['desire-1']),
-    )],
-    [['desire-1', 'Recent work supports it']],
+    ),
+    [{ id: 'desire-1', reason: 'Recent work supports it' }],
   )
   assert.throws(
     () => parseReinforcementResponse('[{"id":"unknown","reason":"Guess"}]', new Set(['desire-1'])),
@@ -56,7 +55,7 @@ test('generator accepts only an explicit profile selector', () => {
 test('generator rejects model candidates whose claimed source was not present', () => {
   const candidate = parseDesireCandidates(JSON.stringify([{
     title: 'Review notes', description: 'Review notes', reason: 'Important',
-    source: 'persona_goal', initialStrength: 0.5, risk: 'none', suggestedAction: 'Read',
+    source: 'persona_goal', risk: 'none', suggestedAction: 'Read',
   }]))
   const inputs = {
     personaGoals: [], urgentTasks: [], activeTasks: [], recentMemories: [], memoryPatterns: [],

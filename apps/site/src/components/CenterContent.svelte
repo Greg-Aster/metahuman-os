@@ -447,7 +447,6 @@ function getPreview(content = '', limit = 160): string {
 // Map dialogueSource identifiers to friendly display labels
 function formatDialogueSource(source: string): string {
   const labels: Record<string, string> = {
-    'operator-policy': '🧭 Operator Policy',
     'agency-system': '📋 Agency',
     'reflector': '💭 Reflection',
     'curiosity': '❓ Curiosity',

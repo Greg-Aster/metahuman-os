@@ -22,11 +22,12 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import type { Desire } from '../../agency/types.js';
 import {
   DEFAULT_QUESTION_PROMPT_TEMPLATE,
-  generateQuestions,
   needsClarifyingQuestions,
+  parseDesireQuestionsResponse,
 } from '../../agency/desire-questions.js';
-import { normalizeModelRole } from '../../model-router.js';
+import { callLLMPrompt, normalizeModelRole } from '../../model-router.js';
 import { audit } from '../../audit.js';
+import { renderPromptTemplate } from '../prompt-template.js';
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   const slot0 = (inputs.desire || inputs.slot_0 || inputs[0]) as { desire?: Desire; found?: boolean } | Desire | undefined;
@@ -71,12 +72,26 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   console.log(`[desire-question-generator] Generating questions for: ${desire.title}`);
   console.log(`[desire-question-generator] Reason: ${check.reason}`);
 
-  const questions = await generateQuestions(desire, {
-    promptTemplate: properties?.promptTemplate ?? DEFAULT_QUESTION_PROMPT_TEMPLATE,
-    role: normalizeModelRole(properties?.role, 'curator'),
-    temperature: properties?.temperature ?? 0.5,
-    maxTokens: properties?.maxTokens ?? 500,
-  });
+  const prompt = renderPromptTemplate(
+    properties?.promptTemplate ?? DEFAULT_QUESTION_PROMPT_TEMPLATE,
+    {
+      title: desire.title,
+      description: desire.description,
+      reason: desire.reason || 'Not specified',
+      source: desire.source,
+      risk: desire.risk || 'unknown',
+      desire,
+    },
+  );
+  const response = await callLLMPrompt(
+    normalizeModelRole(properties?.role, 'curator'),
+    prompt,
+    {
+      temperature: properties?.temperature ?? 0.5,
+      maxTokens: properties?.maxTokens ?? 500,
+    },
+  );
+  const questions = parseDesireQuestionsResponse(response);
 
   // Update desire with questions
   const now = new Date().toISOString();
@@ -125,6 +140,7 @@ export const definition: NodeDefinition = defineNode({
     { name: 'desire', type: 'object', description: 'Updated desire' },
     { name: 'needsQuestions', type: 'boolean', description: 'Whether questions were generated' },
     { name: 'questions', type: 'array', description: 'Generated clarifying questions' },
+    { name: 'reason', type: 'string', description: 'Why clarification is or is not needed' },
   ],
   properties: {
     promptTemplate: DEFAULT_QUESTION_PROMPT_TEMPLATE,

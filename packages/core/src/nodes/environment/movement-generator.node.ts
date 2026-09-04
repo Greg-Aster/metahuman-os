@@ -263,7 +263,6 @@ export const movementGeneratorNode = defineNode({
   category: 'environment',
   inputs: [
     { name: 'movementRequest', type: 'object', optional: true, description: 'Eligible structured off-script movement request' },
-    { name: 'preparedMovementRequest', type: 'object', optional: true, description: 'Persisted request resumed after standing preparation completes' },
     { name: 'instruction', type: 'string', optional: true, description: 'Original interpreted user instruction' },
     { name: 'observation', type: 'object', optional: true, description: 'Robot capability and current-state observation' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
@@ -308,7 +307,7 @@ export const movementGeneratorNode = defineNode({
   },
   description: 'Generates and strictly validates one bounded off-script logical-joint trajectory. It cannot authorize calibration or direct servo control.',
   async execute(inputs, context, properties) {
-    const requestedValue = inputs.preparedMovementRequest ?? inputs.movementRequest;
+    const requestedValue = inputs.movementRequest;
     const hasRequestedValue = requestedValue !== undefined && requestedValue !== null;
     const request = movementRequest(requestedValue);
     if (!request) {

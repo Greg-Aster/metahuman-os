@@ -40,7 +40,8 @@
       title?: string
       comment?: string
       muted?: boolean
-      executionState?: 'idle' | 'running' | 'completed' | 'failed'
+      executionState?: 'idle' | 'running' | 'completed' | 'skipped' | 'failed'
+      executionSkipReason?: string
       executionOutput?: unknown
       isUnconnected?: boolean
     }
@@ -68,6 +69,7 @@
         ?? NOTE_STYLE_COLORS.info
       : null,
   )
+  const isGroupFrame = $derived(schema?.id === 'graph_note' && properties.frame === true)
   const nodeColor = $derived(graphNoteStyle?.color ?? schema?.color ?? '#94a3b8')
   const nodeBackground = $derived(graphNoteStyle?.bgColor ?? schema?.bgColor ?? '#475569')
   const nodeTitle = $derived(
@@ -81,7 +83,7 @@
   const isUnconnected = $derived(data.isUnconnected || false)
   const categoryBadge = $derived(
     schema?.id === 'graph_note'
-      ? 'NOTE'
+      ? (isGroupFrame ? 'GROUP' : 'NOTE')
       : (schema?.category?.slice(0, 3).toUpperCase() || 'NOD'),
   )
 
@@ -212,7 +214,7 @@
   })
 
   function handleResizeEnd(_event: ResizeDragEvent, params: ResizeParams): void {
-    editorActions.updateNodeWidth(id, params.width)
+    editorActions.updateNodeDimensions(id, params.width, isGroupFrame ? params.height : undefined)
     scheduleNodeInternalsUpdate()
   }
 
@@ -236,17 +238,21 @@
   class:muted={isMuted}
   class:running={executionState === 'running'}
   class:completed={executionState === 'completed'}
+  class:skipped={executionState === 'skipped'}
   class:failed={executionState === 'failed'}
   class:unconnected={isUnconnected}
   class:expanded
+  class:group-frame={isGroupFrame}
   style="--node-color: {nodeColor}; --node-bg: {nodeBackground};"
 >
   <NodeResizer
-    isVisible={selected && expanded}
+    isVisible={selected && (expanded || isGroupFrame)}
     minWidth={360}
-    maxWidth={960}
-    resizeDirection="horizontal"
+    maxWidth={isGroupFrame ? 2400 : 960}
+    minHeight={isGroupFrame ? 180 : undefined}
+    resizeDirection={isGroupFrame ? undefined : 'horizontal'}
     color={nodeColor}
+    onResizeStart={() => editorActions.beginNodeResize(id)}
     onResizeEnd={handleResizeEnd}
   />
 
@@ -300,9 +306,15 @@
       </section>
     {/if}
 
+    {#if executionState === 'skipped'}
+      <div class="skip-reason" title={data.executionSkipReason || 'This node was not activated'}>
+        Skipped · {data.executionSkipReason || 'inactive branch'}
+      </div>
+    {/if}
+
     {#if outputWarnings.length}
       <div class="output-warning" title={outputWarnings.join('\n')}>
-        ⚠ {outputWarnings.length} connected output{outputWarnings.length === 1 ? '' : 's'} affected by settings
+        ⚠ {outputWarnings.length} connected output{outputWarnings.length === 1 ? '' : 's'} disabled by settings
       </div>
     {/if}
 
@@ -480,6 +492,16 @@
   .base-node.expanded {
     min-width: 360px;
   }
+  .base-node.group-frame {
+    height: 100%;
+    min-width: 360px;
+    max-width: none;
+    border-style: dashed;
+    background: color-mix(in srgb, var(--node-bg) 18%, transparent);
+  }
+  .base-node.group-frame .node-body {
+    max-width: 420px;
+  }
   .base-node.selected {
     border-color: #fff;
     box-shadow: 0 0 0 2px var(--node-color), 0 4px 12px rgba(0, 0, 0, 0.4);
@@ -494,6 +516,10 @@
     @apply border-green-500;
     box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
   }
+  .base-node.skipped {
+    @apply border-slate-500 opacity-70;
+    box-shadow: 0 0 6px rgba(100, 116, 139, 0.35);
+  }
   .base-node.failed {
     @apply border-red-500;
     box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
@@ -501,6 +527,9 @@
   .base-node.unconnected {
     @apply border-dashed border-yellow-500 opacity-80;
     box-shadow: 0 0 8px rgba(234, 179, 8, 0.3);
+  }
+  .skip-reason {
+    @apply mt-2 truncate rounded border border-slate-600 bg-slate-900/70 px-2 py-1 text-[10px] text-slate-400;
   }
   .node-header {
     @apply flex items-center gap-2 rounded-t-md border-b border-white/10 bg-black/30 px-3 py-2;

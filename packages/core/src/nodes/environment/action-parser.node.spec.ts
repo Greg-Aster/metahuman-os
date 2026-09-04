@@ -3,7 +3,6 @@ import test from 'node:test';
 
 import type { EnvironmentObservation } from '../../environment-interface/index.js';
 import { environmentActionParserNode } from './action-parser.node.js';
-import { environmentTaskStateNode } from './task-state.node.js';
 
 const observation: EnvironmentObservation = {
   environmentId: 'robot-environment',
@@ -93,7 +92,7 @@ test('punctuation-only advertised commands are admitted unchanged', async () => 
   }
 });
 
-test('the parser normalizes selected physical work and leaves completion evidence judgment to Task State', async () => {
+test('the parser rejects physical work that contradicts the LLM decision contract', async () => {
   const result = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I am standing now.',
@@ -113,10 +112,9 @@ test('the parser normalizes selected physical work and leaves completion evidenc
     sessionId: observation.sessionId,
   }, {}, {});
 
-  assert.equal(result.taskDecisionError, '');
-  assert.equal(result.actions[0]?.command, 'stand');
-  assert.equal(result.taskDecision?.outcome, 'act');
-  assert.equal(result.taskDecision?.objectiveComplete, false);
+  assert.deepEqual(result.actions, []);
+  assert.equal(result.taskDecision, null);
+  assert.match(result.taskDecisionError, /physical work requires taskDecision outcome=act/i);
 });
 
 test('autonomous selector output must author an objective', async () => {
@@ -150,6 +148,8 @@ test('autonomous selector output must author an objective', async () => {
     }),
     observation: autonomousObservation,
     sessionId: autonomousObservation.sessionId,
+    inputSource: 'autonomy',
+    robotObserver: autonomousObservation.metadata?.robotObserver,
   }, {}, {});
 
   assert.deepEqual(result.actions, []);
@@ -260,7 +260,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
   );
 });
 
-test('action purpose and evidence reach canonical Task State without competing parser policy', async () => {
+test('action purpose and evidence remain on the validated LLM decision', async () => {
   const movementObservation: EnvironmentObservation = {
     ...observation,
     capabilities: {
@@ -360,34 +360,8 @@ test('the spiky-friend head-tilt case requires a structured advertised action ra
   }, {}, {});
 
   assert.deepEqual(proseOnly.actions, []);
-  assert.equal(proseOnly.taskDecisionError, '');
-
-  const prepared = await environmentTaskStateNode.execute({
-    observation: autonomyObservation,
-    instruction: 'Express curiosity about the newly observed spiky object.',
-    inputSource: 'autonomy',
-  }, {
-    userMessage: '',
-    username: 'test-user',
-  }, { phase: 'prepare' });
-  const reduced = await environmentTaskStateNode.execute({
-    observation: autonomyObservation,
-    instruction: prepared.instruction,
-    taskState: prepared.taskState,
-    actions: proseOnly.actions,
-    movementRequest: proseOnly.movementRequest,
-    response: proseOnly.response,
-    taskDecision: proseOnly.taskDecision,
-    taskDecisionError: proseOnly.taskDecisionError,
-    inputSource: 'autonomy',
-  }, {
-    userMessage: '',
-    username: 'test-user',
-  }, { phase: 'reduce' });
-
-  assert.deepEqual(reduced.actions, []);
-  assert.equal(reduced.complete, false);
-  assert.equal(reduced.decision.blockedReason, 'no_completion_or_action');
+  assert.equal(proseOnly.taskDecision, null);
+  assert.match(proseOnly.taskDecisionError, /outcome=act requires an action or movementRequest/i);
 });
 
 test('the Environment selector contract has no unconsumed escalation output', async () => {

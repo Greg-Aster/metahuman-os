@@ -51,3 +51,73 @@ test('legacy graphs without a viewport remain eligible for an initial fit', () =
 
   assert.equal(graph.viewport, undefined)
 })
+
+test('scheduler, node activation, and edge selection survive load and save', () => {
+  const stored = storedGraph() as any
+  stored.scheduler = {
+    version: 1,
+    activation: 'demand',
+    skippedState: 'explicit',
+    sideEffectOrder: 'serial-topological',
+    maxLoopIterations: 7,
+  }
+  stored.nodes[0].data.activation = {
+    when: [{ nodeId: 'gate', output: 'enabled', equals: true }],
+  }
+  stored.edges = [{
+    id: 'loop',
+    source: 'node-1',
+    target: 'node-1',
+    sourceHandle: 'output',
+    targetHandle: 'input',
+    data: {
+      loop: true,
+      when: { output: 'branch', equals: 'retry' },
+    },
+  }]
+
+  const serialized = serializeGraphForPersistence(enrichGraphWithSchemas(stored))
+  assert.deepEqual(serialized.scheduler, stored.scheduler)
+  assert.deepEqual((serialized.nodes[0].data as any).activation, stored.nodes[0].data.activation)
+  assert.deepEqual(serialized.edges[0].data, stored.edges[0].data)
+})
+
+test('group frames retain height and child containment while regular node heights remain content-driven', () => {
+  const stored = storedGraph() as any
+  stored.nodes = [
+    {
+      id: 'frame-1',
+      type: 'noteNode',
+      position: { x: 20, y: 30 },
+      width: 760,
+      height: 480,
+      zIndex: -1,
+      data: {
+        nodeType: 'cognitive/graph_note',
+        properties: { title: 'Review branch', content: '', style: 'info', frame: true },
+      },
+    },
+    {
+      ...stored.nodes[0],
+      id: 'child-1',
+      parentId: 'frame-1',
+      extent: 'parent',
+      expandParent: true,
+      zIndex: 1,
+    },
+  ]
+
+  const graph = enrichGraphWithSchemas(stored)
+  assert.equal(graph.nodes[0].height, 480)
+  assert.equal(graph.nodes[1].height, undefined)
+  assert.equal(graph.nodes[1].parentId, 'frame-1')
+  assert.equal(graph.nodes[1].extent, 'parent')
+
+  const serialized = serializeGraphForPersistence(graph)
+  assert.equal(serialized.nodes[0].height, 480)
+  assert.equal(serialized.nodes[0].zIndex, -1)
+  assert.equal(serialized.nodes[1].height, undefined)
+  assert.equal(serialized.nodes[1].parentId, 'frame-1')
+  assert.equal(serialized.nodes[1].extent, 'parent')
+  assert.equal(serialized.nodes[1].expandParent, true)
+})

@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "name": "Weekly Goal Review",
+  "description": "Admits deterministic project progress and generates evidence-grounded weekly insights",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "inputNode",
+      "position": { "x": 80, "y": 100 },
+      "data": { "label": "Goal Progress", "nodeType": "goal_review_input", "properties": {} },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "2",
+      "type": "agentNode",
+      "position": { "x": 380, "y": 100 },
+      "data": { "label": "Generate Insights", "nodeType": "goal_review_insights", "properties": {} },
+      "width": 240,
+      "height": 120
+    }
+  ],
+  "edges": [
+    { "id": "e-1-projects-2-projects", "source": "1", "target": "2", "sourceHandle": "projects", "targetHandle": "projects" },
+    { "id": "e-1-overall-2-overall", "source": "1", "target": "2", "sourceHandle": "overallProgress", "targetHandle": "overallProgress" }
+  ]
+}

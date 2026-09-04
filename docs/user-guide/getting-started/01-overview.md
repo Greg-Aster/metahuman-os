@@ -105,7 +105,8 @@ Active Operator modes control automatic work admission:
 
 - **Reactive** responds to user, system, approval, and environment events.
 - **Semi** also permits configured scheduled and idle work.
-- **Full** adds bounded policy proposals without bypassing the shared queue.
+- **Full** lets Robot Operator admit one bounded robot workflow chain at a time
+  through the shared queue, with later work beginning after completion and cooldown.
 
 See [Cognitive Modes](/user-guide#cognitive-modes) and
 [Autonomous Work](/user-guide#autonomous-agents) before enabling

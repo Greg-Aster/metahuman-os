@@ -47,7 +47,7 @@ export const robotOperatorDecisionParserNode = defineNode({
   outputs: [
     { name: 'decision', type: 'object', description: 'Validated grounded observation and free-form high-level intention' },
     { name: 'observed', type: 'string', description: 'Concise summary grounded in the current robot stimulus' },
-    { name: 'instruction', type: 'string', description: 'High-level intention delegated to Boredom Autonomy' },
+    { name: 'instruction', type: 'string', description: 'High-level intention delegated to Robot Autonomy Executor' },
     { name: 'reason', type: 'string', description: 'Concise inspectable decision reason' },
     { name: 'valid', type: 'boolean', description: 'Whether the model response satisfied the graph contract' },
     { name: 'error', type: 'string', description: 'Parsing or contract error' },

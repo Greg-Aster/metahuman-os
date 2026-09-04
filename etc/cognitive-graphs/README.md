@@ -11,11 +11,26 @@ executor and the web editor.
   `environment-mode.json` own the four interactive conversation modes.
 - Agent and workflow graphs own bounded background work such as curation,
   reflection, dreaming, agency, and Robot Operator behavior.
+- Model-backed product operations that are not cataloged Brain agents are also
+  explicit graphs: Desire Check-in, reflection task suggestions, persona
+  extraction and interview questions, preference learning, weekly goal review,
+  self-healing analysis, and semantic-turn classification. Their API and domain
+  services load these graphs; they do not reproduce prompts or model calls.
+- `inner-curiosity.json` is the complete private self-question workflow. Its
+  Brain adapter only resolves execution identity and runs this graph; the graph
+  owns cognition, both Inner Dialogue persistence effects, and optional Train
+  of Thought admission.
 - Boredom Observer, Movement, and Reflection are contextual planner graphs;
-  `boredom-autonomy-mode.json` is their shared iterative executor.
+  Robot Autonomy Executor (`boredom-autonomy-mode.json`, stable runtime key
+  `boredom-autonomy`) executes one selected consequence and ends.
+- `robot-action-result-mode.json` interprets one correlated returned action result
+  and records it in Robot Status without selecting or dispatching another action.
+- `robot-goal-review-mode.json` is a separately scheduled LLM review of an
+  unfinished Robot Status objective. It may delegate one high-level instruction
+  to Robot Autonomy Executor and then ends.
 - `robot-status-mode.json` performs one bounded situational update. Its reusable
-  Robot Status input node supplies supporting context to Environment Mode and
-  Boredom Autonomy without replacing fresh Environment evidence.
+  Robot Status input node supplies supporting context without replacing fresh
+  Environment evidence.
 - Separate admission graphs remain only for the distinct Inner, System, and
   Robot buffers. There is no standalone Conversation Buffer admission graph.
 
@@ -31,3 +46,19 @@ Graph structure and node property schemas are defined by Core. Do not add a
 second graph format or embed business behavior in the transport handlers. See
 `docs/user-guide/advanced-features/node-editor.md` for usage and
 `docs/technical/ARCHITECTURE.md` for ownership.
+
+## Scheduler contract
+
+Every graph declares scheduler contract version 1. Core executes active nodes
+serially in deterministic topological order and reports inactive nodes as
+`skipped`; it does not invoke their executors. Registered node definitions own
+their default activation mode and required input handles. A graph node may add
+an `activation.when` condition when an entire branch depends on another node's
+output.
+
+Edges copy only the exact declared `sourceHandle`. `data.when` selects an edge
+from a source output, `data.loop: true` marks the one intentional re-entry edge,
+and `data.kind: "control"` orders effects without copying data. False, zero, and
+empty strings are valid connected values; missing, `undefined`, and `null`
+outputs do not activate a data edge. Loops are bounded by
+`scheduler.maxLoopIterations`.

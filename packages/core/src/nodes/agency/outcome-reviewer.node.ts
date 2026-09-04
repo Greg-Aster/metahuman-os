@@ -329,11 +329,8 @@ async function runOutcomeReview(
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
-  // Inputs from graph - graph executor maps by handle name (string keys)
-  // Edge uses slot_0/slot_1 handles, so we access by those keys
-  // Also check context.desire for direct injection from reviewOutcomeViaGraph
-  const slot0 = (inputs['slot_0'] || inputs[0]) as { desire?: Desire; execution?: DesireExecution } | Desire | undefined;
-  const slot1 = (inputs['slot_1'] || inputs[1]) as { execution?: DesireExecution } | undefined;
+  const desireInput = (inputs.desire || inputs[0]) as { desire?: Desire; execution?: DesireExecution } | Desire | undefined;
+  const executionInput = (inputs.execution || inputs[1]) as { execution?: DesireExecution } | DesireExecution | undefined;
   const username = context.userId || context.username;
 
   // Handle both wrapped { desire } format and direct Desire object
@@ -341,13 +338,13 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   let desire: Desire | undefined;
   if (context.desire) {
     desire = context.desire as Desire;
-  } else if (slot0) {
-    desire = (slot0 as { desire?: Desire }).desire || (slot0 as Desire);
+  } else if (desireInput) {
+    desire = (desireInput as { desire?: Desire }).desire || (desireInput as Desire);
   }
-  // Get execution from various sources - slot1, slot0 (if wrapped), or desire itself
-  const execution = slot1?.execution ||
-    (slot0 as { execution?: DesireExecution })?.execution ||
-    desire?.execution;
+  const execution = (executionInput as { execution?: DesireExecution })?.execution
+    || (executionInput as DesireExecution | undefined)
+    || (desireInput as { execution?: DesireExecution })?.execution
+    || desire?.execution;
 
   if (!desire) throw new Error('Outcome review requires a desire');
   if (!execution) throw new Error('Outcome review requires execution data');

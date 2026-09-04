@@ -56,7 +56,7 @@ export type DesireStatus =
   | 'planning'          // Plan is being generated
   | 'questioning'       // Waiting for user to answer clarifying questions
   | 'reviewing'         // Plan is under LLM self-review
-  | 'awaiting_approval' // In approval queue (high-risk)
+  | 'awaiting_approval' // Manifest is waiting for explicit owner approval
   | 'approved'          // Ready for execution
   | 'executing'         // Currently being executed
   | 'awaiting_review'   // Execution done, waiting for outcome review
@@ -375,7 +375,7 @@ export type DesireScratchpadEntryType =
   | 'questions_answered'  // User answered clarifying questions
   | 'review_started'      // LLM review began
   | 'review_completed'    // LLM review finished
-  | 'approval_requested'  // Sent to approval queue
+  | 'approval_requested'  // Entered manifest-owned user approval state
   | 'approved'            // User approved
   | 'rejected'            // User or system rejected
   | 'execution_started'   // Began execution
@@ -405,7 +405,7 @@ export type DesireScratchpadEntryType =
  *       v1.json
  *       v2.json
  *     reviews/
- *       alignment-v1.json
+ *       review-<desire-id>-v1.json
  *       outcome-001.json
  *     executions/
  *       attempt-001.json
@@ -738,6 +738,14 @@ export interface DesireReview {
   alignmentScore: number;
   /** ISO timestamp of review */
   reviewedAt: string;
+  /** Exact plan reviewed; prevents a review receipt from crossing plan versions. */
+  planId?: string;
+  /** Plan version reviewed. */
+  planVersion?: number;
+  /** Durable policy decision associated with this review. */
+  autoApprove?: boolean;
+  /** Human-readable policy reason for the automatic/manual decision. */
+  autoApproveReason?: string;
 }
 
 // ============================================================================
@@ -1058,7 +1066,6 @@ export interface DesireCandidate {
   reason: string;
   source: DesireSource;
   sourceId?: string;
-  initialStrength: number;
   risk: DesireRisk;
   suggestedAction: string;
 }
@@ -1155,8 +1162,10 @@ export function generatePlanId(desireId: string): string {
 /**
  * Generate a unique review ID.
  */
-export function generateReviewId(desireId: string): string {
-  return `review-${desireId}`;
+export function generateReviewId(desireId: string, planVersion?: number): string {
+  return planVersion === undefined
+    ? `review-${desireId}`
+    : `review-${desireId}-v${planVersion}`;
 }
 
 /**

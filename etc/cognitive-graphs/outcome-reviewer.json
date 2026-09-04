@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Outcome Reviewer",
   "description": "Reviews one desire execution, applies the canonical Agency transition, then publishes the durable result",
   "cognitiveMode": "agent",
@@ -13,9 +14,7 @@
       "data": {
         "label": "Load Executed Desire",
         "nodeType": "desire_loader",
-        "properties": {
-          "statusFilter": ["awaiting_review", "completed", "failed"]
-        }
+        "properties": {}
       },
       "width": 200,
       "height": 80
@@ -28,8 +27,7 @@
         "label": "Review Outcome",
         "nodeType": "outcome_reviewer",
         "properties": {
-          "temperature": 0.3,
-          "evaluateGoalAchievement": true
+          "temperature": 0.3
         }
       },
       "width": 220,
@@ -99,7 +97,7 @@
         "label": "Audit Durable Result",
         "nodeType": "audit_logger",
         "properties": {
-          "category": "agency",
+          "category": "decision",
           "event": "outcome_reviewed"
         }
       },
@@ -112,15 +110,15 @@
       "id": "load-to-review",
       "source": "load-desire",
       "target": "review-outcome",
-      "sourceHandle": "slot_0",
-      "targetHandle": "slot_0",
+      "sourceHandle": "desire",
+      "targetHandle": "desire",
       "data": { "type": "object", "comment": "Desire to reviewer" }
     },
     {
       "id": "load-to-apply",
       "source": "load-desire",
       "target": "apply-outcome",
-      "sourceHandle": "slot_0",
+      "sourceHandle": "desire",
       "targetHandle": "desire",
       "data": { "type": "object", "comment": "Original desire to canonical transition" }
     },
@@ -161,7 +159,7 @@
       "source": "apply-outcome",
       "target": "audit-result",
       "sourceHandle": "desire",
-      "targetHandle": "eventType",
+      "targetHandle": "data",
       "data": { "type": "object", "comment": "Durably updated desire" }
     }
   ]

@@ -6,13 +6,13 @@ import { getQueueManager } from '../queue/index.js'
 import { environmentObservationNeedsCognition } from '../api/handlers/environment-bridge.js'
 import type { EnvironmentObservation } from './types.js'
 import {
-  attachEnvironmentActionContext,
   enqueueEnvironmentAction,
   getEnvironmentBridgeStatePath,
   publishEnvironmentObservation,
   readEnvironmentBridgeState,
   recordEnvironmentActionResult,
   recordEnvironmentObservation,
+  sanitizeEnvironmentBridgeObservation,
   writeEnvironmentBridgeState,
 } from './store.js'
 
@@ -241,7 +241,7 @@ test('a failed Boredom Movement stimulus capture returns to its autonomy graph f
       source: 'autonomy',
       correlationId: 'boredom-failed-capture',
     })
-    const observation = attachEnvironmentActionContext({
+    const observation = sanitizeEnvironmentBridgeObservation({
       environmentId: 'ainekio',
       adapter: 'ainekio-gateway',
       sessionId: 'robot-1',

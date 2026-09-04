@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Curiosity Service Workflow",
   "description": "Generates curiosity questions from weighted memory sampling with user privacy isolation",
   "cognitiveMode": "agent",

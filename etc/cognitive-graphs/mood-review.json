@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Mood Persona Review",
   "description": "Reviews configured conversation buffers and selects an enabled per-user persona facet. Idle resets use the same graph with a forced baseline decision.",
   "cognitiveMode": "agent",

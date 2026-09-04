@@ -5,6 +5,7 @@ import path from 'node:path'
 import test, { after } from 'node:test'
 
 import {
+  DEFAULT_GRAPH_SCHEDULER,
   cognitiveGraphPath,
   loadGraphFile,
   setAuditEnabled,
@@ -34,6 +35,7 @@ const graph = {
   version: '2.0',
   format: 'svelte-flow',
   name: 'Organizer Agent',
+  scheduler: { ...DEFAULT_GRAPH_SCHEDULER },
   nodes: [],
   edges: [],
 } as SvelteFlowGraph

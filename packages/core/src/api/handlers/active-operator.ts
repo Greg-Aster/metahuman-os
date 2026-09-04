@@ -104,10 +104,8 @@ export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> 
         mode: modeStatus.mode,
         isExecuting: modeStatus.isExecuting,
         currentTask: modeStatus.currentTask || null,
-        consecutiveTasks: modeStatus.policy.consecutiveAutonomousWork,
         health: modeStatus.health,
         healthMessage: modeStatus.healthMessage,
-        policy: modeStatus.policy,
         robotOperator: {
           runtime: readRobotOperatorRuntimeState(),
           episodes: boredomEpisodes,
@@ -128,9 +126,6 @@ export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> 
         config: {
           autonomyMode: config.autonomyMode,
           cooldownMs: config.cooldownMs,
-          maxConsecutiveTasks: config.maxConsecutiveTasks,
-          maxEvaluationsPerHour: config.maxEvaluationsPerHour,
-          userPresenceCooldownMs: config.userPresenceCooldownMs,
         },
       },
     };
@@ -175,9 +170,6 @@ export async function handleUpdateActiveOperatorConfig(req: UnifiedRequest): Pro
     const body = {
       autonomyMode: input.autonomyMode,
       cooldownMs: input.cooldownMs,
-      maxConsecutiveTasks: input.maxConsecutiveTasks,
-      maxEvaluationsPerHour: input.maxEvaluationsPerHour,
-      userPresenceCooldownMs: input.userPresenceCooldownMs,
     };
     const requestedMode = body.autonomyMode as AutonomyMode | undefined;
     if (requestedMode && !['reactive', 'semi', 'full'].includes(requestedMode)) {
@@ -395,11 +387,12 @@ export async function handleUpdateActiveOperatorProposal(req: UnifiedRequest): P
       case 'scan': {
         const scanResult = await runSelfHealing(req.user.username, body.maxErrors || 5);
         result = {
-          success: true,
+          success: scanResult.errors.length === 0,
           message: `Found ${scanResult.errorsFound} errors, created ${scanResult.proposalsCreated} proposals`,
           data: {
             errorsFound: scanResult.errorsFound,
             proposalsCreated: scanResult.proposalsCreated,
+            errors: scanResult.errors,
           },
         };
         break;

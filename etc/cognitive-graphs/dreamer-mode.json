@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Dreamer Agent Workflow",
   "description": "Generates and durably admits bounded surreal dreams from weighted lifetime memory sampling",
   "cognitiveMode": "agent",

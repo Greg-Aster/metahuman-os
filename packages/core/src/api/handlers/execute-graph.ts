@@ -8,7 +8,13 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { audit } from '../../audit.js';
-import { collectNodeOutputs, extractGraphOutput, listExecutedNodes, runGraph } from '../../graph-runtime.js';
+import {
+  collectNodeOutputs,
+  extractGraphOutput,
+  listExecutedNodes,
+  listSkippedNodes,
+  runGraph,
+} from '../../graph-runtime.js';
 
 /**
  * POST /api/execute-graph - Execute a cognitive graph
@@ -63,6 +69,7 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
 
     // Get list of executed nodes
     const executedNodes = listExecutedNodes(graphState);
+    const skippedNodes = listSkippedNodes(graphState);
 
     // Audit successful completion
     await audit({
@@ -73,6 +80,7 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
         sessionId,
         durationMs,
         nodeCount: executedNodes.length,
+        skippedNodeCount: skippedNodes.length,
         hasResponse: !!response,
         success: true,
       },
@@ -81,6 +89,7 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
     console.log('[execute-graph] Execution completed:', {
       durationMs,
       executedNodes: executedNodes.length,
+      skippedNodes: skippedNodes.length,
       hasResponse: !!response,
       responsePreview: response ? response.substring(0, 100) : null,
     });
@@ -92,6 +101,7 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
         response,
         nodeOutputs,
         executedNodes,
+        skippedNodes,
       },
       durationMs,
     });

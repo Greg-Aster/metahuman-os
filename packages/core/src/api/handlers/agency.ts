@@ -26,6 +26,13 @@ import {
   initializeScratchpadSummary,
   initializeStageIterations,
   getSourceWeight,
+  statusToStage,
+  allowedOwnerAdvanceTargets,
+  canOwnerAdvanceDesire,
+  allowedOwnerResetTargets,
+  canOwnerResetDesireTo,
+  validateDesireForUserApproval,
+  approveDesireForExecution,
   type Desire,
   type DesireExecution,
   type DesireStatus,
@@ -41,10 +48,11 @@ import {
   submitSystemEvent,
 } from '../../buffer-admission.js';
 import { submitCoordinatorWork, submitDesireExecution } from '../../queue/index.js';
+import { assertDesireExecutable } from '../../agency/desire-execution-service.js';
 
 // Valid DesireStatus values from types.ts
 const ALL_STATUSES: DesireStatus[] = [
-  'nascent', 'pending', 'evaluating', 'planning', 'reviewing', 'awaiting_approval',
+  'nascent', 'pending', 'evaluating', 'planning', 'questioning', 'reviewing', 'awaiting_approval',
   'approved', 'executing', 'awaiting_review', 'completed', 'rejected', 'abandoned', 'failed'
 ];
 
@@ -52,22 +60,6 @@ const ALL_STATUSES: DesireStatus[] = [
 const LEGACY_STATUS_MAP: Record<string, DesireStatus> = {
   'executed': 'completed',  // "executed" was used before, should be "completed"
   'active': 'executing',    // "active" was used before, should be "executing"
-};
-
-const VALID_ADVANCE_TRANSITIONS: Record<string, string[]> = {
-  nascent: ['pending', 'planning', 'reviewing', 'approved', 'abandoned'],
-  pending: ['planning', 'reviewing', 'approved', 'abandoned'],
-  evaluating: ['planning', 'reviewing', 'approved', 'abandoned'],
-  planning: ['reviewing', 'approved', 'abandoned'],
-  reviewing: ['planning', 'approved', 'abandoned'],
-  approved: ['executing', 'planning', 'abandoned'],
-  awaiting_approval: ['approved', 'planning', 'abandoned'],
-  executing: ['abandoned'],
-  awaiting_review: ['abandoned'],
-  completed: ['abandoned'],
-  failed: ['pending', 'abandoned'],
-  rejected: ['pending'],
-  abandoned: ['pending'],
 };
 
 function stageForResetTarget(status: DesireStatus): DesireStage {
@@ -526,31 +518,16 @@ export async function handleApproveDesire(req: UnifiedRequest): Promise<UnifiedR
       };
     }
 
-    const approvableStatuses: DesireStatus[] = [
-      'nascent',
-      'pending',
-      'evaluating',
-      'planning',
-      'reviewing',
-      'awaiting_approval',
-    ];
-    if (!approvableStatuses.includes(desire.status)) {
+    const approvalError = validateDesireForUserApproval(desire);
+    if (approvalError) {
       return {
         status: 400,
-        error: `Cannot approve desire in '${desire.status}' status. Must be one of: ${approvableStatuses.join(', ')}.`,
+        error: approvalError,
       };
     }
 
-    const now = new Date().toISOString();
     const oldStatus = desire.status;
-    const updatedDesire: Desire = {
-      ...desire,
-      status: 'approved',
-      activatedAt: desire.activatedAt || now,
-      updatedAt: now,
-    };
-
-    await moveDesire(updatedDesire, oldStatus, 'approved', user.username);
+    const updatedDesire = await approveDesireForExecution(desire, user.username);
 
     audit({
       category: 'agent',
@@ -740,8 +717,8 @@ export async function handleResetDesire(req: UnifiedRequest): Promise<UnifiedRes
   }
 
   const targetStatus = (query?.target || 'planning') as DesireStatus;
-  const validTargets: DesireStatus[] = ['nascent', 'pending', 'planning', 'reviewing', 'approved'];
-  if (!validTargets.includes(targetStatus)) {
+  const validTargets = allowedOwnerResetTargets();
+  if (!canOwnerResetDesireTo(targetStatus)) {
     return {
       status: 400,
       error: `Invalid target status: ${targetStatus}. Valid options: ${validTargets.join(', ')}`,
@@ -1056,31 +1033,14 @@ export async function handleAdvanceDesire(req: UnifiedRequest): Promise<UnifiedR
       return { status: 404, error: 'Desire not found' };
     }
 
-    const allowedTransitions = VALID_ADVANCE_TRANSITIONS[desire.status] || [];
-    if (!allowedTransitions.includes(newStatus)) {
+    if (!ALL_STATUSES.includes(newStatus as DesireStatus)) {
+      return { status: 400, error: `Unknown desire status '${String(newStatus)}'.` };
+    }
+    const allowedTransitions = allowedOwnerAdvanceTargets(desire.status);
+    if (!canOwnerAdvanceDesire(desire.status, newStatus as DesireStatus)) {
       return {
         status: 400,
         error: `Cannot transition from '${desire.status}' to '${newStatus}'. Allowed: ${allowedTransitions.join(', ') || 'none'}`,
-      };
-    }
-
-    if (newStatus === 'executing' && !desire.plan) {
-      return {
-        status: 400,
-        data: {
-          error: 'Cannot execute desire without a plan. Use the planning stage first.',
-          suggestion: 'planning',
-        },
-      };
-    }
-
-    if (newStatus === 'reviewing' && !desire.plan) {
-      return {
-        status: 400,
-        data: {
-          error: 'Cannot review desire without a plan. The desire-planner agent will generate a plan automatically (runs every 5 minutes), or you can run it manually with: ./bin/mh agent run desire-planner',
-          suggestion: 'Wait for the planner agent to run, or trigger it manually.',
-        },
       };
     }
 
@@ -1089,6 +1049,7 @@ export async function handleAdvanceDesire(req: UnifiedRequest): Promise<UnifiedR
     const updatedDesire: Desire = {
       ...desire,
       status: newStatus as DesireStatus,
+      currentStage: statusToStage(newStatus as DesireStatus),
       updatedAt: now,
       activatedAt: desire.activatedAt || now,
     };
@@ -1428,20 +1389,12 @@ export async function handleExecuteDesire(req: UnifiedRequest): Promise<UnifiedR
       return { status: 404, error: 'Desire not found' };
     }
 
-    if (desire.status !== 'approved') {
+    try {
+      assertDesireExecutable(desire);
+    } catch (error) {
       return {
         status: 400,
-        error: `Cannot execute desire in '${desire.status}' status. Must be 'approved'.`,
-      };
-    }
-
-    if (!desire.plan || !desire.plan.steps || desire.plan.steps.length === 0) {
-      return {
-        status: 400,
-        data: {
-          error: 'Cannot execute desire without a plan. Use the planning stage first.',
-          suggestion: 'Move the desire back to "planning" status to generate a plan.',
-        },
+        error: (error as Error).message,
       };
     }
 

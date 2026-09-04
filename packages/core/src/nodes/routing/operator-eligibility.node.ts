@@ -37,7 +37,9 @@ export const OperatorEligibilityNode: NodeDefinition = defineNode({
   execute: async (inputs, context, properties) => {
     // Extract message string from inputs
     let message = '';
-    if (typeof inputs[2] === 'object' && inputs[2]?.message) {
+    if (typeof inputs.message === 'string') {
+      message = inputs.message;
+    } else if (typeof inputs[2] === 'object' && inputs[2]?.message) {
       message = inputs[2].message;
     } else if (typeof inputs[0] === 'string') {
       message = inputs[0];

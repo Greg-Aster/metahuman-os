@@ -177,7 +177,7 @@ export interface EpisodicEventMetadata {
 
   // Display properties for Inner Dialogue UI
   displayColor?: string;         // Color for inner dialogue text (e.g., '#22c55e' for green)
-  dialogueSource?: string;       // Source identifier (e.g., 'operator-policy', 'dreamer', 'reflector', 'curiosity')
+  dialogueSource?: string;       // Source identifier (e.g., 'dreamer', 'reflector', 'curiosity')
 
   // Legacy fields (maintain backward compatibility)
   processed?: boolean;           // Organizer agent processed flag

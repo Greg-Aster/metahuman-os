@@ -36,6 +36,9 @@ export * from './desire-questions.js';
 export * from './desire-checkin.js';
 export * from './desire-outcome-service.js';
 export * from './desire-outcome-transition.js';
+export * from './desire-plan-review-transition.js';
+export * from './lifecycle-policy.js';
+export * from './user-approval-transition.js';
 
 // Outcome review remains a public Agency operation. Desire execution itself is
 // internal to the coordinator-owned desire-execution service.
@@ -75,8 +78,6 @@ export {
   listAllDesires,
   savePlan,
   loadPlan,
-  saveReview,
-  loadReview,
   loadMetrics,
   saveMetrics,
   initializeMetrics,
@@ -95,7 +96,8 @@ export {
   savePlanToFolder,
   listPlanVersions,
   loadPlanFromFolder,
-  saveOutcomeReviewToFolder,
+  saveDesireReviewToFolder,
+  loadDesireReviewFromFolder,
   saveExecutionToFolder,
   loadExecutionAttempts,
   loadExecutionAttempt,

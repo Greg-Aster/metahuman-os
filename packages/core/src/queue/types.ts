@@ -62,7 +62,6 @@ export type TaskType =
   | 'environment_command'
   | 'environment_observation'
   | 'sleep_workflow'
-  | 'operator_policy'
   | 'custom'
   | 'generic';
 
@@ -81,7 +80,6 @@ export const TASK_LANE_MAP: Record<TaskType, ResourceLaneId> = {
   custom: 'local-llm',
   generic: 'local-llm',
   sleep_workflow: 'local-llm',
-  operator_policy: 'local-llm',
   environment_command: 'remote-llm',
   environment_observation: 'local-llm',
   index_build: 'vector-index',
@@ -117,7 +115,6 @@ export const DEFAULT_PRIORITIES: Record<TaskType, Priority> = {
   psychoanalyze: 'low',
   mood_review: 'normal',
   sleep_workflow: 'background',
-  operator_policy: 'background',
 };
 
 export const DEFAULT_HANDLERS: Record<TaskType, string> = {
@@ -142,7 +139,6 @@ export const DEFAULT_HANDLERS: Record<TaskType, string> = {
   environment_command: 'environment.command',
   environment_observation: 'environment.observation',
   sleep_workflow: 'workflow.sleep',
-  operator_policy: 'operator.policy',
   custom: 'custom',
   generic: 'generic',
 };

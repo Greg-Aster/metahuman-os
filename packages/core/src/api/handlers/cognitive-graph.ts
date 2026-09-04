@@ -18,6 +18,10 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from '../../paths.js';
 import { getNode, materializeNodeProperties } from '../../nodes/index.js';
+import {
+  DEFAULT_GRAPH_SCHEDULER,
+  validateSvelteFlowGraph,
+} from '../../cognitive-graph-schema.js';
 
 const GRAPHS_DIR = path.join(systemPaths.etc, 'cognitive-graphs');
 const CUSTOM_DIR = path.join(GRAPHS_DIR, 'custom');
@@ -112,6 +116,7 @@ function sanitizeGraphForPersistence(graph: any, rawName: string): any {
     name: graph.name || rawName,
     description: graph.description || '',
     cognitiveMode: graph.cognitiveMode || null,
+    scheduler: graph.scheduler || { ...DEFAULT_GRAPH_SCHEDULER },
     nodes: graph.nodes.map((node: any) => {
       const nodeType = node.data?.nodeType || node.type;
       const label = node.data?.label || node.data?.title;
@@ -127,6 +132,7 @@ function sanitizeGraphForPersistence(graph: any, rawName: string): any {
           properties: sanitizeNodeProperties(nodeType, node.data?.properties || node.properties),
           muted: node.data?.muted,
           comment: node.data?.comment,
+          activation: node.data?.activation,
         },
       };
     }),
@@ -213,8 +219,18 @@ export async function handleCreateCognitiveGraph(req: UnifiedRequest): Promise<U
     const rawName = sanitizeName(body?.name);
     const graph = body?.graph;
 
-    if (!rawName || typeof graph !== 'object' || Array.isArray(graph)) {
+    if (!rawName || !graph || typeof graph !== 'object' || Array.isArray(graph)) {
       return { status: 400, error: 'Invalid payload' };
+    }
+
+    const cleanGraph = sanitizeGraphForPersistence(graph, rawName);
+    try {
+      validateSvelteFlowGraph(cleanGraph);
+    } catch (error) {
+      return {
+        status: 400,
+        error: error instanceof Error ? error.message : 'Invalid graph scheduler contract',
+      };
     }
 
     // Determine where to save: check if built-in exists first, then custom
@@ -242,13 +258,13 @@ export async function handleCreateCognitiveGraph(req: UnifiedRequest): Promise<U
     }
 
     const now = new Date().toISOString();
-    const cleanGraph = sanitizeGraphForPersistence(graph, rawName);
     const graphPayload = {
       version: cleanGraph.version || '1.0',
       format: cleanGraph.format || 'svelte-flow',
       name: cleanGraph.name || rawName,
       description: cleanGraph.description || '',
       cognitiveMode: cleanGraph.cognitiveMode || null,
+      scheduler: cleanGraph.scheduler || { ...DEFAULT_GRAPH_SCHEDULER },
       last_modified: now,
       ...cleanGraph,
     };

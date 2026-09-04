@@ -1,7 +1,7 @@
 import type {
   EnvironmentModelOutput,
   EnvironmentObservation,
-  EnvironmentTaskState,
+  RobotStatusTask,
 } from '@metahuman/core';
 
 export interface EnvironmentActionSelectorDevelopmentCase {
@@ -13,7 +13,7 @@ export interface EnvironmentActionSelectorDevelopmentCase {
   observation: EnvironmentObservation;
   recentConversation?: Array<{ role: 'user' | 'assistant'; content: string }>;
   memories?: string[];
-  taskState?: EnvironmentTaskState;
+  robotStatus?: { task: RobotStatusTask };
   expected: EnvironmentModelOutput;
 }
 
@@ -164,13 +164,48 @@ function capture(): EnvironmentModelOutput {
 
 const cases: EnvironmentActionSelectorDevelopmentCase[] = [];
 
+function persistedTask(input: {
+  objective: string;
+  decisionOutcome: 'act' | 'observe';
+  actionStatus: 'failed' | 'completed';
+  continuationPolicy: string;
+  requiredCompletionBasis: string;
+  motionClass: 'body_local' | 'open_loop_displacement';
+  visualEvidenceMode?: string;
+  baselineFrame?: { id: string; timestamp: string };
+  selectedAction: { type: string; command: string };
+}): RobotStatusTask {
+  return {
+    objective: input.objective,
+    instruction: input.objective,
+    source: 'user',
+    decision: {
+      outcome: input.decisionOutcome,
+      reason: input.decisionOutcome === 'observe'
+        ? 'Evaluate the correlated evidence for the unfinished objective.'
+        : 'The selected action has not completed the objective.',
+      objectiveComplete: false,
+      continuationPolicy: input.continuationPolicy,
+      requiredCompletionBasis: input.requiredCompletionBasis,
+      motionClass: input.motionClass,
+      ...(input.visualEvidenceMode ? { visualEvidenceMode: input.visualEvidenceMode } : {}),
+    },
+    selectedAction: input.selectedAction,
+    actionId: '',
+    actionStatus: input.actionStatus,
+    feedback: null,
+    baselineFrame: input.baselineFrame ?? null,
+    updatedAt: TIMESTAMP,
+  };
+}
+
 function add(
   suite: string,
   risk: EnvironmentActionSelectorDevelopmentCase['risk'],
   instructions: EnvironmentActionSelectorDevelopmentCase['instructions'],
   expected: EnvironmentModelOutput,
   options: Partial<Pick<EnvironmentActionSelectorDevelopmentCase,
-    'fold' | 'observation' | 'recentConversation' | 'memories' | 'taskState'>> = {},
+    'fold' | 'observation' | 'recentConversation' | 'memories' | 'robotStatus'>> = {},
 ): void {
   const index = cases.length;
   cases.push({
@@ -182,7 +217,7 @@ function add(
     observation: options.observation ?? observation(),
     ...(options.recentConversation ? { recentConversation: options.recentConversation } : {}),
     ...(options.memories ? { memories: options.memories } : {}),
-    ...(options.taskState ? { taskState: options.taskState } : {}),
+    ...(options.robotStatus ? { robotStatus: options.robotStatus } : {}),
     expected,
   });
 }
@@ -393,18 +428,17 @@ for (const [suite, instructions, response] of negativeAuthority) {
     : {});
 }
 
-const failedWaveState: EnvironmentTaskState = {
-  version: 1,
+const failedWaveTask = persistedTask({
   objective: 'Wave once.',
-  phase: 'awaiting_action',
-  step: 1,
+  decisionOutcome: 'act',
+  actionStatus: 'failed',
   continuationPolicy: 'none',
   requiredCompletionBasis: 'action_result',
   motionClass: 'body_local',
   selectedAction: { type: 'robotCommand', command: 'wave' },
-};
+});
 add('persisted-failure', 'high', ['Original objective: Wave once. Exact terminal feedback: type=failed; command=wave.', 'The prior wave failed; continue the original objective.', 'Retry the outstanding wave objective after its failed result.', 'Choose the next action for the failed wave task.'], namedAction('wave', 'Retrying the advertised wave command.'), {
-  taskState: failedWaveState,
+  robotStatus: { task: failedWaveTask },
   observation: observation({
     metadata: { actionId: 'failed-wave-action' },
     feedback: [{
@@ -418,18 +452,17 @@ add('persisted-failure', 'high', ['Original objective: Wave once. Exact terminal
   }),
 });
 
-const approachState: EnvironmentTaskState = {
-  version: 1,
+const approachTask = persistedTask({
   objective: 'Move closer to the visible object.',
-  phase: 'evaluating_evidence',
-  step: 1,
+  decisionOutcome: 'observe',
+  actionStatus: 'completed',
   continuationPolicy: 'bounded',
   requiredCompletionBasis: 'visual_observation',
   motionClass: 'open_loop_displacement',
   visualEvidenceMode: 'comparison',
   baselineFrame: { id: 'before-frame', timestamp: '2030-01-15T11:59:58.000Z' },
   selectedAction: { type: 'robotCommand', command: 'walk_forward' },
-};
+});
 add('persisted-visual-complete', 'high', ['The before and after frames show the object is now closer.', 'Evaluate the outstanding approach objective from both frames.', 'The current view clearly confirms the requested closer perspective.', 'Finish the persisted visual objective using the correlated comparison.'], {
   ...complete('The current frame shows the object closer than in the baseline frame.', 'visual_observation'),
   taskDecision: {
@@ -439,7 +472,7 @@ add('persisted-visual-complete', 'high', ['The before and after frames show the 
     motionClass: 'open_loop_displacement',
   },
 }, {
-  taskState: approachState,
+  robotStatus: { task: approachTask },
   observation: observation({
     visual: {
       id: 'after-frame',
@@ -452,7 +485,7 @@ add('persisted-visual-complete', 'high', ['The before and after frames show the 
   }),
 });
 add('persisted-visual-incomplete', 'high', ['The comparison does not show that the object is closer.', 'Continue the approach objective because the visual condition is unmet.', 'The returned frame does not yet satisfy the closer-view objective.', 'Select the next action for the incomplete approach task.'], namedAction('walk_forward', 'The visual objective remains incomplete, so I will take one more bounded forward step.', 'open_loop_displacement'), {
-  taskState: approachState,
+  robotStatus: { task: approachTask },
 });
 
 const target = {
@@ -543,16 +576,15 @@ const persistedCounterfactuals = [
 for (const entry of persistedCounterfactuals) {
   const suffix = `counterfactual-${entry.fold}`;
   const actionId = `failed-${entry.command}-${entry.fold}`;
-  const taskState: EnvironmentTaskState = {
-    version: 1,
+  const robotStatusTask = persistedTask({
     objective: entry.objective,
-    phase: 'awaiting_action',
-    step: 1,
+    decisionOutcome: 'act',
+    actionStatus: 'failed',
     continuationPolicy: 'none',
     requiredCompletionBasis: 'action_result',
     motionClass: entry.motionClass,
     selectedAction: { type: 'robotCommand', command: entry.command },
-  };
+  });
   add('persisted-failure', 'high', instructionSet(
     `The prior ${entry.command} command failed; retry the outstanding objective.`,
     `Continue ${entry.objective.toLowerCase()} after the failed action result.`,
@@ -564,7 +596,7 @@ for (const entry of persistedCounterfactuals) {
     entry.motionClass,
   ), {
     fold: entry.fold,
-    taskState,
+    robotStatus: { task: robotStatusTask },
     observation: observation({
       metadata: { actionId },
       feedback: [{
@@ -579,18 +611,17 @@ for (const entry of persistedCounterfactuals) {
   });
 
   const comparisonActionId = `comparison-action-${entry.fold}`;
-  const comparisonState: EnvironmentTaskState = {
-    version: 1,
+  const comparisonTask = persistedTask({
     objective: `Verify the bounded ${entry.command} objective visually.`,
-    phase: 'evaluating_evidence',
-    step: 1,
+    decisionOutcome: 'observe',
+    actionStatus: 'completed',
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'visual_observation',
     motionClass: entry.motionClass,
     visualEvidenceMode: 'comparison',
     baselineFrame: { id: `baseline-${entry.fold}`, timestamp: '2030-01-15T11:59:58.000Z' },
     selectedAction: { type: 'robotCommand', command: entry.command },
-  };
+  });
   const comparisonObservation = observation({
     visual: {
       id: `comparison-frame-${entry.fold}`,
@@ -609,7 +640,7 @@ for (const entry of persistedCounterfactuals) {
     `Mark the bounded objective complete from the matching before and after frames.`,
   ), completedComparison(completedResponse, entry.motionClass), {
     fold: entry.fold,
-    taskState: comparisonState,
+    robotStatus: { task: comparisonTask },
     observation: comparisonObservation,
   });
 
@@ -617,14 +648,14 @@ for (const entry of persistedCounterfactuals) {
     `The correlated comparison shows the ${entry.command} objective is still incomplete.`,
     `Continue the persisted objective because its visual condition is not satisfied.`,
     `The current frame does not meet the stop condition; choose the bounded retry.`,
-    `Use the outstanding task state to retry ${entry.command} once.`,
+    `Use the outstanding Robot Status task to retry ${entry.command} once.`,
   ), retryNamedAction(
     entry.command,
     `The visual condition remains incomplete, so I will retry ${entry.command} once.`,
     entry.motionClass,
   ), {
     fold: entry.fold,
-    taskState: comparisonState,
+    robotStatus: { task: comparisonTask },
     observation: comparisonObservation,
   });
 }
@@ -918,11 +949,10 @@ for (const entry of authorityRefinementCases) {
   });
 
   const comparisonActionId = `refinement-comparison-action-${entry.fold}`;
-  const completedState: EnvironmentTaskState = {
-    version: 1,
+  const completedTask = persistedTask({
     objective: `Verify the external result of ${entry.completedCommand}.`,
-    phase: 'evaluating_evidence',
-    step: 1,
+    decisionOutcome: 'observe',
+    actionStatus: 'completed',
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'visual_observation',
     motionClass: entry.completedMotionClass,
@@ -932,7 +962,7 @@ for (const entry of authorityRefinementCases) {
       timestamp: '2030-01-15T11:59:58.000Z',
     },
     selectedAction: { type: 'robotCommand', command: entry.completedCommand },
-  };
+  });
   const completedCorrelationId = `refinement-comparison-${entry.fold}`;
   const completedResponse = `The correlated before and after evidence confirms the ${entry.completedCommand} objective is complete.`;
   add('persisted-visual-complete', 'high', instructionSet(
@@ -942,7 +972,7 @@ for (const entry of authorityRefinementCases) {
     `Mark this bounded ${entry.completedCommand} task complete without another physical action.`,
   ), completedComparison(completedResponse, entry.completedMotionClass), {
     fold: entry.fold,
-    taskState: completedState,
+    robotStatus: { task: completedTask },
     observation: observation({
       visual: {
         id: `refinement-current-${entry.fold}`,
@@ -956,16 +986,15 @@ for (const entry of authorityRefinementCases) {
   });
 
   const failedActionId = `refinement-failed-action-${entry.fold}`;
-  const retryState: EnvironmentTaskState = {
-    version: 1,
+  const retryTask = persistedTask({
     objective: `Complete one ${entry.positiveCommand} action.`,
-    phase: 'awaiting_action',
-    step: 1,
+    decisionOutcome: 'act',
+    actionStatus: 'failed',
     continuationPolicy: 'none',
     requiredCompletionBasis: 'action_result',
     motionClass: entry.positiveMotionClass,
     selectedAction: { type: 'robotCommand', command: entry.positiveCommand },
-  };
+  });
   add('persisted-failure', 'high', instructionSet(
     `The previous ${entry.positiveCommand} result failed; retry the persisted objective once.`,
     `Continue the outstanding task by selecting ${entry.positiveCommand} again.`,
@@ -977,7 +1006,7 @@ for (const entry of authorityRefinementCases) {
     entry.positiveMotionClass,
   ), {
     fold: entry.fold,
-    taskState: retryState,
+    robotStatus: { task: retryTask },
     observation: observation({
       metadata: { actionId: failedActionId },
       feedback: [{

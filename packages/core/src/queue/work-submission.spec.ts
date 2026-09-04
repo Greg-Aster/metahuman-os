@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildAgentFollowOnTaskInput, buildMemoryIndexRefreshTaskInput } from './work-submission.js'
+import {
+  buildAgentFollowOnTaskInput,
+  buildDesirePlanningTaskInput,
+  buildMemoryIndexRefreshTaskInput,
+} from './work-submission.js'
 
 test('Agent follow-on submission builds one coordinator-owned finite task contract', () => {
   assert.deepEqual(buildAgentFollowOnTaskInput({
@@ -96,5 +100,42 @@ test('Memory index reconciliation rejects invalid profile identity and limits', 
   assert.throws(
     () => buildMemoryIndexRefreshTaskInput({ username: 'profile', source: 'system', maxAgeHours: -1 }),
     /non-negative number/,
+  )
+})
+
+test('Desire planning builds one targeted coordinator-owned agent task', () => {
+  assert.deepEqual(buildDesirePlanningTaskInput({
+    username: 'profile-one',
+    desireId: 'desire-123-abc',
+    source: 'user',
+    metadata: { producer: 'agency-api' },
+  }), {
+    type: 'generic',
+    handler: 'agent.desire-planner',
+    resource: 'remote-llm',
+    source: 'user',
+    username: 'profile-one',
+    priority: 'high',
+    input: {
+      agentId: 'desire-planner',
+      args: ['--desire-id', 'desire-123-abc'],
+      triggeredBy: 'agency-api',
+    },
+    parentTaskId: undefined,
+    correlationId: undefined,
+    idempotencyKey: 'desire-plan:desire-123-abc',
+    maxAttempts: 2,
+    metadata: { producer: 'agency-api' },
+  })
+})
+
+test('Desire planning rejects invalid profile and desire identity', () => {
+  assert.throws(
+    () => buildDesirePlanningTaskInput({ username: '../profile', desireId: 'desire-1', source: 'user' }),
+    /valid profile username/,
+  )
+  assert.throws(
+    () => buildDesirePlanningTaskInput({ username: 'profile', desireId: '../desire-1', source: 'user' }),
+    /valid desire ID/,
   )
 })

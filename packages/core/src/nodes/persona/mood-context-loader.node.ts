@@ -74,7 +74,7 @@ export const MoodContextLoaderNode: NodeDefinition = defineNode({
     const settings = loadMoodSettings(username);
     const facets = loadPersonaFacetConfig(username);
     const activeFacet = facets.activeFacet;
-    const personaSummaryEnabled = isPersonaSummaryGloballyEnabled();
+    const personaSummaryEnabled = isPersonaSummaryGloballyEnabled(username);
     const personaDisabled = activeFacet === 'inactive' || !personaSummaryEnabled;
     const candidates: MoodPersonaCandidate[] = Object.entries(facets.facets)
       .filter(([id, facet]) => id !== 'inactive' && facet.enabled && Boolean(facet.personaFile))

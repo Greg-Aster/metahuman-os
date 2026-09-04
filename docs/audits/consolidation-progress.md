@@ -2427,6 +2427,236 @@ Validation:
 - No application server, external adapter, model server, or physical robot was
   exercised during this documentation cleanup.
 
+## Desire Planner Graph and Admission Repair - 2026-09-02
+
+Scope and owner decision:
+
+- Kept `brain/agents/desire-planner` and its planner/reviewer graphs as the one
+  finite planning owner. Kept the Work Coordinator as the admission and retry
+  owner for Sleep, CLI, mobile, and Site-triggered work.
+- Confirmed the prior Site handler was a competing inline model, parsing,
+  storage, and review path. Confirmed the reviewer graph's conditional router
+  did not provide executable branch selection, so its reject, approve, and
+  skill-approval nodes could run as independent paths.
+
+Implementation:
+
+- Rewired both graphs exclusively through registered named handles and added
+  them to strict graph contract validation. Planning now requires canonical
+  tool, policy, semantic-memory, plan-validation, and durable-update receipts.
+- Added one profile-scoped plan-review transition that records the validated
+  review and applies exactly one manifest status: rejected, approved, or
+  awaiting user approval. It does not create a second skill-approval queue.
+- Resolved account identity separately from profile identity, made policy and
+  semantic-search failures visible, enabled real skill/trust/plan validation,
+  and required durable plan, reflection, Persona Memory, and review-transition
+  receipts before the agent reports success.
+- Routed manual Site generation through one targeted, idempotent Work
+  Coordinator submission. Removed the inline planning/review implementation,
+  its standalone review route, the unused Desire Conversation Loader, and the
+  obsolete Desire Approval Queue node.
+- Updated the Agent and Agency user documentation to describe the maintained
+  path and removed raw model-stream presentation state from the dashboard.
+
+Validation:
+
+- Focused Desire Planner, plan validator, review transition, and coordinator
+  submission tests pass (4 test files). Core, Brain, Site, and scripts type
+  checks pass.
+- All 27 cognitive graphs validate, including strict registered-node contracts
+  for Desire Planner and Desire Reviewer. Architecture and user-agnostic
+  guardrails pass with zero architecture violations. Node defaults validation
+  passes; its optional event-bus connection logged a sandbox `EPERM`.
+- `./bin/audit check` passes its architecture checks and retains only the
+  existing tracked environment-action-selector corpus size warning.
+- No live model backend, Work Coordinator process, browser session, external
+  provider, or physical system was exercised; validation covers source,
+  contracts, and isolated behavior only.
+
+### Desire Reviewer completion follow-up - 2026-09-02
+
+Root cause and owner decision:
+
+- The reviewer graph was structurally connected, but its single-entry Inner
+  Dialogue Buffer result omitted `savedCount`, so the agent rejected a
+  successful write. A failure after review-file or memory persistence also left
+  a desire in `reviewing` with no resumable exact-decision contract.
+- Generic advance/reset controls and the approval handler could move an
+  unreviewed desire directly into reviewer-owned or approved states. Plan risk
+  could also understate a step, and execution did not reject an auto-approved
+  step marked as requiring explicit approval.
+- Kept `brain/agents/desire-planner` as the finite planning/review owner,
+  `desire-reviewer.json` as its only editable review workflow, Core Agency
+  storage/lifecycle services as the durable owner, and the Work Coordinator as
+  admission owner. No second queue, reviewer, or scheduler was added.
+
+Implementation:
+
+- Added complete single-entry buffer receipts. The reviewer now persists one
+  immutable, plan-versioned review receipt before buffer and Persona Memory
+  effects, then records a real idempotent scratchpad entry before the final
+  manifest transition. A retry resumes `reviewing`, reloads the persisted
+  desire, reuses the exact receipt when present, and does not reload the planner
+  graph.
+- Wired Persona Formatter output into one `personaContext` contract and wired
+  the Policy Loader trust level into the verdict, removing the second identity
+  policy read. Review IDs now include the plan version.
+- Moved explicit user approval behind a Core Agency transition that requires
+  `awaiting_approval` plus an exact plan-version review, records approval,
+  updates metrics/stage counts, and persists the correct current stage. Removed
+  UI fast-approve/review-status approval and prohibited generic advance/reset
+  into `reviewing`, `approved`, or `executing`.
+- Enforced aggregate plan risk at validation and execution, made critical plan
+  steps approval-bearing by default, and reject execution when an explicitly
+  approval-bearing step was auto-approved. Removed the unused root-level legacy
+  review save/load surface; plan and outcome reviews now share the canonical
+  per-desire review folder functions.
+
+Validation:
+
+- Seven focused test files pass: Desire Planner graph contracts, plan-review
+  recording/transition, lifecycle policy, user approval transition, plan
+  validation, execution admission, and Inner Dialogue idempotency/receipts.
+- All 27 cognitive graphs pass schema and registered-node handle validation;
+  graph-executor coverage passes for all 267 configured nodes.
+- Site, scripts, and tests typechecks pass. Core and Brain typechecks are blocked
+  only by a concurrent Environment context-builder spec syntax error, removed
+  Environment task types, and stale selector training fields; no reviewer/Agency
+  type errors remain in their output.
+- Node-default, user-agnostic, architecture, and audit guardrails pass. The
+  audit retains the existing large tracked Environment training corpus warning.
+  Maintained-source inventories were regenerated at 1,595 maintained files and
+  1,365 code files. `git diff --check` passes.
+- No live model, Work Coordinator process, browser interaction, external
+  provider, or physical system was exercised.
+
+## Environment Input and Robot Status Lifecycle Consolidation - 2026-09-02
+
+Scope and owner decision:
+
+- Kept Environment Bridge Input limited to adapter-delivered observation data.
+  Work Coordinator action context and Robot Operator handoff context now enter
+  maintained Environment workflows through their own input nodes.
+- Kept the existing Environment Action Selector as the single semantic LLM
+  decision owner. The refactor adds no command policy, second router, or second
+  model decision.
+
+Implementation:
+
+- Kept feedback correlation and frame selection in explicit single-purpose
+  Environment nodes. Added `robot_status_out` as the non-LLM output owner that
+  atomically stores the selector's task decision, selected or completed action,
+  and correlated result in the canonical profile Robot Status snapshot.
+- Sanitized bridge observations at the canonical interface boundary and carried
+  coordinator/operator context separately through queue execution.
+- Removed the superseded Environment Task State, Environment Task Input,
+  Environment Task Preparation, Environment Task Reducer, and lifecycle helper,
+  together with their wiring, exports, schemas, serialization, and stale tests.
+  Removed the redundant Instruction Resolver pass-through from Boredom Autonomy
+  and wired its dedicated Robot Operator input directly to the selector context.
+- Rewired Environment Mode and Boredom Autonomy to read Robot Status before the
+  selector and update it after Bridge Out. The selector remains the sole semantic
+  owner; Robot Status Out does not call a model or choose an action.
+
+Validation:
+
+- All 27 cognitive graphs validate. The focused Environment, Robot Operator,
+  Robot Status, bridge, and conversation owner suite passes 42 tests; the graph
+  and Freestyle suite passes 4 tests; selector corpus/regression validation
+  passes 2 test files.
+- The full monorepo typecheck, node-default validation, architecture and
+  user-agnostic guardrails, final maintained-source reference searches, and
+  `git diff --check` pass. The full root `pnpm build` chain also passes.
+- No live model backend, Environment adapter, or physical robot was exercised;
+  validation covers source, graph contracts, and isolated behavior only.
+
+## Robot Task Result and Goal Review Lifecycle - 2026-09-02
+
+Scope and ownership:
+
+- Kept Environment Mode and Robot Autonomy Executor as the LLM-owned action
+  selectors. Each dispatches at most one action and ends.
+- Added one Robot Action Result graph that interprets the later correlated
+  terminal result with an LLM and writes the decision to canonical Robot Status.
+  It cannot dispatch another action.
+- Added one separately scheduled Robot Goal Review graph. It reads Robot Status,
+  uses one LLM call to close, wait, request user input, or author one high-level
+  next instruction, and can delegate only that instruction to the existing Robot
+  Autonomy Executor.
+- Robot Operator remains the only scheduler. Reactive admits no timed review;
+  Semi uses the configured review idle timer; Full waits for the current
+  execution/result chain before reviewing an unfinished objective again.
+
+Consolidation:
+
+- Removed the Environment and Robot Autonomy self-feedback routes that caused
+  completed actions to re-enter the same selector graph.
+- Kept correlation metadata for result routing, but moved continuation state to
+  Robot Status. No step limit, command-specific rule, fallback router, or
+  conditional graph-execution system was added.
+
+Validation:
+
+- Root typecheck passed across Core, Brain, CLI, Agent Runtime, local model
+  service, scripts, tests, mobile, and Site.
+- All 28 graphs passed schema validation, including strict registered-node
+  contracts for the two new graphs. The focused Robot Operator, Robot Status,
+  Environment Bridge, buffer, TTS, and action-selector suites passed.
+- Agent Monitor, node defaults, architecture, and user-agnostic guards passed.
+  The combined `pnpm validate` run encountered a sandbox `spawnSync git EPERM`
+  at the user-agnostic stage; that guard and the remaining terminal and Big
+  Brother checks passed when rerun separately.
+- `git diff --check` passed. The running production Site and Robot Operator were
+  not rebuilt or restarted, and no live adapter or physical action was tested.
+- After those passes, an unrelated concurrent conditional-scheduler project
+  changed the shared graph schema and added an unfinished Graph Executor spec.
+  In the current combined worktree, graph validation now requires that project's
+  not-yet-migrated scheduler metadata and Core typecheck sees its unmatched
+  `skipReason` assertion. This lifecycle change did not modify or accommodate
+  those concurrent files.
+
+## Environment Intent Routing and Current-Vision Admission - 2026-09-03
+
+Root cause and ownership:
+
+- Interactive Environment Mode had no early intent owner, so context and side
+  effect nodes were reached without a single explicit route decision. Saved
+  bridge images also lacked provenance that distinguished them from the exact
+  observation that triggered a run.
+- Restored the shared `orchestrator_llm` as a route-only Environment instance.
+  It returns seven independent booleans and cannot rewrite the user input,
+  answer, select a robot command, or plan movement. The existing
+  `environmentActionSelector` role remains the sole semantic response/action
+  owner and still resolves through profile model settings.
+
+Consolidation:
+
+- Environment Mode conditionally admits dialogue history, memory, Robot Status,
+  bridge data, and current camera evidence from the orchestrator decision.
+  Robot-originated turns can reuse their triggering observation; typed chat can
+  use saved capabilities but cannot present a saved frame as current. When
+  current vision is absent, the Action Selector may choose the advertised
+  `captureImage` action.
+- Environment Bridge Out now transports actions and reports transport facts
+  only. Removed its conversation rewriting and background familiarity-search
+  responsibilities, the orphan familiarity output, duplicate result/feedback
+  inputs, empty map input, legacy Environment Chat output, debug viewer, and
+  redundant Thinking Stripper from the interactive graph.
+- Valid action-only turns now complete without creating an empty assistant
+  message or emitting `Graph executed but produced no response`. Movement
+  Generator and Environment Bridge Out are inactive when the selector chooses
+  no action.
+
+Validation:
+
+- Eight focused Environment, Robot Operator, bridge, parser, context, and graph
+  test files pass. Core and Site typechecks pass; all 40 graphs validate; all 323
+  configured graph nodes have executors; node defaults and the zero-violation
+  architecture guard pass. The complete root `pnpm build` chain passes, including
+  workspace typechecks, repository tests and validators, and the production Site
+  build. Live model routing, browser display, bridge delivery, returned image
+  analysis, and physical robot behavior remain separate runtime evidence.
+
 ## Current Known Baseline Debt
 
 The architecture baseline now records no active architecture violations. Current baseline count: 0 violations.

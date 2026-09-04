@@ -9,9 +9,8 @@ import { EventEmitter } from 'node:events';
 import { audit } from '../audit.js';
 import { ensureQueueSystemStarted, getQueueManager } from '../queue/index.js';
 import type { AutonomyMode } from '../queue/types.js';
-import { readRobotOperatorRuntimeState } from '../robot-operator.js';
+import { isRobotAutonomyWorkItem, readRobotOperatorRuntimeState } from '../robot-operator.js';
 import { readLastActiveUsername } from '../system-activity.js';
-import { getOperatorPolicyService } from './operator-policy-service.js';
 import { loadConfig, saveConfig } from './state-persister.js';
 
 export class ModeController extends EventEmitter {
@@ -60,16 +59,9 @@ export class ModeController extends EventEmitter {
       const system = await ensureQueueSystemStarted();
       system.setAutonomyMode(mode);
       const config = loadConfig();
-      // Robot Operator is the sole robot-autonomy producer. Stop the legacy
-      // general policy loop so Full cannot admit a competing LLM evaluation.
-      getOperatorPolicyService().stop();
       if (mode === 'reactive') {
         for (const task of getQueueManager().getAllTasks()) {
-          const robotAutonomyWork = task.handler === 'workflow.boredom-observer'
-            || task.handler === 'workflow.boredom-movement'
-            || task.handler === 'workflow.boredom-reflection'
-            || Boolean(task.input?.metadata?.robotObserver)
-            || Boolean(task.input?.observation?.metadata?.robotObserver)
+          const robotAutonomyWork = isRobotAutonomyWorkItem(task)
           if (task.source === 'autonomy' && robotAutonomyWork) {
             getQueueManager().cancel(task.id, 'Robot Operator disabled by Active Operator reactive mode')
           }
@@ -101,7 +93,6 @@ export class ModeController extends EventEmitter {
   }
 
   async emergencyStop(username = 'system'): Promise<void> {
-    getOperatorPolicyService().stop();
     const manager = getQueueManager();
     for (const task of manager.getAllTasks()) {
       if (task.source === 'autonomy') manager.cancel(task.id, 'Active Operator emergency stop');
@@ -114,15 +105,9 @@ export class ModeController extends EventEmitter {
 
   getStatus() {
     const manager = getQueueManager();
-    const robotAutonomyWork = (task: { source: string; handler: string; input?: Record<string, any> }) => (
+    const robotAutonomyWork = (task: { source: string; handler: string; input: Record<string, any> }) => (
       task.source === 'autonomy'
-      && (
-        task.handler === 'workflow.boredom-observer'
-        || task.handler === 'workflow.boredom-movement'
-        || task.handler === 'workflow.boredom-reflection'
-        || Boolean(task.input?.metadata?.robotObserver)
-        || Boolean(task.input?.observation?.metadata?.robotObserver)
-      )
+      && isRobotAutonomyWorkItem(task)
     );
     const currentTask = manager.getAllTasks().find(task => robotAutonomyWork(task) && task.state === 'leased');
     const runtime = readRobotOperatorRuntimeState();
@@ -138,7 +123,6 @@ export class ModeController extends EventEmitter {
       healthMessage: !fullRuntimeHealthy
         ? 'Full autonomy is selected, but Robot Operator has not published an active Full-mode runtime state'
         : undefined,
-      policy: getOperatorPolicyService().getStatus(),
     };
   }
 

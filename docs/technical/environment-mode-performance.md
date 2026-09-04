@@ -6,12 +6,17 @@ This document is the maintained paper trail for Environment Mode response-time w
 
 ## Current Status
 
-Source reconciled: 2026-08-31. The current worktree graph has 24 nodes and 58
-edges, including the new Robot Status context input. This documentation repair
-did not rebuild or restart the application, exercise a configured profile,
-contact the Environment Bridge, or run a physical robot. The dated work log and
-validation record below remain historical evidence; they are not a claim that
-the same commands or runtime results are current.
+Source reconciled: 2026-09-03. Environment Mode has 20 nodes and 51 edges;
+Robot Autonomy Executor has 21 nodes and 52 edges. Interactive Environment Mode
+now begins with one route-only Intent Orchestrator and conditionally admits
+memory, Robot Status, bridge, and image context before its existing Environment
+Action Selector. Robot-originated turns may use the exact observation that
+triggered the run. A typed chat turn never treats a saved bridge frame as current;
+the selector may choose the advertised `captureImage` action when current vision
+is needed. This source repair did not restart the application, exercise a
+configured profile, contact the Environment Bridge, or run a physical robot.
+The dated work log and validation record below remain historical evidence; they
+are not a claim that the same commands or runtime results are current.
 
 ## Maintenance Rule
 
@@ -25,12 +30,13 @@ the same commands or runtime results are current.
 
 - Optimize the measured critical path before changing model quality.
 - Do not bypass the cognitive graph or add keyword-based intent shortcuts.
-- The Environment action selector is the sole semantic action owner for each turn. It decides conversation versus physical work, selects one exact advertised command or one body-local movement request, and judges external evidence when Task State requires another semantic pass.
+- The Environment Intent Orchestrator owns only independent route switches. It neither rewrites the instruction nor chooses a response, command, or movement.
+- The Environment Action Selector is the sole semantic output owner for each interactive turn. From the selected context routes, it may author conversation, select one exact advertised action, select one body-local movement request, or combine optional conversation with one action.
 - The selector model must be vision-capable because one Environment decision owns both attached robot images and action selection. Movement Generator may generate a requested off-script motion plan only after the selector has already owned and typed the body-local movement request; it never reinterprets or overrides a selected action.
-- Environment Task State is the one deterministic lifecycle owner. It validates capabilities and schemas, persists the objective, closes exact one-step user action results, returns autonomous results to the selector for semantic review, and enforces the bounded action ceiling; it does not reinterpret natural language.
-- Every user or autonomous input must produce a conversational response, one executable action with a response, or an explicit failure diagnostic. Environment Mode has no hidden response route.
-- Matching `completed` feedback closes a reactive one-step `action_result` objective without another model call. Autonomous actions are bounded so the same selector reviews the verified consequence before completing or selecting the next action.
-- Failed actions and incomplete external objectives return to the same Environment action selector. There is no separate recovery, visual-review, validator, or refiner model.
+- The interactive workflow is split by responsibility: User Input supplies the unchanged instruction, Intent Orchestrator selects context and output routes, Environment Bridge Input supplies read-only bridge data with source provenance, Image Input admits only current-run frames, Context Builder creates one selector package, Action Parser validates the selector output, Environment Bridge Out transports an admitted action, and Robot Status Out persists the turn. Result correlation and interpretation remain in Robot Action Result.
+- A user or autonomous input may produce a conversational response, one executable action, both, or an explicit failure diagnostic. Speech remains optional and is not evidence that an action executed.
+- Correlated terminal feedback runs Robot Action Result once. Robot Status Out records that decision and result without applying a deterministic completion policy or re-entering the Environment workflow.
+- Failed actions and incomplete external objectives remain in Robot Status for a later separately admitted Robot Goal Review. No action or result workflow loops itself.
 - Fresh correlated images are admitted for current visual work. A claimed external change requires an ordered baseline and current frame; an absolute current-scene fact requires one current correlated frame.
 - Raw correlated sensory observations remain available in graph state even when a particular LLM call does not process the image. Context admission controls model input, not sensor existence.
 - The robot-mounted camera may evaluate the external scene but cannot prove the robot's own pose or dynamic body motion.
@@ -56,22 +62,35 @@ Historical warm Environment Mode turns before the recent task-contract expansion
 
 ## Current Architecture Findings
 
-- Environment Mode currently has 24 nodes and 58 edges.
+- Environment Mode currently has 20 nodes and 51 edges.
 - Robot Status supplies bounded supporting self-context to the Environment
   Context Builder. It is not current sensory evidence, an action result, or
   proof of external state.
-- The graph executor visits nodes in topological order and awaits them serially.
+- The graph executor evaluates nodes in deterministic topological order, invokes
+  only nodes whose declared branch conditions and required inputs are active,
+  reports inactive nodes as skipped, and awaits active nodes serially.
 - The work coordinator also serializes the broad `local-llm` resource lane with `maxConcurrent: 1` and a 2,000 ms cooldown between complete work items.
-- A normal question or named robot command requires one
-  `environmentActionSelector` call. The checked-in registry maps that role to
-  the vision-capable `default.orchestrator`; the retired typed-escalation path is
-  not part of the current graph. A valid named command does not call Movement
-  Generator. Off-script body-local motion adds Movement Generator only after the
-  selector returns `movementRequest`.
-- Exact successful `action_result` feedback for a reactive one-step command is reduced without a model call. Autonomous results, failed results, and external visual/state objectives use one action-selector evidence/next-action call per physical attempt.
-- Long-term memory retrieval remains a bounded vector lookup. The generative Context Router and Memory Relevance Interpreter are no longer in the active Environment graph.
-- The retired Task Contract, Visual Evidence Assessor, Task Validator, Task Refiner, and Workflow Command nodes are no longer registered or present in the graph.
-- The checked-in registry maps `environmentActionSelector` to the vision-capable `default.orchestrator` model. Registry migration removes the retired `environmentRouter` role and replaces the known text-only `environment-action-selector-0.8b:v1` assignment while preserving explicit custom selector choices.
+- Every interactive turn uses the profile's current Environment `orchestrator`
+  assignment for the route-only Intent Orchestrator, then the current
+  `environmentActionSelector` assignment for the selected response/action
+  decision. These roles resolve through the normal profile model owner; neither
+  graph instance hardcodes a model name.
+- Memory search, Robot Status, Environment Bridge data, and camera-frame
+  processing run only when their selected route is active. Environment Bridge
+  Out runs only after the selector validates an action or movement request.
+- A valid named command does not call Movement Generator. Off-script body-local
+  motion adds Movement Generator only after the selector returns
+  `movementRequest`.
+- A robot-originated turn reuses its exact triggering frame when vision is
+  selected. Typed chat may read saved bridge state and capabilities, but a saved
+  frame is not admitted as current vision. If current vision is needed and the
+  camera action is advertised, the Action Selector may request one capture; no
+  phrase-specific capture rule exists.
+- The retired Task Contract, Environment Task Input, Environment Task
+  Preparation, Environment Task Reducer, Visual Evidence Assessor, Task
+  Validator, Task Refiner, Workflow Command, result-correlation inputs,
+  Environment Map input, Environment Chat output, debug viewer, and redundant
+  Thinking Stripper are not present in interactive Environment Mode.
 - The current source and checked-in graph contain this implementation. Loaded
   server state, profile-specific model resolution, bridge delivery, and physical
   robot behavior remain unverified by this documentation update.
@@ -79,6 +98,27 @@ Historical warm Environment Mode turns before the recent task-contract expansion
 - Graph serialization and coordinator serialization are MetaHuman policies, not hard Ollama limitations.
 
 ## Work Log
+
+### 2026-09-02 - Robot Autonomy Executor parity and naming
+
+Status: implemented in maintained source. Robot Autonomy Executor now queries
+the existing profile semantic-memory index with the planner-authored instruction
+and supplies up to three results above the configured 0.65 threshold to the
+existing Robot Operator Context node. That node continues to deduplicate and
+combine semantic results with memories explicitly delegated by a planner.
+
+The workflow's visible name and policy terminology now use Robot Autonomy
+Executor. The internal `boredom-autonomy` graph key remains stable so planner
+configuration and already-issued correlated feedback continue through the same
+canonical executor. Environment-specific UI output nodes were not copied into
+the background workflow, and the dedicated Robot Operator input/context nodes
+remain the correct replacements for interactive user input and context building.
+
+Validation: all 26 cognitive graphs, the focused Robot Operator/Environment/
+Robot Status suite, Environment selector corpus and regression tests, node
+defaults, Agent Monitor, Core and site type checks, architecture, and the
+user-agnostic guard passed. No application restart, live autonomous cycle,
+Environment Bridge dispatch, or physical robot action was performed.
 
 ### 2026-08-23 - Direct autonomous vision and generic Task State evidence contract
 
@@ -605,7 +645,7 @@ Confirmed repair boundary:
 - Do not increase the image-acquisition deadline; the capture for this objective completed in approximately 4.5 seconds inside its existing 10-second deadline.
 - Preserve the latest raw environment state and sensory data, but admit terminal feedback to action parsing and task validation only when its action/cycle lineage belongs to the current persisted objective.
 - A new typed objective must not inherit an unrelated terminal result merely because that result is present in the session's latest observation.
-- Keep this correction on the current explicit edges: User Input and the bridge planner-intention output feed Instruction Resolver; the raw Environment Bridge observation feeds Environment Task State directly; Task State then grounds Context Builder and Action Parser. Do not add a second feedback store, a prompt phrase branch, or a camera-specific retry shortcut.
+- Keep this correction on explicit owner edges: User Input supplies the interactive instruction; Robot Operator Input supplies autonomy instructions; Environment Bridge Input makes read-only adapter observations and diagnostics available; Core resolves robot-reported action IDs against Work Coordinator records and Verify Matched Sent Action rejects a missing or mismatched result; Find Finished Robot Report for Sent Action selects the matching finished robot report; Select Camera Frames for Current Action chooses valid current or before-and-after camera frames; Context Builder packages the data for the selector; Robot Status Out persists the validated decision and result. Graph edges select which outputs each workflow consumes. Do not add a second feedback store, a prompt phrase branch, or a camera-specific retry shortcut.
 
 Disposition: the operator chose not to pursue this repair during the current performance pass. The defect and its remaining acceptance retest are deferred; they do not block classifier corpus work.
 

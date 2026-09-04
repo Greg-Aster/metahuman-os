@@ -16,3 +16,19 @@ export { DecisionRulesSaverNode } from './decision-rules-saver.node.js';
 export { IdentityExtractorNode } from './identity-extractor.node.js';
 export { ValueManagerNode } from './value-manager.node.js';
 export { GoalManagerNode } from './goal-manager.node.js';
+export {
+  PersonaTranscriptInputNode,
+  PersonaProfileExtractorNode,
+  parsePersonaDraft,
+} from './persona-profile-extractor.node.js';
+export {
+  PersonaInterviewInputNode,
+  PersonaInterviewQuestionNode,
+  parsePersonaInterviewQuestion,
+} from './persona-interview-question.node.js';
+export {
+  PreferenceLearningInputNode,
+  PreferenceLearningNode,
+  parseExtractedPreferences,
+  parsePreferenceContradiction,
+} from './preference-learning.node.js';

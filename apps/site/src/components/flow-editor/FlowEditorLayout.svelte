@@ -3,16 +3,28 @@
   import FlowEditor from './FlowEditor.svelte';
   import NodePalette from '../NodePalette.svelte';
   import PropertyInspector from './PropertyInspector.svelte';
+  import GraphInspector from './GraphInspector.svelte';
+  import EdgeInspector from './EdgeInspector.svelte';
+  import ExecutionPanel from './ExecutionPanel.svelte';
   import { nodeEditorMode } from '../../stores/navigation';
   import { apiFetch } from '../../lib/client/api-config';
   import type { SvelteFlowGraph } from '../../lib/client/flow-editor/template-converter';
-  import type { Node } from '@xyflow/svelte';
+  import type { Edge, Node } from '@xyflow/svelte';
   import {
     enrichGraphWithSchemas,
     loadSchemas,
     materializeSchemaProperties,
     serializeGraphForPersistence,
   } from '../../lib/client/flow-editor/template-converter';
+  import {
+    inspectSchemaHealth,
+    validateAuthoringGraph,
+    type AuthoringIssue,
+  } from '../../lib/client/flow-editor/graph-authoring';
+  import {
+    updateTimeline,
+    type ExecutionTimelineEntry,
+  } from '../../lib/client/flow-editor/execution-observability';
 
   // Props
   let { cognitiveMode = null }: { cognitiveMode?: string | null } = $props();
@@ -33,10 +45,37 @@
   let graphsLoading = $state(false);
   let schemas = $state<any[]>([]);
   let selectedNode = $state<Node | null>(null);
+  let selectedEdge = $state<Edge | null>(null);
   let currentGraph = $state<SvelteFlowGraph | null>(null);
   let lastNodeOutputs = $state<Record<string, unknown>>({});
   let lastRunDurationMs = $state<number | null>(null);
   let showPropertyInspector = $state(true);
+  let showExecutionPanel = $state(false);
+  let executionTimeline = $state<ExecutionTimelineEntry[]>([]);
+  let historyState = $state({ canUndo: false, canRedo: false, canPaste: false });
+  let cleanGraphSignature = $state('');
+  let isDirty = $state(false);
+  const authoringIssues = $derived(currentGraph ? validateAuthoringGraph(currentGraph) : []);
+  const schemaHealth = $derived(currentGraph ? inspectSchemaHealth(currentGraph.nodes) : null);
+
+  $effect(() => {
+    if (flowEditorRef && !currentGraph) {
+      handleGraphChange(flowEditorRef.getCurrentGraph());
+    }
+  });
+
+  function graphSignature(graph: SvelteFlowGraph): string {
+    return JSON.stringify(serializeGraphForPersistence(graph));
+  }
+
+  function markGraphClean(graph: SvelteFlowGraph): void {
+    cleanGraphSignature = graphSignature(graph);
+    isDirty = false;
+  }
+
+  function mayDiscardChanges(): boolean {
+    return !isDirty || window.confirm('Discard unsaved graph changes?');
+  }
 
   // Load saved graphs list (including backups)
   async function refreshSavedGraphs() {
@@ -72,10 +111,12 @@
     }
   }
 
-  onMount(async () => {
-    await loadSchemas();
-    await loadNodeSchemas();
-    await refreshSavedGraphs();
+  onMount(() => {
+    void (async () => {
+      await loadSchemas();
+      await loadNodeSchemas();
+      await refreshSavedGraphs();
+    })();
 
     // Keyboard shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -91,22 +132,37 @@
       }
     };
 
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
   });
 
   function exitNodeEditor() {
+    if (!mayDiscardChanges()) return;
     nodeEditorMode.set(false);
   }
 
   function newGraph() {
+    if (!mayDiscardChanges()) return;
     flowEditorRef?.clearGraph();
     graphName = 'Untitled Graph';
     graphFileName = '';
-    currentGraph = null;
+    currentGraph = flowEditorRef?.getCurrentGraph() || null;
     selectedNode = null;
+    selectedEdge = null;
     lastNodeOutputs = {};
     lastRunDurationMs = null;
+    executionTimeline = [];
+    if (currentGraph) markGraphClean(currentGraph);
   }
 
   // Convert display name to valid filename (slug)
@@ -141,7 +197,15 @@
     }
 
     try {
-      const graph = serializeGraphForPersistence(flowEditorRef.getCurrentGraph());
+      const authoringGraph = flowEditorRef.getCurrentGraph();
+      const blockingIssues = validateAuthoringGraph(authoringGraph).filter(issue => issue.level === 'error');
+      if (blockingIssues.length > 0) {
+        selectedNode = null;
+        selectedEdge = null;
+        showPropertyInspector = true;
+        throw new Error(`Resolve ${blockingIssues.length} graph validation error${blockingIssues.length === 1 ? '' : 's'} before saving.`);
+      }
+      const graph = serializeGraphForPersistence(authoringGraph);
 
       const res = await apiFetch('/api/cognitive-graph', {
         method: 'POST',
@@ -157,6 +221,8 @@
       const result = await res.json();
       graphFileName = validFileName;
       saveSuccess = true;
+      currentGraph = authoringGraph;
+      markGraphClean(authoringGraph);
 
       // Show backup info if one was created
       if (result.backupCreated) {
@@ -175,6 +241,7 @@
   }
 
   async function loadGraph(name: string, scope?: string) {
+    if (!mayDiscardChanges()) return;
     try {
       const url = scope
         ? `/api/cognitive-graph?name=${encodeURIComponent(name)}&scope=${scope}`
@@ -189,8 +256,11 @@
           graphFileName = scope === 'backup' ? '' : name; // Don't keep backup filename
           currentGraph = sfGraph;
           selectedNode = null;
+          selectedEdge = null;
           lastNodeOutputs = {};
           lastRunDurationMs = null;
+          executionTimeline = [];
+          markGraphClean(sfGraph);
         }
       }
     } catch (e) {
@@ -210,18 +280,29 @@
   async function executeGraph() {
     if (!flowEditorRef || isExecuting) return;
 
+    const graph = flowEditorRef.getCurrentGraph();
+    const blockingIssues = validateAuthoringGraph(graph).filter(issue => issue.level === 'error');
+    if (blockingIssues.length > 0) {
+      executionError = `Resolve ${blockingIssues.length} graph validation error${blockingIssues.length === 1 ? '' : 's'} before execution.`;
+      currentGraph = graph;
+      selectedNode = null;
+      selectedEdge = null;
+      showPropertyInspector = true;
+      return;
+    }
+
     isExecuting = true;
     executionError = '';
     lastNodeOutputs = {};
     lastRunDurationMs = null;
+    executionTimeline = [];
+    showExecutionPanel = true;
 
     // Reset previous states - nodes will light up individually as they execute
     flowEditorRef.resetExecutionStates();
 
     try {
       // Send native Svelte Flow format directly - no conversion needed
-      const graph = flowEditorRef.getCurrentGraph();
-
       // Use streaming endpoint for real-time node status
       const res = await apiFetch('/api/execute-graph-stream', {
         method: 'POST',
@@ -307,6 +388,7 @@
    */
   function handleStreamEvent(eventType: string, data: any) {
     if (!flowEditorRef) return;
+    executionTimeline = updateTimeline(executionTimeline, eventType, data);
 
     switch (eventType) {
       case 'node_start':
@@ -322,6 +404,20 @@
         flowEditorRef.setNodeExecutionState(data.nodeId, 'completed');
         if (selectedNode?.id === data.nodeId) {
           selectedNode = { ...selectedNode, data: { ...selectedNode.data, executionState: 'completed' } };
+        }
+        break;
+
+      case 'node_skip':
+        flowEditorRef.setNodeExecutionState(data.nodeId, 'skipped', data.reason);
+        if (selectedNode?.id === data.nodeId) {
+          selectedNode = {
+            ...selectedNode,
+            data: {
+              ...selectedNode.data,
+              executionState: 'skipped',
+              executionSkipReason: data.reason,
+            },
+          };
         }
         break;
 
@@ -350,6 +446,9 @@
     if (selectedNode) {
       selectedNode = graph.nodes.find((node) => node.id === selectedNode?.id) || null;
     }
+    if (selectedEdge) {
+      selectedEdge = graph.edges.find((edge) => edge.id === selectedEdge?.id) || null;
+    }
     // Update graph name when template loads or graph changes
     if (graph.name && graph.name !== 'Untitled Graph') {
       graphName = graph.name;
@@ -358,6 +457,8 @@
     if (graph.cognitiveMode) {
       graphFileName = `${graph.cognitiveMode}-mode`;
     }
+    if (!cleanGraphSignature) markGraphClean(graph);
+    else isDirty = graphSignature(graph) !== cleanGraphSignature;
   }
 
   function handleNodeSelected(nodeType: string) {
@@ -372,7 +473,7 @@
 
     // Create new node
     const newNode: Node = {
-      id: `node-${Date.now()}`,
+      id: `node-${crypto.randomUUID()}`,
       type: 'genericNode',
       position: { x: 100 + Math.random() * 100, y: 100 + Math.random() * 100 },
       data: {
@@ -386,8 +487,9 @@
     flowEditorRef.addNode(newNode);
   }
 
-  function handleSelectionChange(node: Node | null) {
+  function handleSelectionChange(node: Node | null, edge: Edge | null) {
     selectedNode = node;
+    selectedEdge = edge;
   }
 
   function handleUpdateNodeData(nodeId: string, data: Record<string, any>) {
@@ -402,6 +504,24 @@
 
   function handleSelectNode(nodeId: string) {
     flowEditorRef?.selectNode(nodeId);
+  }
+
+  function handleSelectIssue(issue: AuthoringIssue) {
+    if (issue.nodeId) flowEditorRef?.selectNode(issue.nodeId);
+    else if (issue.edgeId) flowEditorRef?.selectEdge(issue.edgeId);
+  }
+
+  function handleUpdateEdgeData(edgeId: string, patch: Record<string, unknown>) {
+    flowEditorRef?.updateEdgeData(edgeId, patch);
+  }
+
+  function handleUpdateGraph(patch: { name?: string; description?: string; maxLoopIterations?: number }) {
+    flowEditorRef?.updateGraphMetadata(patch);
+  }
+
+  function showGraphInspector() {
+    flowEditorRef?.clearSelection();
+    showPropertyInspector = true;
   }
 
   function togglePropertyInspector() {
@@ -429,6 +549,7 @@
         </svg>
         <span>{graphName}</span>
         <span class="text-[10px] px-1.5 py-0.5 bg-gradient-to-br from-orange-500 to-orange-600 text-white rounded font-semibold">Svelte Flow</span>
+        {#if isDirty}<span class="rounded bg-amber-950 px-2 py-0.5 text-[10px] font-semibold text-amber-300">Unsaved</span>{/if}
       </div>
     </div>
 
@@ -542,31 +663,79 @@
     </div>
   {/if}
 
+  <div class="flex h-10 flex-shrink-0 items-center gap-1.5 overflow-x-auto border-b border-neutral-800 bg-[#131313] px-4">
+    <button class="editor-tool" title="Show workflow-wide settings and validation" onclick={showGraphInspector}>Graph</button>
+    <span class="tool-divider"></span>
+    <button class="editor-tool" disabled={!historyState.canUndo} title="Undo (Ctrl/Cmd+Z)" onclick={() => flowEditorRef?.undo()}>Undo</button>
+    <button class="editor-tool" disabled={!historyState.canRedo} title="Redo (Ctrl/Cmd+Shift+Z)" onclick={() => flowEditorRef?.redo()}>Redo</button>
+    <span class="tool-divider"></span>
+    <button class="editor-tool" title="Copy selected nodes (Ctrl/Cmd+C)" onclick={() => flowEditorRef?.copySelected()}>Copy</button>
+    <button class="editor-tool" disabled={!historyState.canPaste} title="Paste copied nodes (Ctrl/Cmd+V)" onclick={() => flowEditorRef?.paste()}>Paste</button>
+    <button class="editor-tool" title="Duplicate selected nodes (Ctrl/Cmd+D)" onclick={() => flowEditorRef?.duplicateSelected()}>Duplicate</button>
+    <span class="tool-divider"></span>
+    <button class="editor-tool" title="Place selected top-level nodes in a movable frame (Ctrl/Cmd+G)" onclick={() => flowEditorRef?.groupSelected()}>Group</button>
+    <button class="editor-tool" title="Remove the selected frame while keeping its nodes (Ctrl/Cmd+Shift+G)" onclick={() => flowEditorRef?.ungroupSelected()}>Ungroup</button>
+    <button class="editor-tool" title="Arrange nodes by dependency order" onclick={() => flowEditorRef?.autoLayout()}>Auto layout</button>
+    <span class="tool-divider"></span>
+    <button class="editor-tool" class:active-tool={showExecutionPanel} title="Toggle execution timeline" onclick={() => (showExecutionPanel = !showExecutionPanel)}>Run log</button>
+  </div>
+
   <!-- Main Content -->
   <div class="flex-1 flex overflow-hidden">
     <NodePalette onNodeSelected={handleNodeSelected} />
 
-    <div class="flex-1 overflow-hidden">
-      <FlowEditor
-        bind:this={flowEditorRef}
-        {cognitiveMode}
-        onGraphChange={handleGraphChange}
-        onSelectionChange={handleSelectionChange}
-      />
+    <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div class="min-h-0 flex-1 overflow-hidden">
+        <FlowEditor
+          bind:this={flowEditorRef}
+          {cognitiveMode}
+          onGraphChange={handleGraphChange}
+          onSelectionChange={handleSelectionChange}
+          onHistoryChange={(state) => (historyState = state)}
+        />
+      </div>
+      {#if showExecutionPanel}
+        <div class="h-[230px] flex-shrink-0 overflow-hidden">
+          <ExecutionPanel
+            graph={currentGraph}
+            entries={executionTimeline}
+            nodeOutputs={lastNodeOutputs}
+            {isExecuting}
+            onSelectNode={handleSelectNode}
+          />
+        </div>
+      {/if}
     </div>
 
     {#if showPropertyInspector}
       <div class="w-[360px] flex-shrink-0 overflow-hidden">
-        <PropertyInspector
-          {selectedNode}
-          graphNodes={currentGraph?.nodes || []}
-          graphEdges={currentGraph?.edges || []}
-          lastOutput={selectedNode ? lastNodeOutputs[selectedNode.id] : undefined}
-          {lastRunDurationMs}
-          onUpdateNodeData={handleUpdateNodeData}
-          onUpdateNodeProperty={handleUpdateNodeProperty}
-          onSelectNode={handleSelectNode}
-        />
+        {#if selectedNode}
+          <PropertyInspector
+            {selectedNode}
+            graphNodes={currentGraph?.nodes || []}
+            graphEdges={currentGraph?.edges || []}
+            lastOutput={lastNodeOutputs[selectedNode.id]}
+            {lastRunDurationMs}
+            onUpdateNodeData={handleUpdateNodeData}
+            onUpdateNodeProperty={handleUpdateNodeProperty}
+            onSelectNode={handleSelectNode}
+          />
+        {:else if selectedEdge}
+          <EdgeInspector
+            {selectedEdge}
+            graphNodes={currentGraph?.nodes || []}
+            onUpdateEdgeData={handleUpdateEdgeData}
+            onSelectNode={handleSelectNode}
+          />
+        {:else}
+          <GraphInspector
+            graph={currentGraph}
+            issues={authoringIssues}
+            {schemaHealth}
+            onUpdateGraph={handleUpdateGraph}
+            onSelectIssue={handleSelectIssue}
+          />
+        {/if}
       </div>
     {/if}
   </div>
@@ -610,3 +779,11 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .editor-tool {
+    @apply whitespace-nowrap rounded border border-neutral-700 bg-neutral-900 px-2.5 py-1 text-[11px] text-neutral-400 transition-colors hover:border-neutral-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-35;
+  }
+  .editor-tool.active-tool { @apply border-blue-700 bg-blue-950/40 text-blue-300; }
+  .tool-divider { @apply mx-1 h-5 w-px flex-shrink-0 bg-neutral-800; }
+</style>

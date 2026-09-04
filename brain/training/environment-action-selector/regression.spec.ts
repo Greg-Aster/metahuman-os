@@ -35,13 +35,6 @@ const observation: EnvironmentObservation = {
   },
   metadata: {
     correlationId: 'spiky-friend-cycle',
-    robotObserver: {
-      cycleId: 'spiky-friend-cycle',
-      step: 1,
-      triggerSource: 'autonomy',
-      graph: 'environment',
-      requestedBy: 'boredom-observer',
-    },
   },
 }
 const expected: EnvironmentModelOutput = {
@@ -83,8 +76,12 @@ test('the spiky-friend head-tilt regression exercises the generic information-ga
   assert.equal(parsed.valid, true)
   assert.equal(parsed.movementRequest?.description, 'Tilt the head gently toward the visible object.')
 
-  const envelope = JSON.parse(buildEnvironmentSelectorEnvelope({ instruction, observation }))
+  const envelope = JSON.parse(buildEnvironmentSelectorEnvelope({
+    instruction,
+    observation,
+    inputSource: 'autonomy',
+  }))
   assert.equal(envelope.inputSource, 'autonomy')
   assert.deepEqual(envelope.currentEnvironment.capabilities.actions, observation.capabilities.actions)
-  assert.equal(envelope.taskState, null)
+  assert.equal(envelope.robotStatus, null)
 })

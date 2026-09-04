@@ -13,10 +13,17 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { listEpisodicFiles, createTask, createProject, type Task, type Project } from './memory.js';
-import { callLLM } from './model-router.js';
+import { listEpisodicFiles, createTask, type Task } from './memory.js';
 import { audit } from './audit.js';
 import { storageClient } from './storage-client.js';
+import { getUserContext } from './context.js';
+import {
+  cognitiveGraphPath,
+  loadGraphFile,
+  requireGraphNodeOutput,
+  runGraph,
+} from './graph-runtime.js';
+import type { ExtractedTaskSuggestion } from './nodes/agent/task-suggestion-extractor.node.js';
 
 // ============================================================================
 // Types
@@ -54,6 +61,9 @@ export interface ExtractionOptions {
   daysBack?: number;
   /** Skip already processed reflections */
   skipProcessed?: boolean;
+  /** Resolved profile identity. Defaults to the authenticated execution context. */
+  username?: string;
+  signal?: AbortSignal;
 }
 
 // ============================================================================
@@ -150,89 +160,35 @@ function loadRecentReflections(options: ExtractionOptions = {}): ReflectionEvent
   return reflections;
 }
 
-// ============================================================================
-// LLM Extraction
-// ============================================================================
-
-const EXTRACTION_PROMPT = `You are analyzing a reflection or inner dialogue to extract actionable tasks.
-
-The reflection may contain:
-- Things the person wants to do
-- Problems they want to solve
-- Goals they're working toward
-- Ideas they want to explore
-- Skills they want to learn
-
-For each actionable item, extract:
-1. A clear, concise task title (imperative form, e.g., "Research X", "Set up Y")
-2. A brief description of what needs to be done
-3. Priority: P0 (urgent), P1 (high), P2 (normal), P3 (low/someday)
-4. Relevant tags
-5. Confidence score (0.0-1.0) - how clearly this is an actionable task
-6. Optional: Project name if this is part of a larger goal
-7. Optional: Dependencies (other tasks that should be done first)
-
-ONLY extract items that are clearly actionable. Skip:
-- Vague musings without clear action
-- Already completed items
-- Pure observations without intent to act
-
-Respond in JSON format:
-{
-  "tasks": [
-    {
-      "title": "Task title",
-      "description": "What needs to be done",
-      "priority": "P2",
-      "tags": ["tag1", "tag2"],
-      "confidence": 0.8,
-      "project": "Project Name" | null,
-      "dependencies": ["Other task title"] | null
-    }
-  ]
-}
-
-If no actionable tasks are found, respond with: {"tasks": []}`;
-
-interface ExtractedTask {
-  title: string;
-  description: string;
-  priority: 'P0' | 'P1' | 'P2' | 'P3';
-  tags: string[];
-  confidence: number;
-  project?: string | null;
-  dependencies?: string[] | null;
-}
-
-/**
- * Extract tasks from a single reflection using LLM.
- */
 async function extractTasksFromReflection(
-  reflection: ReflectionEvent
-): Promise<ExtractedTask[]> {
-  try {
-    const response = await callLLM({
-      role: 'curator',
-      messages: [
-        { role: 'system', content: EXTRACTION_PROMPT },
-        { role: 'user', content: `Analyze this reflection:\n\n${reflection.content}` },
-      ],
-      options: {
-        temperature: 0.3,
-        responseFormat: { type: 'json_object' },
-      },
-    });
-
-    if (!response.content) {
-      return [];
-    }
-
-    const parsed = JSON.parse(response.content);
-    return parsed.tasks || [];
-  } catch (error) {
-    console.warn('[reflection-to-task] Extraction failed:', (error as Error).message);
-    return [];
+  reflection: ReflectionEvent,
+  graph: NonNullable<Awaited<ReturnType<typeof loadGraphFile>>>['graph'],
+  username: string,
+  signal?: AbortSignal,
+): Promise<ExtractedTaskSuggestion[]> {
+  const activeUser = getUserContext();
+  if (!activeUser || (activeUser.username !== username && activeUser.activeProfile !== username)) {
+    throw new Error(`Task suggestion extraction requires an authenticated context for ${username}`);
   }
+  const state = await runGraph({
+    graph,
+    signal,
+    context: {
+      userId: activeUser.userId,
+      username,
+      reflection,
+      allowMemoryWrites: false,
+      recordPersonaMemory: false,
+      cognitiveMode: 'agent',
+      abortSignal: signal,
+    },
+  });
+  if (state.status !== 'completed') {
+    throw new Error(`Task suggestion graph ended with status ${state.status}`);
+  }
+  const output = requireGraphNodeOutput(state, 'task_suggestion_extractor');
+  if (!Array.isArray(output.tasks)) throw new Error('Task suggestion graph returned no typed tasks array');
+  return output.tasks as ExtractedTaskSuggestion[];
 }
 
 // ============================================================================
@@ -246,13 +202,29 @@ export async function extractTaskSuggestions(
   options: ExtractionOptions = {}
 ): Promise<ExtractionResult> {
   const { minConfidence = 0.5 } = options;
+  const activeUser = getUserContext();
+  const username = options.username?.trim()
+    || activeUser?.activeProfile
+    || activeUser?.username
+    || '';
+  if (!username) throw new Error('Task suggestion extraction requires an authenticated profile');
+  const loaded = await loadGraphFile(cognitiveGraphPath('reflection-task-suggestions.json'), {
+    cacheKey: 'reflection-task-suggestions',
+    logPrefix: '[reflection-to-task]',
+  });
+  if (!loaded) throw new Error('Reflection task-suggestion graph is unavailable');
 
   const reflections = loadRecentReflections(options);
   const suggestions: TaskSuggestion[] = [];
   const reflectionIds: string[] = [];
 
   for (const reflection of reflections) {
-    const extracted = await extractTasksFromReflection(reflection);
+    const extracted = await extractTasksFromReflection(
+      reflection,
+      loaded.graph,
+      username,
+      options.signal,
+    );
 
     for (const task of extracted) {
       if (task.confidence < minConfidence) {

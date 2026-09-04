@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
-  attachEnvironmentActionContext,
   dispatchEnvironmentActions,
   enqueueConnectedEnvironmentStops,
   enqueueEnvironmentAction,
+  getEnvironmentActionContext,
   getEnvironmentBridgeStatePath,
   publishEnvironmentObservation,
   readEnvironmentBridgeState,
   recordEnvironmentActionResult,
   recordEnvironmentObservation,
   recordEnvironmentRobotStatus,
+  sanitizeEnvironmentBridgeObservation,
   subscribeEnvironmentActions,
   writeEnvironmentBridgeState,
 } from './index.js';
@@ -211,8 +212,8 @@ try {
 
   resetState();
   const autonomyWork = manager.enqueue({
-    type: 'operator_policy',
-    handler: 'operator.policy',
+    type: 'reflect',
+    handler: 'agent.reflector',
     resource: 'local-llm',
     source: 'autonomy',
     priority: 'background',
@@ -334,7 +335,7 @@ try {
   assert.equal(admittedRecord?.actionId, resultAction.id);
   assert.equal((admittedRecord?.feedback as { id?: string })?.id, 'completed-feedback-1');
   assert.equal((admittedRecord?.action as { command?: string })?.command, 'wave');
-  const contextualResult = attachEnvironmentActionContext({
+  const contextualResult = sanitizeEnvironmentBridgeObservation({
     environmentId: 'ainekio',
     adapter: 'ainekio-gateway',
     sessionId: 'robot-1',
@@ -367,16 +368,18 @@ try {
       autonomousStimulus: 'boredom-observer',
     },
   });
+  const contextualActionContext = getEnvironmentActionContext(contextualResult);
   assert.equal(
-    contextualResult.metadata?.originatingInstruction,
-    'Wave, then use the returned view to tell me what changed.',
-    'action context must be recovered from MetaHuman work rather than trusted from the adapter',
+    contextualActionContext?.requested.command,
+    'wave',
+    'Work Coordinator action context must be recovered separately from the adapter observation',
   );
+  assert.equal(contextualResult.metadata?.originatingInstruction, undefined);
   assert.equal(contextualResult.metadata?.robotObserver, undefined);
   assert.equal(contextualResult.metadata?.robotOperatorDecision, undefined);
   assert.equal(contextualResult.metadata?.robotOperatorMemories, undefined);
   assert.equal(contextualResult.metadata?.autonomousStimulus, undefined);
-  const uncorrelatedObservation = attachEnvironmentActionContext({
+  const uncorrelatedObservation = sanitizeEnvironmentBridgeObservation({
     environmentId: 'ainekio',
     adapter: 'ainekio-gateway',
     sessionId: 'robot-1',
@@ -403,7 +406,15 @@ try {
   assert.equal(uncorrelatedObservation.metadata?.robotOperatorMemories, undefined);
   assert.equal(uncorrelatedObservation.metadata?.autonomousStimulus, undefined);
   assert.deepEqual(
-    contextualResult.metadata?.actionContext,
+    contextualActionContext && {
+      actionId: contextualActionContext.actionId,
+      status: contextualActionContext.status,
+      requested: contextualActionContext.requested,
+      correlationId: contextualActionContext.correlationId,
+      queuedAt: contextualActionContext.queuedAt,
+      completedAt: contextualActionContext.completedAt,
+      result: contextualActionContext.result,
+    },
     {
       actionId: resultAction.id,
       status: 'completed',
@@ -413,9 +424,10 @@ try {
       completedAt: manager.getTask(resultAction.id)?.completedAt,
       result: { type: 'completed', message: 'done' },
     },
-    'returned observations must recover the exact semantic action MetaHuman requested',
+    'the separate Work Coordinator input must recover the exact semantic action MetaHuman requested',
   );
-  const contextualTiming = contextualResult.metadata?.actionTiming as Record<string, unknown>;
+  const contextualTiming = contextualActionContext?.actionTiming;
+  assert.ok(contextualTiming);
   assert.equal(contextualTiming.queueEnteredAt, resultAction.createdAt);
   assert.equal(contextualTiming.leaseGrantedAt, manager.getTask(resultAction.id)?.startedAt);
   assert.equal(
@@ -473,10 +485,11 @@ try {
       actionId: observerCapture.id,
     }],
   };
-  const contextualExpiry = attachEnvironmentActionContext(expiredCaptureObservation);
-  assert.equal(contextualExpiry.metadata?.correlationId, 'observer-capture-cycle');
+  const contextualExpiry = sanitizeEnvironmentBridgeObservation(expiredCaptureObservation);
+  const expiryActionContext = getEnvironmentActionContext(contextualExpiry);
+  assert.equal(expiryActionContext?.correlationId, 'observer-capture-cycle');
   assert.equal(
-    (contextualExpiry.metadata?.robotObserver as { requestedBy?: string })?.requestedBy,
+    (expiryActionContext?.robotObserver as { requestedBy?: string })?.requestedBy,
     'boredom-observer',
   );
   assert.equal(environmentObservationNeedsCognition(contextualExpiry), true);
@@ -654,66 +667,29 @@ try {
 
   const conversationOnly = await environmentSendActionNode.execute({
     actions: [],
-    response: 'Hello from Environment Mode.',
     sessionId: 'robot-1',
   }, { username: 'bridge-spec', sessionId: 'chat-1' } as never, {});
   assert.equal(conversationOnly.status, 'no_actions');
-  assert.equal(conversationOnly.response, 'Hello from Environment Mode.');
-  assert.equal(conversationOnly.conversationResponse, 'Hello from Environment Mode.');
+  assert.equal('response' in conversationOnly, false);
+  assert.equal('conversationResponse' in conversationOnly, false);
   assert.equal(conversationOnly.bridgeRecord.status, 'no_actions');
   assert.equal(conversationOnly.bridgeRecord.commandCount, 0);
   assert.deepEqual(conversationOnly.bridgeRecord.requestedActions, []);
   assert.equal(conversationOnly.bridgeRecord.correlationId, 'chat-1');
 
-  const autonomousResponse = await environmentSendActionNode.execute({
-    actions: [],
-    response: 'A new shape is visible.',
-    familiarityQuery: 'An unfamiliar rounded shape is visible near the robot.',
-    sessionId: 'robot-1',
-    inputSource: 'autonomy',
-    observation: {
-      metadata: { autonomousStimulus: 'boredom-observer' },
-    },
-  }, {
-    username: 'bridge-spec',
-    sessionId: 'autonomy-1',
-  } as never, {});
-  assert.equal(autonomousResponse.conversationResponse, 'A new shape is visible.');
-  assert.equal(autonomousResponse.responseMetadata.dialogueSource, 'boredom-observer');
-  assert.deepEqual(autonomousResponse.responseMetadata.tags, [
-    'robot-operator',
-    'boredom-observer',
-    'autonomy-trigger',
-  ]);
-  assert.match(String(autonomousResponse.familiarityTaskId), /^task-/);
-
-  const autonomousConversation = await environmentSendActionNode.execute({
-    actions: [],
-    response: 'I found something you may want to see.',
-    sessionId: 'robot-1',
-    inputSource: 'autonomy',
-  }, {
-    username: 'bridge-spec',
-    sessionId: 'autonomy-2',
-  } as never, {});
-  assert.equal(autonomousConversation.conversationResponse, 'I found something you may want to see.');
-
   const emptyConversation = await environmentSendActionNode.execute({
     actions: [],
-    response: '',
     sessionId: 'robot-1',
   }, { username: 'bridge-spec', sessionId: 'chat-empty' } as never, {});
   assert.equal(emptyConversation.status, 'no_actions');
-  assert.equal(emptyConversation.response, '');
   assert.match(emptyConversation.message, /no environment action was produced/i);
 
   const unavailableAction = await environmentSendActionNode.execute({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
-    response: 'Walking.',
     sessionId: 'robot-1',
   }, { username: 'bridge-spec', sessionId: 'chat-1' } as never, {});
   assert.equal(unavailableAction.status, 'waiting_for_adapter');
-  assert.match(String(unavailableAction.response), /no robot adapter is connected/i);
+  assert.match(String(unavailableAction.message), /no robot adapter is connected/i);
   assert.equal(unavailableAction.bridgeRecord.status, 'waiting_for_adapter');
   assert.equal(unavailableAction.bridgeRecord.targetSessionId, 'robot-1');
   assert.equal(unavailableAction.bridgeRecord.requestedActions.length, 1);
@@ -732,7 +708,6 @@ try {
   const unsubscribeOffline = subscribeEnvironmentActions('robot-1', () => {});
   const bodyOffline = await environmentSendActionNode.execute({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
-    response: 'Walking.',
     sessionId: 'robot-1',
   }, { username: 'bridge-spec', sessionId: 'chat-offline' } as never, {});
   unsubscribeOffline();
@@ -741,7 +716,7 @@ try {
   assert.equal(bodyOffline.count, 0);
   assert.equal(bodyOffline.adapterReady, true);
   assert.equal(bodyOffline.bodyAuthenticated, false);
-  assert.doesNotMatch(String(bodyOffline.response), /^Walking\.?$/i);
+  assert.equal('response' in bodyOffline, false);
 
   resetState();
   const bodyOnlineState = readEnvironmentBridgeState();
@@ -757,21 +732,19 @@ try {
   const unsubscribeOnline = subscribeEnvironmentActions('robot-1', () => {});
   const bodyQueued = await environmentSendActionNode.execute({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
-    response: 'Walking.',
     sessionId: 'robot-1',
     instruction: 'Walk once, then use the returned observation to tell me what changed.',
     userInstruction: 'Walk once, then use the returned observation to tell me what changed.',
     inputSource: 'user',
-    observation: bodyOnlineState.sessions['robot-1']!.latestObservation,
   }, {
     username: 'bridge-spec',
     sessionId: 'chat-online',
-  } as never, {});
+  } as never, { feedbackGraph: 'robot-action-result' });
   unsubscribeOnline();
   assert.equal(bodyQueued.status, 'coordinated_for_adapter');
   assert.equal(bodyQueued.count, 1);
   assert.equal(bodyQueued.ready, true);
-  assert.equal(bodyQueued.response, 'Walking.');
+  assert.equal('response' in bodyQueued, false);
   const queuedBodyCommand = bodyQueued.commands[0];
   assert.ok(queuedBodyCommand);
   const queuedCycle = queuedBodyCommand.metadata?.robotObserver as
@@ -780,12 +753,12 @@ try {
   assert.equal(
     queuedCycle?.requestedBy,
     'environment-perception',
-    'a user-originated asynchronous action must reuse the bounded perception cycle',
+    'a user-originated asynchronous action must retain its correlation owner',
   );
   assert.equal(
     queuedCycle?.graph,
-    'environment',
-    'user-owned action feedback must return to Environment Mode instead of creating a Robot Operator intention',
+    'robot-action-result',
+    'user-owned action feedback must route once to the configured result workflow',
   );
   assert.equal(
     manager.getTask(queuedBodyCommand.id)?.metadata?.originatingInstruction,
@@ -816,20 +789,14 @@ try {
   const observerWorkflowCapture = await environmentSendActionNode.execute({
     action: observerCaptureAction.data,
     sessionId: 'robot-1',
-    response: 'I captured and understood the image.',
-    taskInstruction: 'Interpret the returned image as one autonomous observation.',
+    instruction: 'Interpret the returned image as one autonomous observation.',
     inputSource: 'autonomy',
-    observation: {
-      ...observerCaptureState.sessions['robot-1']!.latestObservation!,
-      metadata: {
-        robotObserver: {
-          cycleId: 'observer-cycle-1',
-          step: 1,
-          triggerSource: 'autonomy',
-          graph: 'boredom-observer',
-          requestedBy: 'boredom-observer',
-        },
-      },
+    robotObserver: {
+      cycleId: 'observer-cycle-1',
+      step: 1,
+      triggerSource: 'autonomy',
+      graph: 'boredom-observer',
+      requestedBy: 'boredom-observer',
     },
   }, {
     username: 'bridge-spec',
@@ -842,8 +809,8 @@ try {
   assert.equal(observerWorkflowCapture.status, 'coordinated_for_adapter');
   assert.equal(observerWorkflowCapture.commands[0]?.metadata?.robotObserver?.graph, 'environment');
   assert.equal(observerWorkflowCapture.commands[0]?.metadata?.robotObserver?.requestedBy, 'boredom-observer');
-  assert.equal(observerWorkflowCapture.responseMetadata.dialogueSource, 'boredom-observer');
-  assert.equal(observerWorkflowCapture.conversationResponse, 'Camera request queued; waiting for a fresh image.');
+  assert.equal('responseMetadata' in observerWorkflowCapture, false);
+  assert.equal('conversationResponse' in observerWorkflowCapture, false);
   assert.equal(
     manager.getTask(observerWorkflowCapture.commands[0]?.id)?.metadata?.originatingInstruction,
     'Interpret the returned image as one autonomous observation.',
@@ -928,21 +895,15 @@ try {
   const unsubscribeContinuation = subscribeEnvironmentActions('robot-1', () => {});
   const queuedContinuation = await environmentSendActionNode.execute({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
-    response: 'Continuing the remaining task.',
     sessionId: 'robot-1',
     instruction: 'Continue the remaining task.',
     inputSource: 'user',
-    observation: {
-      ...continuationState.sessions['robot-1']!.latestObservation!,
-      metadata: {
-        robotObserver: {
-          cycleId: 'continuation-cycle-1',
-          step: 1,
-          triggerSource: 'user',
-          graph: 'environment',
-          requestedBy: 'environment-perception',
-        },
-      },
+    robotObserver: {
+      cycleId: 'continuation-cycle-1',
+      step: 1,
+      triggerSource: 'user',
+      graph: 'environment',
+      requestedBy: 'environment-perception',
     },
   }, {
     username: 'bridge-spec',
@@ -951,7 +912,7 @@ try {
   unsubscribeContinuation();
   assert.equal(queuedContinuation.status, 'coordinated_for_adapter');
   assert.equal(queuedContinuation.count, 1);
-  assert.equal(queuedContinuation.response, 'Continuing the remaining task.');
+  assert.equal('response' in queuedContinuation, false);
 
   const visual = {
     id: 'camera-1',
@@ -1079,6 +1040,15 @@ try {
     },
     instruction: 'Find the object in front of the robot.',
     images: imageOutput.images,
+    routingAnalysis: {
+      needsResponse: false,
+      needsConversationHistory: false,
+      needsMemory: false,
+      needsRobotStatus: false,
+      needsEnvironment: true,
+      needsVision: false,
+      needsAction: true,
+    },
   }, {}, { systemPrompt: 'Use the current instruction, observation, and advertised capabilities.' });
   const content = contextOutput.messages.at(-1)?.content;
   assert.equal(typeof content, 'string');
@@ -1112,12 +1082,17 @@ try {
       metadata: { correlationId: 'capture-1' },
     },
     instruction: 'Take another picture and explain the colors across the whole scene.',
+    userInstruction: 'Take another picture and explain the colors across the whole scene.',
+    observationCurrent: true,
     images: imageOutput.images,
     routingAnalysis: {
+      needsResponse: true,
+      needsConversationHistory: false,
       needsMemory: false,
+      needsRobotStatus: false,
       needsEnvironment: true,
       needsVision: true,
-      needsAction: false,
+      needsAction: true,
     },
   }, {}, {});
   assert.equal(Array.isArray(correlatedImageContext.messages.at(-1)?.content), true);
@@ -1141,7 +1116,10 @@ try {
     instruction: 'What is happening in France?',
     images: imageOutput.images,
     routingAnalysis: {
+      needsResponse: true,
+      needsConversationHistory: false,
       needsMemory: false,
+      needsRobotStatus: false,
       needsEnvironment: false,
       needsVision: false,
       needsAction: false,

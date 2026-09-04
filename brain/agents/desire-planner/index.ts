@@ -15,6 +15,11 @@ export {
   parseDesirePlannerArgs,
   runCycle,
   processPlanningDesires,
+  isReviewResumeCandidate,
+  buildDesirePlannerGraphContext,
+  buildDesireReviewGraphContext,
+  evaluateDesirePlanGraph,
+  evaluateDesireReviewGraph,
   type DesirePlannerOptions,
   type DesirePlannerResult,
 } from './core.js';

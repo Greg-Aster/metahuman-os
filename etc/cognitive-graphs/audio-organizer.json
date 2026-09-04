@@ -1,0 +1,55 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
+  "name": "Audio Organizer",
+  "description": "Enriches one completed audio transcript and captures it through the canonical memory owner",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "input",
+      "type": "inputNode",
+      "position": { "x": 80, "y": 140 },
+      "data": { "label": "Completed Transcript", "nodeType": "audio_transcript_input", "properties": {} }
+    },
+    {
+      "id": "enrich",
+      "type": "agentNode",
+      "position": { "x": 430, "y": 100 },
+      "width": 350,
+      "height": 240,
+      "data": {
+        "label": "Summarize and Enrich Transcript",
+        "nodeType": "llm_enricher",
+        "properties": {
+          "systemPrompt": "You analyze completed audio transcripts. Return only the requested JSON object.",
+          "promptTemplate": "Analyze this transcript. Return a concise 2-3 sentence summary, short topic tags, and named entities. Return JSON only: {\"summary\":\"...\",\"tags\":[\"topic\"],\"entities\":[\"name\"]}.\n\nTranscript:\n{{content}}",
+          "role": "curator",
+          "temperature": 0.3,
+          "maxTokens": 768,
+          "repeatPenalty": 1.15
+        }
+      }
+    },
+    {
+      "id": "save",
+      "type": "outputNode",
+      "position": { "x": 850, "y": 140 },
+      "data": { "label": "Capture Audio Memory", "nodeType": "audio_memory_saver", "properties": {} }
+    }
+  ],
+  "edges": [
+    { "id": "input-memory-enrich-memory", "source": "input", "target": "enrich", "sourceHandle": "memory", "targetHandle": "memory", "data": {} },
+    { "id": "enrich-memory-save-memory", "source": "enrich", "target": "save", "sourceHandle": "memory", "targetHandle": "memory", "data": {} },
+    { "id": "enrich-analysis-save-analysis", "source": "enrich", "target": "save", "sourceHandle": "analysis", "targetHandle": "analysis", "data": {} },
+    { "id": "input-metadata-save-metadata", "source": "input", "target": "save", "sourceHandle": "metadataFile", "targetHandle": "metadataFile", "data": {} },
+    { "id": "input-timestamp-save-timestamp", "source": "input", "target": "save", "sourceHandle": "captureTimestamp", "targetHandle": "captureTimestamp", "data": {} }
+  ]
+}

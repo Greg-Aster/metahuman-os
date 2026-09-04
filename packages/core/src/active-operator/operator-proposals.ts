@@ -233,7 +233,7 @@ export function createProposal(
     category: 'system',
     level: 'info',
     event: 'operator_proposal_created',
-    actor: 'operator-policy',
+    actor: 'operator-proposals',
     details: {
       proposalId: proposal.id,
       taskType,

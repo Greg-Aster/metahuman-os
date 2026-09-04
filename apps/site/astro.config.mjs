@@ -21,7 +21,8 @@ const allowedHosts = exposureMode === 'shared'
  * This prevents Node.js code from leaking into browser bundles
  * while allowing normal bundling for SSR builds
  *
- * EXCEPTION: /nodes/schemas is browser-safe and should be bundled for client
+ * EXCEPTIONS: the node schemas/types and cognitive graph contract are
+ * dependency-free browser contracts shared by the editor and runtime.
  */
 function externalizeMetahumanCoreForClient() {
   return {
@@ -30,8 +31,10 @@ function externalizeMetahumanCoreForClient() {
     resolveId(id, _importer, options) {
       // Only externalize for non-SSR (client) builds
       if (!options?.ssr && (id.startsWith('@metahuman/core') || id.startsWith('@metahuman/'))) {
-        // ALLOW browser-safe schemas to be bundled for client
-        if (id.includes('/nodes/schemas') || id.includes('/nodes/types')) {
+        // Allow the explicit browser-safe contracts to be bundled for client.
+        if (id.includes('/nodes/schemas')
+          || id.includes('/nodes/types')
+          || id.includes('/cognitive-graph-contract')) {
           return null; // Let Vite bundle this normally
         }
         // Return external with empty module to prevent bundling

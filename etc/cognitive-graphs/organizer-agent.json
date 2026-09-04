@@ -1,6 +1,7 @@
 {
   "version": "2.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Organizer Agent",
   "description": "Enriches one Core-selected episodic memory with validated tags and entities, then persists through the canonical memory owner",
   "cognitiveMode": "agent",

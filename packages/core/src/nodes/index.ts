@@ -16,6 +16,18 @@ import { extractSchema, isNodeDefinition } from './types.js';
 // Re-export types
 export * from './types.js';
 export { environmentActionParserNode } from './environment/action-parser.node.js';
+export {
+  parseDesireCandidates,
+  parseReinforcementResponse,
+  validateCandidateSources,
+} from './agency/desire-generation.node.js';
+export { parseFeasibilityResponse } from './agency/desire-feasibility.node.js';
+export type { DesireFeasibilityResult } from './agency/desire-feasibility.node.js';
+export {
+  parseDesireCheckinEvaluation,
+  validateDesireCheckinEvaluation,
+} from './agency/desire-checkin-evaluator.node.js';
+export type { DesireCheckinEvaluation } from './agency/desire-checkin-evaluator.node.js';
 
 // ============================================================================
 // IMPORT ALL NODE CATEGORIES

@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import type { GraphExecutionState } from './graph-executor.js'
-import { requireGraphNodeOutput } from './graph-runtime.js'
+import {
+  listExecutedNodes,
+  listSkippedNodes,
+  requireGraphNodeOutput,
+} from './graph-runtime.js'
 
 function state(nodes: GraphExecutionState['nodes']): GraphExecutionState {
   return { nodes, startTime: 0, status: 'completed' }
@@ -51,4 +55,17 @@ test('graph output contracts fail on missing, ambiguous, failed, or empty owners
     ])), 'owner'),
     /produced no outputs/,
   )
+})
+
+test('execution and skipped reports remain distinct', () => {
+  const graphState = state(new Map([
+    ['completed', { nodeId: 'completed', status: 'completed', outputs: {} }],
+    ['failed', { nodeId: 'failed', status: 'failed', error: new Error('failure') }],
+    ['skipped', { nodeId: 'skipped', status: 'skipped', skipReason: 'Inactive branch' }],
+  ]))
+
+  assert.deepEqual(listExecutedNodes(graphState), ['completed', 'failed'])
+  assert.deepEqual(listSkippedNodes(graphState), [
+    { nodeId: 'skipped', reason: 'Inactive branch' },
+  ])
 })

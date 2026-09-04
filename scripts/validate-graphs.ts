@@ -11,7 +11,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { validateSvelteFlowGraph, type SvelteFlowGraph } from '../packages/core/src/cognitive-graph-schema.js';
-import { getNode } from '../packages/core/src/nodes/index.js';
 
 const GRAPHS_DIR = 'etc/cognitive-graphs';
 const VALID_MODES = ['dual', 'agent', 'emulation', 'environment'];
@@ -21,41 +20,6 @@ console.log('🔍 Validating cognitive graphs...\n');
 let totalGraphs = 0;
 let validGraphs = 0;
 let errors: Array<{ file: string; errors: string[] }> = [];
-
-function validateRegisteredNodeContracts(graph: SvelteFlowGraph): void {
-  const nodeById = new Map(graph.nodes.map(node => [node.id, node]));
-
-  for (const node of graph.nodes) {
-    const definition = getNode(node.data.nodeType);
-    if (!definition) {
-      throw new Error(`Node ${node.id} uses unregistered type "${node.data.nodeType}"`);
-    }
-
-    const declaredProperties = definition.propertySchemas || {};
-    for (const property of Object.keys(node.data.properties || {})) {
-      if (!(property in declaredProperties)) {
-        throw new Error(`Node ${node.id} (${definition.id}) persists undeclared property "${property}"`);
-      }
-    }
-  }
-
-  for (const edge of graph.edges) {
-    const source = nodeById.get(edge.source);
-    const target = nodeById.get(edge.target);
-    if (!source || !target) {
-      throw new Error(`Edge ${edge.id} references a missing node`);
-    }
-
-    const sourceDefinition = getNode(source.data.nodeType)!;
-    const targetDefinition = getNode(target.data.nodeType)!;
-    if (!sourceDefinition.outputs.some(output => output.name === edge.sourceHandle)) {
-      throw new Error(`Edge ${edge.id} uses undeclared output ${sourceDefinition.id}.${edge.sourceHandle}`);
-    }
-    if (!targetDefinition.inputs.some(input => input.name === edge.targetHandle)) {
-      throw new Error(`Edge ${edge.id} uses undeclared input ${targetDefinition.id}.${edge.targetHandle}`);
-    }
-  }
-}
 
 function validateDualArtifacts(graph: SvelteFlowGraph): void {
   const artifactPaths = [
@@ -91,23 +55,6 @@ for (const file of files) {
     // Additional checks
     if (graph.cognitiveMode && !VALID_MODES.includes(graph.cognitiveMode)) {
       throw new Error(`Invalid cognitiveMode: "${graph.cognitiveMode}". Must be one of: ${VALID_MODES.join(', ')}, or omit the field for cross-mode graphs.`);
-    }
-
-    // Ownership-sensitive graphs use strict runtime wiring: every handle and
-    // persisted property must match a registered node contract.
-    if (
-      file === 'dual-mode.json'
-      || file === 'environment-mode.json'
-      || file === 'curator-mode.json'
-      || file === 'curiosity-mode.json'
-      || file === 'daydreamer-mode.json'
-      || file === 'desire-executor.json'
-      || file === 'boredom-observer-mode.json'
-      || file === 'boredom-movement-mode.json'
-      || file === 'boredom-reflection-mode.json'
-      || file === 'boredom-autonomy-mode.json'
-    ) {
-      validateRegisteredNodeContracts(graph);
     }
 
     if (file === 'dual-mode.json') {

@@ -1,9 +1,10 @@
 /**
- * Graph admission boundary for the non-conversation canonical buffers.
+ * Admission boundary for producers outside an existing cognitive graph.
  *
  * Conversation persistence belongs to the conversational graph that produced
- * or received the text. Producers outside an existing cognitive graph may use
- * these distinct Inner, System, and Robot Buffer workflows.
+ * or received the text. Inner Dialogue reuses its canonical buffer and memory
+ * saver nodes directly; System and Robot records retain their distinct graph
+ * workflows.
  */
 
 import type { CanonicalBufferMode, ConversationMessage } from './conversation-buffer.js';
@@ -30,8 +31,9 @@ export interface BufferAdmissionReceipt {
 
 type AdmissionBufferMode = Exclude<CanonicalBufferMode, 'conversation'>;
 
-const WORKFLOW_FILES: Record<AdmissionBufferMode, string> = {
-  inner: 'inner-buffer-admission.json',
+type GraphAdmissionBufferMode = Exclude<AdmissionBufferMode, 'inner'>;
+
+const WORKFLOW_FILES: Record<GraphAdmissionBufferMode, string> = {
   system: 'system-event.json',
   robot: 'robot-buffer-admission.json',
 };
@@ -44,20 +46,6 @@ async function runBufferAdmission(
 ): Promise<BufferAdmissionReceipt> {
   if (!username || username === 'anonymous') throw new Error(`${mode} admission requires an authenticated username`);
   if (!entry?.content?.trim()) throw new Error(`${mode} admission requires non-empty content`);
-
-  const {
-    cognitiveGraphPath,
-    listFailedNodes,
-    loadGraphFile,
-    requireGraphNodeOutput,
-    runGraph,
-  } = await import('./graph-runtime.js');
-  const loaded = await loadGraphFile(cognitiveGraphPath(WORKFLOW_FILES[mode]), {
-    logPrefix: `[buffer-admission:${mode}]`,
-  });
-  if (!loaded) {
-    throw new Error(`Could not load ${mode} buffer admission workflow`);
-  }
 
   const activeContext = getUserContext();
   const activeContextMatches = Boolean(
@@ -77,50 +65,67 @@ async function runBufferAdmission(
   };
   if (mode === 'system') context.systemEvent = entry;
   else if (mode === 'robot') context.bridgeRecord = entry.meta?.bridgeRecord ?? entry.meta ?? entry;
-  else context.bufferEntry = entry;
 
-  const executeGraph = () => runGraph({ graph: loaded.graph, context });
-  const state = activeContextMatches
-    ? await executeGraph()
-    : await withUserContext({
+  const executeAdmission = async (): Promise<BufferAdmissionReceipt> => {
+    if (mode === 'inner') {
+      const [{ InnerDialogueBufferNode }, { InnerDialogueSaverNode }] = await Promise.all([
+        import('./nodes/output/inner-dialogue-buffer.node.js'),
+        import('./nodes/cognitive/inner-dialogue-saver.node.js'),
+      ]);
+      const bufferOutput = await InnerDialogueBufferNode.execute({ entry }, context, {});
+      if (bufferOutput.persisted !== true) {
+        throw new Error(`inner buffer node did not persist the entry: ${bufferOutput.reason || 'unknown reason'}`);
+      }
+      const saverOutput = await InnerDialogueSaverNode.execute({ entries: bufferOutput.entries }, context, {});
+      const admittedCount = Array.isArray(bufferOutput.entries) ? bufferOutput.entries.length : 0;
+      if (saverOutput.saved !== true || saverOutput.savedCount !== admittedCount) {
+        throw new Error(`inner Persona Memory saver did not persist every admitted entry: ${saverOutput.reason || 'unknown reason'}`);
+      }
+      return {
+        mode,
+        entries: bufferOutput.entries,
+        memoryResults: Array.isArray(saverOutput.results) ? saverOutput.results : [],
+      };
+    }
+
+    const {
+      cognitiveGraphPath,
+      listFailedNodes,
+      loadGraphFile,
+      requireGraphNodeOutput,
+      runGraph,
+    } = await import('./graph-runtime.js');
+    const loaded = await loadGraphFile(cognitiveGraphPath(WORKFLOW_FILES[mode]), {
+      logPrefix: `[buffer-admission:${mode}]`,
+    });
+    if (!loaded) throw new Error(`Could not load ${mode} buffer admission workflow`);
+
+    const state = await runGraph({ graph: loaded.graph, context });
+    const failures = listFailedNodes(state);
+    if (failures.length > 0) {
+      throw new Error(`${mode} buffer admission failed: ${failures[0].error}`);
+    }
+
+    const bufferNodeType = mode === 'system' ? 'system_buffer' : 'robot_buffer';
+    const bufferOutput = requireGraphNodeOutput(state, bufferNodeType);
+    if (bufferOutput.persisted !== true) {
+      throw new Error(`${mode} buffer node completed without durable persistence`);
+    }
+
+    return {
+      mode,
+      entries: Array.isArray(bufferOutput.entries) ? bufferOutput.entries : [],
+      memoryResults: [],
+    };
+  };
+
+  return activeContextMatches
+    ? executeAdmission()
+    : withUserContext({
         userId,
         username,
         role: account?.role || 'standard',
-      }, executeGraph);
-  const failures = listFailedNodes(state);
-  if (failures.length > 0) {
-    throw new Error(`${mode} buffer admission failed: ${failures[0].error}`);
-  }
-
-  const bufferNodeTypes: Record<AdmissionBufferMode, string> = {
-    inner: 'inner_dialogue_buffer',
-    system: 'system_buffer',
-    robot: 'robot_buffer',
-  };
-  const bufferOutput = requireGraphNodeOutput(state, bufferNodeTypes[mode]);
-  if (bufferOutput.persisted !== true) {
-    throw new Error(`${mode} buffer node completed without durable persistence`);
-  }
-
-  const saverNodeType = mode === 'inner' ? 'inner_dialogue_saver' : null;
-  if (saverNodeType) {
-    const saverOutput = requireGraphNodeOutput(state, saverNodeType);
-    const admittedCount = Array.isArray(bufferOutput.entries) ? bufferOutput.entries.length : 0;
-    if (saverOutput.saved !== true || saverOutput.savedCount !== admittedCount) {
-      throw new Error(`${mode} Persona Memory saver did not persist every admitted entry`);
-    }
-    return {
-      mode,
-      entries: bufferOutput.entries,
-      memoryResults: Array.isArray(saverOutput.results) ? saverOutput.results : [],
-    };
-  }
-
-  return {
-    mode,
-    entries: Array.isArray(bufferOutput.entries) ? bufferOutput.entries : [],
-    memoryResults: [],
-  };
+      }, executeAdmission);
 }
 
 async function submitBufferEntry(

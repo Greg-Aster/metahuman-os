@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
+  "name": "Curiosity Researcher",
+  "description": "Researches one pending curiosity question against reconciled local memory",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "input",
+      "type": "inputNode",
+      "position": { "x": 80, "y": 140 },
+      "data": { "label": "Pending Question", "nodeType": "curiosity_research_input", "properties": {} }
+    },
+    {
+      "id": "research",
+      "type": "agentNode",
+      "position": { "x": 470, "y": 140 },
+      "width": 340,
+      "height": 160,
+      "data": { "label": "Research Local Memory", "nodeType": "curiosity_research", "properties": {} }
+    }
+  ],
+  "edges": [
+    { "id": "input-question-research-question", "source": "input", "target": "research", "sourceHandle": "question", "targetHandle": "question", "data": {} },
+    { "id": "input-prior-research-prior", "source": "input", "target": "research", "sourceHandle": "priorResearch", "targetHandle": "priorResearch", "data": {} }
+  ]
+}

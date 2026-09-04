@@ -14,11 +14,13 @@ A desire can move through states such as:
 
 1. **Nascent or pending** — an idea exists but has not been approved for work.
 2. **Evaluating and planning** — the system reviews the desire and builds a versioned plan.
-3. **Reviewing** — the plan and its risk are awaiting review.
-4. **Approved** — execution is allowed, but may not yet be admitted or running.
-5. **Executing** — the operator is carrying out the plan.
-6. **Awaiting review** — execution ended and needs outcome evaluation.
-7. **Completed, rejected, abandoned, or failed** — terminal desire state.
+3. **Reviewing** — the reviewer graph is actively checking the persisted plan.
+4. **Awaiting approval** — review passed or requested revision, and explicit
+   owner approval is required.
+5. **Approved** — execution is allowed, but may not yet be admitted or running.
+6. **Executing** — the operator is carrying out the plan.
+7. **Awaiting review** — execution ended and needs outcome evaluation.
+8. **Completed, rejected, abandoned, or failed** — terminal desire state.
 
 Status alone does not prove the intended outcome occurred. Review the execution record and outcome review.
 
@@ -35,9 +37,23 @@ Creating a desire does not execute it.
 
 ## Plan and Review
 
-Use **Generate Plan** to ask the desire planner for ordered steps, expected outcomes, required skills, risk, and approval requirements. Plans are versioned. You can review older versions, add critique, and regenerate instead of silently overwriting the plan history.
+Use **Generate Plan** to submit one targeted Desire Planner work item. The agent
+builds ordered steps from the registered capability catalog, validates the
+result, runs persona-alignment and policy-safety review, records a review receipt
+for that exact plan version, records its reflection, and then persists exactly
+one result: clarification questions, rejection, approval required, or
+policy-allowed auto-approval. A plan step marked as requiring approval cannot be
+auto-approved. If persistence is interrupted while a desire is `reviewing`, the
+next Desire Planner run resumes that review and reuses any recorded receipt
+instead of replacing it with a new decision. Plans are versioned. You can review
+older versions, add critique, and regenerate instead of silently overwriting the
+plan history.
 
-Use the review controls to approve or reject a plan. Approval means the plan is eligible for execution; it is not proof that work has started.
+The **Approve Plan** control appears only after the canonical reviewer reaches
+`awaiting_approval`; it cannot skip planning or review. **Regenerate Plan** sends
+the desire through the same planner and reviewer owner again. Approval means the
+reviewed plan version is eligible for execution; it is not proof that work has
+started.
 
 ## Execute and Review the Outcome
 

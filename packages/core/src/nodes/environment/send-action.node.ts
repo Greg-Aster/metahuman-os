@@ -5,38 +5,21 @@ import {
   getEnvironmentActionSubscriberCount,
   summarizeEnvironmentBridgeState,
   type EnvironmentActionType,
-  type EnvironmentObservation,
 } from '../../environment-interface/index.js';
 import {
   beginEnvironmentPerceptionCycle,
-  loadRobotOperatorConfig,
   nextRobotObserverCycle,
   parseRobotObserverCycle,
-  type RobotObserverCycleMetadata,
 } from '../../robot-operator.js';
-import { getQueueManager } from '../../queue/unified-queue-manager.js';
 
 const ACTION_OPTIONS: EnvironmentActionType[] = ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'];
 const BODY_ACTIONS = new Set<EnvironmentActionType>(ACTION_OPTIONS.filter(action => action !== 'sendText'));
 type SendStatus = 'coordinated_for_adapter' | 'waiting_for_adapter' | 'bridge_disabled' | 'no_actions' | 'partial' | 'rejected';
-const ROBOT_OPERATOR_SOURCES = new Set([
-  'boredom-observer',
-  'boredom-movement',
-  'boredom-reflection',
-]);
 
 function configuredGraph(value: unknown): string | null {
   return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim())
     ? value.trim()
     : null;
-}
-
-function robotOperatorSource(
-  cycle: RobotObserverCycleMetadata | null,
-): string {
-  return cycle && ROBOT_OPERATOR_SOURCES.has(cycle.requestedBy)
-    ? cycle.requestedBy
-    : 'environment-mode';
 }
 
 function selectedActions(value: unknown): EnvironmentActionType[] {
@@ -60,14 +43,9 @@ export const environmentSendActionNode = defineNode({
     { name: 'actions', type: 'array', optional: true, description: 'Actions to enqueue' },
     { name: 'generatedActions', type: 'array', optional: true, description: 'Validated actions from Movement Generator' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
-    { name: 'response', type: 'string', optional: true, description: 'Conversational response to pass to chat output' },
-    { name: 'familiarityQuery', type: 'string', optional: true, description: 'Current-scene summary for asynchronous familiarity matching' },
-    { name: 'taskInstruction', type: 'string', optional: true, description: 'Validator-owned task contract persisted with action feedback' },
     { name: 'instruction', type: 'string', optional: true, description: 'Current resolved instruction' },
     { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
-    { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
-    { name: 'observation', type: 'object', optional: true, description: 'Current Environment Bridge observation' },
-    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from Robot Operator Input or Environment Action Context Input' },
+    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from Robot Operator Input or the matched sent-action record' },
   ],
   outputs: [
     { name: 'commands', type: 'array', description: 'Coordinator work created for the environment adapter' },
@@ -79,10 +57,6 @@ export const environmentSendActionNode = defineNode({
     { name: 'status', type: 'string', description: 'Bridge delivery status' },
     { name: 'reason', type: 'string', description: 'Machine-readable bridge status reason' },
     { name: 'message', type: 'string', description: 'Human-readable bridge status message' },
-    { name: 'response', type: 'string', description: 'Visible chat warning when the bridge cannot receive the command' },
-    { name: 'conversationResponse', type: 'string', description: 'Response admitted to conversation and TTS' },
-    { name: 'responseMetadata', type: 'object', description: 'Origin metadata for conversation output' },
-    { name: 'familiarityTaskId', type: 'string', description: 'Asynchronous familiarity search work item, when queued' },
     { name: 'targetSessionId', type: 'string', description: 'Target environment session used for delivery checks' },
     { name: 'bridgeEnabled', type: 'boolean', description: 'Whether Environment Bridge is enabled' },
     { name: 'adapterReady', type: 'boolean', description: 'Whether the target adapter subscriber is connected' },
@@ -125,74 +99,53 @@ export const environmentSendActionNode = defineNode({
       type: 'text',
       default: '',
       label: 'Feedback Workflow',
-      description: 'Optional graph that receives the correlated action result. Leave empty to continue the current workflow.',
-      placeholder: 'For example: environment',
+      description: 'Optional one-pass workflow that receives the correlated action result. Empty means record transport feedback without running another graph.',
+      placeholder: 'For example: robot-action-result',
     },
   },
-  description: 'Queues one or more movement/control actions and reports whether an environment adapter can receive them.',
+  description: 'Queues selected actions for Environment Bridge and returns transport facts only; it never authors or replaces conversation.',
   async execute(inputs, context, properties) {
     const requestedActions = [
       ...(Array.isArray(inputs.actions) ? inputs.actions : []),
       ...(Array.isArray(inputs.generatedActions) ? inputs.generatedActions : []),
       ...(inputs.action ? [inputs.action] : []),
     ];
-    const observation = inputs.observation && typeof inputs.observation === 'object'
-      ? inputs.observation as EnvironmentObservation
-      : null;
     const existingCycle = parseRobotObserverCycle(inputs.robotObserver);
     const hasStop = requestedActions.some(action => action && typeof action === 'object' && action.type === 'stop');
     const rawActions = hasStop
       ? requestedActions.filter(action => action && typeof action === 'object' && action.type === 'stop')
       : requestedActions;
+    const contextInstruction = typeof context.userMessage === 'string'
+      ? context.userMessage.trim()
+      : '';
     const currentUserInstruction = typeof inputs.userInstruction === 'string'
       ? inputs.userInstruction.trim()
-      : '';
-    const validatedTaskInstruction = typeof inputs.taskInstruction === 'string'
-      ? inputs.taskInstruction.trim()
-      : '';
+      : contextInstruction;
     const currentInstruction = typeof inputs.instruction === 'string'
       ? inputs.instruction.trim()
-      : '';
-    const originatingInstruction = validatedTaskInstruction || currentInstruction;
+      : contextInstruction;
+    const feedbackGraph = configuredGraph(properties?.feedbackGraph);
     const shouldStartCycle = (
       !existingCycle
+      && Boolean(feedbackGraph)
       && currentUserInstruction
       && rawActions.length > 0
-      && !hasStop
     );
-    const cycleConfig = shouldStartCycle ? loadRobotOperatorConfig() : null;
-    const startedCycle = cycleConfig
+    const startedCycle = shouldStartCycle && feedbackGraph
       ? beginEnvironmentPerceptionCycle(
           `environment-task-${randomUUID()}`,
-          cycleConfig.environmentGraph,
+          feedbackGraph,
         )
       : null;
     const actionCycle = existingCycle ?? startedCycle;
     const continuedCycle = actionCycle ? nextRobotObserverCycle(actionCycle) : null;
-    const feedbackGraph = configuredGraph(properties?.feedbackGraph);
     const nextObserverStep = continuedCycle && feedbackGraph
       ? {
           ...continuedCycle,
           graph: feedbackGraph,
         }
-      : continuedCycle;
+      : null;
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
-    const conversationalResponse = typeof inputs.response === 'string' ? inputs.response.trim() : '';
-    const autonomous = inputs.inputSource === 'autonomy'
-      || existingCycle?.triggerSource === 'autonomy';
-    const dialogueSource = robotOperatorSource(existingCycle);
-    const responseMetadata = autonomous
-      ? {
-          dialogueSource,
-          correlationId: existingCycle?.cycleId ?? null,
-          tags: dialogueSource === 'environment-mode'
-            ? ['environment', 'autonomy']
-            : ['robot-operator', dialogueSource, 'autonomy-trigger'],
-        }
-      : {};
-    const familiarityQuery = typeof inputs.familiarityQuery === 'string'
-      ? inputs.familiarityQuery.replace(/\s+/g, ' ').trim().slice(0, 300)
-      : '';
     const commands = [];
     const rejectedActions = [];
     const options = {
@@ -240,13 +193,13 @@ export const environmentSendActionNode = defineNode({
     } else if (!bridgeSummary.enabled) {
       status = 'bridge_disabled';
       reason = 'environment_bridge_disabled';
-      message = 'I understood the environment command, but Environment Bridge is disabled. No robot adapter can receive it yet.';
+      message = 'Environment Bridge is disabled. No robot adapter can receive this command.';
     } else if (!adapterReady) {
       status = 'waiting_for_adapter';
       reason = 'no_connected_environment_adapter';
       message = targetSessionId
-        ? `I understood the environment command, but no robot adapter is connected for session ${targetSessionId}. Start the Ainekio adapter and try again.`
-        : 'I understood the environment command, but no robot adapter is connected. Start the Ainekio adapter and try again.';
+        ? `No robot adapter is connected for session ${targetSessionId}. Start the Ainekio adapter and try again.`
+        : 'No robot adapter is connected. Start the Ainekio adapter and try again.';
     } else if (requiresPhysicalBody && bodyActions.length > 0 && !bodyAuthenticated) {
       status = 'rejected';
       reason = 'robot_body_offline';
@@ -275,7 +228,7 @@ export const environmentSendActionNode = defineNode({
               username: context.username,
               correlationId: actionCycle?.cycleId ?? context.sessionId,
               source: actionCycle?.triggerSource ?? 'user',
-              originatingInstruction,
+              originatingInstruction: currentInstruction,
             },
           ));
         } catch (error) {
@@ -340,34 +293,6 @@ export const environmentSendActionNode = defineNode({
       source: actionCycle?.triggerSource ?? 'user',
       correlationId: actionCycle?.cycleId ?? context.sessionId ?? null,
     };
-    // Bridge status remains available through message and bridgeRecord, but a
-    // no-action transport result is not a user-facing failure. Conversation and
-    // completed-task passes legitimately traverse Bridge Out without a command.
-    const visibleResponse = conversationalResponse;
-    const queuedResponse = bodyActions.some(action => action.type === 'captureImage')
-      ? 'Camera request queued; waiting for a fresh image.'
-      : visibleResponse;
-    const response = ['bridge_disabled', 'waiting_for_adapter', 'partial', 'rejected'].includes(status)
-      ? message
-      : status === 'coordinated_for_adapter' ? queuedResponse : visibleResponse;
-    let familiarityTaskId = '';
-    if (autonomous && familiarityQuery && context.username) {
-      const familiarityTask = getQueueManager().enqueue({
-        type: 'semantic_search',
-        handler: 'vector.semantic-search',
-        resource: 'vector-index',
-        source: 'autonomy',
-        priority: 'background',
-        input: { query: familiarityQuery, limit: 5, purpose: 'environment-familiarity' },
-        username: context.username,
-        cognitiveMode: 'environment',
-        correlationId: actionCycle?.cycleId ?? context.sessionId,
-        idempotencyKey: `environment-familiarity:${actionCycle?.cycleId ?? context.sessionId ?? 'unknown'}:${actionCycle?.step ?? 0}`,
-        maxAttempts: 1,
-        metadata: { producer: 'environment-mode', purpose: 'familiarity-match' },
-      });
-      familiarityTaskId = familiarityTask.id;
-    }
     return {
       commands,
       rejectedActions,
@@ -378,10 +303,6 @@ export const environmentSendActionNode = defineNode({
       status,
       reason,
       message,
-      response,
-      conversationResponse: response,
-      responseMetadata,
-      familiarityTaskId,
       targetSessionId,
       bridgeEnabled: bridgeSummary.enabled,
       adapterReady,

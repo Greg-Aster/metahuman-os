@@ -143,6 +143,7 @@
     target: 'conversation' | 'inner' = composeTarget,
     meta: Record<string, any> = {},
   ) {
+    if (typeof content !== 'string' || !content.trim()) return;
     messagesApi.pushMessage(
       target === 'inner' ? 'reflection' : 'assistant',
       content,
@@ -2215,7 +2216,7 @@
   async function cycleActiveOperatorMode() {
     if (activeOperatorLoading) return;
     const nextMode = nextAutonomyMode(autonomyMode);
-    if (nextMode === 'full' && !confirm('Enable fully autonomous mode? Configured triggers and the bounded Active Operator policy may propose work.')) return;
+    if (nextMode === 'full' && !confirm('Enable fully autonomous mode? Robot Operator may admit completion-driven robot workflow chains.')) return;
     activeOperatorLoading = true;
     try {
       await setActiveOperatorMode(nextMode);

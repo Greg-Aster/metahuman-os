@@ -11,7 +11,7 @@ owns application behavior; Brain owns asynchronous cognitive work.
 | React Native interface and bundled HTTP host | `apps/react-native` |
 | Domain services, API contracts, graphs, queues, storage, providers, and persistent-process supervision | `packages/core` |
 | Command-line interface | `packages/cli` |
-| Shared agent execution interfaces and runtime adapters | `packages/agent-runtime` |
+| Shared finite-agent execution interfaces | `packages/agent-runtime` |
 | Persistent service and agent-process lifecycle | Agent Monitor and `packages/core/src/agent-process-runner.ts` |
 | Lightweight local model process | `packages/local-model-service` |
 | Finite agents, persistent service entrypoints, and model training | `brain` |

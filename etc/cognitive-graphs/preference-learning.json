@@ -1,0 +1,34 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "name": "Preference Learning",
+  "description": "Extracts preferences from bounded evidence or evaluates one potential contradiction",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "inputNode",
+      "position": { "x": 80, "y": 120 },
+      "data": { "label": "Preference Evidence", "nodeType": "preference_learning_input", "properties": {} },
+      "width": 230,
+      "height": 120
+    },
+    {
+      "id": "2",
+      "type": "personaNode",
+      "position": { "x": 390, "y": 120 },
+      "data": { "label": "Preference Learning", "nodeType": "preference_learning", "properties": {} },
+      "width": 240,
+      "height": 130
+    }
+  ],
+  "edges": [
+    { "id": "e-1-operation-2-operation", "source": "1", "target": "2", "sourceHandle": "operation", "targetHandle": "operation" },
+    { "id": "e-1-events-2-events", "source": "1", "target": "2", "sourceHandle": "events", "targetHandle": "events" },
+    { "id": "e-1-categories-2-categories", "source": "1", "target": "2", "sourceHandle": "categories", "targetHandle": "categories" },
+    { "id": "e-1-preference1-2-preference1", "source": "1", "target": "2", "sourceHandle": "preference1", "targetHandle": "preference1" },
+    { "id": "e-1-preference2-2-preference2", "source": "1", "target": "2", "sourceHandle": "preference2", "targetHandle": "preference2" }
+  ]
+}

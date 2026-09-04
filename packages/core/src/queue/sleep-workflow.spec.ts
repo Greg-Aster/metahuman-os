@@ -69,10 +69,3 @@ test('sleep-owned agents have no independent autonomy schedules', async () => {
   assert.deepEqual(config.agents['sleep-workflow'].allowedModes, ['semi', 'full'])
   assert.equal(SLEEP_WORKFLOW_STAGES.at(-1)?.handler, 'vector.index-build')
 })
-
-test('Full autonomy proposal set excludes sleep-owned work', async () => {
-  const { AUTONOMOUS_PROPOSALS } = await import('../active-operator/policy-contract.js')
-  for (const handler of ['agent.dreamer', 'agent.organizer', 'agent.desire-generator']) {
-    assert.equal(AUTONOMOUS_PROPOSALS[handler], undefined, handler)
-  }
-})

@@ -1,10 +1,11 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Boredom Reflection Mode",
-  "description": "Uses a sampled memory with persona, recent narrative, current state, and verified action history to author one consequential intention for Boredom Autonomy.",
+  "description": "Uses a sampled memory with persona, recent narrative, current state, and verified action history to author one consequential intention for Robot Autonomy Executor.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-09-02",
+  "last_modified": "2026-09-03",
   "nodes": [
     {
       "id": "observation",
@@ -14,7 +15,7 @@
         "label": "Current Robot State and Capabilities",
         "nodeType": "environment_bridge_input",
         "properties": {},
-        "comment": "Supplies current bridge state and capabilities as read-only context for reflection. It has no prompt and produces no direct effect."
+        "comment": "Makes the complete read-only Environment Bridge contract available. This workflow connects only current state and capabilities for reflection; the input node has no prompt or direct effect."
       }
     },
     {
@@ -30,6 +31,7 @@
         }
       }
     },
+    { "id": "robot-operator-input", "type": "operatorNode", "position": { "x": 560, "y": 100 }, "data": { "label": "Robot Operator Input", "nodeType": "robot_operator_input", "properties": {} } },
     {
       "id": "memory-sampler",
       "type": "memoryNode",
@@ -134,13 +136,19 @@
       "type": "operatorNode",
       "position": { "x": 2100, "y": 220 },
       "data": {
-        "label": "Send Intention to Boredom Autonomy",
+        "label": "Send Intention to Robot Autonomy Executor",
         "nodeType": "robot_operator_environment_dispatch",
         "properties": { "graph": "boredom-autonomy" }
       }
     }
   ],
   "edges": [
+    { "id": "e-robot-observer-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "robotObserver", "targetHandle": "robotObserver", "type": "default", "data": { "type": "object" } },
+    { "id": "e-robot-decision-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "plannerDecision", "targetHandle": "plannerDecision", "type": "default", "data": { "type": "object" } },
+    { "id": "e-robot-memories-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "memories", "targetHandle": "delegatedMemories", "type": "default", "data": { "type": "array" } },
+    { "id": "e-robot-observed-at-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "sourceObservationAt", "targetHandle": "sourceObservationAt", "type": "default", "data": { "type": "string" } },
+    { "id": "e-robot-visual-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "currentVisualEvidence", "targetHandle": "currentVisualEvidence", "type": "default", "data": { "type": "boolean" } },
+    { "id": "e-robot-observer-dispatch", "source": "robot-operator-input", "target": "environment-dispatch", "sourceHandle": "robotObserver", "targetHandle": "robotObserver", "type": "default", "data": { "type": "object" } },
     {
       "id": "e-policy-context",
       "source": "planner-policy",

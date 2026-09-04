@@ -15,21 +15,29 @@ export const robotOperatorInputNode = defineNode({
   id: 'robot_operator_input',
   name: 'Robot Operator Input',
   category: 'operator',
-  inputs: [],
+  inputs: [
+    { name: 'actionRobotObserver', type: 'object', optional: true, description: 'Robot Operator cycle restored with the current Work Coordinator action' },
+  ],
   outputs: [
     { name: 'robotObserver', type: 'object', description: 'Validated Robot Operator cycle metadata' },
     { name: 'plannerDecision', type: 'object', description: 'Planner-authored observation, instruction, and reason' },
     { name: 'plannerInstruction', type: 'string', description: 'Planner-authored instruction' },
     { name: 'memories', type: 'array', description: 'Planner-delegated historical memories' },
+    { name: 'stimulusAgent', type: 'string', description: 'Robot Operator child that admitted this cycle' },
+    { name: 'sourceObservationAt', type: 'string', description: 'Timestamp of the bridge observation used for this cycle' },
+    { name: 'currentVisualEvidence', type: 'boolean', description: 'Whether this cycle includes a newly acquired current frame' },
     { name: 'inputSource', type: 'string', description: 'Robot Operator trigger source: user or autonomy' },
+    { name: 'responseMetadata', type: 'object', description: 'Conversation provenance for an optional Robot Operator response' },
     { name: 'available', type: 'boolean', description: 'Whether a valid Robot Operator cycle is present' },
   ],
   description: 'Reads only the Robot Operator handoff supplied with the current Work Coordinator execution.',
-  async execute(_inputs, context) {
+  async execute(inputs, context) {
     const supplied = isRecord(context.robotOperatorContext)
       ? context.robotOperatorContext
       : null;
-    const robotObserver = parseRobotObserverCycle(supplied?.robotObserver);
+    const robotObserver = parseRobotObserverCycle(
+      supplied?.robotObserver ?? inputs.actionRobotObserver,
+    );
     const rawDecision = isRecord(supplied?.plannerDecision)
       ? supplied.plannerDecision
       : null;
@@ -57,7 +65,17 @@ export const robotOperatorInputNode = defineNode({
       plannerDecision,
       plannerInstruction: plannerDecision?.instruction ?? '',
       memories,
+      stimulusAgent: cleanText(supplied?.stimulusAgent, 100),
+      sourceObservationAt: cleanText(supplied?.sourceObservationAt, 100),
+      currentVisualEvidence: supplied?.currentVisualEvidence === true,
       inputSource: robotObserver?.triggerSource ?? 'user',
+      responseMetadata: robotObserver?.triggerSource === 'autonomy'
+        ? {
+            dialogueSource: robotObserver.requestedBy,
+            correlationId: robotObserver.cycleId,
+            tags: ['robot-operator', robotObserver.requestedBy, 'autonomy-trigger'],
+          }
+        : {},
       available: Boolean(robotObserver),
     };
   },

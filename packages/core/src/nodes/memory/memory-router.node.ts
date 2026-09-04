@@ -148,7 +148,7 @@ export const MemoryRouterNode: NodeDefinition = defineNode({
   name: 'Memory Router',
   category: 'memory',
   inputs: [
-    { name: 'orchestratorHints', type: 'object', description: 'LLM-selected memory routing hints (needsMemory, memoryTier, memoryQuery, memoryTypes)' },
+    { name: 'orchestratorHints', type: 'object', optional: true, description: 'LLM-selected memory routing hints (needsMemory, memoryTier, memoryQuery, memoryTypes)' },
     { name: 'userMessage', type: 'string', description: 'User message as fallback query' },
   ],
   outputs: [

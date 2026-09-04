@@ -40,6 +40,7 @@ export async function handleExtractSuggestions(req: UnifiedRequest): Promise<Uni
       minConfidence: body?.minConfidence ?? 0.5,
       daysBack: body?.daysBack ?? 7,
       skipProcessed: body?.skipProcessed ?? true,
+      username: req.user.username,
     };
 
     const result = await extractTaskSuggestions(options);

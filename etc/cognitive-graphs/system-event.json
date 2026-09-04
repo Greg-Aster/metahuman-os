@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "System Event",
   "description": "Admits one durable backend event through the canonical System Buffer node.",
   "last_modified": "2026-07-19",

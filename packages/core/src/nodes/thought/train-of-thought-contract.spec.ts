@@ -45,13 +45,14 @@ test('Train of Thought graph uses only registered executors and current handle c
   assert.equal(graph.nodes.filter(node => node.data.nodeType === 'inner_dialogue_buffer').length, 1)
   assert.equal(graph.nodes.filter(node => node.data.nodeType === 'thought_aggregator').length, 1)
   const backEdge = graph.edges.find(edge => edge.source === 'route' && edge.target === 'generate')
-  assert.match(backEdge?.data?.comment || '', /BACK-EDGE/)
+  assert.equal(backEdge?.data?.loop, true)
+  assert.deepEqual(backEdge?.data?.when, { output: 'branch', equals: 'false' })
 })
 
 test('Reflector and Inner Curiosity own explicit 20 percent seeded follow-on nodes', () => {
   for (const [name, sourceAgent] of [
     ['reflector-mode.json', 'reflector'],
-    ['inner-curiosity-follow-on.json', 'inner-curiosity'],
+    ['inner-curiosity.json', 'inner-curiosity'],
   ] as const) {
     const graph = load(name)
     assertRegisteredHandles(graph)
@@ -64,4 +65,36 @@ test('Reflector and Inner Curiosity own explicit 20 percent seeded follow-on nod
     assert.equal(incoming.length, 1)
     assert.equal(incoming[0].targetHandle, 'seed')
   }
+})
+
+test('Inner Curiosity cognition is graph-owned and has no adapter workflow', () => {
+  const graph = load('inner-curiosity.json')
+  assert.deepEqual(findMissingExecutors(graph), [])
+  assertRegisteredHandles(graph)
+
+  for (const nodeType of [
+    'inner_curiosity_state',
+    'curiosity_weighted_sampler',
+    'persona_loader',
+    'inner_curiosity_question_generator',
+    'inner_curiosity_memory_search',
+    'inner_curiosity_answer_generator',
+    'inner_curiosity_prepare',
+    'inner_curiosity_entry',
+    'inner_curiosity_no_memories',
+    'inner_dialogue_buffer',
+    'inner_dialogue_saver',
+    'agent_trigger',
+    'inner_curiosity_complete',
+  ]) {
+    assert.equal(
+      graph.nodes.filter(node => node.data.nodeType === nodeType).length,
+      1,
+      `inner-curiosity.json must contain exactly one ${nodeType}`,
+    )
+  }
+
+  assert.equal(fs.existsSync(path.join(root, 'etc', 'cognitive-graphs', 'inner-curiosity-follow-on.json')), false)
+  const agentSource = fs.readFileSync(path.join(root, 'brain', 'agents', 'inner-curiosity', 'core.ts'), 'utf8')
+  assert.doesNotMatch(agentSource, /\bcallLLM(?:Text)?\b/)
 })

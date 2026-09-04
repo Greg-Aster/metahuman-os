@@ -27,7 +27,7 @@ export const AUTONOMY_MODES: AutonomyModeDefinition[] = [
     id: 'full',
     label: 'Fully autonomous',
     badge: 'F',
-    description: 'Configured triggers and the bounded Active Operator policy may propose work.',
+    description: 'Robot Operator may admit one completion-driven robot workflow chain at a time.',
     buttonClass: 'full',
   },
 ];

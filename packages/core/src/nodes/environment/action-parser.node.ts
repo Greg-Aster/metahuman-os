@@ -9,7 +9,6 @@ import {
   type RobotObserverCycleMetadata,
 } from '../../robot-operator.js';
 import {
-  environmentTaskContractFromRouting,
   normalizedEnvironmentMotionClass,
   validateEnvironmentSelectorOutput,
 } from './helpers.js';
@@ -127,8 +126,7 @@ export const environmentActionParserNode = defineNode({
     { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
     { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
-    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Prepared lifecycle contract fields' },
-    { name: 'inputSource', type: 'string', optional: true, description: 'Explicit instruction provenance from Instruction Resolver' },
+    { name: 'inputSource', type: 'string', optional: true, description: 'Instruction provenance supplied by the workflow input owner' },
     { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
   ],
   outputs: [
@@ -136,10 +134,12 @@ export const environmentActionParserNode = defineNode({
     { name: 'firstAction', type: 'object', description: 'First parsed action' },
     { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
     { name: 'movementRequested', type: 'boolean', description: 'Whether the model deliberately requested off-script movement generation' },
-    { name: 'taskDecision', type: 'object', description: 'Structured completion or continuation decision for Environment Task Reducer' },
+    { name: 'taskDecision', type: 'object', description: 'Validated task decision authored by the Environment LLM' },
     { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
-    { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result for Environment Task Reducer' },
+    { name: 'actionAdmission', type: 'object', description: 'Typed capability-admission result for diagnostics' },
     { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
+    { name: 'hasActions', type: 'boolean', description: 'Whether an admitted preset action is ready for Environment Bridge Out' },
+    { name: 'hasResponse', type: 'boolean', description: 'Whether the Environment LLM chose to produce conversation text' },
     { name: 'error', type: 'string', description: 'Parser error message' },
     { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
   ],
@@ -150,7 +150,6 @@ export const environmentActionParserNode = defineNode({
       const observation = inputs.observation && typeof inputs.observation === 'object'
         ? inputs.observation as EnvironmentObservation
         : undefined;
-      const routingAnalysis = isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : null;
       const autonomous = inputs.inputSource === 'autonomy';
       const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
       const validation = validateEnvironmentSelectorOutput(
@@ -178,13 +177,7 @@ export const environmentActionParserNode = defineNode({
             taskDecision: null,
             taskDecisionError: validation.errors.join('; '),
           };
-      const routedContract = environmentTaskContractFromRouting(routingAnalysis);
-      const routedMotionClass = isRecord(routingAnalysis?.actionParams)
-        ? normalizedEnvironmentMotionClass(routingAnalysis.actionParams.motionClass)
-        : null;
       const motionClass = normalizedEnvironmentMotionClass(parsed.taskDecision?.motionClass)
-        ?? routedContract?.motionClass
-        ?? routedMotionClass
         ?? (parsed.movementRequest ? 'body_local' : null);
       const connectedSession = Boolean(sessionId || observation?.sessionId);
       const unsupportedCommand = unsupportedRobotCommand(
@@ -250,14 +243,7 @@ export const environmentActionParserNode = defineNode({
           : requiresGeneratedMovement && !movementSupported
             ? 'Off-script movement is unavailable because this robot does not advertise robotMotionPlan.'
             : '');
-      const capabilityError = unavailableAction?.type === 'captureImage'
-        ? 'The robot camera is not currently available.'
-        : unsupportedCommand
-          ? `The Environment LLM selected robot command "${unsupportedCommand}", but the robot does not advertise it.`
-          : unavailableAction
-            ? 'The physical robot is not currently available for that action.'
-            : '';
-      const response = movementError || capabilityError || parsed.response || '';
+      const response = parsed.response || '';
       const valid = actions.length > 0 || movementRequest !== null;
       const actionAdmission = supportedParsedActions.some(isPhysicalMotionAction) || admissionBlocked
         ? {
@@ -268,18 +254,7 @@ export const environmentActionParserNode = defineNode({
             requiredCapability: null,
           }
         : null;
-      const physicalWorkSelected = actions.length > 0 || movementRequest !== null;
-      const taskDecision = physicalWorkSelected && parsed.taskDecision
-        ? {
-            ...parsed.taskDecision,
-            outcome: 'act' as const,
-            objectiveComplete: false,
-            continuationPolicy: parsed.taskDecision.continuationPolicy ?? 'none' as const,
-            requiredCompletionBasis: parsed.taskDecision?.requiredCompletionBasis
-              ?? 'action_result' as const,
-            ...(motionClass ? { motionClass } : {}),
-          }
-        : parsed.taskDecision;
+      const taskDecision = parsed.taskDecision;
       return {
         actions,
         firstAction: actions[0] ?? null,
@@ -289,9 +264,11 @@ export const environmentActionParserNode = defineNode({
         taskDecisionError: parsed.taskDecisionError,
         actionAdmission,
         valid,
+        hasActions: actions.length > 0,
+        hasResponse: Boolean(response.trim()),
         error: valid
           ? ''
-          : parsed.taskDecisionError || movementError || 'No valid environment actions found',
+          : parsed.taskDecisionError || movementError,
         response,
       };
     } catch (error) {
@@ -304,6 +281,8 @@ export const environmentActionParserNode = defineNode({
         taskDecisionError: '',
         actionAdmission: null,
         valid: false,
+        hasActions: false,
+        hasResponse: false,
         error: (error as Error).message,
         response: '',
       };

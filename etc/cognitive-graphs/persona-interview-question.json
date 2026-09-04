@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "name": "Persona Interview Question",
+  "description": "Admits an authenticated persona interview and generates its next adaptive question",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "inputNode",
+      "position": { "x": 80, "y": 120 },
+      "data": { "label": "Interview State", "nodeType": "persona_interview_input", "properties": {} },
+      "width": 220,
+      "height": 110
+    },
+    {
+      "id": "2",
+      "type": "personaNode",
+      "position": { "x": 380, "y": 120 },
+      "data": { "label": "Generate Next Question", "nodeType": "persona_interview_question", "properties": {} },
+      "width": 250,
+      "height": 130
+    }
+  ],
+  "edges": [
+    { "id": "e-1-session-2-session", "source": "1", "target": "2", "sourceHandle": "session", "targetHandle": "session" },
+    { "id": "e-1-config-2-config", "source": "1", "target": "2", "sourceHandle": "config", "targetHandle": "config" },
+    { "id": "e-1-profile-2-profile", "source": "1", "target": "2", "sourceHandle": "profile", "targetHandle": "profile" },
+    { "id": "e-1-gaps-2-gaps", "source": "1", "target": "2", "sourceHandle": "gaps", "targetHandle": "gaps" }
+  ]
+}

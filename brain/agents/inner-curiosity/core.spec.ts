@@ -1,72 +1,119 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import type {
+  GraphExecutionState,
+  GraphRunParams,
+  NodeExecutionState,
+  SvelteFlowGraph,
+} from '@metahuman/core'
 import {
   executeInnerCuriosityForUser,
   parseInnerCuriosityArgs,
   runInnerCuriosity,
   type InnerCuriosityDependencies,
-  type InnerCuriosityReceipt,
 } from './core.js'
 
 const NOW = '2026-08-28T12:00:00.000Z'
+const GRAPH = {
+  version: '1.0',
+  format: 'svelte-flow',
+  scheduler: {
+    version: 1,
+    activation: 'demand',
+    skippedState: 'explicit',
+    sideEffectOrder: 'serial-topological',
+    maxLoopIterations: 5,
+  },
+  name: 'Inner Curiosity Test Graph',
+  nodes: [],
+  edges: [],
+} as SvelteFlowGraph
 
-function dependencies(overrides: Partial<InnerCuriosityDependencies> = {}): InnerCuriosityDependencies {
-  const receipts = new Map<string, InnerCuriosityReceipt>()
-  return {
-    loadConfig: () => ({
-      maxOpenQuestions: 3,
-      researchMode: 'local',
-      innerQuestionMode: 'local',
-      minTrustLevel: 'observe',
-    }),
-    sampleMemories: async () => ({
-      memories: [{
-        __memoryId: 'evt-source',
-        id: 'evt-source',
-        timestamp: '2026-08-28T10:00:00.000Z',
-        type: 'observation',
-        content: 'A grounded source memory.',
-      }],
-      diagnostics: {
-        filesConsidered: 1,
-        filesRead: 1,
-        skippedMalformed: 0,
-        skippedOversize: 0,
-        skippedGenerated: 0,
-        skippedEmpty: 0,
-        truncatedContent: 0,
+function node(
+  nodeId: string,
+  nodeType: string,
+  status: NodeExecutionState['status'],
+  outputs?: Record<string, unknown>,
+  error?: Error,
+): [string, NodeExecutionState] {
+  return [nodeId, {
+    nodeId,
+    status,
+    definition: { type: nodeType },
+    ...(outputs ? { outputs } : {}),
+    ...(error ? { error } : {}),
+  }]
+}
+
+function graphState(
+  entries: Array<[string, NodeExecutionState]>,
+  status: GraphExecutionState['status'] = 'completed',
+): GraphExecutionState {
+  return { nodes: new Map(entries), startTime: 0, endTime: 1, status }
+}
+
+function generatedState(deduplicated = false): GraphExecutionState {
+  return graphState([
+    node('state', 'inner_curiosity_state', 'completed', {
+      status: deduplicated ? 'prepared' : 'new',
+      execution: {
+        username: 'test-user',
+        executionId: 'task-stable',
       },
     }),
-    loadPersonaName: () => 'Test Persona',
-    generateQuestion: async () => 'What pattern should I understand?',
-    searchMemories: async () => [{
-      id: 'evt-related',
-      path: '/tmp/evt-related.json',
-      type: 'episodic',
-      text: 'A related indexed memory.',
-      vector: [],
-    }],
-    generateAnswer: async () => 'The memories support one cautious connection.',
-    loadReceipt: (_username, key) => receipts.get(key) || null,
-    saveReceipt: receipt => { receipts.set(receipt.idempotencyKey, receipt) },
-    persistDialogue: async () => {},
-    triggerFollowOn: async () => {},
-    auditGenerated: () => {},
+    node('sample', 'curiosity_weighted_sampler', deduplicated ? 'skipped' : 'completed', {
+      count: 1,
+    }),
+    node('no-memories', 'inner_curiosity_no_memories', 'skipped'),
+    node('complete', 'inner_curiosity_complete', 'completed', {
+      outcome: {
+        status: 'generated',
+        username: 'test-user',
+        executionId: 'task-stable',
+        deduplicated,
+        memoriesConsidered: 1,
+        searchResults: 1,
+        followOn: {
+          admitted: false,
+          skipped: true,
+          reason: 'probability',
+          probability: 0.2,
+          roll: 0.8,
+        },
+      },
+    }),
+  ])
+}
+
+function dependencies(
+  state: GraphExecutionState,
+  overrides: Partial<InnerCuriosityDependencies> = {},
+): InnerCuriosityDependencies {
+  return {
+    loadGraph: async () => ({ graph: GRAPH, source: '/test/inner-curiosity.json' }),
+    executeGraph: async (_params: GraphRunParams) => state,
+    resolveUserId: () => 'test-user-id',
     now: () => new Date(NOW),
     newExecutionId: () => 'execution-generated',
     ...overrides,
   }
 }
 
-const OPTIONS = {
-  executionId: 'task-stable',
-  executionTimestamp: NOW,
-}
+test('Inner Curiosity delegates one authenticated cycle to its canonical graph', async () => {
+  let received: GraphRunParams | undefined
+  const deps = dependencies(generatedState(), {
+    executeGraph: async params => {
+      received = params
+      return generatedState()
+    },
+  })
 
-test('Inner Curiosity returns one typed generated outcome', async () => {
-  const deps = dependencies()
-  const result = await executeInnerCuriosityForUser('test-user', OPTIONS, deps)
+  const result = await executeInnerCuriosityForUser('test-user', {
+    executionId: 'task-stable',
+    executionTimestamp: NOW,
+  }, deps)
+
   assert.deepEqual(result, {
     status: 'generated',
     username: 'test-user',
@@ -74,176 +121,132 @@ test('Inner Curiosity returns one typed generated outcome', async () => {
     deduplicated: false,
     memoriesConsidered: 1,
     searchResults: 1,
+    followOn: {
+      admitted: false,
+      skipped: true,
+      reason: 'probability',
+      probability: 0.2,
+      roll: 0.8,
+    },
   })
-  const repeatedWithoutTimestamp = await executeInnerCuriosityForUser(
-    'test-user',
-    { executionId: OPTIONS.executionId },
-    deps,
-  )
-  assert.equal(repeatedWithoutTimestamp.status, 'generated')
-  if (repeatedWithoutTimestamp.status === 'generated') assert.equal(repeatedWithoutTimestamp.deduplicated, true)
+  assert.equal(received?.graph, GRAPH)
+  assert.equal(received?.context.username, 'test-user')
+  assert.equal(received?.context.userId, 'test-user-id')
+  assert.equal(received?.context.executionId, 'task-stable')
+  assert.equal(received?.context.executionTimestamp, NOW)
+  assert.equal(received?.context.requestedExecutionTimestamp, NOW)
+  assert.equal(received?.context.idempotencyKey, 'inner-curiosity:test-user:task-stable')
+  assert.equal(received?.context.recordPersonaMemory, true)
+  assert.equal(received?.context.allowMemoryWrites, true)
 })
 
-test('disabled and empty-memory cycles are explicit successful skips', async () => {
-  const disabled = await executeInnerCuriosityForUser('test-user', OPTIONS, dependencies({
-    loadConfig: () => ({
-      maxOpenQuestions: 3,
-      researchMode: 'local',
-      innerQuestionMode: 'off',
-      minTrustLevel: 'observe',
-    }),
-  }))
-  assert.equal(disabled.status, 'skipped')
-  if (disabled.status === 'skipped') assert.equal(disabled.reason, 'disabled')
+test('completed receipts and empty samples become explicit graph-owned outcomes', async t => {
+  await t.test('completed receipt', async () => {
+    const state = graphState([
+      node('state', 'inner_curiosity_state', 'completed', {
+        outcome: {
+          status: 'generated',
+          username: 'test-user',
+          executionId: 'task-stable',
+          deduplicated: true,
+          memoriesConsidered: 2,
+          searchResults: 4,
+        },
+      }),
+      node('sample', 'curiosity_weighted_sampler', 'skipped'),
+      node('no-memories', 'inner_curiosity_no_memories', 'skipped'),
+      node('complete', 'inner_curiosity_complete', 'skipped'),
+    ])
+    const result = await executeInnerCuriosityForUser(
+      'test-user',
+      { executionId: 'task-stable' },
+      dependencies(state),
+    )
+    assert.equal(result.status, 'generated')
+    if (result.status === 'generated') assert.equal(result.deduplicated, true)
+  })
 
-  const empty = await executeInnerCuriosityForUser('test-user', OPTIONS, dependencies({
-    sampleMemories: async () => ({
-      memories: [],
-      diagnostics: {
-        filesConsidered: 0,
-        filesRead: 0,
-        skippedMalformed: 0,
-        skippedOversize: 0,
-        skippedGenerated: 0,
-        skippedEmpty: 0,
-        truncatedContent: 0,
-      },
-    }),
-  }))
-  assert.equal(empty.status, 'skipped')
-  if (empty.status === 'skipped') assert.equal(empty.reason, 'no-memories')
+  await t.test('no memories', async () => {
+    const state = graphState([
+      node('state', 'inner_curiosity_state', 'completed', {
+        execution: { username: 'test-user', executionId: 'task-stable' },
+      }),
+      node('sample', 'curiosity_weighted_sampler', 'completed', { count: 0 }),
+      node('no-memories', 'inner_curiosity_no_memories', 'completed', {
+        outcome: {
+          status: 'skipped',
+          username: 'test-user',
+          executionId: 'task-stable',
+          reason: 'no-memories',
+        },
+      }),
+      node('complete', 'inner_curiosity_complete', 'skipped'),
+    ])
+    const result = await executeInnerCuriosityForUser(
+      'test-user',
+      { executionId: 'task-stable' },
+      dependencies(state),
+    )
+    assert.deepEqual(result, {
+      status: 'skipped',
+      username: 'test-user',
+      executionId: 'task-stable',
+      reason: 'no-memories',
+    })
+  })
 })
 
-test('question, search, and answer failures remain real failures', async t => {
-  await t.test('question failure', async () => {
+test('graph load, execution, and output contract failures remain failures', async t => {
+  await t.test('missing graph', async () => {
     await assert.rejects(
-      executeInnerCuriosityForUser('test-user', OPTIONS, dependencies({
-        generateQuestion: async () => { throw new Error('question backend unavailable') },
+      executeInnerCuriosityForUser('test-user', {}, dependencies(generatedState(), {
+        loadGraph: async () => null,
       })),
-      /question backend unavailable/,
+      /could not be loaded/,
     )
   })
-  await t.test('search failure', async () => {
+
+  await t.test('failed node', async () => {
+    const state = graphState([
+      node('question', 'inner_curiosity_question_generator', 'failed', undefined, new Error('model unavailable')),
+    ], 'failed')
     await assert.rejects(
-      executeInnerCuriosityForUser('test-user', OPTIONS, dependencies({
-        searchMemories: async () => { throw new Error('index unavailable') },
-      })),
-      /index unavailable/,
+      executeInnerCuriosityForUser('test-user', {}, dependencies(state)),
+      /question: model unavailable/,
     )
   })
-  await t.test('answer failure', async () => {
+
+  await t.test('malformed outcome', async () => {
+    const state = generatedState()
+    state.nodes.get('complete')!.outputs = { outcome: { status: 'generated' } }
     await assert.rejects(
-      executeInnerCuriosityForUser('test-user', OPTIONS, dependencies({
-        generateAnswer: async () => { throw new Error('answer backend unavailable') },
-      })),
-      /answer backend unavailable/,
+      executeInnerCuriosityForUser('test-user', {}, dependencies(state)),
+      /outcome username/,
     )
   })
 })
 
-test('a persistence failure resumes the prepared receipt without repeating model work', async () => {
-  const receipts = new Map<string, InnerCuriosityReceipt>()
-  let questionCalls = 0
-  let answerCalls = 0
-  let persistenceCalls = 0
-  const deps = dependencies({
-    generateQuestion: async () => {
-      questionCalls += 1
-      return 'What pattern should I understand?'
-    },
-    generateAnswer: async () => {
-      answerCalls += 1
-      return 'The memories support one cautious connection.'
-    },
-    loadReceipt: (_username, key) => receipts.get(key) || null,
-    saveReceipt: receipt => { receipts.set(receipt.idempotencyKey, receipt) },
-    persistDialogue: async () => {
-      persistenceCalls += 1
-      if (persistenceCalls === 1) throw new Error('buffer unavailable')
-    },
-  })
-
-  await assert.rejects(
-    executeInnerCuriosityForUser('test-user', OPTIONS, deps),
-    /buffer unavailable/,
-  )
-  assert.equal([...receipts.values()][0].status, 'prepared')
-
-  const resumed = await executeInnerCuriosityForUser('test-user', OPTIONS, deps)
-  assert.equal(resumed.status, 'generated')
-  if (resumed.status === 'generated') assert.equal(resumed.deduplicated, true)
-  const repeated = await executeInnerCuriosityForUser('test-user', OPTIONS, deps)
-  assert.equal(repeated.status, 'generated')
-  if (repeated.status === 'generated') assert.equal(repeated.deduplicated, true)
-  assert.equal(questionCalls, 1)
-  assert.equal(answerCalls, 1)
-  assert.equal(persistenceCalls, 2)
-})
-
-test('follow-on admission happens only after durable dialogue persistence and resumes from the prepared receipt', async () => {
-  const order: string[] = []
-  const receipts = new Map<string, InnerCuriosityReceipt>()
-  let followOnCalls = 0
-  const deps = dependencies({
-    loadReceipt: (_username, key) => receipts.get(key) || null,
-    saveReceipt: receipt => { receipts.set(receipt.idempotencyKey, receipt) },
-    persistDialogue: async () => { order.push('persist') },
-    triggerFollowOn: async () => {
-      order.push('follow-on')
-      followOnCalls += 1
-      if (followOnCalls === 1) throw new Error('coordinator unavailable')
-    },
-  })
-
-  await assert.rejects(
-    executeInnerCuriosityForUser('test-user', OPTIONS, deps),
-    /coordinator unavailable/,
-  )
-  assert.deepEqual(order, ['persist', 'follow-on'])
-  assert.equal([...receipts.values()][0].status, 'prepared')
-
-  const resumed = await executeInnerCuriosityForUser('test-user', OPTIONS, deps)
-  assert.equal(resumed.status, 'generated')
-  assert.deepEqual(order, ['persist', 'follow-on', 'persist', 'follow-on'])
-})
-
-test('cancellation, unsupported options, and unresolved identity fail explicitly', async () => {
+test('identity, cancellation, and private CLI arguments are validated before cognition', async () => {
   const controller = new AbortController()
   controller.abort(new Error('cancelled by test'))
   await assert.rejects(
-    executeInnerCuriosityForUser('test-user', { ...OPTIONS, signal: controller.signal }, dependencies()),
+    executeInnerCuriosityForUser('test-user', { signal: controller.signal }, dependencies(generatedState())),
     /cancelled by test/,
   )
 
-  const inFlightController = new AbortController()
-  let persistenceCalls = 0
   await assert.rejects(
-    executeInnerCuriosityForUser('test-user', {
-      ...OPTIONS,
-      signal: inFlightController.signal,
-    }, dependencies({
-      generateQuestion: async () => {
-        inFlightController.abort(new Error('cancelled after model response'))
-        return 'What pattern should I understand?'
-      },
-      persistDialogue: async () => { persistenceCalls += 1 },
-    })),
-    /cancelled after model response/,
+    executeInnerCuriosityForUser('test-user', { executionTimestamp: 'not-a-date' }, dependencies(generatedState())),
+    /must be a valid date/,
   )
-  assert.equal(persistenceCalls, 0)
-
-  assert.throws(() => parseInnerCuriosityArgs(['--single-user'], {}), /Unknown inner-curiosity option/)
+  await assert.rejects(runInnerCuriosity({}), /requires a resolved username/)
+  assert.throws(() => parseInnerCuriosityArgs(['--legacy']), /Unknown inner-curiosity option/)
   assert.deepEqual(parseInnerCuriosityArgs([], {
     MH_TRIGGER_USERNAME: 'test-user',
-    MH_TASK_ID: 'task-1',
+    MH_TASK_ID: 'task-stable',
     MH_TASK_CREATED_AT: NOW,
   }), {
     username: 'test-user',
-    executionId: 'task-1',
+    executionId: 'task-stable',
     executionTimestamp: NOW,
   })
-  await assert.rejects(
-    runInnerCuriosity({ username: 'definitely-missing-inner-curiosity-user' }),
-    /No authenticated user found/,
-  )
 })

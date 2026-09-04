@@ -185,6 +185,19 @@ try {
     username: 'greggles',
     userMessageCount: 10,
   }), [], 'replaying the same persisted message count must not duplicate Mood work');
+  assert.ok(queue.claim(moodTasks[0], 'trigger-manager-spec'));
+  queue.complete(moodTasks[0], true, {});
+  const secondProfileMoodTasks = manager.triggerEvent('conversation.user-message.appended', {
+    username: 'second-profile',
+    userMessageCount: 10,
+  });
+  assert.equal(secondProfileMoodTasks.length, 1, 'Mood counts must be admitted independently per profile');
+  assert.ok(queue.claim(secondProfileMoodTasks[0], 'trigger-manager-spec'));
+  queue.complete(secondProfileMoodTasks[0], true, {});
+  assert.deepEqual(manager.triggerEvent('conversation.user-message.appended', {
+    username: 'greggles',
+    userMessageCount: 10,
+  }), [], 'a completed count must remain deduplicated after another profile is admitted');
 
   manager.setAutonomyMode('full');
   assert.equal(manager.getSnapshot().autonomyMode, 'full');
@@ -214,12 +227,17 @@ try {
 
   manager.setAutonomyMode('semi');
   const idleTasks = manager.evaluateActivityTriggers(Date.now() + 61_000);
-  assert.equal(idleTasks.length, 1, 'Mood should admit one baseline reset after its idle cooldown');
-  const idleTask = queue.getTask(idleTasks[0]);
-  assert.equal(idleTask?.metadata?.triggerId, 'mood');
-  assert.equal(idleTask?.username, 'greggles');
-  assert.deepEqual(idleTask?.input.args, ['--baseline']);
-  assert.equal(idleTask?.input.triggerData.idleReset, true);
+  assert.equal(idleTasks.length, 2, 'Mood should admit one baseline reset per idle profile');
+  const idleMoodTasks = idleTasks.map(taskId => queue.getTask(taskId));
+  assert.deepEqual(
+    idleMoodTasks.map(task => task?.username).sort(),
+    ['greggles', 'second-profile'],
+  );
+  for (const idleTask of idleMoodTasks) {
+    assert.equal(idleTask?.metadata?.triggerId, 'mood');
+    assert.deepEqual(idleTask?.input.args, ['--baseline']);
+    assert.equal(idleTask?.input.triggerData.idleReset, true);
+  }
   assert.deepEqual(manager.evaluateActivityTriggers(Date.now() + 62_000), [], 'an idle period must not enqueue repeated baseline resets');
 
   const typeChanged = service.update({
@@ -275,6 +293,21 @@ try {
   assert.equal(manager.triggerManual('broken', 'owner'), null);
   assert.equal(manager.getSnapshot().triggers.find(trigger => trigger.id === 'broken')?.lastSuppressionReason, 'invalid-handler');
   manager.dispose();
+
+  const freshEventQueue = new UnifiedQueueManager();
+  const freshEventManager = new TriggerManager(freshEventQueue, {
+    ...config,
+    agents: { mood: config.agents.mood },
+  });
+  freshEventManager.start();
+  freshEventManager.setAutonomyMode('semi');
+  assert.deepEqual(
+    freshEventManager.evaluateActivityTriggers(Date.now() + 61_000),
+    [],
+    'an event trigger must not fabricate an idle-reset period before its first event',
+  );
+  assert.equal(freshEventManager.getSnapshot().triggers[0]?.nextRun, undefined);
+  freshEventManager.dispose();
 
   const probabilityConfig = (jitterMs: number): TriggerManagerConfig => ({
     version: '1.0.0',

@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { setAuditEnabled, type GraphExecutionState, type SvelteFlowGraph } from '@metahuman/core'
+import {
+  DEFAULT_GRAPH_SCHEDULER,
+  setAuditEnabled,
+  type GraphExecutionState,
+  type SvelteFlowGraph,
+} from '@metahuman/core'
 import {
   evaluateTrainOfThoughtGraph,
   parseTrainOfThoughtArgs,
@@ -17,6 +22,7 @@ const graph: SvelteFlowGraph = {
   format: 'svelte-flow',
   name: 'test train',
   cognitiveMode: 'agent',
+  scheduler: { ...DEFAULT_GRAPH_SCHEDULER },
   nodes: [
     { id: 'aggregate', type: 'cognitiveNode', position: { x: 0, y: 0 }, data: { label: 'aggregate', nodeType: 'thought_aggregator', properties: {} } },
     { id: 'persist', type: 'outputNode', position: { x: 1, y: 0 }, data: { label: 'persist', nodeType: 'inner_dialogue_buffer', properties: {} } },

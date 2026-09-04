@@ -37,7 +37,6 @@ import {
 import { submitRobotBridgeRecord } from '../../buffer-admission.js';
 import { getCurrentlyActiveUser } from '../../sessions.js';
 import { beginTTSUserTurn, getTTSQueueState } from '../../tts/delivery-queue.js';
-import { readRobotObserverCycle } from '../../robot-operator.js';
 
 const STREAM_HEARTBEAT_MS = 15_000;
 const BRIDGE_TOKEN_ENV = 'MH_ENVIRONMENT_BRIDGE_TOKEN';
@@ -99,8 +98,7 @@ export function environmentObservationNeedsCognition(
   const hasVisual = Boolean(observation.visual) || Boolean(observation.visuals?.length);
   const hasFeedback = Boolean(observation.feedback?.length);
   const hasPerceptionMetadata = Boolean(
-    observation.metadata?.robotObserver
-    || observation.metadata?.perceptionEvent,
+    observation.metadata?.perceptionEvent,
   );
   if (hasText || hasVisual || hasFeedback || hasPerceptionMetadata) {
     return true;

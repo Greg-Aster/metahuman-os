@@ -12,8 +12,8 @@ import { createRobotBufferMessage, RobotBufferNode } from './nodes/output/robot-
 const graph = JSON.parse(
   fs.readFileSync(path.join(ROOT, 'etc/cognitive-graphs/environment-mode.json'), 'utf8'),
 ) as {
-  nodes: Array<{ id: string; data?: { nodeType?: string; properties?: Record<string, unknown> } }>;
-  edges: Array<{ source: string; target: string; sourceHandle?: string; targetHandle?: string }>;
+  nodes: Array<{ id: string; data?: { nodeType?: string; properties?: Record<string, unknown>; activation?: { when?: Array<{ nodeId: string; output: string; truthy?: boolean }> } } }>;
+  edges: Array<{ source: string; target: string; sourceHandle?: string; targetHandle?: string; data?: { when?: { output: string; truthy?: boolean; notEquals?: unknown }; kind?: string } }>;
 };
 const conversationBufferSource = fs.readFileSync(
   path.join(ROOT, 'packages/core/src/nodes/output/conversation-buffer.node.ts'),
@@ -56,6 +56,7 @@ const hasEdge = (source: string, sourceHandle: string, target: string, targetHan
 
 const historyId = nodeId('conversation_history');
 const userInputId = nodeId('user_input');
+const orchestratorId = nodeId('orchestrator_llm');
 const bridgeInputId = nodeId('environment_bridge_input');
 const memoryRouterId = nodeId('memory_router');
 const contextId = nodeId('environment_context_builder');
@@ -68,40 +69,34 @@ const bufferId = nodeId('conversation_buffer');
 const captureId = nodeId('memory_capture');
 const streamId = nodeId('stream_writer');
 const ttsId = nodeId('tts');
-const taskStateNodes = graph.nodes.filter(node => node.data?.nodeType === 'environment_task_state');
-assert.equal(taskStateNodes.length, 2);
-const prepareId = taskStateNodes.find(node => node.data?.properties?.phase === 'prepare')?.id;
-const reducerId = taskStateNodes.find(node => node.data?.properties?.phase === 'reduce')?.id;
-assert.ok(prepareId);
-assert.ok(reducerId);
+const robotStatusId = nodeId('robot_status');
+const robotStatusOutId = nodeId('robot_status_out');
 
 assert.ok(hasEdge(historyId, 'history', contextId, 'conversationHistory'));
-assert.ok(hasEdge(prepareId, 'memoryHints', memoryRouterId, 'orchestratorHints'));
+assert.ok(hasEdge(userInputId, 'message', orchestratorId, 'message'));
+assert.ok(hasEdge(historyId, 'history', orchestratorId, 'conversationHistory'));
+assert.ok(hasEdge(orchestratorId, 'analysis', contextId, 'routingAnalysis'));
+assert.equal(
+  graph.nodes.find(node => node.id === orchestratorId)?.data?.properties?.outputContract,
+  'environment',
+);
+assert.ok(hasEdge(userInputId, 'message', memoryRouterId, 'userMessage'));
+assert.ok(hasEdge(orchestratorId, 'analysis', memoryRouterId, 'orchestratorHints'));
 assert.ok(hasEdge(memoryRouterId, 'memories', contextId, 'memories'));
 assert.ok(hasEdge(personaLoaderId, 'persona', personaFormatterId, 'persona'));
 assert.ok(hasEdge(personaFormatterId, 'formatted', contextId, 'personaText'));
-assert.ok(hasEdge(prepareId, 'routingAnalysis', contextId, 'routingAnalysis'));
-assert.ok(hasEdge(prepareId, 'routingAnalysis', actionParserId, 'routingAnalysis'));
-assert.ok(hasEdge(bridgeId, 'conversationResponse', bufferId, 'response'));
+assert.ok(hasEdge(actionParserId, 'response', bufferId, 'response'));
 assert.equal(
   graph.nodes.some(node => node.data?.nodeType === 'instruction_resolver'),
   false,
   'Interactive Environment Mode must not retain the autonomous instruction adapter',
 );
-assert.ok(hasEdge(bridgeInputId, 'observation', prepareId, 'observation'));
-assert.ok(hasEdge(userInputId, 'message', prepareId, 'instruction'));
-assert.ok(hasEdge(userInputId, 'message', prepareId, 'userInstruction'));
-assert.ok(hasEdge(userInputId, 'instructionSource', prepareId, 'inputSource'));
+assert.ok(hasEdge(robotStatusId, 'context', contextId, 'robotStatus'));
+assert.ok(hasEdge(userInputId, 'message', contextId, 'instruction'));
 assert.ok(hasEdge(userInputId, 'message', contextId, 'userInstruction'));
-assert.ok(hasEdge(userInputId, 'instructionSource', contextId, 'inputSource'));
-assert.ok(hasEdge(userInputId, 'message', actionParserId, 'userInstruction'));
-assert.ok(hasEdge(userInputId, 'instructionSource', actionParserId, 'inputSource'));
-assert.ok(hasEdge(userInputId, 'message', reducerId, 'userInstruction'));
-assert.ok(hasEdge(userInputId, 'instructionSource', reducerId, 'inputSource'));
-assert.ok(hasEdge(userInputId, 'message', bridgeId, 'userInstruction'));
-assert.ok(hasEdge(userInputId, 'instructionSource', bridgeId, 'inputSource'));
 assert.ok(hasEdge(userInputId, 'message', bufferId, 'userMessage'));
 assert.ok(hasEdge(bridgeInputId, 'observation', contextId, 'observation'));
+assert.ok(hasEdge(bridgeInputId, 'isTriggeringObservation', contextId, 'observationCurrent'));
 assert.equal(
   graph.nodes.some(node => [
     'environment_observation',
@@ -116,12 +111,27 @@ assert.doesNotMatch(
   /environmentTaskInstruction|environmentActionSource/,
   'The queue owner must not inject hidden instruction or provenance channels around graph edges',
 );
-assert.ok(hasEdge(actionParserId, 'actions', reducerId, 'actions'));
-assert.equal(hasEdge(reducerId, 'decision', bufferId, 'taskLifecycle'), false);
+assert.ok(hasEdge(actionParserId, 'actions', bridgeId, 'actions'));
+assert.ok(hasEdge(bridgeId, 'bridgeRecord', robotStatusOutId, 'bridgeRecord'));
+assert.ok(hasEdge(actionParserId, 'taskDecision', robotStatusOutId, 'taskDecision'));
+assert.equal(
+  graph.nodes.some(node => [
+    'environment_task_input',
+    'environment_task_preparation',
+    'environment_task_reducer',
+  ].includes(node.data?.nodeType || '')),
+  false,
+  'Robot Status is the sole durable Environment task owner',
+);
 assert.ok(hasEdge(bufferId, 'entries', captureId, 'entries'));
 assert.ok(hasEdge(bufferId, 'response', streamId, 'response'));
 assert.ok(hasEdge(bufferId, 'response', ttsId, 'conversation'));
 assert.ok(hasEdge(bridgeId, 'bridgeRecord', robotBufferId, 'bridgeRecord'));
+assert.equal(
+  graph.nodes.some(node => ['environment_action_context_input', 'environment_feedback'].includes(node.data?.nodeType || '')),
+  false,
+  'Interactive Environment Mode must leave action-result correlation to Robot Action Result',
+);
 assert.equal(
   graph.nodes.some(node => node.data?.nodeType === 'response_synthesizer'),
   false,
@@ -183,18 +193,21 @@ const context = await environmentContextBuilderNode.execute({
     capabilities: { actions: ['robotCommand'], robotCommands: ['wave'] },
   },
   instruction: 'What is my name?',
+  userInstruction: 'What is my name?',
+  routingAnalysis: {
+    needsResponse: true,
+    needsConversationHistory: true,
+    needsMemory: true,
+    needsRobotStatus: false,
+    needsEnvironment: true,
+    needsVision: false,
+    needsAction: false,
+  },
   conversationHistory: [
     { role: 'user', content: 'My name is Greg.' },
     { role: 'assistant', content: 'Nice to meet you, Greg.' },
   ],
   memories: [{ content: 'User: My name is Greg.\n\nAssistant: Nice to meet you, Greg.' }],
-  routingAnalysis: {
-    needsMemory: true,
-    needsEnvironment: false,
-    needsVision: false,
-    needsAction: false,
-    isFollowUp: false,
-  },
 }, {}, {});
 
 assert.equal(context.messages.length, 2);
@@ -209,13 +222,13 @@ assert.deepEqual(memorySelectorEnvelope.currentEnvironment.capabilities.actions,
 assert.deepEqual(memorySelectorEnvelope.currentEnvironment.capabilities.robotCommands, ['wave']);
 assert.match(memorySelectorEnvelope.memories[0] ?? '', /My name is Greg/);
 assert.equal(
-  `${String(context.messages[0]?.content)}\n${String(context.messages[1]?.content)}`.match(/My name is Greg/g)?.length,
+  JSON.stringify(memorySelectorEnvelope.memories).match(/My name is Greg/g)?.length,
   1,
-  'Each selected memory enters the selector context exactly once',
+  'Each selected memory enters the memory section exactly once',
 );
 assert.deepEqual(context.context.contextSelection, {
-  recentHistory: false,
-  recentHistoryCount: 0,
+  recentHistory: true,
+  recentHistoryCount: 2,
   semanticMemory: true,
 });
 
@@ -236,15 +249,18 @@ const selfContainedContext = await environmentContextBuilderNode.execute({
     capabilities: { actions: [], robotCommands: [] },
   },
   instruction: 'Hello, how are you?',
-  conversationHistory: [...unifiedInnerDialogue, ...fullConversationWindow],
-  memories: [{ content: 'A stale movement request from an earlier turn.' }],
+  userInstruction: 'Hello, how are you?',
   routingAnalysis: {
+    needsResponse: true,
+    needsConversationHistory: false,
     needsMemory: false,
+    needsRobotStatus: false,
     needsEnvironment: false,
     needsVision: false,
     needsAction: false,
-    isFollowUp: false,
   },
+  conversationHistory: [...unifiedInnerDialogue, ...fullConversationWindow],
+  memories: [{ content: 'A stale movement request from an earlier turn.' }],
 }, {}, {});
 
 const selfContainedMessages = selfContainedContext.messages as Array<{ role: string; content: string }>;
@@ -256,18 +272,13 @@ assert.equal(
 assert.equal(
   selfContainedMessages.some(message => message.content.includes('stale movement request')),
   false,
-  'Unrequested semantic memory must not enter the prompt',
+  'Unselected memory output must not enter the selector context',
 );
-assert.match(
-  String(selfContainedMessages.at(-1)?.content),
-  /"capabilities":\{"actions":\[\],"robotCommands":\[\]/,
-  'The action selector receives the advertised capability contract in its bounded envelope',
-);
+assert.equal(JSON.parse(String(selfContainedMessages.at(-1)?.content)).currentEnvironment, null);
 assert.deepEqual(selfContainedContext.context.contextAdmission, {
-  typed: true,
-  environment: true,
+  environment: false,
   vision: false,
-  actionContracts: true,
+  actionContracts: false,
   selector: true,
 });
 
@@ -281,18 +292,21 @@ const followUpContext = await environmentContextBuilderNode.execute({
     capabilities: { actions: [], robotCommands: [] },
   },
   instruction: followUpInstruction,
+  userInstruction: followUpInstruction,
+  routingAnalysis: {
+    needsResponse: true,
+    needsConversationHistory: true,
+    needsMemory: false,
+    needsRobotStatus: false,
+    needsEnvironment: false,
+    needsVision: false,
+    needsAction: false,
+  },
   conversationHistory: [
     ...unifiedInnerDialogue,
     ...fullConversationWindow,
     { role: 'user', content: followUpInstruction },
   ],
-  routingAnalysis: {
-    needsMemory: false,
-    needsEnvironment: false,
-    needsVision: false,
-    needsAction: false,
-    isFollowUp: true,
-  },
 }, {}, { recentHistoryLimit: 4 });
 
 const followUpMessages = followUpContext.messages as Array<{ role: string; content: string }>;
@@ -328,22 +342,24 @@ const currentStateContext = await environmentContextBuilderNode.execute({
     state: { batteryPercent: 72 },
   },
   instruction: 'What is the current battery level?',
+  userInstruction: 'What is the current battery level?',
   routingAnalysis: {
+    needsResponse: true,
+    needsConversationHistory: false,
     needsMemory: false,
+    needsRobotStatus: false,
     needsEnvironment: true,
     needsVision: false,
     needsAction: false,
-    isFollowUp: false,
   },
 }, {}, { systemPrompt: 'EXECUTION GROUNDING CONTRACT' });
 
 assert.match(String(currentStateContext.message), /batteryPercent/);
 assert.match(String(currentStateContext.messages[0]?.content), /EXECUTION GROUNDING CONTRACT/);
 assert.deepEqual(currentStateContext.context.contextAdmission, {
-  typed: true,
   environment: true,
   vision: false,
-  actionContracts: true,
+  actionContracts: false,
   selector: true,
 });
 

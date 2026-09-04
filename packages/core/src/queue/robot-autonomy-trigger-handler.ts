@@ -5,7 +5,6 @@ import { withUserContext } from '../context.js'
 import {
   getEnvironmentActionSubscriberCount,
   summarizeEnvironmentBridgeState,
-  type EnvironmentObservation,
 } from '../environment-interface/index.js'
 import {
   isRobotOperatorChildEnabled,
@@ -31,6 +30,9 @@ function requestedSessionId(task: QueuedTask, configuredSessionId?: string): str
 function stimulusAgent(task: QueuedTask): RobotOperatorStimulusAgent {
   if (task.handler === 'workflow.robot-status' || task.input.agentId === 'robot-status') {
     return 'robot-status'
+  }
+  if (task.handler === 'workflow.robot-goal-review' || task.input.agentId === 'robot-goal-review') {
+    return 'robot-goal-review'
   }
   if (task.handler === 'workflow.boredom-reflection' || task.input.agentId === 'boredom-reflection') {
     return 'boredom-reflection'
@@ -82,31 +84,6 @@ async function executeRobotStatusGraph(
 
 function anotherRobotAutonomyCycleIsActive(currentTaskId: string): boolean {
   return hasActiveRobotAutonomyCycle(getQueueManager().getAllTasks(), currentTaskId)
-}
-
-export function buildRobotAutonomyStimulus(
-  latest: EnvironmentObservation,
-  cycle: RobotObserverCycleMetadata,
-  agentId: RobotOperatorStimulusAgent,
-): EnvironmentObservation {
-  return {
-    environmentId: latest.environmentId,
-    adapter: latest.adapter,
-    sessionId: latest.sessionId,
-    timestamp: new Date().toISOString(),
-    capabilities: latest.capabilities,
-    state: latest.state,
-    location: latest.location,
-    map: latest.map,
-    feedback: [],
-    metadata: {
-      robotObserver: cycle,
-      correlationId: cycle.cycleId,
-      autonomousStimulus: agentId,
-      currentVisualEvidence: false,
-      sourceObservationAt: latest.timestamp,
-    },
-  }
 }
 
 export async function executeRobotAutonomyTriggerWork(
@@ -182,14 +159,23 @@ export async function executeRobotAutonomyTriggerWork(
     requestedBy: agentId,
   }
 
-  const observation = buildRobotAutonomyStimulus(session.latestObservation, cycle, agentId)
+  const observation = session.latestObservation
   const cognitionTask = context.enqueue({
     type: 'environment_observation',
     handler: 'environment.observation',
     resource: 'local-llm',
     source: cycle.triggerSource,
     priority: manual ? 'high' : 'background',
-    input: { observation, graph: cycle.graph },
+    input: {
+      observation,
+      graph: cycle.graph,
+      robotOperatorContext: {
+        robotObserver: cycle,
+        stimulusAgent: agentId,
+        sourceObservationAt: observation.timestamp,
+        currentVisualEvidence: false,
+      },
+    },
     username: task.username,
     cognitiveMode: 'environment',
     parentTaskId: task.id,

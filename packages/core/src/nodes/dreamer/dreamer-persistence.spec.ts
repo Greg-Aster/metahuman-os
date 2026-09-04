@@ -192,3 +192,89 @@ test('coordinator retry identity replays the first durable daydream exactly', as
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('coordinator retry identity replays the complete durable dream sequence exactly', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-dreamer-retry-'))
+  const username = `dreamer-retry-${Date.now()}`
+  const originalRunPath = systemPaths.run
+  const originalFetch = globalThis.fetch
+  registerProfileStorageConfigGetter(candidate => candidate === username
+    ? { path: root, type: 'internal' }
+    : undefined)
+  systemPaths.run = path.join(root, 'run')
+  fs.mkdirSync(path.join(root, 'etc'), { recursive: true })
+  fs.copyFileSync(
+    path.join(systemPaths.root, 'etc', 'chat-settings.json'),
+    path.join(root, 'etc', 'chat-settings.json'),
+  )
+  setAuditEnabled(false)
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ task: { id: 'dreamer-retry-index-test' } }),
+  }) as Response
+
+  const context = {
+    userId: username,
+    username,
+    allowMemoryWrites: true,
+    idempotencyKey: `dreamer:${username}:task-stable`,
+    memoryTimestamp: '2026-09-02T12:34:56.000Z',
+  }
+
+  try {
+    await withUserContext({ userId: username, username, role: 'owner' }, async () => {
+      const first = await DreamerDreamSaverNode.execute!({
+        dreamData: 'The first durable dream crosses a silver bridge.',
+        thinkingData: 'The bridge suggests transition.',
+        continuationsData: [
+          { dream: 'The bridge becomes a paper bird.', thinking: 'The image becomes lighter.', index: 1 },
+          { dream: 'The bird folds the moon into its wings.', index: 2 },
+        ],
+        sourceIds: ['source-first'],
+      }, context, { type: 'dream' })
+      const retry = await DreamerDreamSaverNode.execute!({
+        dreamData: 'Regenerated initial text must not replace the first dream.',
+        thinkingData: 'Regenerated reasoning must not replace admitted reasoning.',
+        continuationsData: [
+          { dream: 'Regenerated continuation one.', thinking: 'Regenerated continuation reasoning.', index: 1 },
+          { dream: 'Regenerated continuation two.', index: 2 },
+        ],
+        sourceIds: ['source-retry'],
+      }, context, { type: 'dream' })
+
+      assert.equal(first.savedCount, 3)
+      assert.equal(retry.savedCount, 3)
+      assert.equal(retry.deduplicatedCount, 3)
+      assert.deepEqual(retry.eventIds, first.eventIds)
+      assert.deepEqual(retry.dreams, first.dreams)
+      assert.deepEqual(
+        retry.bufferEntries.filter((entry: any) => entry.role === 'dream').map((entry: any) => entry.content),
+        first.dreams,
+      )
+
+      const firstAdmission = await InnerDialogueBufferNode.execute!({
+        entries: first.bufferEntries,
+        passthrough: first.dream,
+      }, context, {})
+      const retryAdmission = await InnerDialogueBufferNode.execute!({
+        entries: retry.bufferEntries,
+        passthrough: retry.dream,
+      }, context, {})
+      assert.equal(firstAdmission.saved, true)
+      assert.equal(retryAdmission.saved, true)
+      assert.equal(retryAdmission.passthrough, first.dream)
+      assert.equal(loadBufferForUser(username, 'inner').messages.length, first.bufferEntries.length)
+
+      const dreams = jsonFiles(path.join(root, 'memory', 'episodic'))
+        .map(file => JSON.parse(fs.readFileSync(file, 'utf8')))
+        .filter(event => event.type === 'dream')
+      assert.equal(dreams.length, 3)
+      assert.equal(dreams.some(event => event.content.startsWith('Regenerated')), false)
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+    systemPaths.run = originalRunPath
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

@@ -13,14 +13,18 @@
  * Outputs:
  *   - verdict: 'approve' | 'reject' | 'revise'
  *   - review: DesireReview object
- *   - autoApprove: boolean (can skip approval queue)
+ *   - autoApprove: boolean (policy permits immediate manifest approval)
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire, DesirePlan, DesireReview } from '../../agency/types.js';
 import { generateReviewId } from '../../agency/types.js';
 import { canAutoApprove, isRiskBlocked } from '../../agency/config.js';
-import { loadDecisionRules } from '../../identity.js';
+import {
+  highestPlanStepRisk,
+  planRequiresManualApproval,
+  planRiskCoversEveryStep,
+} from '../../agency/plan-risk.js';
 
 interface AlignmentReviewInput {
   alignmentScore: number;
@@ -38,50 +42,57 @@ interface SafetyReviewInput {
 }
 
 const execute: NodeExecutor = async (inputs, context, _properties) => {
-  // Inputs come via slot positions from graph links:
-  // slot 0: {desire, found} from desire_loader
-  // slot 2: alignment review output from desire_alignment_reviewer
-  // slot 3: safety review output from desire_safety_reviewer
-  const slot0 = inputs[0] as { desire?: Desire; found?: boolean } | undefined;
-  const slot2 = inputs[2] as AlignmentReviewInput | undefined;
-  const slot3 = inputs[3] as SafetyReviewInput | undefined;
-
-  // Extract desire and plan (plan is embedded in desire)
-  const desire = slot0?.desire || (inputs.desire as Desire | undefined);
-  const plan = desire?.plan || (inputs.plan as DesirePlan | undefined);
-
-  // Get reviews from slots or named inputs
-  const alignmentReview = slot2 || (inputs.alignmentReview as AlignmentReviewInput | undefined);
-  const safetyReview = slot3 || (inputs.safetyReview as SafetyReviewInput | undefined);
-
-  const username = context.userId;
+  const desire = inputs.desire as Desire | undefined;
+  const plan = inputs.plan as DesirePlan | undefined;
+  const alignmentReview = inputs.alignmentReview as AlignmentReviewInput | undefined;
+  const safetyReview = inputs.safetyReview as SafetyReviewInput | undefined;
+  const trustLevel = typeof inputs.trustLevel === 'string' ? inputs.trustLevel.trim() : '';
+  const username = typeof context.username === 'string' ? context.username.trim() : '';
 
   if (!desire || !plan || !alignmentReview || !safetyReview) {
-    return {
-      verdict: 'reject',
-      review: null,
-      autoApprove: false,
-      reasoning: `Missing required inputs for verdict. Got desire: ${!!desire}, plan: ${!!plan}, alignmentReview: ${!!alignmentReview}, safetyReview: ${!!safetyReview}`,
-    };
+    throw new Error('Desire Verdict requires desire, plan, alignment review, and safety review');
+  }
+  if (!username) throw new Error('Desire Verdict requires an authenticated profile username');
+  if (!trustLevel) throw new Error('Desire Verdict requires the loaded policy trust level');
+  if (!Number.isFinite(alignmentReview.alignmentScore)
+    || !Array.isArray(alignmentReview.concerns)
+    || typeof alignmentReview.approved !== 'boolean'
+    || typeof alignmentReview.reasoning !== 'string'
+    || !Number.isFinite(safetyReview.safetyScore)
+    || !Array.isArray(safetyReview.risks)
+    || !Array.isArray(safetyReview.mitigations)
+    || typeof safetyReview.approved !== 'boolean'
+    || typeof safetyReview.reasoning !== 'string') {
+    throw new Error('Desire Verdict received malformed review inputs');
+  }
+  if (!planRiskCoversEveryStep(plan)) {
+    throw new Error(
+      `Desire Verdict rejected understated plan risk '${plan.estimatedRisk}'; highest step risk is '${highestPlanStepRisk(plan)}'`,
+    );
   }
 
   // Check if risk is blocked entirely
   const blocked = await isRiskBlocked(plan.estimatedRisk, username);
   if (blocked) {
     const review: DesireReview = {
-      id: generateReviewId(desire.id),
+      id: generateReviewId(desire.id, plan.version),
       verdict: 'reject',
       reasoning: `Risk level "${plan.estimatedRisk}" is blocked by policy`,
       concerns: ['Risk level exceeds policy limits'],
       riskAssessment: `Blocked: ${plan.estimatedRisk}`,
       alignmentScore: alignmentReview.alignmentScore,
       reviewedAt: new Date().toISOString(),
+      planId: plan.id,
+      planVersion: plan.version,
+      autoApprove: false,
+      autoApproveReason: `Risk level "${plan.estimatedRisk}" is blocked by policy`,
     };
 
     return {
       verdict: 'reject',
       review,
       autoApprove: false,
+      autoApproveReason: review.autoApproveReason,
       reasoning: review.reasoning,
     };
   }
@@ -121,7 +132,7 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
 
   // Build review object
   const review: DesireReview = {
-    id: generateReviewId(desire.id),
+    id: generateReviewId(desire.id, plan.version),
     verdict,
     reasoning,
     concerns: allConcerns.length > 0 ? allConcerns : undefined,
@@ -129,30 +140,35 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
     riskAssessment: `Estimated: ${plan.estimatedRisk}, Safety Score: ${safetyReview.safetyScore.toFixed(2)}`,
     alignmentScore: alignmentReview.alignmentScore,
     reviewedAt: new Date().toISOString(),
+    planId: plan.id,
+    planVersion: plan.version,
+    autoApprove: false,
+    autoApproveReason: verdict === 'approve'
+      ? 'Manual approval is required until the active policy check completes'
+      : `Review verdict '${verdict}' cannot be auto-approved`,
   };
 
   // Check if can auto-approve
   let autoApprove = false;
-  let autoApproveReason = '';
+  let autoApproveReason = review.autoApproveReason || 'Manual approval required';
 
   if (verdict === 'approve') {
-    // Get user's CURRENT trust level from persona (not desire's required level)
-    let currentTrustLevel = 'supervised_auto'; // default fallback
-    try {
-      const rules = loadDecisionRules();
-      currentTrustLevel = rules.trustLevel;
-    } catch (err) {
-      console.warn('[desire-verdict] Could not load decision rules, using default trust level');
+    if (planRequiresManualApproval(plan)) {
+      autoApproveReason = 'One or more plan steps require explicit user approval';
+    } else {
+      // Use the trust value from the same policy-loader snapshot reviewed above.
+      const result = await canAutoApprove(plan.estimatedRisk, desire.strength, trustLevel, username, desire);
+      autoApprove = result.autoApprove;
+      autoApproveReason = result.reason;
+      const degradationInfo = result.trustDegradation
+        ? ` [trust degraded: ${result.trustDegradation.reduction} level(s)]`
+        : '';
+      console.log(`[desire-verdict] Auto-approve check: trust=${trustLevel}, risk=${plan.estimatedRisk}, strength=${desire.strength.toFixed(2)}${degradationInfo} → ${autoApprove ? 'AUTO' : 'MANUAL'}: ${autoApproveReason}`);
     }
-    // Pass desire for maturity-based trust degradation calculation
-    const result = await canAutoApprove(plan.estimatedRisk, desire.strength, currentTrustLevel, username, desire);
-    autoApprove = result.autoApprove;
-    autoApproveReason = result.reason;
-    const degradationInfo = result.trustDegradation
-      ? ` [trust degraded: ${result.trustDegradation.reduction} level(s)]`
-      : '';
-    console.log(`[desire-verdict] Auto-approve check: trust=${currentTrustLevel}, risk=${plan.estimatedRisk}, strength=${desire.strength.toFixed(2)}${degradationInfo} → ${autoApprove ? 'AUTO' : 'MANUAL'}: ${autoApproveReason}`);
   }
+
+  review.autoApprove = autoApprove;
+  review.autoApproveReason = autoApproveReason;
 
   return {
     verdict,
@@ -173,11 +189,12 @@ export const DesireVerdictNode: NodeDefinition = defineNode({
     { name: 'plan', type: 'object', description: 'Plan being reviewed' },
     { name: 'alignmentReview', type: 'object', description: 'Output from alignment reviewer' },
     { name: 'safetyReview', type: 'object', description: 'Output from safety reviewer' },
+    { name: 'trustLevel', type: 'string', description: 'Trust level from the same loaded policy snapshot' },
   ],
   outputs: [
     { name: 'verdict', type: 'string', description: 'approve, reject, or revise' },
     { name: 'review', type: 'object', description: 'Complete DesireReview object' },
-    { name: 'autoApprove', type: 'boolean', description: 'Whether to skip approval queue' },
+    { name: 'autoApprove', type: 'boolean', description: 'Whether policy permits immediate manifest approval' },
     { name: 'autoApproveReason', type: 'string', optional: true, description: 'Reason for auto-approve decision' },
     { name: 'reasoning', type: 'string', description: 'Explanation of verdict' },
   ],

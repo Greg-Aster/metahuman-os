@@ -1,0 +1,65 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
+  "name": "Psychoanalyzer",
+  "description": "Reviews one canonical agent-selected evidence set and returns a validated persona learning proposal",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "input",
+      "type": "inputNode",
+      "position": { "x": 80, "y": 120 },
+      "data": {
+        "label": "Selected Evidence and Persona",
+        "nodeType": "psychoanalyzer_input",
+        "properties": {}
+      }
+    },
+    {
+      "id": "analysis",
+      "type": "agentNode",
+      "position": { "x": 460, "y": 120 },
+      "width": 360,
+      "height": 260,
+      "data": {
+        "label": "Evidence-Backed Persona Analysis",
+        "nodeType": "psychoanalyzer_analysis",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "input-memories-analysis-memories",
+      "source": "input",
+      "target": "analysis",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "data": {}
+    },
+    {
+      "id": "input-persona-analysis-persona",
+      "source": "input",
+      "target": "analysis",
+      "sourceHandle": "persona",
+      "targetHandle": "persona",
+      "data": {}
+    },
+    {
+      "id": "input-config-analysis-config",
+      "source": "input",
+      "target": "analysis",
+      "sourceHandle": "config",
+      "targetHandle": "config",
+      "data": {}
+    }
+  ]
+}

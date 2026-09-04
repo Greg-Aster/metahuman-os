@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import type { PropertySchema } from '@metahuman/core/nodes/types'
+  import { validatePropertyValue } from '@metahuman/core/nodes/types'
   import {
     CANVAS_TEXTAREA_MAX_HEIGHT,
     getCanvasTextareaHeight,
@@ -45,10 +46,23 @@
       ? Math.min(schema.rows ?? 5, 8)
       : (schema.rows ?? 5),
   )
+  const validationError = $derived(
+    overridden ? null : validatePropertyValue(currentValue, schema),
+  )
 
   let suggestions = $state<PropertySuggestion[]>([])
   let suggestionsLoading = $state(false)
   let suggestionsError = $state('')
+  let jsonDraft = $state('')
+  let jsonError = $state('')
+  let lastJsonValue = $state<unknown>(Symbol('uninitialized'))
+
+  $effect(() => {
+    if (schema.type !== 'json' || Object.is(value, lastJsonValue)) return
+    jsonDraft = stringifyJson(currentValue)
+    jsonError = ''
+    lastJsonValue = value
+  })
 
   async function refreshSuggestions(): Promise<void> {
     if (!schema.suggestions || suggestionsLoading) return
@@ -75,11 +89,18 @@
     return typeof option === 'string' ? option : option.label
   }
 
-  function parseJsonSafe(nextValue: string): unknown {
+  function updateJson(nextValue: string): void {
+    jsonDraft = nextValue
     try {
-      return JSON.parse(nextValue)
+      const parsed = JSON.parse(nextValue)
+      jsonError = ''
+      lastJsonValue = parsed
+      onValueChange(parsed)
     } catch {
-      return nextValue
+      jsonError = 'Enter valid JSON before saving or executing the graph.'
+      // Keep the invalid draft in graph authoring state so shared validation
+      // can block Save and Execute until the field becomes valid again.
+      onValueChange(nextValue)
     }
   }
 
@@ -180,7 +201,11 @@
   }
 </script>
 
-<div class="property-field" class:canvas-density={density === 'canvas'}>
+<div
+  class="property-field"
+  class:canvas-density={density === 'canvas'}
+  class:invalid-field={Boolean(jsonError || validationError)}
+>
   <div class="property-heading">
     <label for={controlId} title={schema.description}>{schema.label || propertyKey}</label>
     {#if overridden}
@@ -350,9 +375,10 @@
       id={controlId}
       class="property-input property-textarea property-json nodrag nopan nowheel"
       use:autoGrowTextarea={{ enabled: density === 'canvas', value: currentValue }}
-      value={stringifyJson(currentValue)}
+      value={jsonDraft}
       disabled={overridden}
-      oninput={(event) => onValueChange(parseJsonSafe((event.target as HTMLTextAreaElement).value))}
+      aria-invalid={Boolean(jsonError || validationError)}
+      oninput={(event) => updateJson((event.target as HTMLTextAreaElement).value)}
       rows={density === 'canvas' ? 6 : 3}
     ></textarea>
   {/if}
@@ -362,6 +388,9 @@
   {/if}
   {#if overridden}
     <p class="override-note">The connected {propertyKey} input is the effective runtime value.</p>
+  {/if}
+  {#if jsonError || validationError}
+    <p class="validation-error" role="alert">{jsonError || validationError}</p>
   {/if}
 </div>
 
@@ -391,6 +420,13 @@
   .property-input:focus {
     @apply border-blue-500 outline-none;
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  }
+  .invalid-field .property-input,
+  .invalid-field .property-multiselect {
+    @apply border-red-500;
+  }
+  .validation-error {
+    @apply mb-0 mt-1.5 text-[11px] leading-snug text-red-300;
   }
   .property-input:disabled,
   .suggestion-refresh:disabled,

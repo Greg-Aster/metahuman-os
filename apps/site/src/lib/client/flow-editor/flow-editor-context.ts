@@ -4,7 +4,8 @@ const FLOW_EDITOR_ACTIONS = Symbol('metahuman-flow-editor-actions')
 
 export interface FlowEditorActions {
   updateNodeProperty: (nodeId: string, propertyKey: string, value: unknown) => void
-  updateNodeWidth: (nodeId: string, width: number) => void
+  beginNodeResize: (nodeId: string) => void
+  updateNodeDimensions: (nodeId: string, width: number, height?: number) => void
   selectNode: (nodeId: string) => void
 }
 

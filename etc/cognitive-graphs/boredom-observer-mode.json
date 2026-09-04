@@ -1,10 +1,11 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Boredom Observer Mode",
-  "description": "Acquires one correlated camera frame, then uses it with persona, recent narrative, and verified action history to author an intention for Boredom Autonomy.",
+  "description": "Acquires one correlated camera frame, then uses it with persona, recent narrative, and verified action history to author an intention for Robot Autonomy Executor.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-09-02",
+  "last_modified": "2026-09-03",
   "nodes": [
     {
       "id": "observation",
@@ -14,7 +15,7 @@
         "label": "Current Robot Stimulus",
         "nodeType": "environment_bridge_input",
         "properties": {},
-        "comment": "Supplies the observation that triggered this observer cycle, including selected images and state. It does not capture a new image or control the robot."
+        "comment": "Makes the complete read-only Environment Bridge contract available. This workflow connects only the triggering observation, image, and state outputs; the input node does not capture an image or control the robot."
       }
     },
     {
@@ -22,11 +23,14 @@
       "type": "environmentNode",
       "position": { "x": 300, "y": 260 },
       "data": {
-        "label": "Fresh Correlated Image",
+        "label": "Select Camera Frames for Current Action",
         "nodeType": "environment_image_input",
-        "properties": {}
+        "properties": {},
+        "comment": "Selects the current valid camera frame for the observer."
       }
     },
+    { "id": "action-context", "type": "environmentNode", "position": { "x": 300, "y": 100 }, "data": { "label": "Verify Matched Sent Action", "nodeType": "environment_action_context_input", "properties": {}, "comment": "On the camera-result pass, verifies the robot-reported action ID against the trusted sent-action record Core already resolved." } },
+    { "id": "robot-operator-input", "type": "operatorNode", "position": { "x": 560, "y": 100 }, "data": { "label": "Robot Operator Input", "nodeType": "robot_operator_input", "properties": {} } },
     {
       "id": "planner-policy",
       "type": "inputNode",
@@ -144,7 +148,7 @@
       "type": "operatorNode",
       "position": { "x": 2110, "y": 190 },
       "data": {
-        "label": "Send Intention to Boredom Autonomy",
+        "label": "Send Intention to Robot Autonomy Executor",
         "nodeType": "robot_operator_environment_dispatch",
         "properties": { "graph": "boredom-autonomy" }
       }
@@ -199,6 +203,15 @@
     }
   ],
   "edges": [
+    { "id": "e-observation-action-context", "source": "observation", "target": "action-context", "sourceHandle": "actionId", "targetHandle": "actionId", "type": "default", "data": { "type": "string" } },
+    { "id": "e-action-context-robot-input", "source": "action-context", "target": "robot-operator-input", "sourceHandle": "robotObserver", "targetHandle": "actionRobotObserver", "type": "default", "data": { "type": "object" } },
+    { "id": "e-action-context-planner", "source": "action-context", "target": "planner-context", "sourceHandle": "actionContext", "targetHandle": "actionContext", "type": "default", "data": { "type": "object" } },
+    { "id": "e-robot-observer-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "robotObserver", "targetHandle": "robotObserver", "type": "default", "data": { "type": "object" } },
+    { "id": "e-robot-decision-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "plannerDecision", "targetHandle": "plannerDecision", "type": "default", "data": { "type": "object" } },
+    { "id": "e-robot-memories-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "memories", "targetHandle": "delegatedMemories", "type": "default", "data": { "type": "array" } },
+    { "id": "e-robot-observed-at-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "sourceObservationAt", "targetHandle": "sourceObservationAt", "type": "default", "data": { "type": "string" } },
+    { "id": "e-robot-visual-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "currentVisualEvidence", "targetHandle": "currentVisualEvidence", "type": "default", "data": { "type": "boolean" } },
+    { "id": "e-robot-observer-dispatch", "source": "robot-operator-input", "target": "environment-dispatch", "sourceHandle": "robotObserver", "targetHandle": "robotObserver", "type": "default", "data": { "type": "object" } },
     {
       "id": "e-observation-visual-image",
       "source": "observation",
@@ -216,6 +229,15 @@
       "targetHandle": "visuals",
       "type": "default",
       "data": { "type": "array" }
+    },
+    {
+      "id": "e-observation-current-image",
+      "source": "observation",
+      "target": "image-input",
+      "sourceHandle": "isTriggeringObservation",
+      "targetHandle": "observationCurrent",
+      "type": "default",
+      "data": { "type": "boolean" }
     },
     {
       "id": "e-policy-context",

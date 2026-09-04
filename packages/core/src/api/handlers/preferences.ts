@@ -49,6 +49,7 @@ export async function handleLearnPreferences(req: UnifiedRequest): Promise<Unifi
       daysBack: body?.daysBack ?? 14,
       minConfidence: body?.minConfidence ?? 0.5,
       categories: body?.categories,
+      username: req.user.username,
     };
 
     const result = await learnPreferences(options);
@@ -288,7 +289,7 @@ export async function handleModifyPreference(req: UnifiedRequest): Promise<Unifi
  */
 export async function handleFindContradictions(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    const contradictions = await findContradictions();
+    const contradictions = await findContradictions({ username: req.user.username });
 
     audit({
       category: 'action',

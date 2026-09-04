@@ -249,11 +249,9 @@
   let currentLoadingMessage = '';
   let loadingMessageInterval: ReturnType<typeof setInterval> | null = null;
 
-  // Streaming LLM output state
+  // Coordinator workflow progress state
   let streamingPhase = '';
   let streamingOutput = '';
-  let streamingModel = '';
-  let streamingLatency = 0;
   let streamingSteps = 0;
   let streamEventSource: EventSource | null = null;
 
@@ -349,8 +347,6 @@
     // Reset streaming state
     streamingPhase = '';
     streamingOutput = '';
-    streamingModel = '';
-    streamingLatency = 0;
     streamingSteps = 0;
   }
 
@@ -957,10 +953,7 @@
     }
   }
 
-  /**
-   * Generate a plan for a desire inline with SSE streaming
-   * Shows real-time LLM output as it generates
-   */
+  /** Generate a plan through the coordinator-owned Desire Planner agent. */
   async function handleGeneratePlan(id: string, critique?: string) {
     agentProcessingId = id;
     processingId = id;
@@ -969,12 +962,10 @@
     // Reset streaming state
     streamingPhase = 'Starting...';
     streamingOutput = '';
-    streamingModel = '';
-    streamingLatency = 0;
     streamingSteps = 0;
 
     try {
-      // Use apiFetch with POST to send critique, then read as EventSource-like stream
+      // Read coordinator progress from the transport-only SSE route.
       const response = await apiFetch(`/api/agency/desires/${id}/generate-plan-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1054,24 +1045,8 @@
       case 'desire_loaded':
         streamingPhase = `Loaded: "${data.title}"`;
         break;
-      case 'llm_started':
-        streamingPhase = 'LLM is thinking...';
-        streamingModel = data.model || '';
-        break;
-      case 'llm_complete':
-        streamingPhase = 'LLM response received';
-        streamingModel = data.model || data.modelId || '';
-        streamingLatency = data.latencyMs || data.durationMs || 0;
-        // Show raw LLM output (truncated for display)
-        if (data.rawOutput) {
-          streamingOutput = data.rawOutput.length > 2000
-            ? data.rawOutput.substring(0, 2000) + '...'
-            : data.rawOutput;
-        }
-        break;
-      case 'plan_parsed':
-        streamingPhase = 'Plan parsed successfully';
-        streamingSteps = data.stepCount || 0;
+      case 'queued':
+        streamingPhase = data.message || 'Planning queued...';
         break;
       case 'complete':
         streamingPhase = 'Complete!';
@@ -1083,32 +1058,6 @@
         streamingPhase = 'Error';
         error = data.error || 'Unknown error';
         break;
-    }
-  }
-
-  /**
-   * Run the review process inline (alignment + safety check)
-   * Shows cheeky loading messages while processing
-   */
-  async function handleReviewDesire(id: string) {
-    agentProcessingId = id;
-    processingId = id;
-    startLoadingMessages('reviewing');
-
-    try {
-      const res = await apiFetch(`/api/agency/desires/${id}/review`, {
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to review desire');
-      }
-      await loadAll(true, true);
-    } catch (e) {
-      error = (e as Error).message;
-    } finally {
-      stopLoadingMessages();
-      processingId = null;
     }
   }
 
@@ -2420,31 +2369,21 @@
                     </button>
                   {/if}
                   {#if desire.status === 'planning'}
-                    {#if desire.plan}
-                      <button
-                        class="btn-primary btn-xs"
-                        disabled={processingId === desire.id}
-                        on:click={() => handleAdvanceStage(desire.id, 'reviewing')}
-                      >
-                        → Review
-                      </button>
-                    {:else}
-                      <button
-                        class="px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                        style="background: linear-gradient(135deg, #6d28d9, #8b5cf6);"
-                        disabled={processingId === desire.id || agentProcessingId === desire.id}
-                        on:click={() => handleGeneratePlan(desire.id)}
-                      >
-                        {#if agentProcessingId === desire.id && agentOperation === 'planning'}
-                          <span class="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></span>
-                        {:else}
-                          🧠
-                        {/if}
-                        Generate Plan
-                      </button>
-                    {/if}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      style="background: linear-gradient(135deg, #6d28d9, #8b5cf6);"
+                      disabled={processingId === desire.id || agentProcessingId === desire.id}
+                      on:click={() => handleGeneratePlan(desire.id)}
+                    >
+                      {#if agentProcessingId === desire.id && agentOperation === 'planning'}
+                        <span class="inline-block w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin mr-1"></span>
+                      {:else}
+                        🧠
+                      {/if}
+                      {desire.plan ? 'Regenerate Plan' : 'Generate Plan'}
+                    </button>
                   {/if}
-                  {#if desire.status === 'reviewing' || desire.status === 'awaiting_approval'}
+                  {#if desire.status === 'awaiting_approval'}
                     <button
                       class="btn-success btn-xs"
                       disabled={processingId === desire.id}
@@ -2514,18 +2453,6 @@
                       {:else}
                         🔍 Run Outcome Review
                       {/if}
-                    </button>
-                  {/if}
-
-                  <!-- Quick approve (skip to approved) - for early stages only -->
-                  {#if ['nascent', 'pending', 'planning'].includes(desire.status)}
-                    <button
-                      class="btn-primary btn-xs"
-                      disabled={processingId === desire.id}
-                      on:click={() => handleApprove(desire.id)}
-                      title="Skip to approved status"
-                    >
-                      ⏩ Fast Approve
                     </button>
                   {/if}
 
@@ -2602,12 +2529,6 @@
         {#if streamingPhase}
           <div class="mt-4 p-3 bg-violet-600/20 rounded-lg text-left">
             <div class="text-base text-violet-300 font-medium">{streamingPhase}</div>
-            {#if streamingModel}
-              <div class="text-sm text-gray-400 mt-1 font-mono">Model: {streamingModel}</div>
-            {/if}
-            {#if streamingLatency > 0}
-              <div class="text-sm text-gray-400 mt-1 font-mono">Latency: {(streamingLatency / 1000).toFixed(1)}s</div>
-            {/if}
             {#if streamingSteps > 0}
               <div class="text-sm text-gray-400 mt-1 font-mono">Steps: {streamingSteps}</div>
             {/if}

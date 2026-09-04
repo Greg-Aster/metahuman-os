@@ -94,17 +94,14 @@ export async function buildDevelopmentRecords(
   return cases.flatMap(sourceCase => sourceCase.instructions.flatMap((instruction, instructionIndex) => (
     CONTEXT_VARIATIONS.map(contextVariation => {
       const { observation, recentConversation } = withVariation(sourceCase, contextVariation)
-      const queuedContinuation = sourceCase.taskState?.phase === 'awaiting_action'
-        || sourceCase.taskState?.phase === 'evaluating_evidence'
       return {
         system: buildEnvironmentSelectorSystemPrompt({
           systemPrompt: activePrompt,
-          queuedContinuation,
         }),
         user: buildEnvironmentSelectorEnvelope({
           instruction,
           observation,
-          taskState: sourceCase.taskState,
+          robotStatus: sourceCase.robotStatus,
           recentConversation,
           memories: sourceCase.memories,
         }),

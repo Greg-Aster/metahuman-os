@@ -6,6 +6,7 @@
  * persistence have both completed.
  */
 
+import { randomUUID } from 'node:crypto'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import {
@@ -28,6 +29,8 @@ export interface DreamerOptions {
   forceRun?: boolean
   config?: SleepConfig
   username?: string
+  executionId?: string
+  executionTimestamp?: string
   signal?: AbortSignal
 }
 
@@ -51,6 +54,8 @@ export interface DreamerGraphEvaluation extends UserDreamerStats {
   oldestAgeDays: number
 }
 
+const MAX_EXECUTION_ID_CHARS = 400
+
 function markBackgroundActivity(): void {
   try {
     recordSystemActivity()
@@ -61,6 +66,44 @@ function markBackgroundActivity(): void {
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException('Dreamer execution cancelled', 'AbortError')
+}
+
+function resolveExecutionIdentity(options: DreamerOptions): {
+  executionId: string
+  executionTimestamp: string
+} {
+  const executionId = (options.executionId || randomUUID()).trim()
+  if (!executionId) throw new Error('Dreamer executionId must not be empty')
+  if (executionId.length > MAX_EXECUTION_ID_CHARS) {
+    throw new Error(`Dreamer executionId must not exceed ${MAX_EXECUTION_ID_CHARS} characters`)
+  }
+
+  const timestampInput = options.executionTimestamp || new Date().toISOString()
+  if (Number.isNaN(Date.parse(timestampInput))) {
+    throw new Error('Dreamer executionTimestamp must be a valid date')
+  }
+  return {
+    executionId,
+    executionTimestamp: new Date(timestampInput).toISOString(),
+  }
+}
+
+export function buildDreamerGraphContext(
+  username: string,
+  maxDreams: number,
+  options: DreamerOptions = {},
+): Record<string, any> {
+  const identity = resolveExecutionIdentity(options)
+  return {
+    userId: username,
+    username,
+    allowMemoryWrites: true,
+    cognitiveMode: 'agent' as const,
+    maxDreams,
+    idempotencyKey: `dreamer:${username}:${identity.executionId}`,
+    memoryTimestamp: identity.executionTimestamp,
+    signal: options.signal,
+  }
 }
 
 function graphNodeOutputs(
@@ -193,16 +236,10 @@ export async function generateUserDreams(
     }
 
     const graph = await loadDreamerGraph()
+    const graphContext = buildDreamerGraphContext(username, config.maxDreamsPerNight, options)
     const graphResult = await runGraph({
       graph,
-      context: {
-        userId: username,
-        username,
-        allowMemoryWrites: true,
-        cognitiveMode: 'agent' as const,
-        maxDreams: config.maxDreamsPerNight,
-        signal: options.signal,
-      },
+      context: graphContext,
       signal: options.signal,
     })
     const evaluation = evaluateDreamerGraph(graph, graphResult, config.maxDreamsPerNight)
@@ -256,8 +293,17 @@ export async function generateUserDreams(
   }
 }
 
-export function parseDreamerArgs(args: string[]): Pick<DreamerOptions, 'forceRun'> {
-  const options: Pick<DreamerOptions, 'forceRun'> = {}
+export function parseDreamerArgs(
+  args: string[],
+  environment: NodeJS.ProcessEnv = process.env,
+): Pick<DreamerOptions, 'forceRun' | 'username' | 'executionId' | 'executionTimestamp'> {
+  const options: Pick<DreamerOptions, 'forceRun' | 'username' | 'executionId' | 'executionTimestamp'> = {}
+  const username = environment.MH_TRIGGER_USERNAME?.trim() || environment.MH_TRIGGER_PROFILE?.trim()
+  const executionId = environment.MH_TASK_ID?.trim()
+  const executionTimestamp = environment.MH_TASK_CREATED_AT?.trim()
+  if (username) options.username = username
+  if (executionId) options.executionId = executionId
+  if (executionTimestamp) options.executionTimestamp = executionTimestamp
   for (const argument of args) {
     if (argument === '--force') {
       options.forceRun = true
@@ -318,6 +364,8 @@ export async function runCycle(options: DreamerOptions = {}): Promise<DreamerRes
       () => generateUserDreams(targetUser.username, {
         config,
         forceRun,
+        executionId: options.executionId,
+        executionTimestamp: options.executionTimestamp,
         signal: options.signal,
       }),
     )
@@ -355,17 +403,30 @@ export async function runCycle(options: DreamerOptions = {}): Promise<DreamerRes
 export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentResult> {
   const startTime = Date.now()
   try {
-    const args = parseDreamerArgs(input.args || [])
+    const args = parseDreamerArgs(input.args || [], {})
     const optionKeys = Object.keys(input.options || {})
-    const unknownOption = optionKeys.find(key => key !== 'forceRun')
+    const allowedOptions = new Set(['forceRun', 'executionId', 'executionTimestamp'])
+    const unknownOption = optionKeys.find(key => !allowedOptions.has(key))
     if (unknownOption) throw new Error(`Unknown Dreamer runtime option: ${unknownOption}`)
     if (input.options?.forceRun !== undefined && typeof input.options.forceRun !== 'boolean') {
       throw new Error('Dreamer forceRun option must be boolean')
+    }
+    if (input.options?.executionId !== undefined && typeof input.options.executionId !== 'string') {
+      throw new Error('Dreamer executionId option must be a string')
+    }
+    if (input.options?.executionTimestamp !== undefined && typeof input.options.executionTimestamp !== 'string') {
+      throw new Error('Dreamer executionTimestamp option must be a string')
     }
 
     const result = await runCycle({
       forceRun: args.forceRun === true || input.options?.forceRun === true,
       username: ctx.username,
+      executionId: typeof input.options?.executionId === 'string'
+        ? input.options.executionId
+        : args.executionId,
+      executionTimestamp: typeof input.options?.executionTimestamp === 'string'
+        ? input.options.executionTimestamp
+        : args.executionTimestamp,
       signal: ctx.signal,
     })
     return {

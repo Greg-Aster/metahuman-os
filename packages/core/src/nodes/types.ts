@@ -94,6 +94,14 @@ export type PropertyType =
   | 'tags'        // Tag array input
   | 'multiselect'; // Multiple selection dropdown
 
+/** Serializable validation rules shared by the editor and graph validator. */
+export interface PropertyValidation {
+  pattern?: string;
+  minLength?: number;
+  maxLength?: number;
+  message?: string;
+}
+
 export interface PropertySchema {
   type: PropertyType;
   default: any;
@@ -117,7 +125,7 @@ export interface PropertySchema {
   required?: boolean;
   placeholder?: string;
   rows?: number;
-  validation?: (value: any) => boolean | string;
+  validation?: PropertyValidation;
 }
 
 export type NodePresentationBadgeTone = 'neutral' | 'info' | 'success' | 'warning';
@@ -140,6 +148,19 @@ export interface NodePresentation {
   badges?: NodePresentationBadge[];
   statusTitle?: string;
   statusFields?: NodePresentationStatusField[];
+}
+
+// ============================================================================
+// SCHEDULER CONTRACT
+// ============================================================================
+
+export type NodeActivationMode = 'required-inputs' | 'any-input' | 'always';
+
+/** Runtime readiness owned by the graph scheduler. */
+export interface NodeExecutionPolicy {
+  activation: NodeActivationMode;
+  /** Stable input handles that must all receive active data. */
+  requiredInputs: string[];
 }
 
 // ============================================================================
@@ -224,6 +245,12 @@ export interface NodeDefinition {
   description: string;
   /** Declarative visual-editor behavior; never changes runtime execution. */
   presentation?: NodePresentation;
+
+  /** Annotation-only nodes are persisted but never invoke a runtime executor. */
+  editorOnly?: boolean;
+
+  /** Declarative scheduler readiness; materialized for every registered node. */
+  execution: NodeExecutionPolicy;
 
   // ---- Executor ----
   /** Runtime execution function */
@@ -342,13 +369,24 @@ export function isNodeDefinition(obj: unknown): obj is NodeDefinition {
  * Helper to create a node definition with category colors applied
  */
 export function defineNode(
-  definition: Omit<NodeDefinition, 'color' | 'bgColor'> & { color?: string; bgColor?: string }
+  definition: Omit<NodeDefinition, 'color' | 'bgColor' | 'execution'> & {
+    color?: string;
+    bgColor?: string;
+    execution?: Partial<NodeExecutionPolicy>;
+  }
 ): NodeDefinition {
   const colors = categoryColors[definition.category];
+  const requiredInputs = definition.execution?.requiredInputs
+    ?? definition.inputs.filter(input => !input.optional).map(input => input.name);
   return {
     ...definition,
     color: definition.color ?? colors.color,
     bgColor: definition.bgColor ?? colors.bgColor,
+    execution: {
+      activation: definition.execution?.activation
+        ?? (requiredInputs.length > 0 ? 'required-inputs' : 'any-input'),
+      requiredInputs,
+    },
   };
 }
 
@@ -372,14 +410,47 @@ export interface NodeSchema {
   propertySchemas?: Record<string, PropertySchema>;
   description: string;
   presentation?: NodePresentation;
+  editorOnly?: boolean;
+  execution: NodeExecutionPolicy;
   size?: [number, number];
+  version?: string;
+  deprecated?: boolean;
   aliases?: string[];
+  tags?: string[];
+  documentation?: {
+    complete: boolean;
+    missingInputs: string[];
+    missingOutputs: string[];
+    missingProperties: string[];
+  };
 }
 
 /**
  * Extract schema from a NodeDefinition (drops the execute function)
  */
 export function extractSchema(node: NodeDefinition): NodeSchema {
+  const activationBadge: NodePresentationBadge = node.editorOnly
+    ? { label: 'Editor only', tone: 'info' }
+    : node.execution.activation === 'always'
+      ? { label: 'Always runs', tone: 'warning' }
+      : node.execution.activation === 'required-inputs'
+        ? { label: 'Requires inputs', tone: 'neutral' }
+        : { label: 'Active path', tone: 'neutral' };
+  const presentation: NodePresentation = {
+    ...(node.presentation || {}),
+    badges: [activationBadge, ...(node.presentation?.badges || [])],
+  };
+  const documentation = {
+    complete: true,
+    missingInputs: node.inputs.filter(slot => !slot.description?.trim()).map(slot => slot.name),
+    missingOutputs: node.outputs.filter(slot => !slot.description?.trim()).map(slot => slot.name),
+    missingProperties: Object.entries(node.propertySchemas || {})
+      .filter(([, schema]) => !schema.description?.trim())
+      .map(([key]) => key),
+  };
+  documentation.complete = documentation.missingInputs.length === 0
+    && documentation.missingOutputs.length === 0
+    && documentation.missingProperties.length === 0;
   return {
     id: node.id,
     name: node.name,
@@ -391,8 +462,93 @@ export function extractSchema(node: NodeDefinition): NodeSchema {
     properties: materializeNodeProperties(node),
     propertySchemas: node.propertySchemas,
     description: node.description,
-    presentation: node.presentation,
+    presentation,
+    editorOnly: node.editorOnly,
+    execution: node.execution,
     size: node.size,
+    version: node.version,
+    deprecated: node.deprecated,
     aliases: node.aliases,
+    tags: node.tags,
+    documentation,
   };
+}
+
+function propertyIsEmpty(value: unknown): boolean {
+  return value === undefined
+    || value === null
+    || value === ''
+    || (Array.isArray(value) && value.length === 0);
+}
+
+function propertyOptionValue(option: string | { value: string; label: string }): string {
+  return typeof option === 'string' ? option : option.value;
+}
+
+/**
+ * Validate one schema-backed property without importing runtime node code.
+ * The return value is suitable for inline editor feedback and server errors.
+ */
+export function validatePropertyValue(value: unknown, schema: PropertySchema): string | null {
+  if (propertyIsEmpty(value)) {
+    return schema.required ? 'A value is required.' : null;
+  }
+
+  const stringTypes: PropertyType[] = ['string', 'text', 'text_multiline', 'color'];
+  if (stringTypes.includes(schema.type) && typeof value !== 'string') {
+    return 'Expected text.';
+  }
+  if ((schema.type === 'number' || schema.type === 'slider') && (
+    typeof value !== 'number' || !Number.isFinite(value)
+  )) {
+    return 'Expected a finite number.';
+  }
+  if ((schema.type === 'boolean' || schema.type === 'toggle') && typeof value !== 'boolean') {
+    return 'Expected true or false.';
+  }
+  if (schema.type === 'tags' && (
+    !Array.isArray(value) || value.some(item => typeof item !== 'string')
+  )) {
+    return 'Expected a list of text tags.';
+  }
+  if (schema.type === 'multiselect' && !Array.isArray(value)) {
+    return 'Expected a list of selected values.';
+  }
+  if (schema.type === 'json' && (typeof value !== 'object' || value === null)) {
+    return 'Expected a JSON object or array.';
+  }
+
+  if (typeof value === 'number') {
+    if (schema.min !== undefined && value < schema.min) return `Must be at least ${schema.min}.`;
+    if (schema.max !== undefined && value > schema.max) return `Must be at most ${schema.max}.`;
+  }
+
+  if (typeof value === 'string') {
+    if (schema.validation?.minLength !== undefined && value.length < schema.validation.minLength) {
+      return schema.validation.message || `Must contain at least ${schema.validation.minLength} characters.`;
+    }
+    if (schema.validation?.maxLength !== undefined && value.length > schema.validation.maxLength) {
+      return schema.validation.message || `Must contain at most ${schema.validation.maxLength} characters.`;
+    }
+    if (schema.validation?.pattern) {
+      try {
+        if (!new RegExp(schema.validation.pattern).test(value)) {
+          return schema.validation.message || 'Value does not match the required format.';
+        }
+      } catch {
+        return 'The node definition contains an invalid validation pattern.';
+      }
+    }
+  }
+
+  const optionValues = (schema.options || []).map(propertyOptionValue);
+  if (schema.type === 'select' && optionValues.length > 0 && !optionValues.includes(String(value))) {
+    return 'Select one of the available values.';
+  }
+  if (schema.type === 'multiselect' && optionValues.length > 0) {
+    const invalid = (value as unknown[]).find(item => !optionValues.includes(String(item)));
+    if (invalid !== undefined) return `Unknown selection: ${String(invalid)}.`;
+  }
+
+  return null;
 }

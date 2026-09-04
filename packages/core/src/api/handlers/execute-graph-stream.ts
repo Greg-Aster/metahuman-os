@@ -6,7 +6,13 @@
  */
 
 import type { ExecutionEvent } from '../../graph-executor.js';
-import { collectNodeOutputs, extractGraphOutput, namedSse, runGraph } from '../../graph-runtime.js';
+import {
+  collectNodeOutputs,
+  extractGraphOutput,
+  listSkippedNodes,
+  namedSse,
+  runGraph,
+} from '../../graph-runtime.js';
 import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
 
 /**
@@ -21,8 +27,9 @@ function formatSSE(event: string, data: any): string {
  *
  * Returns SSE stream with events:
  * - node_start: { nodeId, nodeType }
- * - node_complete: { nodeId }
- * - node_error: { nodeId, error }
+ * - node_complete: { nodeId, durationMs }
+ * - node_skip: { nodeId, reason }
+ * - node_error: { nodeId, error, durationMs }
  * - graph_complete: { response, duration }
  * - graph_error: { error }
  */
@@ -64,6 +71,15 @@ export async function handleExecuteGraphStream(
         case 'node_complete':
           onEvent(formatSSE('node_complete', {
             nodeId: event.nodeId,
+            durationMs: event.data?.durationMs,
+            timestamp: event.timestamp,
+          }));
+          break;
+
+        case 'node_skip':
+          onEvent(formatSSE('node_skip', {
+            nodeId: event.nodeId,
+            reason: event.data?.reason,
             timestamp: event.timestamp,
           }));
           break;
@@ -72,6 +88,7 @@ export async function handleExecuteGraphStream(
           onEvent(formatSSE('node_error', {
             nodeId: event.nodeId,
             error: event.data?.error,
+            durationMs: event.data?.durationMs,
             timestamp: event.timestamp,
           }));
           break;
@@ -107,6 +124,7 @@ export async function handleExecuteGraphStream(
 
     // Build node outputs map for display nodes (output_viewer, etc.)
     const nodeOutputs = collectNodeOutputs(graphState);
+    const skippedNodes = listSkippedNodes(graphState);
 
     // Send final completion event with response and node outputs
     onEvent(formatSSE('graph_complete', {
@@ -114,6 +132,7 @@ export async function handleExecuteGraphStream(
       durationMs,
       status: graphState.status,
       nodeOutputs,
+      skippedNodes,
     }));
 
     console.log('[execute-graph-stream] Streaming execution completed:', {

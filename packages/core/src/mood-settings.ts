@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { audit } from './audit.js';
 import { getUserContext } from './context.js';
+import { loadModelRegistry } from './model-resolver.js';
 import { getProfilePaths, systemPaths } from './path-builder.js';
 
 export type MoodBufferSource = 'conversation' | 'inner' | 'both';
@@ -135,19 +136,13 @@ export function saveMoodState(username: string, patch: MoodState): MoodState {
   return next;
 }
 
-export function isPersonaSummaryGloballyEnabled(): boolean {
-  const filePath = path.join(systemPaths.etc, 'models.json');
-  const models = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
-  if (!models || typeof models !== 'object' || Array.isArray(models)) {
-    throw new Error(`Model configuration must contain a JSON object: ${filePath}`);
-  }
-  const globalSettings = (models as Record<string, unknown>).globalSettings;
-  if (globalSettings === undefined) return true;
-  if (!globalSettings || typeof globalSettings !== 'object' || Array.isArray(globalSettings)) {
-    throw new Error(`Model globalSettings must contain a JSON object: ${filePath}`);
-  }
-  const enabled = (globalSettings as Record<string, unknown>).includePersonaSummary;
+export function isPersonaSummaryGloballyEnabled(username?: string): boolean {
+  const resolvedUsername = resolveUsername(username);
+  if (!resolvedUsername) throw new Error('Mood persona summary settings require a profile username');
+  const enabled = loadModelRegistry(false, resolvedUsername).globalSettings?.includePersonaSummary;
   if (enabled === undefined) return true;
-  if (typeof enabled !== 'boolean') throw new Error(`includePersonaSummary must be boolean: ${filePath}`);
+  if (typeof enabled !== 'boolean') {
+    throw new Error(`includePersonaSummary must be boolean for profile: ${resolvedUsername}`);
+  }
   return enabled;
 }

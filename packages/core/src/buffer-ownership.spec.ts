@@ -71,24 +71,17 @@ assert.deepEqual(InnerDialogueSaverNode.inputs.map(input => input.name), ['entry
 assert.equal(SystemBufferNode.id, 'system_buffer');
 assert.equal(RobotBufferNode.id, 'robot_buffer');
 
-const longTermAdmissionGraphs: Record<string, [string, string]> = {
-  'inner-buffer-admission.json': ['inner_dialogue_buffer', 'inner_dialogue_saver'],
-};
-for (const [fileName, [bufferType, saverType]] of Object.entries(longTermAdmissionGraphs)) {
-  const graph = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/cognitive-graphs', fileName), 'utf8'));
-  assert.equal(graph.nodes.length, 2, `${fileName} must contain one short-term buffer and one long-term saver`);
-  const buffer = graph.nodes.find((node: any) => node.data?.nodeType === bufferType);
-  const saver = graph.nodes.find((node: any) => node.data?.nodeType === saverType);
-  assert.ok(buffer, `${fileName} must own ${bufferType}`);
-  assert.ok(saver, `${fileName} must own ${saverType}`);
-  assert.ok(
-    graph.edges.some((edge: any) => edge.source === buffer.id
-      && edge.sourceHandle === 'entries'
-      && edge.target === saver.id
-      && edge.targetHandle === 'entries'),
-    `${fileName} must pass exact admitted entries from ${bufferType} to ${saverType}`,
-  );
-}
+const bufferAdmissionSource = fs.readFileSync(
+  path.join(ROOT, 'packages/core/src/buffer-admission.ts'),
+  'utf8',
+);
+assert.doesNotMatch(
+  bufferAdmissionSource,
+  /inner-buffer-admission/,
+  'Inner Dialogue admission must use the canonical nodes without a standalone graph',
+);
+assert.match(bufferAdmissionSource, /inner-dialogue-buffer\.node/);
+assert.match(bufferAdmissionSource, /inner-dialogue-saver\.node/);
 
 const shortTermAdmissionGraphs: Record<string, string> = {
   'system-event.json': 'system_buffer',
@@ -121,6 +114,11 @@ assert.equal(
   fs.existsSync(path.join(graphDirectory, 'conversation-buffer-admission.json')),
   false,
   'Conversation turns must be owned by their producing graph, not a standalone admission graph',
+);
+assert.equal(
+  fs.existsSync(path.join(graphDirectory, 'inner-buffer-admission.json')),
+  false,
+  'Inner Dialogue producers outside a graph must reuse the canonical nodes without a standalone admission graph',
 );
 const conversationGraphFiles: string[] = [];
 for (const fileName of fs.readdirSync(graphDirectory)) {
@@ -187,6 +185,8 @@ assert.deepEqual(conversationGraphFiles.sort(), [
   'emulation-mode.json',
   'environment-mode.json',
   'response-pipeline.json',
+  'robot-action-result-mode.json',
+  'robot-goal-review-mode.json',
 ]);
 
 const directInnerDialogueCapture = files.filter(file => {

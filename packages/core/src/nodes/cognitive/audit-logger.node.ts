@@ -44,7 +44,7 @@ export const AuditLoggerNode: NodeDefinition = defineNode({
   name: 'Audit Logger',
   category: 'cognitive',
   inputs: [
-    { name: 'data', type: 'any', description: 'Data to log' },
+    { name: 'data', type: 'any', optional: true, description: 'Primary data to log when the graph supplies it' },
     { name: 'status', type: 'any', optional: true, description: 'Additional completion status' },
   ],
   outputs: [
@@ -60,7 +60,7 @@ export const AuditLoggerNode: NodeDefinition = defineNode({
       type: 'select',
       default: 'agent',
       label: 'Category',
-      options: ['agent', 'system', 'action', 'data', 'security'],
+      options: ['agent', 'system', 'decision', 'action', 'data', 'data_change', 'security'],
     },
     event: {
       type: 'text',

@@ -44,6 +44,11 @@ export interface MissingExecutorInfo {
   label?: string;
 }
 
+export interface SkippedGraphNode {
+  nodeId: string;
+  reason: string;
+}
+
 export class AsyncEventQueue {
   private queue: string[] = []
   private resolvers: Array<(value: IteratorResult<string>) => void> = []
@@ -144,7 +149,18 @@ export function requireGraphNodeOutput(
 }
 
 export function listExecutedNodes(graphState: GraphExecutionState): string[] {
-  return Array.from(graphState.nodes.keys())
+  return [...graphState.nodes.entries()]
+    .filter(([, nodeState]) => nodeState.status === 'completed' || nodeState.status === 'failed')
+    .map(([nodeId]) => nodeId)
+}
+
+export function listSkippedNodes(graphState: GraphExecutionState): SkippedGraphNode[] {
+  return [...graphState.nodes.entries()]
+    .filter(([, nodeState]) => nodeState.status === 'skipped')
+    .map(([nodeId, nodeState]) => ({
+      nodeId,
+      reason: nodeState.skipReason || 'Node was not activated',
+    }))
 }
 
 export function listFailedNodes(graphState: GraphExecutionState): FailedGraphNode[] {

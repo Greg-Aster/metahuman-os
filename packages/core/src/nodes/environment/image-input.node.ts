@@ -4,7 +4,7 @@ import {
   type EnvironmentFeedback,
   type EnvironmentVisualFrame,
 } from '../../environment-interface/index.js';
-import type { EnvironmentTaskState } from './helpers.js';
+import type { RobotStatusTask } from '../../robot-status.js';
 
 const MAX_CACHED_FRAMES = 24;
 const frameCache = new Map<string, EnvironmentVisualFrame>();
@@ -51,38 +51,53 @@ export function clearEnvironmentImageFrameCache(): void {
 
 export const environmentImageInputNode = defineNode({
   id: 'environment_image_input',
-  name: 'Environment Image Input',
+  name: 'Select Camera Frames for Current Action',
   category: 'environment',
   inputs: [
-    { name: 'visual', type: 'object', optional: true, description: 'Latest visual frame' },
-    { name: 'visuals', type: 'array', optional: true, description: 'Visual frame list' },
-    { name: 'taskState', type: 'object', optional: true, description: 'Environment task containing an optional baseline-frame reference' },
-    { name: 'terminalFeedback', type: 'object', optional: true, description: 'Exact terminal feedback from Environment Feedback Correlator' },
-    { name: 'actionId', type: 'string', optional: true, description: 'Verified Work Coordinator action identifier' },
-    { name: 'correlationId', type: 'string', optional: true, description: 'Verified Work Coordinator correlation identifier' },
+    { name: 'visual', label: 'Current camera frame', type: 'object', optional: true, description: 'The latest camera frame received from the robot bridge.' },
+    { name: 'visuals', label: 'Camera frame list', type: 'array', optional: true, description: 'Other camera frames included in the current robot observation.' },
+    { name: 'observationCurrent', label: 'Current-run observation', type: 'boolean', optional: true, description: 'Whether these frames arrived with the observation that triggered this graph run. Omit only in workflows whose input is already current by contract.' },
+    { name: 'robotStatus', label: 'Saved robot status', type: 'object', optional: true, description: 'Robot Status containing the current task and an optional saved before-action frame.' },
+    { name: 'terminalFeedback', label: 'Finished robot result', type: 'object', optional: true, description: 'The finished robot report selected for the sent action.' },
+    { name: 'actionId', label: 'Sent action ID', type: 'string', optional: true, description: 'The verified ID of the sent action whose camera frame is returning.' },
+    { name: 'correlationId', label: 'Action cycle ID', type: 'string', optional: true, description: 'The verified cycle ID used to match a returned camera frame.' },
   ],
   outputs: [
-    { name: 'images', type: 'array', description: 'Validated image content parts for an image-capable model' },
-    { name: 'frames', type: 'array', description: 'Accepted visual frame metadata' },
-    { name: 'rejectedCount', type: 'number', description: 'Frames rejected by format or size validation' },
+    { name: 'images', label: 'Images for the model', type: 'array', description: 'The selected camera frames formatted for an image-capable model.' },
+    { name: 'frames', label: 'Selected camera frames', type: 'array', description: 'Metadata for the camera frames this node selected.' },
+    { name: 'rejectedCount', label: 'Rejected frames', type: 'number', description: 'Number of frames rejected because they were not valid supported JPEG data.' },
+    { name: 'current', label: 'Current evidence available', type: 'boolean', description: 'Whether at least one selected frame belongs to this graph run.' },
   ],
-  description: 'Validates bridge camera frames and returns one current frame or an ordered baseline/current pair for the reported action.',
+  presentation: {
+    badges: [
+      { label: 'Checks camera frames', tone: 'info' },
+      { label: 'No model', tone: 'neutral' },
+      { label: 'Sends nothing', tone: 'neutral' },
+    ],
+    statusTitle: 'Last frame selection',
+    statusFields: [
+      { output: 'rejectedCount', label: 'Rejected' },
+    ],
+  },
+  description: 'Checks camera frames received from the robot. For a new observation, it returns the current valid frame. After an action finishes, it can return the saved before-action frame and the current frame tagged with the same action or cycle ID. It sends no command, changes no status, and calls no model.',
   async execute(inputs) {
     const candidates = framesFromInputs(inputs.visual, inputs.visuals);
     const valid = candidates.filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl));
-    rememberFrames(valid);
-    const taskState = isRecord(inputs.taskState)
-      ? inputs.taskState as unknown as EnvironmentTaskState
+    const observationCurrent = inputs.observationCurrent !== false;
+    if (observationCurrent) rememberFrames(valid);
+    const status = isRecord(inputs.robotStatus) ? inputs.robotStatus : null;
+    const task = isRecord(status?.task)
+      ? status.task as unknown as RobotStatusTask
       : null;
     const terminalFeedback = isRecord(inputs.terminalFeedback)
       ? inputs.terminalFeedback as unknown as EnvironmentFeedback
       : null;
     const actionId = cleanText(inputs.actionId);
     const correlationId = cleanText(inputs.correlationId);
-    const baseline = terminalFeedback && taskState?.baselineFrame
-      ? frameCache.get(taskState.baselineFrame.id)
+    const baseline = terminalFeedback && task?.baselineFrame
+      ? frameCache.get(task.baselineFrame.id)
       : undefined;
-    const current = terminalFeedback
+    const current = observationCurrent && terminalFeedback
       ? [...valid].reverse().find(frame => {
           const frameActionId = cleanText(frame.metadata?.actionId);
           const frameCorrelationId = cleanText(frame.metadata?.correlationId);
@@ -91,7 +106,7 @@ export const environmentImageInputNode = defineNode({
             || (correlationId && frameCorrelationId === correlationId)
           );
         })
-      : valid[0];
+      : observationCurrent ? valid[0] : undefined;
     const accepted = [baseline, current]
       .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
       .filter((frame, index, frames) => frames.findIndex(candidate => candidate.id === frame.id) === index);
@@ -102,6 +117,7 @@ export const environmentImageInputNode = defineNode({
       })),
       frames: accepted,
       rejectedCount: candidates.length - valid.length,
+      current: Boolean(current),
     };
   },
 });

@@ -28,6 +28,8 @@
       "maxRetries": 3,
       "robotStatusInactivityThreshold": 300,
       "robotStatusJitterMs": 60000,
+      "robotGoalReviewInactivityThreshold": 60,
+      "robotGoalReviewJitterMs": 0,
       "boredomObserverInactivityThreshold": 300,
       "boredomObserverJitterMs": 60000,
       "boredomMovementInactivityThreshold": 600,
@@ -35,12 +37,13 @@
       "boredomReflectionInactivityThreshold": 900,
       "boredomReflectionJitterMs": 180000,
       "robotStatusGraph": "robot-status",
+      "robotGoalReviewGraph": "robot-goal-review",
       "boredomObserverGraph": "boredom-observer",
       "boredomMovementGraph": "boredom-movement",
       "boredomReflectionGraph": "boredom-reflection",
       "autonomyGraph": "boredom-autonomy",
       "environmentGraph": "environment",
-      "comment": "Robot-autonomy scheduler and admission owner. Semi mode uses independent idle timers; full mode rotates continuously across Robot Status and the three named boredom planners between cooldowns. Robot Status refreshes reusable situational context; each boredom graph authors one contextual intention and Boredom Autonomy executes and revises it from correlated results."
+      "comment": "Robot-autonomy scheduler and admission owner. Semi mode gives Robot Goal Review its own idle timer. Full mode prioritizes Robot Goal Review while Robot Status records an unfinished objective; otherwise it rotates Robot Status and the three boredom planners between cooldowns. Every admitted workflow is finite."
     },
     "maintenance-service": {
       "id": "maintenance-service",

@@ -3,8 +3,17 @@ import {
   submitInnerReflection,
   submitSystemEvent,
 } from '../buffer-admission.js';
-import { searchMemory } from '../memory.js';
-import { callLLMText } from '../model-router.js';
+import {
+  cognitiveGraphPath,
+  loadGraphFile,
+  requireGraphNodeOutput,
+  runGraph,
+} from '../graph-runtime.js';
+import {
+  validateDesireCheckinEvaluation,
+  type DesireCheckinEvaluation,
+} from '../nodes/agency/desire-checkin-evaluator.node.js';
+import { getUserContext } from '../context.js';
 import {
   advanceDesireMilestone,
   listDesiresFromFolders,
@@ -20,70 +29,16 @@ export interface DesireCheckinInput {
   force?: boolean;
 }
 
-export interface DesireCheckinEvaluation {
-  statusAssessment: string;
-  questionsForUser: string[];
-  currentMilestoneComplete: boolean;
-  suggestedNextActions: string[];
-  recommendation: 'continue' | 'advance_milestone' | 'adjust_plan' | 'escalate';
-  recommendationReason?: string;
-}
+export {
+  parseDesireCheckinEvaluation,
+  type DesireCheckinEvaluation,
+} from '../nodes/agency/desire-checkin-evaluator.node.js';
 
 export interface DesireCheckinResult {
   processed: number;
   questionsGenerated: number;
   milestonesAdvanced: number;
   errors: string[];
-}
-
-const RECOMMENDATIONS = new Set<DesireCheckinEvaluation['recommendation']>([
-  'continue',
-  'advance_milestone',
-  'adjust_plan',
-  'escalate',
-]);
-
-function stringList(value: unknown, limit: number): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === 'string')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .slice(0, limit);
-}
-
-export function parseDesireCheckinEvaluation(text: string): DesireCheckinEvaluation {
-  const fallback: DesireCheckinEvaluation = {
-    statusAssessment: text.trim().slice(0, 2_000) || 'The check-in returned no assessment.',
-    questionsForUser: [],
-    currentMilestoneComplete: false,
-    suggestedNextActions: [],
-    recommendation: 'continue',
-  };
-  const json = text.match(/\{[\s\S]*\}/)?.[0];
-  if (!json) return fallback;
-
-  try {
-    const parsed = JSON.parse(json) as Record<string, unknown>;
-    const recommendation = typeof parsed.recommendation === 'string'
-      && RECOMMENDATIONS.has(parsed.recommendation as DesireCheckinEvaluation['recommendation'])
-      ? parsed.recommendation as DesireCheckinEvaluation['recommendation']
-      : 'continue';
-    return {
-      statusAssessment: typeof parsed.statusAssessment === 'string' && parsed.statusAssessment.trim()
-        ? parsed.statusAssessment.trim().slice(0, 2_000)
-        : fallback.statusAssessment,
-      questionsForUser: stringList(parsed.questionsForUser, 5),
-      currentMilestoneComplete: parsed.currentMilestoneComplete === true,
-      suggestedNextActions: stringList(parsed.suggestedNextActions, 5),
-      recommendation,
-      recommendationReason: typeof parsed.recommendationReason === 'string'
-        ? parsed.recommendationReason.trim().slice(0, 1_000)
-        : undefined,
-    };
-  } catch {
-    return fallback;
-  }
 }
 
 async function selectDesires(input: DesireCheckinInput, username: string): Promise<Desire[]> {
@@ -104,45 +59,37 @@ async function selectDesires(input: DesireCheckinInput, username: string): Promi
     && (desire.status === 'executing' || desire.status === 'approved'));
 }
 
-async function evaluateDesire(
+async function evaluateDesireViaGraph(
   desire: Desire,
   username: string,
+  graph: NonNullable<Awaited<ReturnType<typeof loadGraphFile>>>['graph'],
   cognitiveMode?: string,
+  signal?: AbortSignal,
 ): Promise<DesireCheckinEvaluation> {
-  const currentMilestoneIndex = desire.goalProgress?.currentMilestone || 0;
-  const currentMilestone = desire.milestones?.[currentMilestoneIndex];
-  const memoryReferences = searchMemory(desire.title).slice(0, 10);
-  const response = await callLLMText({
-    role: 'orchestrator',
-    userId: username,
-    cognitiveMode,
-    messages: [
-      {
-        role: 'system',
-        content: `Evaluate progress on one long-running user goal. Return exactly one JSON object with this shape:
-{"statusAssessment":"brief assessment","questionsForUser":["optional question"],"currentMilestoneComplete":false,"suggestedNextActions":["optional action"],"recommendation":"continue|advance_milestone|adjust_plan|escalate","recommendationReason":"brief reason"}
-Use only the supplied goal state and memory references. Do not claim work was completed without evidence. Ask concise questions when evidence is missing.`,
-      },
-      {
-        role: 'user',
-        content: JSON.stringify({
-          goal: {
-            id: desire.id,
-            title: desire.title,
-            description: desire.description,
-            reason: desire.reason,
-            status: desire.status,
-          },
-          progress: desire.goalProgress || null,
-          currentMilestone: currentMilestone || null,
-          milestones: desire.milestones || [],
-          memoryReferences,
-        }),
-      },
-    ],
-    options: { temperature: 0.3, maxTokens: 800 },
+  const activeUser = getUserContext();
+  if (!activeUser || (activeUser.username !== username && activeUser.activeProfile !== username)) {
+    throw new Error(`Desire check-in requires an authenticated context for ${username}`);
+  }
+  const state = await runGraph({
+    graph,
+    signal,
+    context: {
+      userId: activeUser.userId,
+      username,
+      desire,
+      desireId: desire.id,
+      allowMemoryWrites: false,
+      recordPersonaMemory: false,
+      abortSignal: signal,
+      cognitiveMode,
+    },
   });
-  return parseDesireCheckinEvaluation(response);
+  if (state.status !== 'completed') {
+    throw new Error(`Desire check-in graph ended with status ${state.status}`);
+  }
+  return validateDesireCheckinEvaluation(
+    requireGraphNodeOutput(state, 'desire_checkin_evaluator').evaluation,
+  );
 }
 
 export async function runDesireCheckin(
@@ -157,6 +104,11 @@ export async function runDesireCheckin(
     errors: [],
   };
   if (desires.length === 0) return result;
+  const loaded = await loadGraphFile(cognitiveGraphPath('desire-checkin.json'), {
+    cacheKey: 'agency:desire-checkin',
+    logPrefix: '[AGENCY:checkin]',
+  });
+  if (!loaded) throw new Error('Desire check-in graph is unavailable');
 
   await submitInnerReflection(
     options.username,
@@ -167,7 +119,13 @@ export async function runDesireCheckin(
   for (const desire of desires) {
     if (options.signal?.aborted) throw new DOMException('Desire check-in cancelled', 'AbortError');
     try {
-      const evaluation = await evaluateDesire(desire, options.username, options.cognitiveMode);
+      const evaluation = await evaluateDesireViaGraph(
+        desire,
+        options.username,
+        loaded.graph,
+        options.cognitiveMode,
+        options.signal,
+      );
       const recorded = await recordDesireCheckin(desire.id, options.username, evaluation.statusAssessment);
       if (!recorded) throw new Error('Desire disappeared before the check-in could be recorded');
 

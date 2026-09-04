@@ -62,8 +62,13 @@ export interface TriggerState {
   suppressionCount: number;
   lastAdmissionKey?: string;
   eventCounts: Map<string, number>;
-  lastEventAt?: Date;
-  lastEventUsername?: string;
+  eventSubjects: Map<string, TriggerEventSubjectState>;
+}
+
+export interface TriggerEventSubjectState {
+  username?: string;
+  lastEventAt: Date;
+  lastIdleResetEventAt?: string;
 }
 
 export interface TriggerHandlerHealth {
@@ -253,8 +258,7 @@ export class TriggerManager extends EventEmitter {
         suppressionCount: prior?.suppressionCount ?? 0,
         lastAdmissionKey: prior?.lastAdmissionKey,
         eventCounts: prior?.eventCounts ?? new Map(),
-        lastEventAt: prior?.lastEventAt ?? (agentConfig.type === 'event' ? new Date() : undefined),
-        lastEventUsername: prior?.lastEventUsername,
+        eventSubjects: prior?.eventSubjects ?? new Map(),
       });
     }
     if (this.running) this.scheduleAll();
@@ -283,10 +287,9 @@ export class TriggerManager extends EventEmitter {
       errorCount: existing?.errorCount ?? 0,
       suppressionCount: existing?.suppressionCount ?? 0,
       eventCounts: existing?.eventCounts ?? new Map(),
+      eventSubjects: existing?.eventSubjects ?? new Map(),
       lastProbabilityKey: existing?.lastProbabilityKey,
       lastProbabilityPassed: existing?.lastProbabilityPassed,
-      lastEventAt: existing?.lastEventAt ?? (config.type === 'event' ? new Date() : undefined),
-      lastEventUsername: existing?.lastEventUsername,
     });
     if (this.running && config.enabled) this.schedule(config.id);
     this.emitState('configChanged');
@@ -376,9 +379,7 @@ export class TriggerManager extends EventEmitter {
       return;
     }
     if (state.config.type === 'event') {
-      state.nextRun = state.config.idleResetSeconds
-        ? new Date((state.lastEventAt ?? new Date()).getTime() + state.config.idleResetSeconds * 1_000)
-        : undefined;
+      this.updateEventNextRun(state);
       return;
     }
 
@@ -588,20 +589,22 @@ export class TriggerManager extends EventEmitter {
           ? data.username
           : typeof data?.userId === 'string' ? data.userId : undefined;
         const subject = username || 'system';
-        state.lastEventAt = new Date();
-        state.lastEventUsername = username;
-        if (state.config.idleResetSeconds) {
-          state.nextRun = new Date(state.lastEventAt.getTime() + state.config.idleResetSeconds * 1_000);
-        }
         const threshold = state.config.eventCountThreshold ?? 1;
         const countField = state.config.eventCountField || 'count';
         let count = Number(data?.[countField]);
         if (!Number.isInteger(count) || count < 1) {
           count = (state.eventCounts.get(subject) || 0) + 1;
-          state.eventCounts.set(subject, count);
         } else {
-          state.eventCounts.set(subject, count);
+          const previousCount = state.eventCounts.get(subject) || 0;
+          if (count <= previousCount) {
+            this.suppress(agentId, state, 'duplicate', `event-count:${agentId}:${subject}:${countField}:${count}`);
+            continue;
+          }
         }
+        state.eventCounts.set(subject, count);
+        const lastEventAt = new Date();
+        state.eventSubjects.set(subject, { username, lastEventAt });
+        this.updateEventNextRun(state);
         if (count % threshold !== 0) continue;
         const admissionKey = threshold > 1
           ? `event-count:${agentId}:${subject}:${countField}:${count}`
@@ -632,38 +635,47 @@ export class TriggerManager extends EventEmitter {
     }
     for (const [agentId, state] of this.triggers) {
       if (state.config.type !== 'event' || !state.config.enabled || !state.config.idleResetSeconds) continue;
-      const lastEventAt = state.lastEventAt ?? this.lastActivity;
-      const eventInactiveSeconds = (now - lastEventAt.getTime()) / 1_000;
-      state.nextRun = new Date(lastEventAt.getTime() + state.config.idleResetSeconds * 1_000);
-      if (eventInactiveSeconds < state.config.idleResetSeconds) continue;
-      const username = state.lastEventUsername || this.lastActiveUsername || readLastActiveUsername() || undefined;
-      const admissionKey = `idle-reset:${agentId}:${username || 'system'}:${lastEventAt.toISOString()}`;
-      if (state.lastAdmissionKey === admissionKey) {
-        state.nextRun = undefined;
-        continue;
-      }
-      if (this.autonomyMode !== 'semi') {
-        this.suppress(
-          agentId,
-          state,
-          this.autonomyMode === 'reactive' ? 'mode:reactive' : 'mode:not-allowed',
+      for (const [subject, eventSubject] of state.eventSubjects) {
+        const lastEventKey = eventSubject.lastEventAt.toISOString();
+        if (eventSubject.lastIdleResetEventAt === lastEventKey) continue;
+        const eventInactiveSeconds = (now - eventSubject.lastEventAt.getTime()) / 1_000;
+        if (eventInactiveSeconds < state.config.idleResetSeconds) continue;
+        const admissionKey = `idle-reset:${agentId}:${subject}:${lastEventKey}`;
+        if (this.autonomyMode !== 'semi') {
+          this.suppress(
+            agentId,
+            state,
+            this.autonomyMode === 'reactive' ? 'mode:reactive' : 'mode:not-allowed',
+            admissionKey,
+          );
+          continue;
+        }
+        const taskId = this.fireTrigger(agentId, 'event', false, ['--baseline'], {
+          username: eventSubject.username,
           admissionKey,
-        );
-        continue;
+          idleReset: true,
+          triggerData: { eventName: 'system.idle-reset', inactiveSeconds: eventInactiveSeconds, idleReset: true },
+        });
+        if (taskId) {
+          taskIds.push(taskId);
+          eventSubject.lastIdleResetEventAt = lastEventKey;
+        }
       }
-      const taskId = this.fireTrigger(agentId, 'event', false, ['--baseline'], {
-        username,
-        admissionKey,
-        idleReset: true,
-        triggerData: { eventName: 'system.idle-reset', inactiveSeconds: eventInactiveSeconds, idleReset: true },
-      });
-      if (taskId) {
-        taskIds.push(taskId);
-        state.nextRun = undefined;
-      }
+      this.updateEventNextRun(state);
     }
     this.emitState('evaluated');
     return taskIds;
+  }
+
+  private updateEventNextRun(state: TriggerState): void {
+    if (!state.config.idleResetSeconds) {
+      state.nextRun = undefined;
+      return;
+    }
+    const pending = [...state.eventSubjects.values()]
+      .filter(subject => subject.lastIdleResetEventAt !== subject.lastEventAt.toISOString())
+      .map(subject => subject.lastEventAt.getTime() + state.config.idleResetSeconds! * 1_000);
+    state.nextRun = pending.length > 0 ? new Date(Math.min(...pending)) : undefined;
   }
 
   recordActivity(username?: string): void {

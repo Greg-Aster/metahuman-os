@@ -5,7 +5,6 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { TriggerManagerConfig } from './trigger-manager.js';
 import { UnifiedQueueManager } from './unified-queue-manager.js';
-import { applyPolicyDecision } from '../active-operator/policy-contract.js';
 import { eventBus } from '../infrastructure/event-bus/client.js';
 
 const sleepRuntimeFile = path.join(os.tmpdir(), `metahuman-work-coordinator-sleep-${randomUUID()}.json`);
@@ -286,69 +285,6 @@ function input(overrides: Record<string, unknown> = {}) {
   assert.equal(task?.priority, 'background');
   assert.equal(manager.isPaused(), false, 'proactive admission must not pause user work');
   triggers.stop();
-}
-
-{
-  const manager = new UnifiedQueueManager();
-  const rejected = applyPolicyDecision(
-    manager,
-    { decision: 'propose', handler: 'environment.command', reason: 'move somewhere' },
-    { username: 'owner', cognitiveMode: 'environment', now: 1_000_000 },
-  );
-  assert.equal(rejected.accepted, false, 'policy proposals must be allow-listed and cannot dispatch robot work');
-
-  const proposed = applyPolicyDecision(
-    manager,
-    { decision: 'propose', handler: 'agent.reflector', reason: 'useful reflection' },
-    { username: 'owner', cognitiveMode: 'dual', now: 1_000_000 },
-  );
-  assert.equal(proposed.accepted, true);
-  assert.equal(manager.getTask(proposed.proposedTaskId!)?.source, 'autonomy');
-  assert.equal(manager.getTask(proposed.proposedTaskId!)?.priority, 'low');
-}
-
-{
-  const manager = new UnifiedQueueManager();
-  const high = manager.enqueue(input({ priority: 'high' }));
-  const low = manager.enqueue(input({ priority: 'low' }));
-  const invalidSelection = applyPolicyDecision(
-    manager,
-    { decision: 'execute', taskId: low.id, reason: 'choose lower priority' },
-    { username: 'owner' },
-  );
-  const validSelection = applyPolicyDecision(
-    manager,
-    { decision: 'execute', taskId: high.id, reason: 'deterministic next work' },
-    { username: 'owner' },
-  );
-  assert.equal(invalidSelection.accepted, false, 'policy cannot reorder deterministic priority');
-  assert.equal(validSelection.accepted, true);
-}
-
-{
-  const manager = new UnifiedQueueManager();
-  const needsInput = manager.enqueue(input({ priority: 'normal' }));
-  const unrelated = manager.enqueue(input({ priority: 'low' }));
-  const requested = applyPolicyDecision(
-    manager,
-    { decision: 'request_input', taskId: needsInput.id, reason: 'Need an owner choice' },
-    { username: 'owner' },
-  );
-  assert.equal(requested.accepted, true);
-  assert.equal(manager.getTask(needsInput.id)?.state, 'waiting');
-  assert.equal(manager.getNextExecutable()?.id, unrelated.id, 'request_input must not block unrelated work');
-
-  const now = 1_000_000;
-  assert.equal(applyPolicyDecision(
-    manager,
-    { decision: 'wait', reason: 'cooldown', wakeAt: new Date(now + 60_000).toISOString() },
-    { username: 'owner', now },
-  ).accepted, true);
-  assert.equal(applyPolicyDecision(
-    manager,
-    { decision: 'wait', reason: 'unbounded wait', wakeAt: new Date(now + 2 * 60 * 60_000).toISOString() },
-    { username: 'owner', now },
-  ).accepted, false);
 }
 
 {

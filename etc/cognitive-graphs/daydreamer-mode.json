@@ -1,6 +1,7 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Daydreamer Agent Workflow",
   "description": "Generates brief daydreams from weighted memory sampling - lighter version of dreams for waking hours, inner dialogue only",
   "cognitiveMode": "agent",

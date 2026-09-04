@@ -41,6 +41,7 @@ export async function handleGenerateReview(req: UnifiedRequest): Promise<Unified
       includeArchived: body?.includeArchived ?? false,
       weeksBack: body?.weeksBack ?? 4,
       generateInsights: body?.generateInsights ?? true,
+      username: req.user.username,
     };
 
     const review = await generateWeeklyReview(options);

@@ -295,7 +295,6 @@ export function getEnvironmentActionContext(
     taskFeedbackData?.actionTiming,
     ...(observationFeedbackData?.map(data => data.actionTiming) ?? []),
   );
-  const taskInstruction = boundedOriginatingInstruction(task.metadata?.originatingInstruction);
   return {
     actionId: task.id,
     status: typeof resultFeedback?.type === 'string'
@@ -319,7 +318,6 @@ export function getEnvironmentActionContext(
           },
         }
       : {}),
-    ...(taskInstruction ? { taskInstruction } : {}),
     ...(isRecord(taskInputMetadata?.robotObserver)
       ? { robotObserver: taskInputMetadata.robotObserver }
       : {}),

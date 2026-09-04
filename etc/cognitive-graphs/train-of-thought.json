@@ -1,6 +1,7 @@
 {
   "version": "2.0",
   "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Train of Thought Workflow",
   "description": "Extends one supplied thought or bounded profile-memory seed through related historical memories, then durably admits the resulting reasoning chain",
   "cognitiveMode": "agent",
@@ -189,7 +190,12 @@
       "target": "generate",
       "sourceHandle": "routedData",
       "targetHandle": "context",
-      "data": { "type": "object", "comment": "Continue from related memories [BACK-EDGE]" }
+      "data": {
+        "type": "object",
+        "comment": "Continue from related memories",
+        "loop": true,
+        "when": { "output": "branch", "equals": "false" }
+      }
     },
     {
       "id": "e-route-aggregate",
@@ -197,7 +203,11 @@
       "target": "aggregate",
       "sourceHandle": "routedData",
       "targetHandle": "thoughtData",
-      "data": { "type": "object", "comment": "Aggregate only after the router exits" }
+      "data": {
+        "type": "object",
+        "comment": "Aggregate only after the router exits",
+        "when": { "output": "branch", "equals": "true" }
+      }
     },
     {
       "id": "e-aggregate-persist",

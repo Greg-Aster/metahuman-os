@@ -11,7 +11,7 @@ import {
 import { loadConfig } from './config.js'
 import {
   saveDesireManifest,
-  saveOutcomeReviewToFolder,
+  saveDesireReviewToFolder,
 } from './storage.js'
 
 const CYCLE_RESET_STRENGTH = 0.3
@@ -39,7 +39,7 @@ export interface AppliedDesireOutcome {
 export interface DesireOutcomeTransitionDependencies {
   loadConfig: typeof loadConfig
   saveManifest: typeof saveDesireManifest
-  saveReview: typeof saveOutcomeReviewToFolder
+  saveReview: typeof saveDesireReviewToFolder
 }
 
 function inferDesireNature(metrics: DesireMetrics): 'recurring' | 'achievable' | 'aspirational' {
@@ -164,7 +164,7 @@ export async function applyDesireOutcomeReview(
   const deps: DesireOutcomeTransitionDependencies = {
     loadConfig,
     saveManifest: saveDesireManifest,
-    saveReview: saveOutcomeReviewToFolder,
+    saveReview: saveDesireReviewToFolder,
     ...dependencies,
   }
   if (!username.trim()) throw new Error('Outcome transition requires a username')

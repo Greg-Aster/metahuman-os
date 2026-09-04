@@ -70,7 +70,7 @@ test('compact summaries remain readable across property types', () => {
   ), 'All 2')
 })
 
-test('slot presentation groups ports and warns when a wired output is filtered out', () => {
+test('slot presentation groups ports and warns when a configured output is disabled', () => {
   const outputs = [
     { name: 'observation', type: 'object' as const, group: 'Core', primary: true },
     {
@@ -78,25 +78,25 @@ test('slot presentation groups ports and warns when a wired output is filtered o
       type: 'object' as const,
       label: 'current image',
       group: 'Perception',
-      enabledBy: { property: 'fields', includes: 'visual' },
+      enabledBy: { property: 'dataOutputs', includes: 'visual' },
     },
   ]
 
   assert.deepEqual(groupNodeSlots(outputs).map((group) => group.label), ['Core', 'Perception'])
   assert.deepEqual(getConnectedOutputConfigurationWarnings(
     outputs,
-    { fields: ['state'] },
+    { dataOutputs: ['state'] },
     {
-      fields: schema('multiselect', {
-        label: 'Observation Data',
-        options: [{ value: 'visual', label: 'Current image' }],
+      dataOutputs: schema('multiselect', {
+        label: 'Optional Outputs',
+        options: [{ value: 'visual', label: 'Current camera frame' }],
       }),
     },
     ['visual'],
-  ), ['current image is connected, but Observation Data excludes Current image.'])
+  ), ['current image is connected, but Optional Outputs excludes Current camera frame.'])
   assert.deepEqual(getConnectedOutputConfigurationWarnings(
     outputs,
-    { fields: ['visual'] },
+    { dataOutputs: ['visual'] },
     undefined,
     ['visual'],
   ), [])

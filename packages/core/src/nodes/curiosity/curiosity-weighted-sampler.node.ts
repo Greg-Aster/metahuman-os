@@ -3,12 +3,21 @@
 import { sampleCuriosityMemories } from '../../curiosity-memory-sampling.js';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 
-const execute: NodeExecutor = async (_inputs, context, properties) => {
+function positiveNumber(value: unknown, fallback: number, label: string, maximum: number): number {
+  const selected = value === undefined ? fallback : value;
+  if (typeof selected !== 'number' || !Number.isFinite(selected) || selected <= 0 || selected > maximum) {
+    throw new Error(`${label} must be greater than zero and at most ${maximum}`);
+  }
+  return selected;
+}
+
+export const executeCuriosityWeightedSampler: NodeExecutor = async (_inputs, context, properties) => {
   const username = typeof context.username === 'string' && context.username.trim()
     ? context.username.trim()
     : context.userId;
-  const sampleSize = properties?.sampleSize || 5;
-  const decayFactor = properties?.decayFactor || 14;
+  const sampleSize = positiveNumber(properties?.sampleSize, 5, 'Curiosity sampleSize', 100);
+  if (!Number.isSafeInteger(sampleSize)) throw new Error('Curiosity sampleSize must be an integer');
+  const decayFactor = positiveNumber(properties?.decayFactor, 14, 'Curiosity decayFactor', 3_650);
 
   if (!username) {
     return {
@@ -28,6 +37,7 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
     return {
       memories: sample.memories,
       count: sample.memories.length,
+      hasMemories: sample.memories.length > 0,
       username,
       decayFactor,
       diagnostics: sample.diagnostics,
@@ -46,6 +56,8 @@ export const CuriosityWeightedSamplerNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'memories', type: 'array', description: 'Sampled memories' },
     { name: 'count', type: 'number' },
+    { name: 'hasMemories', type: 'boolean' },
+    { name: 'diagnostics', type: 'object' },
   ],
   properties: {
     sampleSize: 5,
@@ -64,5 +76,5 @@ export const CuriosityWeightedSamplerNode: NodeDefinition = defineNode({
     },
   },
   description: 'Samples memories using weighted selection with exponential decay',
-  execute,
+  execute: executeCuriosityWeightedSampler,
 });

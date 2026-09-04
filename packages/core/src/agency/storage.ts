@@ -14,6 +14,7 @@ import type {
   AgencyConfig,
   AgencyMetrics,
   DesireScratchpadEntry,
+  DesireScratchpadSummary,
   DesireScratchpadEntryType,
   DesireOutcomeReview,
   DesireExecution,
@@ -217,9 +218,7 @@ export async function listNascentDesires(username?: string): Promise<Desire[]> {
  * Uses folder-based storage only.
  */
 export async function listDesiresPendingApproval(username?: string): Promise<Desire[]> {
-  const approvalStatuses: DesireStatus[] = ['awaiting_approval', 'reviewing'];
-  const allDesires = await listDesiresFromFolders(username);
-  return allDesires.filter(d => approvalStatuses.includes(d.status));
+  return listDesiresByStatus('awaiting_approval', username);
 }
 
 /**
@@ -265,43 +264,6 @@ export async function loadPlan(planId: string, username?: string): Promise<Desir
   }
 
   return JSON.parse(result.data as string) as DesirePlan;
-}
-
-// ============================================================================
-// Review Storage
-// ============================================================================
-
-/**
- * Save a review to storage.
- */
-export async function saveReview(review: DesireReview, username?: string): Promise<void> {
-  await storageClient.write({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: `reviews/${review.id}.json`,
-    data: JSON.stringify(review, null, 2),
-    encoding: 'utf8',
-  });
-}
-
-/**
- * Load a review by ID.
- */
-export async function loadReview(reviewId: string, username?: string): Promise<DesireReview | null> {
-  const result = await storageClient.read({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: `reviews/${reviewId}.json`,
-    encoding: 'utf8',
-  });
-
-  if (!result.success || !result.data) {
-    return null;
-  }
-
-  return JSON.parse(result.data as string) as DesireReview;
 }
 
 // ============================================================================
@@ -747,7 +709,7 @@ export async function addScratchpadEntryToFolder(
   desireId: string,
   entry: DesireScratchpadEntry,
   username?: string
-): Promise<void> {
+): Promise<DesireScratchpadSummary> {
   const folderPath = getDesireFolderPath(desireId);
 
   // Load current manifest to get scratchpad summary
@@ -764,6 +726,19 @@ export async function addScratchpadEntryToFolder(
       desire = fileBased;
     } else {
       throw new Error(`Desire ${desireId} not found`);
+    }
+  }
+
+  const idempotencyKey = typeof entry.data?.idempotencyKey === 'string'
+    ? entry.data.idempotencyKey.trim()
+    : '';
+  if (idempotencyKey) {
+    const filenames = await listScratchpadEntries(desireId, username);
+    for (const filename of filenames) {
+      const existing = await loadScratchpadEntry(desireId, filename, username);
+      if (existing?.data?.idempotencyKey === idempotencyKey) {
+        return desire.scratchpad || initializeScratchpadSummary();
+      }
     }
   }
 
@@ -785,6 +760,7 @@ export async function addScratchpadEntryToFolder(
   // Update manifest with new summary
   desire.scratchpad = updateScratchpadSummary(summary, entry);
   await saveDesireManifest(desire, username);
+  return desire.scratchpad;
 }
 
 /**
@@ -931,12 +907,10 @@ export async function loadPlanFromFolder(
   return JSON.parse(result.data as string) as DesirePlan;
 }
 
-/**
- * Save an outcome review to desire folder
- */
-export async function saveOutcomeReviewToFolder(
+/** Save a plan or outcome review to the desire's canonical review folder. */
+export async function saveDesireReviewToFolder(
   desireId: string,
-  review: DesireOutcomeReview,
+  review: DesireReview | DesireOutcomeReview,
   username?: string
 ): Promise<void> {
   const folderPath = getDesireFolderPath(desireId);
@@ -949,6 +923,24 @@ export async function saveOutcomeReviewToFolder(
     data: JSON.stringify(review, null, 2),
     encoding: 'utf8',
   });
+}
+
+/** Load one plan or outcome review from the desire's canonical review folder. */
+export async function loadDesireReviewFromFolder(
+  desireId: string,
+  reviewId: string,
+  username?: string,
+): Promise<DesireReview | DesireOutcomeReview | null> {
+  const folderPath = getDesireFolderPath(desireId);
+  const result = await storageClient.read({
+    username,
+    category: CATEGORY,
+    subcategory: SUBCATEGORY,
+    relativePath: `${folderPath}/reviews/${reviewId}.json`,
+    encoding: 'utf8',
+  });
+  if (!result.success || !result.data) return null;
+  return JSON.parse(result.data as string) as DesireReview | DesireOutcomeReview;
 }
 
 /**

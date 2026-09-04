@@ -5,9 +5,6 @@
 
   let autonomyMode: AutonomyMode = 'reactive';
   let cooldownMs = 30_000;
-  let maxConsecutiveTasks = 5;
-  let maxEvaluationsPerHour = 12;
-  let userPresenceCooldownMs = 60_000;
   let loading = false;
   let saving = false;
   let error = '';
@@ -25,9 +22,6 @@
       if (!response.ok) throw new Error(config.error || 'Failed to load Active Operator configuration');
       autonomyMode = config.autonomyMode || 'reactive';
       cooldownMs = config.cooldownMs ?? 30_000;
-      maxConsecutiveTasks = config.maxConsecutiveTasks ?? 5;
-      maxEvaluationsPerHour = config.maxEvaluationsPerHour ?? 12;
-      userPresenceCooldownMs = config.userPresenceCooldownMs ?? 60_000;
     } catch (caught) {
       error = (caught as Error).message;
     } finally {
@@ -64,9 +58,6 @@
         body: JSON.stringify({
           autonomyMode,
           cooldownMs,
-          maxConsecutiveTasks,
-          maxEvaluationsPerHour,
-          userPresenceCooldownMs,
         }),
       });
       const result = await response.json();
@@ -80,7 +71,7 @@
   }
 
   async function emergencyStop() {
-    if (!confirm('Cancel active autonomy policy work and return to reactive mode?')) return;
+    if (!confirm('Cancel active autonomous work and return to reactive mode?')) return;
     saving = true;
     try {
       const response = await apiFetch('/api/active-operator/control', {
@@ -126,21 +117,12 @@
   {/if}
 
   <details class="mt-4">
-    <summary class="cursor-pointer py-2 font-medium text-white">Bounded policy limits</summary>
+    <summary class="cursor-pointer py-2 font-medium text-white">Full-mode timing</summary>
     <div class="mt-3 grid gap-3">
-      <label class="text-sm text-white">Cooldown (ms)
+      <label class="text-sm text-white">Robot Operator cooldown (ms)
         <input class="form-input mt-1" type="number" bind:value={cooldownMs} min="5000" step="1000" />
       </label>
-      <label class="text-sm text-white">Maximum consecutive autonomous tasks
-        <input class="form-input mt-1" type="number" bind:value={maxConsecutiveTasks} min="1" max="50" />
-      </label>
-      <label class="text-sm text-white">Maximum policy evaluations per hour
-        <input class="form-input mt-1" type="number" bind:value={maxEvaluationsPerHour} min="1" max="60" />
-      </label>
-      <label class="text-sm text-white">User-presence cooldown (ms)
-        <input class="form-input mt-1" type="number" bind:value={userPresenceCooldownMs} min="0" step="1000" />
-      </label>
-      <button class="btn-primary" disabled={saving} on:click={saveConfig}>{saving ? 'Saving…' : 'Save limits'}</button>
+      <button class="btn-primary" disabled={saving} on:click={saveConfig}>{saving ? 'Saving…' : 'Save timing'}</button>
     </div>
   </details>
 </div>

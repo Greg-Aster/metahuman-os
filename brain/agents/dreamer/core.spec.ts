@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import type { GraphExecutionState, SvelteFlowGraph } from '@metahuman/core'
 import {
+  DEFAULT_GRAPH_SCHEDULER,
+  type GraphExecutionState,
+  type SvelteFlowGraph,
+} from '@metahuman/core'
+import {
+  buildDreamerGraphContext,
   evaluateDreamerGraph,
   parseDreamerArgs,
   run,
@@ -23,6 +28,7 @@ const graph = {
   format: 'svelte-flow',
   name: 'Dreamer contract fixture',
   cognitiveMode: 'agent',
+  scheduler: { ...DEFAULT_GRAPH_SCHEDULER },
   nodes: Object.entries(nodeIds).map(([nodeType, id]) => ({
     id,
     type: 'cognitiveNode',
@@ -133,10 +139,29 @@ test('Dreamer exposes one strict runtime contract', () => {
   assert.equal(agent.run, run)
   assert.equal(meta.id, 'dreamer')
   assert.equal(meta.defaultInterval, undefined)
-  assert.deepEqual(parseDreamerArgs([]), {})
-  assert.deepEqual(parseDreamerArgs(['--force']), { forceRun: true })
+  assert.deepEqual(parseDreamerArgs([], {}), {})
+  assert.deepEqual(parseDreamerArgs(['--force'], {}), { forceRun: true })
   assert.throws(() => parseDreamerArgs(['--single-user']), /Unknown dreamer option/)
   assert.equal(taskTriggerKind('{"triggeredBy":"sleep-workflow"}'), 'sleep-workflow')
   assert.equal(taskTriggerKind('{"triggeredBy":"manual"}'), 'manual')
   assert.throws(() => taskTriggerKind('{invalid'), /valid JSON/)
+})
+
+test('Dreamer carries the Work Coordinator retry identity into graph persistence', () => {
+  const executionTimestamp = '2026-09-02T12:34:56.000Z'
+  const parsed = parseDreamerArgs([], {
+    MH_TRIGGER_USERNAME: 'test-profile',
+    MH_TASK_ID: 'dream-task-stable',
+    MH_TASK_CREATED_AT: executionTimestamp,
+  })
+  assert.deepEqual(parsed, {
+    username: 'test-profile',
+    executionId: 'dream-task-stable',
+    executionTimestamp,
+  })
+
+  const context = buildDreamerGraphContext('test-profile', 3, parsed)
+  assert.equal(context.idempotencyKey, 'dreamer:test-profile:dream-task-stable')
+  assert.equal(context.memoryTimestamp, executionTimestamp)
+  assert.equal(context.maxDreams, 3)
 })

@@ -55,6 +55,8 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'jitterMs',
   'robotStatusInactivityThreshold',
   'robotStatusJitterMs',
+  'robotGoalReviewInactivityThreshold',
+  'robotGoalReviewJitterMs',
   'boredomObserverInactivityThreshold',
   'boredomObserverJitterMs',
   'boredomMovementInactivityThreshold',
@@ -62,6 +64,7 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'boredomReflectionInactivityThreshold',
   'boredomReflectionJitterMs',
   'robotStatusGraph',
+  'robotGoalReviewGraph',
   'boredomObserverGraph',
   'boredomMovementGraph',
   'boredomReflectionGraph',
@@ -313,6 +316,28 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         description: 'Random variation around the Robot Status refresh threshold.',
       },
       {
+        key: 'robotGoalReviewInactivityThreshold',
+        label: 'Robot Goal Review Idle Seconds',
+        type: 'number',
+        value: typeof effective.robotGoalReviewInactivityThreshold === 'number'
+          ? effective.robotGoalReviewInactivityThreshold
+          : 60,
+        applyMode: 'restart',
+        writable: true,
+        description: 'Semi-autonomous idle threshold for reviewing an unfinished Robot Status objective.',
+      },
+      {
+        key: 'robotGoalReviewJitterMs',
+        label: 'Robot Goal Review Jitter Milliseconds',
+        type: 'number',
+        value: typeof effective.robotGoalReviewJitterMs === 'number'
+          ? effective.robotGoalReviewJitterMs
+          : 0,
+        applyMode: 'restart',
+        writable: true,
+        description: 'Random variation around the unfinished-goal review threshold.',
+      },
+      {
         key: 'boredomObserverInactivityThreshold',
         label: 'Boredom Observer Idle Seconds',
         type: 'number',
@@ -387,6 +412,14 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         writable: true,
       },
       {
+        key: 'robotGoalReviewGraph',
+        label: 'Robot Goal Review Graph',
+        type: 'text',
+        value: typeof effective.robotGoalReviewGraph === 'string' ? effective.robotGoalReviewGraph : 'robot-goal-review',
+        applyMode: 'restart',
+        writable: true,
+      },
+      {
         key: 'boredomObserverGraph',
         label: 'Boredom Observer Graph',
         type: 'text',
@@ -412,12 +445,12 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
       },
       {
         key: 'autonomyGraph',
-        label: 'Boredom Autonomy Graph',
+        label: 'Robot Autonomy Executor Graph',
         type: 'text',
         value: typeof effective.autonomyGraph === 'string' ? effective.autonomyGraph : 'boredom-autonomy',
         applyMode: 'restart',
         writable: true,
-        description: 'Shared action-selection and feedback graph used by all three boredom planners.',
+        description: 'One-pass action-selection graph used by boredom planners and unfinished-goal review.',
       },
       {
         key: 'environmentGraph',

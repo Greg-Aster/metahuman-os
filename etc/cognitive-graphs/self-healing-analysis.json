@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "name": "Self-healing Analysis",
+  "description": "Admits one TypeScript error and creates a review-only repair proposal",
+  "cognitiveMode": "agent",
+  "last_modified": "2026-09-03",
+  "nodes": [
+    {
+      "id": "1",
+      "type": "inputNode",
+      "position": { "x": 80, "y": 100 },
+      "data": { "label": "TypeScript Error", "nodeType": "self_healing_input", "properties": {} },
+      "width": 220,
+      "height": 100
+    },
+    {
+      "id": "2",
+      "type": "operatorNode",
+      "position": { "x": 380, "y": 100 },
+      "data": { "label": "Analyze Repair", "nodeType": "self_healing_analysis", "properties": {} },
+      "width": 240,
+      "height": 120
+    }
+  ],
+  "edges": [
+    { "id": "e-1-error-2-error", "source": "1", "target": "2", "sourceHandle": "error", "targetHandle": "error" },
+    { "id": "e-1-context-2-context", "source": "1", "target": "2", "sourceHandle": "sourceContext", "targetHandle": "sourceContext" }
+  ]
+}

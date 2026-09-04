@@ -2,19 +2,25 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Environment Mode",
-  "description": "Single-owner Environment workflow. One LLM interprets new input or external evidence; typed task state closes exact action results, admits one next action, and prevents silent failures.",
+  "description": "Environment workflow with LLM-owned intent routing, selected context branches, one response/action selector, optional novel movement generation, one action dispatch, and Robot Status persistence.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-09-02T20:23:20.423Z",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
+  "last_modified": "2026-09-04T00:21:26.063Z",
   "nodes": [
     {
       "id": "user-input",
       "type": "inputNode",
       "position": {
-        "x": -60,
-        "y": -165
+        "x": 80,
+        "y": 80
       },
       "width": 240,
-      "height": 110,
       "data": {
         "label": "User Input",
         "nodeType": "user_input",
@@ -25,43 +31,13 @@
       }
     },
     {
-      "id": "2",
-      "type": "environmentNode",
-      "position": {
-        "x": -315,
-        "y": 135
-      },
-      "width": 240,
-      "height": 120,
-      "data": {
-        "label": "Environment Bridge Input",
-        "nodeType": "environment_bridge_input",
-        "properties": {
-          "sessionId": "",
-          "observationFields": [
-            "capabilities",
-            "text",
-            "state",
-            "location",
-            "map",
-            "visual",
-            "visuals",
-            "feedback",
-            "metadata"
-          ]
-        },
-        "comment": "Reads the exact triggering robot observation, or the selected/latest connected robot session during a direct user turn. Environment Mode receives no planner instruction from this node."
-      }
-    },
-    {
       "id": "conversation-history",
       "type": "contextNode",
       "position": {
-        "x": -60,
-        "y": 420
+        "x": 80,
+        "y": 462
       },
       "width": 240,
-      "height": 110,
       "data": {
         "label": "Conversation History",
         "nodeType": "conversation_history",
@@ -72,49 +48,102 @@
       }
     },
     {
-      "id": "robot-status",
-      "type": "contextNode",
+      "id": "intent-orchestrator",
+      "type": "llmNode",
       "position": {
-        "x": -60,
-        "y": 660
+        "x": 540,
+        "y": 80
       },
-      "width": 250,
-      "height": 110,
+      "width": 300,
       "data": {
-        "label": "Robot Status",
-        "nodeType": "robot_status",
+        "label": "Choose Required Routes",
+        "nodeType": "orchestrator_llm",
         "properties": {
-          "historyLimit": 3
-        }
+          "outputContract": "environment",
+          "systemPrompt": "You are the Environment Intent Orchestrator. Decide which independent routes are relevant to the current user message.\nYou do not answer the user, rewrite or summarize the message, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes user-visible natural-language expression. Without it, this workflow produces no chat message. It can coexist with every other route.\n- needsConversationHistory exposes earlier dialogue.\n- needsMemory exposes stored long-term experience.\n- needsRobotStatus exposes the canonical current snapshot of the robot's condition, readiness, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection and its advertised capabilities.\n\nRoutes are independent. Infer which information and capabilities are relevant from the message and recent dialogue. Return exactly the seven JSON booleans and nothing else.",
+          "userPromptTemplate": "Current user message: {{userMessage}}",
+          "temperature": 0.1,
+          "maxTokens": 768
+        },
+        "comment": "One LLM call classifies intent into independent route switches. It does not rewrite the input, answer, or select an action."
       }
     },
     {
       "id": "memory-router",
       "type": "memoryNode",
       "position": {
-        "x": 840,
-        "y": 270
+        "x": 1000,
+        "y": 80
       },
       "width": 250,
-      "height": 120,
       "data": {
         "label": "Relevant Long-Term Memory",
         "nodeType": "memory_router",
         "properties": {
           "topK": 3,
           "threshold": 0.65
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsMemory",
+              "truthy": true
+            }
+          ]
         }
+      }
+    },
+    {
+      "id": "robot-status",
+      "type": "contextNode",
+      "position": {
+        "x": 1000,
+        "y": 422
+      },
+      "width": 250,
+      "data": {
+        "label": "Robot Status",
+        "nodeType": "robot_status",
+        "properties": {
+          "historyLimit": 3
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsRobotStatus",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "type": "environmentNode",
+      "position": {
+        "x": 1000,
+        "y": 799
+      },
+      "width": 240,
+      "data": {
+        "label": "Load Selected Environment Bridge Data",
+        "nodeType": "environment_bridge_input",
+        "properties": {
+          "sessionId": ""
+        },
+        "comment": "Reads only Environment Bridge observations and diagnostics. It runs only when intent selected environment, vision, or action context."
       }
     },
     {
       "id": "persona-loader",
       "type": "personaNode",
       "position": {
-        "x": -45,
-        "y": -435
+        "x": 80,
+        "y": 744
       },
       "width": 240,
-      "height": 110,
       "data": {
         "label": "Active Persona",
         "nodeType": "persona_loader",
@@ -125,11 +154,10 @@
       "id": "persona-formatter",
       "type": "personaNode",
       "position": {
-        "x": 285,
-        "y": -435
+        "x": 540,
+        "y": 795
       },
       "width": 250,
-      "height": 120,
       "data": {
         "label": "Compact Persona Context",
         "nodeType": "persona_formatter",
@@ -144,31 +172,23 @@
       "id": "11",
       "type": "environmentNode",
       "position": {
-        "x": -60,
-        "y": 945
+        "x": 1460,
+        "y": 80
       },
       "width": 260,
-      "height": 130,
       "data": {
-        "label": "Environment Image Input",
+        "label": "Use Current-Run Camera Evidence",
         "nodeType": "environment_image_input",
-        "properties": {}
-      }
-    },
-    {
-      "id": "task-state-prepare",
-      "type": "environmentNode",
-      "position": {
-        "x": 525,
-        "y": 240
-      },
-      "width": 260,
-      "height": 150,
-      "data": {
-        "label": "Prepare Environment Task",
-        "nodeType": "environment_task_state",
-        "properties": {
-          "phase": "prepare"
+        "properties": {},
+        "comment": "Validates camera data and admits it as current evidence only when that observation triggered this graph run.",
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsVision",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -176,31 +196,30 @@
       "id": "3",
       "type": "environmentNode",
       "position": {
-        "x": 1155,
-        "y": -570
+        "x": 1920,
+        "y": 80
       },
       "width": 530,
-      "height": 140,
       "data": {
-        "label": "Build Environment Context",
+        "label": "Build Selected Environment Context",
         "nodeType": "environment_context_builder",
         "properties": {
-          "systemPrompt": "ENVIRONMENT ACTION SELECTOR\nTreat currentInstruction as authoritative; use activePersona for judgment. currentEnvironment contains current physical state and capabilities. Robot Status, history, and memories are context, not current proof; use them for semantic continuity.\n\nReturn JSON with response, actions, movementRequest, and taskDecision. Make one semantic routing decision: response-only, one advertised action, or one movementRequest. actions and movementRequest are exclusive. response is optional, never execution, and one or two concise sentences.\n\nConversation may remain response-only. Expressive action is optional when meaningful; add no filler motion.\n\nFor physical or sensing intent, choose an advertised action when its description performs the current step, even if the objective needs later steps; reassess after feedback. Use movementRequest only when the current movement itself is uncovered. Compare descriptions, never names; preserve specified body parts, direction, timing, and holds.\n\nChoose taskDecision and evidence that establish the objective. A terminal action result proves execution; a visual observation proves only visible facts. Continue from fresh correlated evidence, but neither invent extra steps nor impose a fixed action count.\n\nPreserve taskState, capabilities, and capabilityRules. Never claim beyond current evidence. For autonomy, choose a persona-grounded response, action, or both; summarize fresh visual evidence concisely.",
+          "systemPrompt": "ENVIRONMENT ACTION SELECTOR\nselectedRoutes is the Intent Orchestrator's decision about which capabilities and context are relevant to currentInstruction. Use those selected capabilities without deciding the routes again. The original instruction is authoritative; persona, selected history, selected memory, Robot Status, and bridge data are supporting context. A saved environment observation supplies last-known state and capabilities, not current vision or current-turn action feedback.\n\nReturn strict JSON with response, actions, movementRequest, and taskDecision. The response field carries the user-visible natural-language expression selected by needsResponse and can accompany any action. Do not add filler motion.\n\nPhysical and sensing capabilities are available through actions. If current visual evidence is useful but absent, captureImage may be selected when advertised; an attached current frame can be analyzed without another capture. Never describe a saved frame as current.\n\nAdvertised actions are proven capabilities described in currentEnvironment. movementRequest is available for a novel movement not covered by an advertised action. Preserve relevant body part, direction, timing, and holds. actions and movementRequest are exclusive.\n\ntaskDecision describes the output the model selected. outcome act means that actions or movementRequest is non-empty and objectiveComplete is false; only later correlated action feedback can establish completion. A response without either uses a different outcome. An action result proves execution; a visual observation proves only visible facts. Never claim completion beyond supplied evidence.",
           "recentHistoryLimit": 4
-        }
+        },
+        "comment": "Packages the original input plus only the context routes selected by Intent Orchestrator."
       }
     },
     {
       "id": "4",
       "type": "llmNode",
       "position": {
-        "x": 1875,
-        "y": -540
+        "x": 2380,
+        "y": 80
       },
       "width": 220,
-      "height": 120,
       "data": {
-        "label": "Environment Action Selector",
+        "label": "Choose Response and/or One Action",
         "nodeType": "model_router",
         "properties": {
           "role": "environmentActionSelector",
@@ -209,53 +228,47 @@
           "repeatPenalty": 1.15,
           "format": "json"
         },
-        "comment": "Semantic Environment decision point. It chooses a conversation-only response, one advertised action, or one body-local movement request and proposes task continuation or completion. It does not execute or authorize physical work; Parse Environment Action, Environment Task State, and Environment Bridge Out own validation, lifecycle, and dispatch."
-      }
-    },
-    {
-      "id": "5",
-      "type": "outputNode",
-      "position": {
-        "x": 2190,
-        "y": -45
-      },
-      "width": 220,
-      "height": 110,
-      "data": {
-        "label": "Thinking Stripper",
-        "nodeType": "thinking_stripper",
-        "properties": {}
+        "comment": "The Environment Action Selector executes the chosen routes. It may answer, choose one advertised action, or request one novel movement; it does not decide which context branches run."
       }
     },
     {
       "id": "6",
       "type": "environmentNode",
       "position": {
-        "x": 2445,
-        "y": 105
+        "x": 2840,
+        "y": 80
       },
       "width": 240,
-      "height": 120,
       "data": {
-        "label": "Parse Environment Action",
+        "label": "Validate Selector Output",
         "nodeType": "environment_action_parser",
         "properties": {}
       }
     },
     {
-      "id": "task-state-reduce",
+      "id": "movement-generator",
       "type": "environmentNode",
       "position": {
-        "x": 2730,
-        "y": 210
+        "x": 3300,
+        "y": 463
       },
-      "width": 260,
-      "height": 170,
+      "width": 250,
       "data": {
-        "label": "Reduce Environment Task",
-        "nodeType": "environment_task_state",
+        "label": "Generate Novel Movement When Requested",
+        "nodeType": "movement_generator",
         "properties": {
-          "phase": "reduce"
+          "role": "orchestrator",
+          "maxTokens": 4096,
+          "temperature": 0.2
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "6",
+              "output": "movementRequest",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -263,13 +276,12 @@
       "id": "8",
       "type": "environmentNode",
       "position": {
-        "x": 3105,
-        "y": 75
+        "x": 3760,
+        "y": 994
       },
       "width": 240,
-      "height": 110,
       "data": {
-        "label": "Environment Bridge Out",
+        "label": "Send Selected Action",
         "nodeType": "environment_send_action",
         "properties": {
           "allowedActions": [
@@ -287,26 +299,17 @@
           ],
           "maxDurationMs": 5000,
           "defaultDurationMs": 750,
-          "feedbackGraph": ""
-        }
-      }
-    },
-    {
-      "id": "movement-generator",
-      "type": "environmentNode",
-      "position": {
-        "x": 1830,
-        "y": 405
-      },
-      "width": 250,
-      "height": 150,
-      "data": {
-        "label": "Movement Generator",
-        "nodeType": "movement_generator",
-        "properties": {
-          "role": "orchestrator",
-          "maxTokens": 4096,
-          "temperature": 0.2
+          "feedbackGraph": "robot-action-result"
+        },
+        "comment": "Dispatches actions and returns transport facts only. It does not create or replace conversation.",
+        "activation": {
+          "when": [
+            {
+              "nodeId": "6",
+              "output": "valid",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -314,11 +317,10 @@
       "id": "robot-buffer",
       "type": "outputNode",
       "position": {
-        "x": 3420,
-        "y": 885
+        "x": 4220,
+        "y": 80
       },
       "width": 250,
-      "height": 120,
       "data": {
         "label": "Robot Buffer",
         "nodeType": "robot_buffer",
@@ -328,34 +330,15 @@
       }
     },
     {
-      "id": "tts-out",
-      "type": "outputNode",
-      "position": {
-        "x": 4740,
-        "y": 630
-      },
-      "width": 240,
-      "height": 110,
-      "data": {
-        "label": "TTS Output",
-        "nodeType": "tts",
-        "properties": {
-          "source": "environment-mode",
-          "defaultMode": "conversation"
-        }
-      }
-    },
-    {
       "id": "conversation-buffer",
       "type": "outputNode",
       "position": {
-        "x": 3540,
-        "y": 345
+        "x": 3300,
+        "y": 80
       },
       "width": 250,
-      "height": 120,
       "data": {
-        "label": "Conversation Buffer",
+        "label": "Save User and Optional Response",
         "nodeType": "conversation_buffer",
         "properties": {}
       }
@@ -364,11 +347,10 @@
       "id": "memory-capture",
       "type": "outputNode",
       "position": {
-        "x": 4650,
-        "y": 255
+        "x": 3760,
+        "y": 80
       },
       "width": 250,
-      "height": 110,
       "data": {
         "label": "Conversation Memory Saver",
         "nodeType": "memory_capture",
@@ -376,157 +358,245 @@
       }
     },
     {
-      "id": "9",
-      "type": "environmentNode",
+      "id": "tts-out",
+      "type": "outputNode",
       "position": {
-        "x": -75,
-        "y": 1185
+        "x": 3760,
+        "y": 423
       },
-      "width": 260,
-      "height": 130,
+      "width": 240,
       "data": {
-        "label": "Optional Map Context",
-        "nodeType": "environment_map_input",
+        "label": "Speak Optional Response",
+        "nodeType": "tts",
         "properties": {
-          "mapJson": "",
-          "locationJson": "",
-          "coordinateSystem": ""
+          "source": "environment-mode",
+          "defaultMode": "conversation"
         }
-      }
-    },
-    {
-      "id": "node-1783475676613",
-      "type": "utilityNode",
-      "position": {
-        "x": 3180,
-        "y": -510
-      },
-      "data": {
-        "nodeType": "cognitive/output_viewer",
-        "properties": {}
       }
     },
     {
       "id": "12",
       "type": "outputNode",
       "position": {
-        "x": 3960,
-        "y": 300
+        "x": 3760,
+        "y": 745
       },
       "width": 180,
-      "height": 60,
       "data": {
-        "label": "Stream Conversation",
+        "label": "Return Optional Response",
         "nodeType": "stream_writer",
         "properties": {}
       }
     },
     {
-      "id": "13",
+      "id": "robot-status-out",
       "type": "outputNode",
       "position": {
-        "x": 4410,
-        "y": -120
+        "x": 4220,
+        "y": 397
       },
       "width": 280,
-      "height": 148,
       "data": {
-        "label": "Environment Chat",
-        "nodeType": "cognitive/chat_view",
-        "properties": {
-          "mode": "direct",
-          "maxMessages": 5
-        }
+        "label": "Update Robot Status",
+        "nodeType": "robot_status_out",
+        "properties": {},
+        "comment": "Updates the canonical profile Robot Status after this Environment pass. It performs no model call and makes no action decision."
       }
     }
   ],
   "edges": [
     {
-      "id": "e-user-input-message-task-state-prepare-instruction",
+      "id": "e-user-intent",
       "source": "user-input",
-      "target": "task-state-prepare",
+      "target": "intent-orchestrator",
+      "sourceHandle": "message",
+      "targetHandle": "message",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-history-intent",
+      "source": "conversation-history",
+      "target": "intent-orchestrator",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-intent-context",
+      "source": "intent-orchestrator",
+      "target": "3",
+      "sourceHandle": "analysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-user-instruction-context",
+      "source": "user-input",
+      "target": "3",
       "sourceHandle": "message",
       "targetHandle": "instruction",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Current human-authored instruction or empty during feedback"
+        "type": "string"
       }
     },
     {
-      "id": "e-user-input-message-task-state-prepare-userInstruction",
+      "id": "e-user-provenance-context",
       "source": "user-input",
-      "target": "task-state-prepare",
+      "target": "3",
       "sourceHandle": "message",
       "targetHandle": "userInstruction",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Distinguishes a new human turn from correlated feedback"
+        "type": "string"
       }
     },
     {
-      "id": "e-user-input-instructionSource-task-state-prepare-inputSource",
-      "source": "user-input",
-      "target": "task-state-prepare",
-      "sourceHandle": "instructionSource",
-      "targetHandle": "inputSource",
+      "id": "e-history-context",
+      "source": "conversation-history",
+      "target": "3",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Explicit user instruction provenance"
+        "type": "array"
       }
     },
     {
-      "id": "e-2-observation-task-state-prepare-observation",
-      "source": "2",
-      "target": "task-state-prepare",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Prepare one typed lifecycle state"
-      }
-    },
-    {
-      "id": "e-task-state-prepare-memoryHints-memory-router-orchestratorHints",
-      "source": "task-state-prepare",
+      "id": "e-intent-memory",
+      "source": "intent-orchestrator",
       "target": "memory-router",
-      "sourceHandle": "memoryHints",
+      "sourceHandle": "analysis",
       "targetHandle": "orchestratorHints",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Skip memory on feedback; bounded semantic retrieval on a new input"
+        "type": "object"
       }
     },
     {
-      "id": "e-task-state-prepare-instruction-memory-router-userMessage",
-      "source": "task-state-prepare",
+      "id": "e-user-memory",
+      "source": "user-input",
       "target": "memory-router",
-      "sourceHandle": "instruction",
+      "sourceHandle": "message",
       "targetHandle": "userMessage",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Current objective as the semantic memory query"
+        "type": "string"
       }
     },
     {
-      "id": "e-memory-router-memories-3-memories",
+      "id": "e-memory-context",
       "source": "memory-router",
       "target": "3",
       "sourceHandle": "memories",
       "targetHandle": "memories",
       "type": "default",
       "data": {
-        "type": "array",
-        "comment": "Top semantically matching long-term memories"
+        "type": "array"
       }
     },
     {
-      "id": "e-persona-loader-persona-persona-formatter-persona",
+      "id": "e-status-context",
+      "source": "robot-status",
+      "target": "3",
+      "sourceHandle": "context",
+      "targetHandle": "robotStatus",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-route-status",
+      "source": "intent-orchestrator",
+      "target": "robot-status",
+      "sourceHandle": "needsRobotStatus",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsRobotStatus",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-memory",
+      "source": "intent-orchestrator",
+      "target": "memory-router",
+      "sourceHandle": "needsMemory",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsMemory",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-environment",
+      "source": "intent-orchestrator",
+      "target": "2",
+      "sourceHandle": "needsEnvironment",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsEnvironment",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-vision",
+      "source": "intent-orchestrator",
+      "target": "2",
+      "sourceHandle": "needsVision",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsVision",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-action",
+      "source": "intent-orchestrator",
+      "target": "2",
+      "sourceHandle": "needsAction",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsAction",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-persona-format",
       "source": "persona-loader",
       "target": "persona-formatter",
       "sourceHandle": "persona",
@@ -537,667 +607,272 @@
       }
     },
     {
-      "id": "e-persona-formatter-formatted-3-personaText",
+      "id": "e-persona-context",
       "source": "persona-formatter",
       "target": "3",
       "sourceHandle": "formatted",
       "targetHandle": "personaText",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "One compact active-persona copy for action selection and autonomous expression"
+        "type": "string"
       }
     },
     {
-      "id": "e-conversation-history-history-3-conversationHistory",
-      "source": "conversation-history",
-      "target": "3",
-      "sourceHandle": "history",
-      "targetHandle": "conversationHistory",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Recent dialogue only on a new user pass"
-      }
-    },
-    {
-      "id": "e-robot-status-context-3-robotStatus",
-      "source": "robot-status",
-      "target": "3",
-      "sourceHandle": "context",
-      "targetHandle": "robotStatus",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Reusable Robot Status supports self-context but is not current physical proof"
-      }
-    },
-    {
-      "id": "e-task-state-prepare-visuals-11-visuals",
-      "source": "task-state-prepare",
-      "target": "11",
-      "sourceHandle": "visuals",
-      "targetHandle": "visuals",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "One current frame or ordered baseline and result frames"
-      }
-    },
-    {
-      "id": "e-2-observation-3-observation",
+      "id": "e-observation-context",
       "source": "2",
       "target": "3",
       "sourceHandle": "observation",
       "targetHandle": "observation",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Current capabilities, state, and exact feedback"
+        "type": "object"
       }
     },
     {
-      "id": "e-task-state-prepare-instruction-3-instruction",
-      "source": "task-state-prepare",
+      "id": "e-observation-current-context",
+      "source": "2",
       "target": "3",
-      "sourceHandle": "instruction",
-      "targetHandle": "instruction",
+      "sourceHandle": "isTriggeringObservation",
+      "targetHandle": "observationCurrent",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Task-state-grounded semantic instruction"
+        "type": "boolean"
       }
     },
     {
-      "id": "e-user-input-message-3-userInstruction",
-      "source": "user-input",
-      "target": "3",
-      "sourceHandle": "message",
-      "targetHandle": "userInstruction",
+      "id": "e-bridge-visual-image",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "visual",
+      "targetHandle": "visual",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Current human input without hidden context lookup"
+        "type": "object"
       }
     },
     {
-      "id": "e-user-input-instructionSource-3-inputSource",
-      "source": "user-input",
-      "target": "3",
-      "sourceHandle": "instructionSource",
-      "targetHandle": "inputSource",
+      "id": "e-bridge-visuals-image",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "visuals",
+      "targetHandle": "visuals",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Explicit user instruction provenance"
+        "type": "array"
       }
     },
     {
-      "id": "e-task-state-prepare-routingAnalysis-3-routingAnalysis",
-      "source": "task-state-prepare",
-      "target": "3",
-      "sourceHandle": "routingAnalysis",
-      "targetHandle": "routingAnalysis",
+      "id": "e-bridge-current-image",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "isTriggeringObservation",
+      "targetHandle": "observationCurrent",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Deterministic context admission, never semantic action authority"
+        "type": "boolean"
       }
     },
     {
-      "id": "e-task-state-prepare-taskState-3-taskState",
-      "source": "task-state-prepare",
-      "target": "3",
-      "sourceHandle": "taskState",
-      "targetHandle": "taskState",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "The sole objective lifecycle state"
-      }
-    },
-    {
-      "id": "e-11-images-3-images",
+      "id": "e-images-context",
       "source": "11",
       "target": "3",
       "sourceHandle": "images",
       "targetHandle": "images",
       "type": "default",
       "data": {
-        "type": "array",
-        "comment": "Bounded validated model image content"
+        "type": "array"
       }
     },
     {
-      "id": "e-9-map-3-map",
-      "source": "9",
-      "target": "3",
-      "sourceHandle": "map",
-      "targetHandle": "map",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Optional authored map context"
-      }
-    },
-    {
-      "id": "e-9-location-3-location",
-      "source": "9",
-      "target": "3",
-      "sourceHandle": "location",
-      "targetHandle": "location",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Optional authored location context"
-      }
-    },
-    {
-      "id": "e-3-messages-4-messages",
+      "id": "e-context-model",
       "source": "3",
       "target": "4",
       "sourceHandle": "messages",
       "targetHandle": "messages",
       "type": "default",
       "data": {
-        "type": "array",
-        "comment": "Prompt-ready Environment decision"
+        "type": "array"
       }
     },
     {
-      "id": "e-3-jsonSchema-4-jsonSchema",
+      "id": "e-schema-model",
       "source": "3",
       "target": "4",
       "sourceHandle": "jsonSchema",
       "targetHandle": "jsonSchema",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Provider schema restricted to current advertised capabilities"
+        "type": "object"
       }
     },
     {
-      "id": "e-4-response-5-response",
+      "id": "e-model-parser",
       "source": "4",
-      "target": "5",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "llm_response",
-        "comment": "Pass the semantic Environment decision directly to the parser path"
-      }
-    },
-    {
-      "id": "e-5-response-6-response",
-      "source": "5",
       "target": "6",
       "sourceHandle": "response",
       "targetHandle": "response",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Parse the one Environment decision"
+        "type": "llm_response"
       }
     },
     {
-      "id": "e-2-sessionId-6-sessionId",
+      "id": "e-session-parser",
       "source": "2",
       "target": "6",
       "sourceHandle": "sessionId",
       "targetHandle": "sessionId",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Target robot session"
+        "type": "string"
       }
     },
     {
-      "id": "e-2-observation-6-observation",
+      "id": "e-observation-parser",
       "source": "2",
       "target": "6",
       "sourceHandle": "observation",
       "targetHandle": "observation",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Advertised actions and named robot commands"
+        "type": "object"
       }
     },
     {
-      "id": "e-task-state-prepare-routingAnalysis-6-routingAnalysis",
-      "source": "task-state-prepare",
-      "target": "6",
-      "sourceHandle": "routingAnalysis",
-      "targetHandle": "routingAnalysis",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Fallback persisted task semantics only"
-      }
-    },
-    {
-      "id": "e-user-input-message-6-userInstruction",
-      "source": "user-input",
-      "target": "6",
-      "sourceHandle": "message",
-      "targetHandle": "userInstruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "New human instruction provenance"
-      }
-    },
-    {
-      "id": "e-user-input-instructionSource-6-inputSource",
-      "source": "user-input",
+      "id": "e-source-parser",
+      "source": "3",
       "target": "6",
       "sourceHandle": "instructionSource",
       "targetHandle": "inputSource",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Explicit user instruction provenance"
+        "type": "string"
       }
     },
     {
-      "id": "e-6-movementRequest-movement-generator-movementRequest",
+      "id": "e-movement-request-generator",
       "source": "6",
       "target": "movement-generator",
       "sourceHandle": "movementRequest",
       "targetHandle": "movementRequest",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Generate body-local motion only when requested"
+        "type": "object"
       }
     },
     {
-      "id": "e-task-state-prepare-movementRequest-3-preparedMovementRequest",
-      "source": "task-state-prepare",
-      "target": "3",
-      "sourceHandle": "movementRequest",
-      "targetHandle": "preparedMovementRequest",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Skip redundant semantic selection while the authorized request enters Movement Generator"
-      }
-    },
-    {
-      "id": "e-task-state-prepare-movementRequest-movement-generator-preparedMovementRequest",
-      "source": "task-state-prepare",
+      "id": "e-instruction-generator",
+      "source": "3",
       "target": "movement-generator",
-      "sourceHandle": "movementRequest",
-      "targetHandle": "preparedMovementRequest",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Resume the exact request after correlated standing preparation"
-      }
-    },
-    {
-      "id": "e-task-state-prepare-instruction-movement-generator-instruction",
-      "source": "task-state-prepare",
-      "target": "movement-generator",
-      "sourceHandle": "instruction",
+      "sourceHandle": "currentInstruction",
       "targetHandle": "instruction",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Original movement objective"
+        "type": "string"
       }
     },
     {
-      "id": "e-2-observation-movement-generator-observation",
+      "id": "e-observation-generator",
       "source": "2",
       "target": "movement-generator",
       "sourceHandle": "observation",
       "targetHandle": "observation",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Current joint and capability context"
+        "type": "object"
       }
     },
     {
-      "id": "e-2-sessionId-movement-generator-sessionId",
+      "id": "e-session-generator",
       "source": "2",
       "target": "movement-generator",
       "sourceHandle": "sessionId",
       "targetHandle": "sessionId",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Target robot session"
+        "type": "string"
       }
     },
     {
-      "id": "e-task-state-prepare-taskState-task-state-reduce-taskState",
-      "source": "task-state-prepare",
-      "target": "task-state-reduce",
-      "sourceHandle": "taskState",
-      "targetHandle": "taskState",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Prepared lifecycle state"
-      }
-    },
-    {
-      "id": "e-2-observation-task-state-reduce-observation",
-      "source": "2",
-      "target": "task-state-reduce",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Exact terminal result and current state"
-      }
-    },
-    {
-      "id": "e-task-state-prepare-instruction-task-state-reduce-instruction",
-      "source": "task-state-prepare",
-      "target": "task-state-reduce",
-      "sourceHandle": "instruction",
-      "targetHandle": "instruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Current objective or feedback decision instruction"
-      }
-    },
-    {
-      "id": "e-user-input-message-task-state-reduce-userInstruction",
-      "source": "user-input",
-      "target": "task-state-reduce",
-      "sourceHandle": "message",
-      "targetHandle": "userInstruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Current human input for user-input evidence"
-      }
-    },
-    {
-      "id": "e-user-input-instructionSource-task-state-reduce-inputSource",
-      "source": "user-input",
-      "target": "task-state-reduce",
-      "sourceHandle": "instructionSource",
-      "targetHandle": "inputSource",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Explicit user instruction provenance"
-      }
-    },
-    {
-      "id": "e-6-actions-task-state-reduce-actions",
+      "id": "e-actions-bridge",
       "source": "6",
-      "target": "task-state-reduce",
+      "target": "8",
       "sourceHandle": "actions",
       "targetHandle": "actions",
       "type": "default",
       "data": {
         "type": "array",
-        "comment": "Capability-validated semantic actions"
+        "when": {
+          "output": "hasActions",
+          "truthy": true
+        }
       }
     },
     {
-      "id": "e-6-movementRequest-task-state-reduce-movementRequest",
-      "source": "6",
-      "target": "task-state-reduce",
-      "sourceHandle": "movementRequest",
-      "targetHandle": "movementRequest",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Movement generation request"
-      }
-    },
-    {
-      "id": "e-6-response-task-state-reduce-response",
-      "source": "6",
-      "target": "task-state-reduce",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Conversational result"
-      }
-    },
-    {
-      "id": "e-6-taskDecision-task-state-reduce-taskDecision",
-      "source": "6",
-      "target": "task-state-reduce",
-      "sourceHandle": "taskDecision",
-      "targetHandle": "taskDecision",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Environment LLM completion decision"
-      }
-    },
-    {
-      "id": "e-6-taskDecisionError-task-state-reduce-taskDecisionError",
-      "source": "6",
-      "target": "task-state-reduce",
-      "sourceHandle": "taskDecisionError",
-      "targetHandle": "taskDecisionError",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Malformed semantic decision"
-      }
-    },
-    {
-      "id": "e-6-actionAdmission-task-state-reduce-actionAdmission",
-      "source": "6",
-      "target": "task-state-reduce",
-      "sourceHandle": "actionAdmission",
-      "targetHandle": "actionAdmission",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Typed capability validation"
-      }
-    },
-    {
-      "id": "e-movement-generator-actions-task-state-reduce-generatedActions",
+      "id": "e-generated-actions-bridge",
       "source": "movement-generator",
-      "target": "task-state-reduce",
+      "target": "8",
       "sourceHandle": "actions",
       "targetHandle": "generatedActions",
       "type": "default",
       "data": {
         "type": "array",
-        "comment": "Generated bounded body-local action"
+        "when": {
+          "output": "valid",
+          "truthy": true
+        }
       }
     },
     {
-      "id": "e-movement-generator-response-task-state-reduce-generatedResponse",
-      "source": "movement-generator",
-      "target": "task-state-reduce",
-      "sourceHandle": "response",
-      "targetHandle": "generatedResponse",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Movement generation status"
-      }
-    },
-    {
-      "id": "e-11-frames-task-state-reduce-frames",
-      "source": "11",
-      "target": "task-state-reduce",
-      "sourceHandle": "frames",
-      "targetHandle": "frames",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "Exact frames used for completion evidence"
-      }
-    },
-    {
-      "id": "e-task-state-reduce-actions-8-actions",
-      "source": "task-state-reduce",
-      "target": "8",
-      "sourceHandle": "actions",
-      "targetHandle": "actions",
-      "type": "default",
-      "data": {
-        "type": "array",
-        "comment": "At most one action for this objective step"
-      }
-    },
-    {
-      "id": "e-task-state-reduce-response-8-response",
-      "source": "task-state-reduce",
-      "target": "8",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Environment response for conversation and TTS"
-      }
-    },
-    {
-      "id": "e-task-state-reduce-familiarityQuery-8-familiarityQuery",
-      "source": "task-state-reduce",
-      "target": "8",
-      "sourceHandle": "familiarityQuery",
-      "targetHandle": "familiarityQuery",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Queue non-blocking familiarity matching after the decision"
-      }
-    },
-    {
-      "id": "e-task-state-reduce-taskInstruction-8-taskInstruction",
-      "source": "task-state-reduce",
-      "target": "8",
-      "sourceHandle": "taskInstruction",
-      "targetHandle": "taskInstruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Persist the sole typed lifecycle state with the action"
-      }
-    },
-    {
-      "id": "e-2-sessionId-8-sessionId",
-      "source": "2",
-      "target": "8",
-      "sourceHandle": "sessionId",
-      "targetHandle": "sessionId",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Target robot session"
-      }
-    },
-    {
-      "id": "e-task-state-prepare-instruction-8-instruction",
-      "source": "task-state-prepare",
-      "target": "8",
-      "sourceHandle": "instruction",
-      "targetHandle": "instruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Resolved objective or correlated feedback instruction"
-      }
-    },
-    {
-      "id": "e-user-input-message-8-userInstruction",
-      "source": "user-input",
-      "target": "8",
-      "sourceHandle": "message",
-      "targetHandle": "userInstruction",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "New human instruction used to start a correlated cycle"
-      }
-    },
-    {
-      "id": "e-user-input-instructionSource-8-inputSource",
-      "source": "user-input",
-      "target": "8",
-      "sourceHandle": "instructionSource",
-      "targetHandle": "inputSource",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "comment": "Explicit user instruction provenance"
-      }
-    },
-    {
-      "id": "e-2-observation-8-observation",
-      "source": "2",
-      "target": "8",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "comment": "Current bridge cycle metadata"
-      }
-    },
-    {
-      "id": "e-8-bridgeRecord-robot-buffer-bridgeRecord",
+      "id": "e-bridge-robot-buffer",
       "source": "8",
       "target": "robot-buffer",
       "sourceHandle": "bridgeRecord",
       "targetHandle": "bridgeRecord",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Structured outbound bridge record"
+        "type": "object"
       }
     },
     {
-      "id": "e-user-input-message-conversation-buffer-userMessage",
+      "id": "e-user-conversation-buffer",
       "source": "user-input",
       "target": "conversation-buffer",
       "sourceHandle": "message",
       "targetHandle": "userMessage",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Only fresh player-authored text enters the Conversation Buffer"
+        "type": "string"
       }
     },
     {
-      "id": "e-8-conversationResponse-conversation-buffer-response",
-      "source": "8",
+      "id": "e-response-conversation-buffer",
+      "source": "6",
       "target": "conversation-buffer",
-      "sourceHandle": "conversationResponse",
+      "sourceHandle": "response",
       "targetHandle": "response",
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Every Environment response enters conversation"
+        "when": {
+          "output": "hasResponse",
+          "truthy": true
+        }
       }
     },
     {
-      "id": "e-8-responseMetadata-conversation-buffer-metadata",
-      "source": "8",
-      "target": "conversation-buffer",
-      "sourceHandle": "responseMetadata",
-      "targetHandle": "metadata",
+      "id": "e-conversation-memory",
+      "source": "conversation-buffer",
+      "target": "memory-capture",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Preserve the originating autonomy service label"
+        "type": "array"
       }
     },
     {
-      "id": "e-conversation-buffer-response-tts-out-conversation",
+      "id": "e-conversation-tts",
       "source": "conversation-buffer",
       "target": "tts-out",
       "sourceHandle": "response",
@@ -1205,11 +880,14 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Speak the same visible response"
+        "when": {
+          "output": "response",
+          "notEquals": ""
+        }
       }
     },
     {
-      "id": "e-conversation-buffer-response-12-response",
+      "id": "e-conversation-stream",
       "source": "conversation-buffer",
       "target": "12",
       "sourceHandle": "response",
@@ -1217,44 +895,126 @@
       "type": "default",
       "data": {
         "type": "string",
-        "comment": "Stream the same visible response"
+        "when": {
+          "output": "response",
+          "notEquals": ""
+        }
       }
     },
     {
-      "id": "e-conversation-buffer-entries-memory-capture-entries",
-      "source": "conversation-buffer",
-      "target": "memory-capture",
-      "sourceHandle": "entries",
-      "targetHandle": "entries",
+      "id": "e-observation-status-out",
+      "source": "2",
+      "target": "robot-status-out",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
       "type": "default",
       "data": {
-        "type": "array",
-        "comment": "Buffer-admitted Environment conversation entries"
+        "type": "object"
       }
     },
     {
-      "id": "e-12-output-13-message",
-      "source": "12",
-      "target": "13",
-      "sourceHandle": "output",
-      "targetHandle": "message",
+      "id": "e-instruction-status-out",
+      "source": "3",
+      "target": "robot-status-out",
+      "sourceHandle": "currentInstruction",
+      "targetHandle": "instruction",
       "type": "default",
       "data": {
-        "type": "string",
-        "comment": "Environment chat output"
+        "type": "string"
       }
     },
     {
-      "id": "e-task-state-reduce-decision-node-1783475676613-data",
-      "source": "task-state-reduce",
-      "target": "node-1783475676613",
-      "sourceHandle": "decision",
-      "targetHandle": "data",
+      "id": "e-user-status-out",
+      "source": "user-input",
+      "target": "robot-status-out",
+      "sourceHandle": "message",
+      "targetHandle": "userInstruction",
       "type": "default",
       "data": {
-        "type": "object",
-        "comment": "Typed lifecycle diagnostics"
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-source-status-out",
+      "source": "3",
+      "target": "robot-status-out",
+      "sourceHandle": "instructionSource",
+      "targetHandle": "inputSource",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-decision-status-out",
+      "source": "6",
+      "target": "robot-status-out",
+      "sourceHandle": "taskDecision",
+      "targetHandle": "taskDecision",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-actions-status-out",
+      "source": "6",
+      "target": "robot-status-out",
+      "sourceHandle": "actions",
+      "targetHandle": "actions",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-generated-actions-status-out",
+      "source": "movement-generator",
+      "target": "robot-status-out",
+      "sourceHandle": "actions",
+      "targetHandle": "generatedActions",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-response-status-out",
+      "source": "6",
+      "target": "robot-status-out",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-bridge-status-out",
+      "source": "8",
+      "target": "robot-status-out",
+      "sourceHandle": "bridgeRecord",
+      "targetHandle": "bridgeRecord",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-frames-status-out",
+      "source": "11",
+      "target": "robot-status-out",
+      "sourceHandle": "frames",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
       }
     }
-  ]
+  ],
+  "viewport": {
+    "x": 20,
+    "y": 80,
+    "zoom": 0.35
+  }
 }
