@@ -3,9 +3,9 @@
   "format": "svelte-flow",
   "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Persona Extraction",
-  "description": "Admits an authenticated interview transcript and extracts one validated persona draft",
+  "description": "Admits an authenticated interview transcript and extracts one validated draft matching the canonical persona schema",
   "cognitiveMode": "agent",
-  "last_modified": "2026-09-03",
+  "last_modified": "2026-09-04",
   "nodes": [
     {
       "id": "1",

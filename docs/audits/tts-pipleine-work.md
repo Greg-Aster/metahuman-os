@@ -1,7 +1,7 @@
 # TTS Pipeline Work
 
 Date opened: 2026-07-17
-Status updated: 2026-08-31
+Status updated: 2026-09-04
 Status: canonical node-owned local and robot routing is implemented and source-validated; current audible browser and physical-robot playback remain unverified
 Scope owner: MetaHuman TTS request, synthesis, and playback flow, including the Ainekio robot output boundary
 
@@ -376,11 +376,11 @@ Exit gate: a response without a TTS-node request is silent; a response with one 
 
 ### Phase 3 - Consolidate synthesis and configuration ownership
 
-- [ ] Add streaming synthesis to the canonical TTS provider/service interface.
-- [ ] Move Kokoro stream option resolution under `KokoroService` or the selected single synthesis owner.
-- [ ] Make `/api/tts` and `/api/tts-stream` thin adapters over that owner, or retire the redundant route after caller migration.
+- [x] Add streaming synthesis to the canonical TTS provider/service interface.
+- [x] Move Kokoro stream option resolution under `KokoroService` or the selected single synthesis owner.
+- [x] Make `/api/tts` and `/api/tts-stream` thin adapters over that owner, or retire the redundant route after caller migration.
 - [ ] Select one Kokoro process-start configuration mechanism; remove the second environment-variable injection path.
-- [ ] Preserve all existing saved voice behavior: provider, voice, language, speed, custom voicepack, normalization, fallback, device, and startup policy.
+- [x] Preserve all existing saved voice behavior: provider, voice, language, speed, custom voicepack, normalization, fallback, device, and startup policy.
 - [ ] Decide and test multi-user behavior before relying on one process-global Kokoro default profile.
 - [ ] Treat native Web Speech as an explicit configured provider or remove it from automatic assistant-response routing.
 
@@ -559,3 +559,14 @@ Append new entries in chronological order. Include changed files, validation evi
 - Passed: `pnpm validate:tts-startup-profile`, `pnpm -s check:architecture` with zero violations, `bash -n`, `shellcheck`, and scoped `git diff --check`.
 - Existing validation debt: `pnpm typecheck:cli` remains blocked before checking this change because the workspace cannot find existing `diff` and `minimatch` type-definition packages. The changed CLI path was executed directly and returned successfully.
 - Build note: no Astro build was run while the production site was live, avoiding the already characterized `dist` replacement race.
+
+### TTS-010 - 2026-09-04 - Kokoro synthesis consolidated and processing device made operable
+
+- Canonical owner: `KokoroService` now owns both batch and ordered phrase-streamed synthesis, including profile-resolved voice, language, speed, custom voicepack, normalization, cache, fallback, and request telemetry. Browser and robot adapters no longer implement direct Kokoro transports.
+- Chunking: `packages/core/src/tts/speech-chunks.ts` now preserves paragraph boundaries and creates bounded speech phrases. The Python server's duplicate SSE/base64 chunker and thread pool were removed.
+- Browser playback: Kokoro streaming now decodes and schedules the first received phrase immediately on one Web Audio clock. The two-chunk `HTMLAudioElement` threshold and the second-request batch fallback were removed.
+- Removed: the uncalled simulated `TTSIntegration` streaming surface and stale `voice-stream`, `audioChunkMs`, `splitPattern`, profile-level Kokoro server, and profile-level Kokoro device settings.
+- Voice Settings: the installation owner can select CPU or CUDA for both Kokoro and Whisper. The handler delegates atomic `etc/voice-servers.json` changes and managed restarts to `voice-service-manager.ts`; non-owners and environment-controlled devices remain locked. Existing provider, output, voice, speed, voicepack, normalization, fallback, RVC, language, server, and VAD controls remain exposed.
+- Runtime evidence: the canonical launcher was stopped before the production build and then relaunched. Site returned HTTP 200, Kokoro health returned ready with `device: cuda`, the Kokoro process held 1156 MiB of NVIDIA memory, and one warm direct synthesis returned HTTP 200 with a 0.33-second first byte. This proves service admission, CUDA residency, and audio generation, not audible browser or physical speaker output.
+- Passed: `pnpm validate:voice-service-ownership`, `pnpm validate:tts-node-ownership`, `pnpm validate:tts-synthesis`, `pnpm validate:tts-delivery-queue`, `pnpm validate:graphs` for all 39 graphs, `pnpm typecheck:core`, `pnpm typecheck:site`, `pnpm check:architecture`, `./bin/audit check`, `pnpm --dir apps/site build`, Python compilation, and `git diff --check`.
+- Remaining: process-default injection consolidation, native Web Speech product ownership, live audible browser verification, correlated robot playback, and physical hardware proof remain separate work.

@@ -11,6 +11,8 @@ const launcher = read('bin/start-voice-server')
 const bootLauncher = read('bin/start-services')
 const manager = read('packages/core/src/voice-service-manager.ts')
 const voiceSettings = read('packages/core/src/api/handlers/voice-settings.ts')
+const voiceSettingsUi = read('apps/site/src/components/VoiceSettings.svelte')
+const kokoroServer = read('external/kokoro/kokoro_server.py')
 const sovitsManager = read('packages/core/src/tts/server-manager.ts')
 const sovitsRoutes = read('packages/core/src/api/handlers/tts-service-routes.ts')
 const sovitsCli = read('packages/cli/src/commands/sovits.ts')
@@ -59,6 +61,48 @@ for (const file of voiceServerOwners) {
 }
 
 assert.doesNotMatch(manager, /etc\/services\.json/, 'voice server configuration must not use Agent Monitor service config')
+assert.match(
+  manager,
+  /updateVoiceServiceDevice[\s\S]*?writeVoiceServerConfig[\s\S]*?stopVoiceService[\s\S]*?ensureVoiceServiceRunning/,
+  'device updates must atomically persist and restart through the voice service lifecycle owner',
+)
+assert.match(
+  voiceSettings,
+  /user\.role !== 'owner'[\s\S]*?updateVoiceServiceDevice\('kokoro'[\s\S]*?updateVoiceServiceDevice\('whisper'/,
+  'Voice Settings must owner-guard and delegate both device updates to the lifecycle owner',
+)
+assert.doesNotMatch(
+  voiceSettings,
+  /kokoroConfig\.device\s*=|config\.stt\.whisper\.device\s*=/,
+  'system service devices must not be persisted in a user voice profile',
+)
+for (const control of [
+  'config.outputTarget',
+  'config.piper.currentVoice',
+  'config.piper.speakingRate',
+  'config.sovits.serverUrl',
+  'config.rvc.speakerId',
+  'config.rvc.device',
+  'config.kokoro.voice',
+  'config.kokoro.speed',
+  'config.kokoro.normalizeCustomVoicepacks',
+  'config.stt.language',
+  'config.stt.useServer',
+  'config.stt.vad.voiceThreshold',
+]) {
+  assert.match(voiceSettingsUi, new RegExp(control.replaceAll('.', '\\.')), `${control} must remain exposed in Voice Settings`)
+}
+assert.match(
+  voiceSettingsUi,
+  /id="kokoro-device"[\s\S]{0,300}canConfigureDevices/,
+  'Kokoro CPU/CUDA selection must be editable for the installation owner',
+)
+assert.match(
+  voiceSettingsUi,
+  /id="stt-device"[\s\S]{0,300}canConfigureDevices/,
+  'Whisper CPU/CUDA selection must be editable for the installation owner',
+)
+assert.match(kokoroServer, /"device": processing_device/, 'Kokoro health must report its applied processing device')
 assert.match(launcher, /voice-server start --all --boot/, 'the voice launcher must use the standalone voice server command')
 assert.doesNotMatch(launcher, /default-user\.txt|profile path|mh" agent/, 'the voice launcher must not resolve a user or call Agent Monitor')
 assert.match(bootLauncher, /start_task voice-server/, 'system startup must launch the independent voice server owner')

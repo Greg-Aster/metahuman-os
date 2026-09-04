@@ -75,7 +75,6 @@ export interface RobotOperatorRuntimeState {
   mode: AutonomyMode
   lifecycle: 'starting' | 'armed' | 'dormant' | 'admitting' | 'stopped'
   reason: string
-  fullCooldownMs?: number
   children: Record<RobotOperatorStimulusAgent, RobotOperatorChildRuntimeState>
 }
 
@@ -257,18 +256,6 @@ export function nextRobotOperatorFullChild(
   return enabled[normalizedCursor % enabled.length] ?? null
 }
 
-export function robotOperatorFullDueAt(
-  now: number,
-  lastAdmittedAt: number,
-  cooldownMs: number,
-  minimumDelayMs = 1_000,
-): number {
-  return Math.max(
-    now + Math.max(1_000, minimumDelayMs),
-    Math.max(0, lastAdmittedAt) + Math.max(1_000, cooldownMs),
-  )
-}
-
 function hasRobotObserverMetadata(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const record = value as Record<string, any>
@@ -346,9 +333,6 @@ export function readRobotOperatorRuntimeState(): RobotOperatorRuntimeState | nul
       mode: parsed.mode,
       lifecycle: parsed.lifecycle,
       reason: typeof parsed.reason === 'string' ? parsed.reason.slice(0, 200) : '',
-      ...(typeof parsed.fullCooldownMs === 'number'
-        ? { fullCooldownMs: boundedNumber(parsed.fullCooldownMs, 30_000, 1_000, 3_600_000) }
-        : {}),
       children,
     }
   } catch {

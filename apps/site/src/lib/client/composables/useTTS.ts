@@ -19,7 +19,9 @@ interface VoiceProviderCache {
 
 interface AudioChunk {
   index: number;
-  audio: HTMLAudioElement;
+  buffer: AudioBuffer;
+  source: AudioBufferSourceNode | null;
+  scheduled: boolean;
   played: boolean;
 }
 
@@ -101,7 +103,7 @@ function isNativeTTSAvailable(): boolean {
  * Normalize text for speech synthesis
  * Removes markdown formatting, code blocks, thinking blocks, and other non-speakable content
  */
-function normalizeTextForSpeech(text: string): string {
+export function normalizeTextForSpeech(text: string): string {
   if (!text) return '';
   let output = text;
 
@@ -125,8 +127,13 @@ function normalizeTextForSpeech(text: string): string {
   output = output.replace(/<\/?[^>]+>/g, ' ');
   // Replace multiple punctuation markers such as asterisks or slashes used decoratively
   output = output.replace(/[*/]{2,}/g, ' ');
-  // Collapse whitespace
-  output = output.replace(/\s+/g, ' ').trim();
+  // Preserve paragraph boundaries for low-latency phrase synthesis.
+  output = output
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t\f\v]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
   return output;
 }
@@ -139,8 +146,6 @@ function createTTS() {
   // State
   const playbackRequests = createTTSPlaybackRequestTracker();
   let audioCtx: AudioContext | null = null;
-  let currentAudio: HTMLAudioElement | null = null;
-  let currentObjectUrl: string | null = null;
   let currentTtsAbort: AbortController | null = null;
   let ttsPlaybackToken = 0;
   const livePlaybackTokens = new Set<number>();
@@ -163,13 +168,11 @@ function createTTS() {
   // Streaming state
   let audioQueue: AudioChunk[] = [];
   let currentChunkIndex = 0;
-  let isPlayingChunk = false;
   let streamAbortController: AbortController | null = null;
-
-  // Buffer threshold: wait for this many chunks before starting playback
-  // With paragraph-level streaming, each chunk is a full paragraph
-  // Buffer 2 paragraphs to smooth over any synthesis delays
-  const BUFFER_THRESHOLD = 2;
+  const streamSources = new Set<AudioBufferSourceNode>();
+  let streamNextStartTime = 0;
+  let streamStartedAt = 0;
+  let streamReportedSpeaking = false;
   let streamComplete = false; // Track if all chunks have been received
   let streamPlaybackFailed = false;
 
@@ -193,16 +196,6 @@ function createTTS() {
   }
 
   /**
-   * Revoke current audio object URL to free memory
-   */
-  function revokeCurrentUrl() {
-    if (currentObjectUrl) {
-      URL.revokeObjectURL(currentObjectUrl);
-      currentObjectUrl = null;
-    }
-  }
-
-  /**
    * Stop active audio playback
    */
   function stopActiveAudio(reason: TTSStopReason = 'interrupted') {
@@ -210,16 +203,7 @@ function createTTS() {
     // Check if we were playing before stopping
     const wasPlaying = get(isPlaying);
 
-    // Stop Audio element (legacy/fallback)
-    if (currentAudio) {
-      try {
-        currentAudio.pause();
-      } catch {}
-      currentAudio = null;
-    }
-    revokeCurrentUrl();
-
-    // Stop Web Audio API source (new approach - doesn't steal media session)
+    // Stop batch Web Audio API source.
     if (webAudioSource) {
       try {
         webAudioSource.stop();
@@ -249,18 +233,25 @@ function createTTS() {
       streamAbortController = null;
     }
 
-    // Stop any playing chunk
-    for (const chunk of audioQueue) {
+    // Stop every scheduled Web Audio source.
+    for (const source of streamSources) {
       try {
-        chunk.audio.pause();
-        URL.revokeObjectURL(chunk.audio.src);
+        source.stop();
       } catch {}
     }
+    streamSources.clear();
+
+    if (streamReportedSpeaking && get(isPlaying)) {
+      reportTTSState(false);
+    }
+    streamReportedSpeaking = false;
+    isPlaying.set(false);
 
     // Reset streaming state
     audioQueue = [];
     currentChunkIndex = 0;
-    isPlayingChunk = false;
+    streamNextStartTime = 0;
+    streamStartedAt = 0;
     streamComplete = false;
     streamPlaybackFailed = false;
     isStreaming.set(false);
@@ -540,10 +531,14 @@ function createTTS() {
     // Initialize streaming state
     audioQueue = [];
     currentChunkIndex = 0;
-    isPlayingChunk = false;
+    streamSources.clear();
+    streamNextStartTime = 0;
+    streamStartedAt = performance.now();
+    streamReportedSpeaking = false;
     streamComplete = false;
     streamPlaybackFailed = false;
-    streamAbortController = new AbortController();
+    const controller = new AbortController();
+    streamAbortController = controller;
 
     isStreaming.set(true);
     isLoading.set(true);
@@ -574,7 +569,7 @@ function createTTS() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
-        signal: streamAbortController.signal,
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -608,70 +603,62 @@ function createTTS() {
         for (const event of events) {
           if (!event.startsWith('data: ')) continue;
 
+          let data: Record<string, any>;
           try {
-            const data = JSON.parse(event.slice(6));
-
-            // Handle completion event
-            if (data.event === 'complete') {
-              console.log('[useTTS] Stream complete:', data.total_chunks, 'chunks');
-              streamComplete = true;
-              isLoading.set(false);
-              // Try to play any remaining buffered chunks
-              playNextChunk();
-              continue;
-            }
-
-            // Handle error event
-            if (data.event === 'error') {
-              console.error('[useTTS] Stream error:', data.error);
-              streamPlaybackFailed = true;
-              streamComplete = true;
-              throw new Error(data.error);
-            }
-
-            // Handle audio chunk
-            if (data.audio_base64) {
-              console.log(`[useTTS] Received chunk ${data.chunk_index + 1}/${data.total_sentences}`);
-              streamProgress.set({ current: data.chunk_index + 1, total: data.total_sentences });
-
-              // Convert base64 to blob
-              const binaryString = atob(data.audio_base64);
-              const bytes = new Uint8Array(binaryString.length);
-              for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-              }
-              const blob = new Blob([bytes], { type: 'audio/wav' });
-              const url = URL.createObjectURL(blob);
-
-              // Create audio element
-              const audio = new Audio(url);
-              audioQueue.push({
-                index: data.chunk_index,
-                audio,
-                played: false,
-              });
-
-              // Count buffered (unplayed) chunks
-              const bufferedCount = audioQueue.filter(c => !c.played).length;
-              console.log(`[useTTS] Buffered chunks: ${bufferedCount}/${BUFFER_THRESHOLD}`);
-
-              // Start playback once we have enough buffered OR this is the last chunk
-              const shouldStartPlayback = bufferedCount >= BUFFER_THRESHOLD || data.is_final;
-
-              if (shouldStartPlayback && !get(isPlaying)) {
-                console.log('[useTTS] Buffer threshold reached, starting playback');
-                isLoading.set(false);
-                isPlaying.set(true);
-                reportTTSState(true); // Tell server we're speaking
-              }
-
-              // Try to play next chunk if buffer is ready
-              if (shouldStartPlayback) {
-                playNextChunk();
-              }
-            }
+            data = JSON.parse(event.slice(6));
           } catch (parseError) {
             console.warn('[useTTS] Failed to parse SSE event:', parseError);
+            streamPlaybackFailed = true;
+            throw new Error('TTS stream returned an invalid event');
+          }
+
+          if (data.event === 'complete') {
+            console.log('[useTTS] Stream complete:', data.total_chunks, 'chunks');
+            streamComplete = true;
+            isLoading.set(false);
+            finishStreamingPlaybackIfComplete(token);
+            continue;
+          }
+
+          if (data.event === 'error') {
+            streamPlaybackFailed = true;
+            streamComplete = true;
+            throw new Error(String(data.error || 'TTS stream failed'));
+          }
+
+          if (typeof data.audio_base64 === 'string') {
+            const chunkIndex = Number(data.chunk_index);
+            const totalChunks = Number(data.total_sentences);
+            if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || !Number.isInteger(totalChunks)) {
+              throw new Error('TTS stream returned invalid chunk metadata');
+            }
+            console.log(`[useTTS] Received chunk ${chunkIndex + 1}/${totalChunks}`);
+            streamProgress.set({ current: chunkIndex + 1, total: totalChunks });
+
+            const binaryString = atob(data.audio_base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+
+            audioCtx = audioCtx || new (window.AudioContext || (window as any).webkitAudioContext)();
+            if (audioCtx.state === 'suspended') await audioCtx.resume();
+            const decoded = await audioCtx.decodeAudioData(bytes.buffer);
+            if (playbackWasStopped(token)) return finishPlayback(token, false);
+
+            if (audioQueue.length === 0) {
+              console.log(
+                `[useTTS] First audio received after ${Math.round(performance.now() - streamStartedAt)}ms`,
+              );
+            }
+            audioQueue.push({
+              index: chunkIndex,
+              buffer: decoded,
+              source: null,
+              scheduled: false,
+              played: false,
+            });
+            scheduleStreamingChunks(token);
           }
         }
       }
@@ -680,7 +667,7 @@ function createTTS() {
         console.warn('[useTTS] TTS stream ended before its completion event');
         streamPlaybackFailed = true;
         streamComplete = true;
-        playNextChunk();
+        finishStreamingPlaybackIfComplete(token);
       }
 
       // Wait for all chunks to finish playing
@@ -693,74 +680,67 @@ function createTTS() {
         return finishPlayback(token, false);
       }
       console.warn('[useTTS] Streaming failed:', e);
-
-      // Fallback to non-streaming mode
-      console.log('[useTTS] Falling back to non-streaming TTS');
+      streamPlaybackFailed = true;
       stopStreaming();
-      finishPlayback(token, false);
-      return await speakText(text);
+      return finishPlayback(token, false);
     } finally {
+      if (streamAbortController === controller) streamAbortController = null;
       isLoading.set(false);
       isStreaming.set(false);
     }
   }
 
-  /**
-   * Play the next chunk in the queue
-   * Only starts playback if buffer threshold is met or stream is complete
-   */
-  function playNextChunk() {
-    if (isPlayingChunk) return;
-
-    // Find next unplayed chunk
-    const chunk = audioQueue.find(c => c.index === currentChunkIndex && !c.played);
-    if (!chunk) return;
-
-    // Count buffered (unplayed) chunks
-    const bufferedCount = audioQueue.filter(c => !c.played).length;
-
-    // Don't start playing until we have enough buffered OR stream is complete
-    if (bufferedCount < BUFFER_THRESHOLD && !streamComplete) {
-      console.log(`[useTTS] Waiting for buffer: ${bufferedCount}/${BUFFER_THRESHOLD} chunks`);
-      return;
+  function finishStreamingPlaybackIfComplete(token: number): void {
+    const allPlayed = audioQueue.length === 0 || audioQueue.every(chunk => chunk.played);
+    if (!streamComplete || !allPlayed || streamSources.size > 0) return;
+    if (!playbackWasStopped(token)) {
+      isPlaying.set(false);
+      if (streamReportedSpeaking) reportTTSState(false);
     }
+    streamReportedSpeaking = false;
+  }
 
-    isPlayingChunk = true;
-    chunk.played = true;
+  /**
+   * Decode and schedule each ordered phrase as soon as it arrives. Web Audio's
+   * clock keeps already-buffered phrases contiguous without delaying the first.
+   */
+  function scheduleStreamingChunks(token: number): void {
+    if (!audioCtx || playbackWasStopped(token)) return;
 
-    console.log(`[useTTS] Playing chunk ${chunk.index} (buffer: ${bufferedCount - 1} remaining)`);
+    while (true) {
+      const chunk = audioQueue.find(candidate => (
+        candidate.index === currentChunkIndex && !candidate.scheduled
+      ));
+      if (!chunk) break;
 
-    chunk.audio.onended = () => {
-      console.log(`[useTTS] Chunk ${chunk.index} finished`);
-      URL.revokeObjectURL(chunk.audio.src);
-      isPlayingChunk = false;
-      currentChunkIndex++;
-      playNextChunk();
+      const source = audioCtx.createBufferSource();
+      source.buffer = chunk.buffer;
+      source.connect(audioCtx.destination);
+      chunk.source = source;
+      chunk.scheduled = true;
+      currentChunkIndex += 1;
 
-      // Check if all chunks are played
-      const allPlayed = audioQueue.every(c => c.played);
-      if (allPlayed && streamComplete) {
-        isPlaying.set(false);
-        reportTTSState(false); // Tell server we're done speaking
+      const startAt = Math.max(audioCtx.currentTime + 0.02, streamNextStartTime);
+      streamNextStartTime = startAt + chunk.buffer.duration;
+      streamSources.add(source);
+      source.onended = () => {
+        chunk.played = true;
+        streamSources.delete(source);
+        console.log(`[useTTS] Chunk ${chunk.index} finished`);
+        finishStreamingPlaybackIfComplete(token);
+      };
+      source.start(startAt);
+
+      if (!streamReportedSpeaking) {
+        streamReportedSpeaking = true;
+        isLoading.set(false);
+        isPlaying.set(true);
+        reportTTSState(true);
+        console.log(
+          `[useTTS] First playback scheduled after ${Math.round(performance.now() - streamStartedAt)}ms`,
+        );
       }
-    };
-
-    chunk.audio.onerror = () => {
-      console.warn(`[useTTS] Chunk ${chunk.index} playback error`);
-      streamPlaybackFailed = true;
-      URL.revokeObjectURL(chunk.audio.src);
-      isPlayingChunk = false;
-      currentChunkIndex++;
-      playNextChunk();
-    };
-
-    chunk.audio.play().catch((err) => {
-      console.warn(`[useTTS] Failed to play chunk ${chunk.index}:`, err);
-      streamPlaybackFailed = true;
-      isPlayingChunk = false;
-      currentChunkIndex++;
-      playNextChunk();
-    });
+    }
   }
 
   /**
@@ -774,11 +754,11 @@ function createTTS() {
           return;
         }
         const allPlayed = audioQueue.length === 0 || audioQueue.every(c => c.played);
-        if (allPlayed && !isPlayingChunk && streamComplete) {
+        if (allPlayed && streamSources.size === 0 && streamComplete) {
           isPlaying.set(false);
           resolve();
         } else {
-          setTimeout(checkComplete, 100);
+          setTimeout(checkComplete, 50);
         }
       };
       checkComplete();

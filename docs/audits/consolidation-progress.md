@@ -1594,7 +1594,7 @@ Scope and surviving owners:
 
 - Work Coordinator is the sole admission and lifecycle owner for desire
   execution work. Core Agency owns status claims, the editable execution graph,
-  durable attempt recording, and the handoff to Outcome Reviewer.
+  durable attempt recording, and the handoff to Desire Outcome Reviewer.
 - The brain Desire Executor remains only as a removable manual/mobile admission
   interface. It owns no review, scheduler, lock, task store, execution backend,
   persistence, or fallback path.
@@ -1727,11 +1727,11 @@ Repair and consolidation:
   graphs through the shared graph runtime, resolves result owners by stable node
   type, propagates cancellation, uses one effective per-profile lock, and fails
   when no real profile is selected.
-- Replaced the 979-line competing Brain Outcome Reviewer with a thin admission
+- Replaced the 979-line competing Brain implementation with a thin Desire Outcome Reviewer admission
   interface. Removed its recurring-task creation, duplicate state machine,
   duplicated metrics/scratchpad persistence, hidden config defaults, repair-task
   path, and fabricated profile behavior.
-- Rebuilt `outcome-reviewer.json` around one strict reviewer and one canonical
+- Rebuilt `desire-outcome-reviewer.json` around one strict reviewer and one canonical
   `desire_updater` transition. Possible system defects pause for user approval;
   no repair task or second execution path is created.
 - Removed the manual API's independent verification/prompt/mutation outcome

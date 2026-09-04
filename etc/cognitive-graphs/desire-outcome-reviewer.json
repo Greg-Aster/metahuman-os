@@ -2,10 +2,10 @@
   "version": "1.0",
   "format": "svelte-flow",
   "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
-  "name": "Outcome Reviewer",
+  "name": "Desire Outcome Reviewer",
   "description": "Reviews one desire execution, applies the canonical Agency transition, then publishes the durable result",
   "cognitiveMode": "agent",
-  "last_modified": "2026-08-25",
+  "last_modified": "2026-09-04",
   "nodes": [
     {
       "id": "load-desire",
@@ -24,8 +24,8 @@
       "type": "genericNode",
       "position": { "x": 380, "y": 180 },
       "data": {
-        "label": "Review Outcome",
-        "nodeType": "outcome_reviewer",
+        "label": "Review Desire Outcome",
+        "nodeType": "desire_outcome_reviewer",
         "properties": {
           "temperature": 0.3
         }
@@ -56,7 +56,7 @@
         "nodeType": "inner_dialogue_buffer",
         "properties": {
           "tags": ["agency", "outcome-review", "inner"],
-          "dialogueSource": "outcome-reviewer"
+          "dialogueSource": "desire-outcome-reviewer"
         }
       },
       "width": 200,
@@ -70,7 +70,7 @@
         "label": "TTS Output",
         "nodeType": "tts",
         "properties": {
-          "source": "outcome-reviewer",
+          "source": "desire-outcome-reviewer",
           "defaultMode": "inner"
         }
       },
@@ -98,7 +98,7 @@
         "nodeType": "audit_logger",
         "properties": {
           "category": "decision",
-          "event": "outcome_reviewed"
+          "event": "desire_outcome_transition_applied"
         }
       },
       "width": 180,

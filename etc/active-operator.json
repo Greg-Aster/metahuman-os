@@ -1,4 +1,3 @@
 {
-  "autonomyMode": "reactive",
-  "cooldownMs": 30000
+  "autonomyMode": "full"
 }

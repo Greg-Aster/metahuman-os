@@ -6,6 +6,8 @@ import {
   ensureVoiceServiceRunning,
   getVoiceServiceConfig,
   getVoiceServiceStatus,
+  isVoiceServiceDeviceEnvironmentControlled,
+  updateVoiceServiceDevice,
 } from '../../voice-service-manager.js';
 import { startSovitsServer, stopSovitsServer } from '../../tts/server-manager.js';
 import * as fs from 'node:fs';
@@ -203,13 +205,12 @@ type VoiceConfig = {
       autoFallbackToPiper: boolean;
       useCustomVoicepack: boolean;
       customVoicepackPath?: string;
-      device?: 'cuda' | 'cpu';
+      normalizeCustomVoicepacks?: boolean;
       voices?: Array<{id: string; name: string; lang: string; gender: string; quality: string}>;
     };
   };
   stt: Record<string, any>;
   cache: Record<string, any>;
-  webSocket: Record<string, any>;
   training: Record<string, any>;
   [key: string]: any;
 };
@@ -266,7 +267,7 @@ function buildDefaultVoiceConfig(
         autoFallbackToPiper: true,
         useCustomVoicepack: false,
         customVoicepackPath: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', 'default.pt'),
-        device: 'cpu',
+        normalizeCustomVoicepacks: true,
       },
     },
     stt: {
@@ -282,11 +283,6 @@ function buildDefaultVoiceConfig(
       enabled: true,
       directory: path.join(profileRoot, 'out', 'voice-cache'),
       maxSizeMB: 500,
-    },
-    webSocket: {
-      path: '/voice-stream',
-      maxPayloadMB: 10,
-      audioChunkMs: 100,
     },
     training: {
       enabled: true,
@@ -461,7 +457,7 @@ function ensureVoiceConfig(
       autoFallbackToPiper: true,
       useCustomVoicepack: false,
       customVoicepackPath: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', 'default.pt'),
-      device: 'cpu',
+      normalizeCustomVoicepacks: true,
     };
     needsWrite = true;
   }
@@ -479,7 +475,14 @@ function ensureVoiceConfig(
     : 1.0;
   config.tts.kokoro.autoFallbackToPiper = config.tts.kokoro.autoFallbackToPiper ?? true;
   config.tts.kokoro.useCustomVoicepack = config.tts.kokoro.useCustomVoicepack ?? false;
-  config.tts.kokoro.device = config.tts.kokoro.device === 'cuda' ? 'cuda' : 'cpu';
+  config.tts.kokoro.normalizeCustomVoicepacks = config.tts.kokoro.normalizeCustomVoicepacks ?? true;
+  const staleKokoroServiceSettings = config.tts.kokoro as unknown as Record<string, unknown>;
+  for (const key of ['device', 'server', 'splitPattern']) {
+    if (key in staleKokoroServiceSettings) {
+      delete staleKokoroServiceSettings[key];
+      needsWrite = true;
+    }
+  }
 
   // Ensure cache directory exists
   config.cache = config.cache ?? {
@@ -531,15 +534,6 @@ function ensureVoiceConfig(
       silenceDelay: 5000,
       minDuration: 500,
     };
-    needsWrite = true;
-  }
-
-  config.webSocket = config.webSocket ?? {
-    path: '/voice-stream',
-    maxPayloadMB: 10,
-    audioChunkMs: 100,
-  };
-  if (!config.webSocket) {
     needsWrite = true;
   }
 
@@ -630,6 +624,11 @@ export async function handleGetVoiceSettings(req: UnifiedRequest): Promise<Unifi
         : 'unknown';
 
     return successResponse({
+        systemVoiceControl: {
+          canConfigureDevices: user.role === 'owner',
+          kokoroDeviceLockedByEnvironment: isVoiceServiceDeviceEnvironmentControlled('kokoro'),
+          whisperDeviceLockedByEnvironment: isVoiceServiceDeviceEnvironmentControlled('whisper'),
+        },
         provider: providerForUI,
         outputTarget: config.tts.outputTarget,
         speechDisabled: config.tts.speechDisabled === true,
@@ -666,6 +665,7 @@ export async function handleGetVoiceSettings(req: UnifiedRequest): Promise<Unifi
           speed: config.tts.kokoro?.speed || 1.0,
           autoFallbackToPiper: config.tts.kokoro?.autoFallbackToPiper ?? true,
           useCustomVoicepack: config.tts.kokoro?.useCustomVoicepack ?? false,
+          normalizeCustomVoicepacks: config.tts.kokoro?.normalizeCustomVoicepacks ?? true,
           device: kokoroSystemConfig.device,
           voices: kokoroVoices,
         },
@@ -707,8 +707,31 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
 
   try {
 
-    const body = req.body as any;
+    const body = (req.body ?? {}) as any;
     const { provider, outputTarget, speechDisabled, piper, sovits, rvc, kokoro, stt } = body;
+
+    const requestedKokoroDevice = kokoro?.device;
+    const requestedWhisperDevice = stt?.device;
+    if (requestedKokoroDevice !== undefined && requestedKokoroDevice !== 'cpu' && requestedKokoroDevice !== 'cuda') {
+      return errorResponse('Kokoro device must be cpu or cuda', 400);
+    }
+    if (requestedWhisperDevice !== undefined && requestedWhisperDevice !== 'cpu' && requestedWhisperDevice !== 'cuda') {
+      return errorResponse('Whisper device must be cpu or cuda', 400);
+    }
+
+    const currentKokoroDevice = getVoiceServiceConfig('kokoro').device;
+    const currentWhisperDevice = getVoiceServiceConfig('whisper').device;
+    const kokoroDeviceChanged = requestedKokoroDevice !== undefined && requestedKokoroDevice !== currentKokoroDevice;
+    const whisperDeviceChanged = requestedWhisperDevice !== undefined && requestedWhisperDevice !== currentWhisperDevice;
+    if ((kokoroDeviceChanged || whisperDeviceChanged) && user.role !== 'owner') {
+      return errorResponse('Only the installation owner can change voice service processing devices', 403);
+    }
+    if (kokoroDeviceChanged && isVoiceServiceDeviceEnvironmentControlled('kokoro')) {
+      return errorResponse('Kokoro device is controlled by MH_KOKORO_DEVICE and cannot be changed here', 409);
+    }
+    if (whisperDeviceChanged && isVoiceServiceDeviceEnvironmentControlled('whisper')) {
+      return errorResponse('Whisper device is controlled by MH_WHISPER_DEVICE and cannot be changed here', 409);
+    }
 
     console.log('[voice-settings POST] Received body:', { provider, hasPiper: !!piper, hasSovits: !!sovits, hasRvc: !!rvc, hasKokoro: !!kokoro, hasStt: !!stt });
 
@@ -839,6 +862,9 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
         // Only allow manual override if not using custom voice from dropdown
         kokoroConfig.useCustomVoicepack = kokoro.useCustomVoicepack;
       }
+      if (typeof kokoro.normalizeCustomVoicepacks === 'boolean') {
+        kokoroConfig.normalizeCustomVoicepacks = kokoro.normalizeCustomVoicepacks;
+      }
       if (kokoro.customVoicepackPath && !kokoro.voice?.startsWith('custom_')) {
         kokoroConfig.customVoicepackPath = kokoro.customVoicepackPath;
       }
@@ -852,8 +878,8 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
       config.stt.whisper.server = config.stt.whisper.server || { useServer: true, url: 'http://127.0.0.1:9883', autoStart: true, port: 9883 };
       config.stt.whisper.vad = config.stt.whisper.vad || { voiceThreshold: 12, silenceDelay: 5000, minDuration: 500 };
 
-      // Model, device, and compute type belong to the shared Whisper system
-      // service. They are configured in etc/voice-servers.json, not a user profile.
+      // Model and compute type belong to the shared Whisper system service.
+      // Device changes are applied below through the service lifecycle owner.
 
       // Update language
       if (stt.language && typeof stt.language === 'string') {
@@ -888,25 +914,48 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
 
     // Handle provider switching and service orchestration
     try {
+      let kokoroRestarted = false;
+      let whisperRestarted = false;
+      if (user.role === 'owner' && requestedKokoroDevice !== undefined) {
+        const update = await updateVoiceServiceDevice('kokoro', requestedKokoroDevice);
+        kokoroRestarted = update.restarted;
+      }
+      if (user.role === 'owner' && requestedWhisperDevice !== undefined) {
+        const update = await updateVoiceServiceDevice('whisper', requestedWhisperDevice);
+        whisperRestarted = update.restarted;
+      }
+
       await syncTTSBackends(previousProvider, config.tts.provider, config);
 
       const responseProvider = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
+      const restartedServices = [
+        kokoroRestarted ? 'Kokoro' : undefined,
+        whisperRestarted ? 'Whisper' : undefined,
+      ].filter(Boolean);
+      const deviceMessage = restartedServices.length > 0
+        ? ` ${restartedServices.join(' and ')} restarted on the selected processing device.`
+        : '';
+      const appliedKokoroConfig = getVoiceServiceConfig('kokoro');
+      const appliedWhisperConfig = getVoiceServiceConfig('whisper');
       return successResponse({
           success: true,
           provider: responseProvider,
+          kokoroDevice: appliedKokoroConfig.device,
+          whisperDevice: appliedWhisperConfig.device,
+          whisperComputeType: appliedWhisperConfig.computeType,
           message: responseProvider === 'sovits'
-            ? 'Voice settings saved. SoVITS server started successfully.'
-            : `Voice settings saved. Provider switched to ${responseProvider}.`,
+            ? `Voice settings saved. SoVITS server started successfully.${deviceMessage}`
+            : `Voice settings saved.${deviceMessage}`,
         });
     } catch (serviceError) {
-      // Settings were saved, but service failed to start
+      // Profile preferences were saved, but the requested system service change failed.
       console.error('[voice-settings] Service orchestration failed:', serviceError);
       const responseProvider = config.tts.provider === 'gpt-sovits' ? 'sovits' : config.tts.provider;
       return {
         status: 500,
         data: {
           success: false,
-          error: `Settings saved, but failed to start ${responseProvider} server: ${(serviceError as Error).message}`,
+          error: `Voice preferences were saved, but the system voice service change failed: ${(serviceError as Error).message}`,
           provider: responseProvider,
         },
       };
@@ -926,8 +975,7 @@ async function syncTTSBackends(
   const prev = normalize(previousProvider);
   const next = normalize(nextProvider);
 
-  // Kokoro device selection is system service configuration, not a user
-  // profile preference, so a profile save must never restart that process.
+  // Device changes are applied separately through updateVoiceServiceDevice.
   if (prev === next) {
     return;
   }

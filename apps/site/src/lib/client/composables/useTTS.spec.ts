@@ -1,5 +1,15 @@
 import assert from 'node:assert/strict';
-import { createTTSPlaybackRequestTracker, useTTS } from './useTTS.js';
+import {
+  createTTSPlaybackRequestTracker,
+  normalizeTextForSpeech,
+  useTTS,
+} from './useTTS.js';
+
+assert.equal(
+  normalizeTextForSpeech('First paragraph.\n\nSecond   paragraph.'),
+  'First paragraph.\n\nSecond paragraph.',
+  'speech normalization must preserve paragraph boundaries for chunking',
+);
 
 const playbackRequests = createTTSPlaybackRequestTracker();
 const queuedPlayback = playbackRequests.begin('tts-queued-delivery');
@@ -42,7 +52,9 @@ assert.equal(
 );
 
 const originalFetch = globalThis.fetch;
+const originalWindow = globalThis.window;
 let streamRequestCount = 0;
+let scheduledStreamSources = 0;
 let queuedStreamStartedResolve: (() => void) | undefined;
 let manualStreamStartedResolve: (() => void) | undefined;
 let manualStreamController: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -69,12 +81,24 @@ globalThis.fetch = async (input, init) => {
       });
     }
 
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        manualStreamController = controller;
-        manualStreamStartedResolve?.();
-      },
-    });
+    const body = streamRequestCount === 2
+      ? new ReadableStream<Uint8Array>({
+          start(controller) {
+            manualStreamController = controller;
+            manualStreamStartedResolve?.();
+          },
+        })
+      : new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(
+              'data: {"chunk_index":0,"total_sentences":2,"audio_base64":"AQ==","is_final":false}\n\n',
+            ));
+            controller.enqueue(new TextEncoder().encode(
+              'data: {"event":"complete","total_chunks":1}\n\n',
+            ));
+            controller.close();
+          },
+        });
     return new Response(body, {
       status: 200,
       headers: { 'Content-Type': 'text/event-stream' },
@@ -82,6 +106,34 @@ globalThis.fetch = async (input, init) => {
   }
   return Response.json({});
 };
+
+class FakeAudioBufferSource {
+  buffer: { duration: number } | null = null;
+  onended: (() => void) | null = null;
+  connect() {}
+  start() {
+    scheduledStreamSources += 1;
+    queueMicrotask(() => this.onended?.());
+  }
+  stop() {}
+}
+
+class FakeAudioContext {
+  state = 'running';
+  currentTime = 0;
+  destination = {};
+  async resume() {}
+  async close() {}
+  async decodeAudioData() {
+    return { duration: 0.1 };
+  }
+  createBufferSource() {
+    return new FakeAudioBufferSource();
+  }
+  createBuffer() {
+    return {};
+  }
+}
 
 try {
   const ttsApi = useTTS();
@@ -109,8 +161,24 @@ try {
     'completed',
     'manual replay must survive the stale queue interruption and complete',
   );
+
+  globalThis.window = {
+    AudioContext: FakeAudioContext,
+    dispatchEvent: () => true,
+  } as unknown as Window & typeof globalThis;
+  assert.equal(
+    await ttsApi.speak('First phrase should start immediately.', { streaming: true }),
+    'completed',
+  );
+  assert.equal(
+    scheduledStreamSources,
+    1,
+    'the first decoded phrase must be scheduled without waiting for a second chunk',
+  );
 } finally {
   globalThis.fetch = originalFetch;
+  if (originalWindow === undefined) delete (globalThis as { window?: Window }).window;
+  else globalThis.window = originalWindow;
 }
 
 console.log('useTTS.spec.ts passed');

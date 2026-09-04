@@ -43,9 +43,10 @@ export * from './user-approval-transition.js';
 // Outcome review remains a public Agency operation. Desire execution itself is
 // internal to the coordinator-owned desire-execution service.
 export {
-  loadOutcomeReviewerGraph,
-  type ReviewOutcomeResult,
-  reviewOutcomeViaGraph,
+  evaluateDesireOutcomeReviewGraph,
+  loadDesireOutcomeReviewerGraph,
+  type DesireOutcomeReviewGraphResult,
+  reviewDesireOutcomeViaGraph,
 } from './executor.js';
 
 // Re-export common functions at top level for convenience

@@ -9,6 +9,7 @@ import {
   discardRobotSpeech,
   stageRobotSpeech,
 } from './robot-audio.js';
+import { createKokoroTTSService } from '../tts.js';
 
 const MAX_ROBOT_KOKORO_STREAM_BYTES = 3 * 1024 * 1024;
 const MAX_ROBOT_WAV_CHUNKS = 64;
@@ -35,15 +36,6 @@ interface KokoroRobotSpeechOptions {
   speed?: number;
   langCode?: string;
   sessionId?: string;
-}
-
-interface KokoroConfig {
-  voice: string;
-  speed: number;
-  langCode: string;
-  customVoicepack: string | null;
-  normalize: boolean;
-  robotVolumePercent?: number;
 }
 
 function readVoiceConfig(username: string): Record<string, any> {
@@ -76,36 +68,15 @@ export function getRobotSpeakerSession(): string | undefined {
   return speakerReady ? observation?.sessionId : undefined;
 }
 
-function resolveKokoroConfig(
-  username: string,
-  options: Pick<KokoroRobotSpeechOptions, 'voice' | 'voiceId' | 'speed' | 'langCode'>,
-): KokoroConfig {
+function getRobotVolumePercent(username: string): number | undefined {
   const config = readVoiceConfig(username);
-  const saved = config.tts?.kokoro ?? {};
-  const requestedVoice = options.voiceId || options.voice;
-  const builtInVoiceRequested = Boolean(
-    requestedVoice && /^[a-z]{2}_[a-z]+$/.test(requestedVoice),
-  );
-  const useCustomVoicepack = saved.useCustomVoicepack === true
-    && typeof saved.customVoicepackPath === 'string'
-    && saved.customVoicepackPath.length > 0
-    && !builtInVoiceRequested;
   const configuredRobotVolume = config.tts?.robotVolumePercent;
-  const robotVolumePercent = typeof configuredRobotVolume === 'number'
+  return typeof configuredRobotVolume === 'number'
     && Number.isFinite(configuredRobotVolume)
     && configuredRobotVolume >= 1
     && configuredRobotVolume <= 100
     ? configuredRobotVolume
     : undefined;
-
-  return {
-    voice: requestedVoice || saved.voice || 'af_heart',
-    speed: options.speed ?? saved.speed ?? 1,
-    langCode: options.langCode || saved.langCode || 'a',
-    customVoicepack: useCustomVoicepack ? saved.customVoicepackPath : null,
-    normalize: useCustomVoicepack ? saved.normalizeCustomVoicepacks !== false : false,
-    robotVolumePercent,
-  };
 }
 
 export function normalizeRobotSpeechText(text: string): string {
@@ -120,78 +91,39 @@ export function normalizeRobotSpeechText(text: string): string {
     .replace(/^\s*[-+*]\s+/gm, '')
     .replace(/<\/?[^>]+>/g, ' ')
     .replace(/[*/]{2,}/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t\f\v]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
 async function collectKokoroWavChunks(
-  body: ReadableStream<Uint8Array> | null,
-  signal?: AbortSignal,
+  service: ReturnType<typeof createKokoroTTSService>,
+  text: string,
+  options: KokoroRobotSpeechOptions,
 ): Promise<Buffer[]> {
-  if (!body) throw new Error('Kokoro returned no audio stream');
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
   const wavChunks: Buffer[] = [];
-  let buffer = '';
   let receivedBytes = 0;
-  let completed = false;
 
-  const processBlock = (block: string): void => {
-    const rawData = block
-      .split(/\r?\n/)
-      .filter(line => line.startsWith('data:'))
-      .map(line => line.slice(5).trimStart())
-      .join('\n');
-    if (!rawData) return;
-    const event = JSON.parse(rawData) as Record<string, unknown>;
-    if (event.event === 'complete') {
-      completed = true;
-      return;
+  for await (const chunk of service.synthesizeStream(text, {
+    signal: options.signal,
+    voice: options.voiceId || options.voice,
+    speakingRate: options.speed,
+    langCode: options.langCode,
+    requestId: options.requestId,
+  })) {
+    if (wavChunks.length >= MAX_ROBOT_WAV_CHUNKS) {
+      throw new Error('Kokoro returned too many robot audio chunks');
     }
-    if (event.event === 'error') {
-      throw new Error(String(event.error || 'Kokoro synthesis failed'));
+    receivedBytes += chunk.audio.length;
+    if (receivedBytes > MAX_ROBOT_KOKORO_STREAM_BYTES) {
+      throw new Error('Kokoro robot audio stream exceeds its size limit');
     }
-    const encoded = event.audio_base64;
-    if (
-      typeof encoded !== 'string'
-      || encoded.length === 0
-      || encoded.length % 4 !== 0
-      || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)
-      || wavChunks.length >= MAX_ROBOT_WAV_CHUNKS
-    ) {
-      throw new Error('Kokoro returned an invalid robot audio event');
-    }
-    const wav = Buffer.from(encoded, 'base64');
-    if (typeof event.audio_size === 'number' && event.audio_size !== wav.length) {
-      throw new Error('Kokoro audio size does not match its event');
-    }
-    wavChunks.push(wav);
-  };
-
-  try {
-    while (!completed) {
-      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      receivedBytes += value.byteLength;
-      if (receivedBytes > MAX_ROBOT_KOKORO_STREAM_BYTES) {
-        throw new Error('Kokoro robot audio stream exceeds its size limit');
-      }
-      buffer += decoder.decode(value, { stream: true });
-      while (true) {
-        const boundary = buffer.match(/\r?\n\r?\n/);
-        if (!boundary || boundary.index === undefined) break;
-        const block = buffer.slice(0, boundary.index);
-        buffer = buffer.slice(boundary.index + boundary[0].length);
-        processBlock(block);
-      }
-    }
-  } finally {
-    reader.releaseLock();
+    wavChunks.push(chunk.audio);
   }
 
-  if (!completed) throw new Error('Kokoro stream ended before completion');
+  if (wavChunks.length === 0) throw new Error('Kokoro returned no robot audio');
   return wavChunks;
 }
 
@@ -203,31 +135,14 @@ export async function renderRobotSpeech(
   const sessionId = options.sessionId || getRobotSpeakerSession();
   if (!sessionId) throw new Error('The Environment Bridge robot speaker is not ready');
 
-  const kokoro = resolveKokoroConfig(options.username, options);
-  const kokoroServerUrl = process.env.KOKORO_SERVER_URL || 'http://127.0.0.1:9882';
-  const response = await fetch(`${kokoroServerUrl}/synthesize-stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text,
-      lang_code: kokoro.langCode,
-      voice: kokoro.voice,
-      speed: kokoro.speed,
-      custom_voicepack: kokoro.customVoicepack,
-      normalize: kokoro.normalize,
-    }),
-    signal: options.signal,
-  });
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`Kokoro server error (${response.status}): ${message}`);
-  }
+  const service = createKokoroTTSService(options.username);
+  const robotVolumePercent = getRobotVolumePercent(options.username);
 
   let artifactId: string | undefined;
   try {
-    const wavChunks = await collectKokoroWavChunks(response.body, options.signal);
+    const wavChunks = await collectKokoroWavChunks(service, text, options);
     const artifact = stageRobotSpeech(
-      combineRobotSpeechWavChunks(wavChunks, kokoro.robotVolumePercent),
+      combineRobotSpeechWavChunks(wavChunks, robotVolumePercent),
     );
     artifactId = artifact.id;
     const action = enqueueEnvironmentAction(

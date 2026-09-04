@@ -1,9 +1,9 @@
 # Maintained Source Inventory
 
-Generated: 2026-09-04T17:36:41.609Z
+Generated: 2026-09-04T18:47:49.296Z
 
-Total maintained files: 1629
-Code files: 1386
+Total maintained files: 1632
+Code files: 1389
 Policy: `docs/technical/MAINTAINED_SURFACE.md`
 
 ## By Area
@@ -14,7 +14,7 @@ Policy: `docs/technical/MAINTAINED_SURFACE.md`
 - brain-services: 2
 - cli: 12
 - config: 81
-- core-engine: 760
+- core-engine: 763
 - docs: 51
 - external-integration: 7
 - local-model-service: 6
@@ -28,7 +28,7 @@ Policy: `docs/technical/MAINTAINED_SURFACE.md`
 
 ## By Kind
 
-- code: 1386
+- code: 1389
 - docs: 59
 - json: 99
 - other: 54
@@ -49,7 +49,7 @@ Policy: `docs/technical/MAINTAINED_SURFACE.md`
 - packages/core/src/nodes/schemas.ts: 2650 lines
 - apps/site/src/components/AgencyDashboard.svelte: 2574 lines
 - packages/core/src/voice-training.ts: 2312 lines
-- packages/core/src/profile.ts: 1979 lines
+- packages/core/src/profile.ts: 1974 lines
 - apps/site/src/lib/client/composables/useMicrophone.ts: 1957 lines
 - packages/core/src/api/handlers/agency.ts: 1926 lines
 - brain/training/personalization/lora-trainer.ts: 1798 lines
@@ -74,18 +74,18 @@ Policy: `docs/technical/MAINTAINED_SURFACE.md`
 - apps/site/src/components/LeftSidebar.svelte: 1144 lines
 - packages/core/src/environment-interface/compatibility.spec.ts: 1139 lines
 - packages/core/src/context-builder.ts: 1113 lines
+- packages/core/src/nodes/robot-operator/boredom-autonomy.spec.ts: 1112 lines
 - apps/site/src/components/flow-editor/FlowEditor.svelte: 1097 lines
 - apps/site/src/components/PersonaEditor.svelte: 1086 lines
 - packages/core/src/api/handlers/auth.ts: 1069 lines
 - brain/training/environment-action-selector/development-cases.ts: 1031 lines
 - packages/core/src/nodes/environment/helpers.ts: 1020 lines
-- packages/core/src/api/handlers/voice-settings.ts: 989 lines
-- packages/core/src/nodes/robot-operator/boredom-autonomy.spec.ts: 989 lines
-- apps/site/src/lib/client/composables/useTTS.ts: 984 lines
+- packages/core/src/api/handlers/voice-settings.ts: 985 lines
 - apps/site/src/components/SystemSettings.svelte: 981 lines
 - brain/agents/desire-planner/core.ts: 975 lines
 - apps/site/src/components/NetworkServerSettings.svelte: 973 lines
 - packages/core/src/environment-interface/motion-plan.spec.ts: 969 lines
+- apps/site/src/lib/client/composables/useTTS.ts: 964 lines
 - brain/agents/environment-bridge/core.ts: 962 lines
 - packages/core/src/graph-executor.ts: 945 lines
 - packages/core/src/llm-backend.ts: 943 lines

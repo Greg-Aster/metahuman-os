@@ -1,5 +1,5 @@
 /**
- * Persistence for Active Operator mode and Robot Operator Full-mode pacing.
+ * Persistence for Active Operator mode.
  *
  * Executable work and in-progress recovery live only in packages/core/src/queue.
  * This module persists autonomy admission configuration and nothing else.
@@ -18,7 +18,6 @@ function normalizeConfig(loaded: Partial<ActiveOperatorConfig>): ActiveOperatorC
     autonomyMode: ['reactive', 'semi', 'full'].includes(loaded.autonomyMode || '')
       ? loaded.autonomyMode!
       : DEFAULT_CONFIG.autonomyMode,
-    cooldownMs: Math.max(5_000, Number(loaded.cooldownMs ?? DEFAULT_CONFIG.cooldownMs)),
   };
 }
 

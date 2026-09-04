@@ -667,7 +667,7 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
         autoFallbackToPiper: true,
         useCustomVoicepack: false,
         customVoicepackPath: path.join(profileRoot, 'out', 'voices', 'kokoro-voicepacks', 'default.pt'),
-        device: 'cuda',
+        normalizeCustomVoicepacks: true,
       },
       rvc: {
         referenceAudioDir: path.join(profileRoot, 'out', 'voices', 'rvc-samples'),
@@ -718,11 +718,6 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
       enabled: true,
       directory: path.join(profileRoot, 'out', 'voice-cache'),
       maxSizeMB: 500,
-    },
-    webSocket: {
-      path: '/voice-stream',
-      maxPayloadMB: 10,
-      audioChunkMs: 100,
     },
     training: {
       enabled: true,

@@ -15,7 +15,7 @@ export { DesireUpdaterNode } from './desire-updater.node.js';
 export { DesirePlanReviewRecorderNode } from './desire-plan-review-recorder.node.js';
 export { DesirePlanReviewTransitionNode } from './desire-plan-review-transition.node.js';
 export { DesireExecutorNode } from './desire-executor.node.js';
-export { OutcomeReviewerNode } from './outcome-reviewer.node.js';
+export { DesireOutcomeReviewerNode } from './desire-outcome-reviewer.node.js';
 export { DesireFeasibilityNode, parseFeasibilityResponse } from './desire-feasibility.node.js';
 export {
   DesireCheckinEvaluatorNode,
@@ -42,7 +42,7 @@ import { DesireUpdaterNode } from './desire-updater.node.js';
 import { DesirePlanReviewRecorderNode } from './desire-plan-review-recorder.node.js';
 import { DesirePlanReviewTransitionNode } from './desire-plan-review-transition.node.js';
 import { DesireExecutorNode } from './desire-executor.node.js';
-import { OutcomeReviewerNode } from './outcome-reviewer.node.js';
+import { DesireOutcomeReviewerNode } from './desire-outcome-reviewer.node.js';
 import { DesireFeasibilityNode } from './desire-feasibility.node.js';
 import { DesireCheckinEvaluatorNode } from './desire-checkin-evaluator.node.js';
 import { definition as DesireQuestionGeneratorNode } from './desire-question-generator.node.js';
@@ -59,7 +59,7 @@ export const agencyNodes = [
   DesirePlanReviewRecorderNode,
   DesirePlanReviewTransitionNode,
   DesireExecutorNode,
-  OutcomeReviewerNode,
+  DesireOutcomeReviewerNode,
   DesireFeasibilityNode,
   DesireCheckinEvaluatorNode,
   DesireQuestionGeneratorNode,

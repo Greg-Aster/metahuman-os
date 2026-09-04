@@ -3,7 +3,6 @@
  * Implements text-to-speech using Kokoro StyleTTS2-based synthesis
  */
 
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from '../../path-builder.js';
@@ -16,7 +15,33 @@ import {
 import { eventBus, EventTypes, generateRequestId } from '../../infrastructure/event-bus/index.js';
 import { getCachedAudio, cacheAudio, getCacheStats, clearCache } from '../cache.js';
 import type { ITextToSpeechService, TTSSynthesizeOptions, TTSStatus, KokoroConfig, CacheConfig } from '../interface.js';
+import { splitSpeechText } from '../speech-chunks.js';
 import type { PiperService } from './piper-service.js';
+
+export interface KokoroStreamChunk {
+  index: number;
+  total: number;
+  text: string;
+  audio: Buffer;
+  isFinal: boolean;
+  synthesisMs: number;
+  cacheHit: boolean;
+}
+
+interface ResolvedKokoroOptions {
+  langCode: string;
+  voice: string;
+  speed: number;
+  useCustom: boolean;
+  customPath: string;
+  voiceKey: string;
+  cacheKey: string;
+}
+
+interface KokoroSynthesisResult {
+  audio: Buffer;
+  cacheHit: boolean;
+}
 
 export class KokoroService implements ITextToSpeechService {
   constructor(
@@ -26,6 +51,105 @@ export class KokoroService implements ITextToSpeechService {
   ) {}
 
   async synthesize(text: string, options?: TTSSynthesizeOptions): Promise<Buffer> {
+    const result = await this.synthesizeWithMetadata(text, options);
+    return result.audio;
+  }
+
+  async *synthesizeStream(
+    text: string,
+    options: TTSSynthesizeOptions = {},
+  ): AsyncGenerator<KokoroStreamChunk> {
+    const chunks = splitSpeechText(text);
+    if (chunks.length === 0) throw new Error('No speakable text to synthesize');
+
+    const requestId = options.requestId || generateRequestId();
+    const startedAt = Date.now();
+    let audioBytes = 0;
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'tts_stream_started',
+      details: {
+        provider: 'kokoro',
+        requestId,
+        textLength: text.length,
+        totalChunks: chunks.length,
+      },
+      actor: 'system',
+    });
+
+    try {
+      for (let index = 0; index < chunks.length; index += 1) {
+        if (options.signal?.aborted) {
+          throw new DOMException('TTS generation aborted', 'AbortError');
+        }
+        const chunkStartedAt = Date.now();
+        const chunkText = chunks[index]!;
+        const result = await this.synthesizeWithMetadata(chunkText, options, requestId);
+        const synthesisMs = Date.now() - chunkStartedAt;
+        audioBytes += result.audio.length;
+
+        if (index === 0) {
+          audit({
+            level: 'info',
+            category: 'action',
+            event: 'tts_stream_first_audio',
+            details: {
+              provider: 'kokoro',
+              requestId,
+              textLength: text.length,
+              chunkLength: chunkText.length,
+              durationMs: Date.now() - startedAt,
+              cacheHit: result.cacheHit,
+            },
+            actor: 'system',
+          });
+        }
+
+        yield {
+          index,
+          total: chunks.length,
+          text: chunkText,
+          audio: result.audio,
+          isFinal: index === chunks.length - 1,
+          synthesisMs,
+          cacheHit: result.cacheHit,
+        };
+      }
+
+      audit({
+        level: 'info',
+        category: 'action',
+        event: 'tts_stream_completed',
+        details: {
+          provider: 'kokoro',
+          requestId,
+          textLength: text.length,
+          totalChunks: chunks.length,
+          audioBytes,
+          durationMs: Date.now() - startedAt,
+        },
+        actor: 'system',
+      });
+    } catch (error) {
+      audit({
+        level: (error as Error).name === 'AbortError' ? 'info' : 'error',
+        category: 'action',
+        event: 'tts_stream_failed',
+        details: {
+          provider: 'kokoro',
+          requestId,
+          textLength: text.length,
+          durationMs: Date.now() - startedAt,
+          error: (error as Error).message,
+        },
+        actor: 'system',
+      });
+      throw error;
+    }
+  }
+
+  private resolveOptions(options?: TTSSynthesizeOptions): ResolvedKokoroOptions {
     const langCode = options?.langCode || this.config.langCode;
     const voice = options?.voice || this.config.voice;
     const speed = options?.speakingRate || this.config.speed;
@@ -35,43 +159,51 @@ export class KokoroService implements ITextToSpeechService {
     const isBuiltInVoice = options?.voice && /^[a-z]{2}_[a-z]+$/.test(options.voice);
     const useCustom = isBuiltInVoice ? false : this.config.useCustomVoicepack;
     const customPath = this.config.customVoicepackPath;
-
-
-    // Build cache key
     const voiceKey = useCustom ? `custom:${path.basename(customPath)}` : voice;
     const cacheKey = `kokoro:${langCode}:${voiceKey}`;
 
+    return { langCode, voice, speed, useCustom, customPath, voiceKey, cacheKey };
+  }
+
+  private async synthesizeWithMetadata(
+    text: string,
+    options?: TTSSynthesizeOptions,
+    correlatedRequestId?: string,
+  ): Promise<KokoroSynthesisResult> {
+    const resolved = this.resolveOptions(options);
+
     // Check cache first
-    const cached = getCachedAudio(this.cacheConfig, text, cacheKey, speed);
+    const cached = getCachedAudio(this.cacheConfig, text, resolved.cacheKey, resolved.speed);
     if (cached) {
-      return cached;
+      return { audio: cached, cacheHit: true };
     }
 
-    const requestId = generateRequestId();
+    const requestId = correlatedRequestId || options?.requestId || generateRequestId();
     const startTime = Date.now();
 
     // Publish synthesize started event
     eventBus.emit('kokoro', EventTypes.KOKORO_SYNTHESIZE_STARTED, {
       textLength: text.length,
-      voice: voiceKey,
-      langCode,
-      speed,
-      useCustomVoicepack: useCustom,
-      mode: this.config.server.useServer ? 'server' : 'cli',
+      voice: resolved.voiceKey,
+      langCode: resolved.langCode,
+      speed: resolved.speed,
+      useCustomVoicepack: resolved.useCustom,
+      mode: 'server',
     }, { requestId });
 
     try {
-      let audioBuffer: Buffer;
-
-      // Use server mode if configured and enabled
-      if (this.config.server.useServer) {
-        audioBuffer = await this.synthesizeViaServer(text, langCode, voice, speed, useCustom, customPath, options?.signal);
-      } else {
-        audioBuffer = await this.synthesizeViaCLI(text, langCode, voice, speed, useCustom, customPath, options?.signal);
-      }
+      const audioBuffer = await this.synthesizeViaServer(
+        text,
+        resolved.langCode,
+        resolved.voice,
+        resolved.speed,
+        resolved.useCustom,
+        resolved.customPath,
+        options?.signal,
+      );
 
       // Cache for future use
-      cacheAudio(this.cacheConfig, text, cacheKey, speed, audioBuffer);
+      cacheAudio(this.cacheConfig, text, resolved.cacheKey, resolved.speed, audioBuffer);
 
       const duration = Date.now() - startTime;
 
@@ -84,9 +216,10 @@ export class KokoroService implements ITextToSpeechService {
           textLength: text.length,
           audioSize: audioBuffer.length,
           durationMs: duration,
-          mode: this.config.server.useServer ? 'server' : 'cli',
-          voice: voiceKey,
-          langCode,
+          mode: 'server',
+          voice: resolved.voiceKey,
+          langCode: resolved.langCode,
+          requestId,
         },
         actor: 'system',
       });
@@ -95,10 +228,10 @@ export class KokoroService implements ITextToSpeechService {
       eventBus.emit('kokoro', EventTypes.KOKORO_SYNTHESIZE_COMPLETED, {
         textLength: text.length,
         audioSize: audioBuffer.length,
-        voice: voiceKey,
+        voice: resolved.voiceKey,
       }, { requestId, durationMs: duration });
 
-      return audioBuffer;
+      return { audio: audioBuffer, cacheHit: false };
     } catch (error) {
       // Fallback to Piper if configured
       if (this.config.autoFallbackToPiper && this.piperFallback) {
@@ -120,7 +253,10 @@ export class KokoroService implements ITextToSpeechService {
           fallbackTo: 'piper',
         }, { requestId, level: 'warn', durationMs: Date.now() - startTime });
 
-        return this.piperFallback.synthesize(text, options);
+        return {
+          audio: await this.piperFallback.synthesize(text, options),
+          cacheHit: false,
+        };
       }
 
       // Publish synthesize failed event
@@ -162,17 +298,11 @@ export class KokoroService implements ITextToSpeechService {
       normalize: useCustom ? (this.config.normalizeCustomVoicepacks ?? true) : false,
     };
 
-    // Make HTTP request to server
-    const controller = new AbortController();
-    if (signal) {
-      signal.addEventListener('abort', () => controller.abort());
-    }
-
     const response = await fetch(`${serverUrl}/synthesize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      signal: controller.signal,
+      signal,
     });
 
     if (!response.ok) {
@@ -182,120 +312,6 @@ export class KokoroService implements ITextToSpeechService {
 
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer);
-  }
-
-  /**
-   * Synthesize via direct Python CLI (fallback method)
-   */
-  private async synthesizeViaCLI(
-    text: string,
-    langCode: string,
-    voice: string,
-    speed: number,
-    useCustom: boolean,
-    customPath: string,
-    signal?: AbortSignal
-  ): Promise<Buffer> {
-    const kokoroDir = path.join(ROOT, 'external', 'kokoro');
-    const pythonBin = path.join(kokoroDir, 'venv', 'bin', 'python3');
-
-    // Validate Python virtual environment exists
-    if (!fs.existsSync(pythonBin)) {
-      throw new Error(`Kokoro not installed. Run: ./bin/install-kokoro.sh`);
-    }
-
-    // Create temp output file
-    const tempDir = this.cacheConfig.directory;
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    const tempFile = path.join(tempDir, `kokoro_temp_${Date.now()}_${Math.random().toString(16).slice(2)}.wav`);
-
-    const abortError = new Error('TTS generation aborted');
-    abortError.name = 'AbortError';
-
-    if (signal?.aborted) {
-      throw abortError;
-    }
-
-    try {
-      // Build Python command to run Kokoro
-      const args = [
-        '-m', 'kokoro',
-        '--text', text,
-        '--lang', langCode,
-        '--voice', useCustom ? customPath : voice,
-        '--speed', speed.toString(),
-        '--output', tempFile,
-      ];
-
-      const child = spawn(pythonBin, args, {
-        cwd: kokoroDir,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let aborted = false;
-      const onAbort = () => {
-        aborted = true;
-        try {
-          child.kill('SIGTERM');
-        } catch {}
-      };
-
-      const cleanupAbort = () => {
-        if (signal) {
-          signal.removeEventListener('abort', onAbort);
-        }
-      };
-
-      const stderrChunks: Buffer[] = [];
-      child.stderr?.on('data', (chunk) => {
-        stderrChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      });
-
-      if (signal) {
-        signal.addEventListener('abort', onAbort, { once: true });
-      }
-
-      await new Promise<void>((resolve, reject) => {
-        child.once('error', (err) => {
-          cleanupAbort();
-          reject(err);
-        });
-
-        child.once('close', (code) => {
-          cleanupAbort();
-          if (aborted || signal?.aborted) {
-            reject(abortError);
-            return;
-          }
-          if (code !== 0) {
-            const stderr = stderrChunks.length ? Buffer.concat(stderrChunks).toString('utf-8').trim() : '';
-            reject(new Error(`Kokoro CLI exited with code ${code}${stderr ? `: ${stderr}` : ''}`));
-            return;
-          }
-          resolve();
-        });
-      });
-
-      // Read generated audio
-      if (!fs.existsSync(tempFile)) {
-        throw new Error('Kokoro failed to generate audio file');
-      }
-
-      const audioBuffer = fs.readFileSync(tempFile);
-
-      // Clean up temp file
-      fs.unlinkSync(tempFile);
-
-      return audioBuffer;
-    } catch (error) {
-      // Clean up temp file on error
-      if (fs.existsSync(tempFile)) {
-        fs.unlinkSync(tempFile);
-      }
-      throw error;
-    }
   }
 
   /**
@@ -323,18 +339,15 @@ export class KokoroService implements ITextToSpeechService {
     const pythonBin = path.join(kokoroDir, 'venv', 'bin', 'python3');
     const installed = fs.existsSync(pythonBin);
 
-    let serverAvailable = false;
-    if (this.config.server.useServer) {
-      serverAvailable = await this.checkServerHealth(getVoiceServiceUrl('kokoro'));
-    }
+    const serverAvailable = await this.checkServerHealth(getVoiceServiceUrl('kokoro'));
 
     const cacheStats = getCacheStats(this.cacheConfig);
 
     return {
       provider: 'kokoro',
-      available: installed && (serverAvailable || !this.config.server.useServer),
+      available: installed && serverAvailable,
       modelPath: kokoroDir,
-      serverUrl: this.config.server.useServer ? getVoiceServiceUrl('kokoro') : undefined,
+      serverUrl: getVoiceServiceUrl('kokoro'),
       cacheEnabled: this.cacheConfig.enabled,
       cacheSize: cacheStats.size,
       cacheFiles: cacheStats.files,
@@ -353,10 +366,6 @@ export class KokoroService implements ITextToSpeechService {
     const serverUrl = getVoiceServiceUrl('kokoro');
     const available = await this.checkServerHealth(serverUrl);
     if (available) return true;
-
-    if (this.config.server.autoStart === false) {
-      return false;
-    }
 
     try {
       await ensureVoiceServiceRunning('kokoro');

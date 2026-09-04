@@ -22,7 +22,8 @@ executor and the web editor.
   of Thought admission.
 - Boredom Observer, Movement, and Reflection are contextual planner graphs;
   Robot Autonomy Executor (`boredom-autonomy-mode.json`, stable runtime key
-  `boredom-autonomy`) executes one selected consequence and ends.
+  `boredom-autonomy`) routes the unchanged internal intention, executes one
+  self-directed consequence, records Robot Status, and ends.
 - `robot-action-result-mode.json` interprets one correlated returned action result
   and records it in Robot Status without selecting or dispatching another action.
 - `robot-goal-review-mode.json` is a separately scheduled LLM review of an

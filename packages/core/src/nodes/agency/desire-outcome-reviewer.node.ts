@@ -1,5 +1,5 @@
 /**
- * Outcome Reviewer Node
+ * Desire Outcome Reviewer Node
  *
  * Reviews the outcome of a desire's execution and determines next steps.
  * Routes through LLM to evaluate whether the goal was achieved.
@@ -20,7 +20,7 @@ import { callLLM, normalizeModelRole, type ModelRole, type RouterMessage } from 
 import { audit } from '../../audit.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
-interface OutcomeReviewOutput {
+interface DesireOutcomeReviewOutput {
   verdict: OutcomeVerdict;
   reasoning: string;
   successScore: number;
@@ -69,7 +69,7 @@ function stringArray(value: unknown, name: string, optional = false): string[] |
   return value.map(item => String(item).trim());
 }
 
-export function parseOutcomeReviewResponse(content: string): OutcomeReviewOutput {
+export function parseDesireOutcomeReviewResponse(content: string): DesireOutcomeReviewOutput {
   const jsonMatch = content.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error('Outcome review response did not contain a JSON object');
 
@@ -252,19 +252,21 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Review
   "completionCriteriaMet": true/false - for long_running: set true ONLY if the ultimate completion criteria is actually met
 }`;
 
-interface OutcomeReviewOptions {
+interface DesireOutcomeReviewOptions {
   systemPrompt?: string;
   userPromptTemplate?: string;
   role?: ModelRole;
   temperature?: number;
+  cognitiveMode?: string;
 }
 
-async function runOutcomeReview(
+export async function runDesireOutcomeReview(
   desire: Desire,
   execution?: DesireExecution,
-  username?: string,
-  options: OutcomeReviewOptions = {},
-): Promise<OutcomeReviewOutput> {
+  userId?: string,
+  options: DesireOutcomeReviewOptions = {},
+  call: typeof callLLM = callLLM,
+): Promise<DesireOutcomeReviewOutput> {
   const plan = desire.plan;
   const exec = execution || desire.execution;
 
@@ -318,20 +320,21 @@ async function runOutcomeReview(
     { role: 'user', content: userPrompt },
   ];
 
-  const response = await callLLM({
+  const response = await call({
     role: options.role ?? 'persona',
     messages,
-    userId: username,
+    userId,
+    cognitiveMode: options.cognitiveMode,
     options: { temperature: options.temperature ?? 0.3, responseFormat: 'json' },
   });
   if (!response.content) throw new Error('Outcome review model returned an empty response');
-  return parseOutcomeReviewResponse(response.content);
+  return parseDesireOutcomeReviewResponse(response.content);
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   const desireInput = (inputs.desire || inputs[0]) as { desire?: Desire; execution?: DesireExecution } | Desire | undefined;
   const executionInput = (inputs.execution || inputs[1]) as { execution?: DesireExecution } | DesireExecution | undefined;
-  const username = context.userId || context.username;
+  const userId = typeof context.userId === 'string' ? context.userId : undefined;
 
   // Handle both wrapped { desire } format and direct Desire object
   // Also check context.desire for cases where desire is injected directly
@@ -349,13 +352,14 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   if (!desire) throw new Error('Outcome review requires a desire');
   if (!execution) throw new Error('Outcome review requires execution data');
 
-  console.log(`[outcome-reviewer] 🔍 Reviewing outcome for: ${desire.title}`);
+  console.log(`[desire-outcome-reviewer] 🔍 Reviewing outcome for: ${desire.title}`);
 
-  const reviewResult = await runOutcomeReview(desire, execution, username, {
+  const reviewResult = await runDesireOutcomeReview(desire, execution, userId, {
       systemPrompt: properties?.systemPrompt ?? SYSTEM_PROMPT,
       userPromptTemplate: properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE,
       role: normalizeModelRole(properties?.role, 'persona'),
       temperature: properties?.temperature ?? 0.3,
+      cognitiveMode: typeof context.cognitiveMode === 'string' ? context.cognitiveMode : undefined,
   });
 
     const outcomeReview: DesireOutcomeReview = {
@@ -377,18 +381,18 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       completionCriteriaMet: reviewResult.completionCriteriaMet,
     };
 
-    console.log(`[outcome-reviewer]    Verdict: ${reviewResult.verdict}`);
-    console.log(`[outcome-reviewer]    Success Score: ${reviewResult.successScore}`);
-    console.log(`[outcome-reviewer]    Failure Category: ${reviewResult.failureCategory}`);
+    console.log(`[desire-outcome-reviewer]    Verdict: ${reviewResult.verdict}`);
+    console.log(`[desire-outcome-reviewer]    Success Score: ${reviewResult.successScore}`);
+    console.log(`[desire-outcome-reviewer]    Failure Category: ${reviewResult.failureCategory}`);
     if (reviewResult.isFixableBug) {
-      console.log(`[outcome-reviewer]    🔧 Fixable Bug Detected: ${reviewResult.errorType || 'unknown'}`);
-      console.log(`[outcome-reviewer]    Suggested Fix: ${reviewResult.suggestedFix}`);
+      console.log(`[desire-outcome-reviewer]    🔧 Fixable Bug Detected: ${reviewResult.errorType || 'unknown'}`);
+      console.log(`[desire-outcome-reviewer]    Suggested Fix: ${reviewResult.suggestedFix}`);
     }
     if (reviewResult.milestoneAdvance) {
-      console.log(`[outcome-reviewer]    📍 Milestone completed - ready to advance`);
+      console.log(`[desire-outcome-reviewer]    📍 Milestone completed - ready to advance`);
     }
     if (reviewResult.completionCriteriaMet) {
-      console.log(`[outcome-reviewer]    ✅ Completion criteria MET - goal fully achieved`);
+      console.log(`[desire-outcome-reviewer]    ✅ Completion criteria MET - goal fully achieved`);
     }
 
     // Audit the review
@@ -396,7 +400,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       category: 'agent',
       level: reviewResult.verdict === 'escalate' ? 'warn' : 'info',
       event: 'desire_outcome_reviewed',
-      actor: 'outcome-reviewer-node',
+      actor: 'desire-outcome-reviewer-node',
       details: {
         desireId: desire.id,
         title: desire.title,
@@ -432,9 +436,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   };
 };
 
-export const OutcomeReviewerNode: NodeDefinition = defineNode({
-  id: 'outcome_reviewer',
-  name: 'Outcome Reviewer',
+export const DesireOutcomeReviewerNode: NodeDefinition = defineNode({
+  id: 'desire_outcome_reviewer',
+  name: 'Desire Outcome Reviewer',
   category: 'agency',
   description: 'Reviews execution outcomes and determines next steps',
   inputs: [
@@ -486,4 +490,4 @@ export const OutcomeReviewerNode: NodeDefinition = defineNode({
   execute,
 });
 
-export default OutcomeReviewerNode;
+export default DesireOutcomeReviewerNode;

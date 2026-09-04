@@ -4,7 +4,6 @@
   import { AUTONOMY_MODES, type AutonomyMode } from '../lib/client/active-operator-modes';
 
   let autonomyMode: AutonomyMode = 'reactive';
-  let cooldownMs = 30_000;
   let loading = false;
   let saving = false;
   let error = '';
@@ -21,7 +20,6 @@
       const config = await response.json();
       if (!response.ok) throw new Error(config.error || 'Failed to load Active Operator configuration');
       autonomyMode = config.autonomyMode || 'reactive';
-      cooldownMs = config.cooldownMs ?? 30_000;
     } catch (caught) {
       error = (caught as Error).message;
     } finally {
@@ -41,28 +39,6 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Failed to change autonomy mode');
       autonomyMode = result.mode;
-    } catch (caught) {
-      error = (caught as Error).message;
-    } finally {
-      saving = false;
-    }
-  }
-
-  async function saveConfig() {
-    saving = true;
-    error = '';
-    try {
-      const response = await apiFetch('/api/active-operator/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          autonomyMode,
-          cooldownMs,
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Failed to save Active Operator configuration');
-      autonomyMode = result.autonomyMode;
     } catch (caught) {
       error = (caught as Error).message;
     } finally {
@@ -115,14 +91,4 @@
   {#if autonomyMode === 'full'}
     <button class="danger-button mt-4" disabled={saving} on:click={emergencyStop}>Emergency stop autonomy</button>
   {/if}
-
-  <details class="mt-4">
-    <summary class="cursor-pointer py-2 font-medium text-white">Full-mode timing</summary>
-    <div class="mt-3 grid gap-3">
-      <label class="text-sm text-white">Robot Operator cooldown (ms)
-        <input class="form-input mt-1" type="number" bind:value={cooldownMs} min="5000" step="1000" />
-      </label>
-      <button class="btn-primary" disabled={saving} on:click={saveConfig}>{saving ? 'Saving…' : 'Save timing'}</button>
-    </div>
-  </details>
 </div>

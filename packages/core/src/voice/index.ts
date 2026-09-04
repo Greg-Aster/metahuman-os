@@ -20,14 +20,3 @@ export {
   type ASRIntegrationConfig,
   type AudioChunk,
 } from './asr-integration.js';
-
-// TTS Integration
-export {
-  TTSIntegration,
-  createTTSIntegration,
-  calculateAudioDuration,
-  adjustAudioSpeed,
-  adjustAudioVolume,
-  type TTSIntegrationConfig,
-  type SynthesizeOptions,
-} from './tts-integration.js';

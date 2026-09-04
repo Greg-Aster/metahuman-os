@@ -9,9 +9,9 @@
     "maxLoopIterations": 5
   },
   "name": "Robot Autonomy Executor",
-  "description": "One-pass Robot Autonomy Executor. The Environment LLM selects one contextual consequence, Environment Bridge Out dispatches it, Robot Status Out records the pass, and the workflow ends.",
+  "description": "One-pass Robot Autonomy Executor. An Intent Orchestrator selects the context needed for an internally authored intention, the Environment LLM chooses one self-directed consequence, Environment Bridge Out dispatches it, Robot Status Out records the pass, and the workflow ends.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-09-03T23:45:46.037Z",
+  "last_modified": "2026-09-04T18:49:28.000Z",
   "nodes": [
     {
       "id": "observation",
@@ -41,6 +41,27 @@
       }
     },
     {
+      "id": "intent-orchestrator",
+      "type": "llmNode",
+      "position": {
+        "x": 340,
+        "y": 20
+      },
+      "width": 300,
+      "data": {
+        "label": "Choose Self-Directed Routes",
+        "nodeType": "orchestrator_llm",
+        "properties": {
+          "outputContract": "environment",
+          "systemPrompt": "You are the Robot Autonomy Intent Orchestrator. The current message is a high-level intention authored by an internal agent for the robot, not a human instruction. Decide which independent routes are relevant to realizing that self-directed intention. You do not answer, rewrite or summarize the intention, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes optional first-person outward expression by the robot.\n- needsConversationHistory exposes recent dialogue and private reflection.\n- needsMemory exposes relevant long-term experience beyond memories already delegated with the intention.\n- needsRobotStatus exposes the canonical current snapshot, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection plus verified recent action history.\n\nTreat the intention as the robot's own prospective choice. Routes are independent and may combine. Select only information and capabilities that can materially inform this pass. Return exactly the seven JSON booleans and nothing else.",
+          "userPromptTemplate": "Internal planner intention: {{userMessage}}",
+          "temperature": 0.1,
+          "maxTokens": 768
+        },
+        "comment": "Classifies the unchanged internal planner intention into independent route switches. It does not answer, rewrite the intention, or select an action."
+      }
+    },
+    {
       "id": "executive-policy",
       "type": "inputNode",
       "position": {
@@ -51,7 +72,7 @@
         "label": "Robot Autonomy Execution Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Execute the one high-level plannerDecision using current evidence, Robot Status, persona, recent context, and advertised capabilities. The delegated instruction is authoritative intent; current bridge facts are authoritative physical context. Choose one response, one advertised action, or one body-local movementRequest. Prefer an advertised command when its description performs the needed effect; use movementRequest only when the requested movement is not covered. Preserve body part, direction, timing, and hold details. Do not invent an unrelated idle task.\n\nReturn strict JSON: response, actions, movementRequest, and taskDecision with objective, reason, outcome, objectiveComplete, continuationPolicy, and requiredCompletionBasis. Physical work uses outcome=act and objectiveComplete=false because the result will be interpreted by Robot Action Result after this workflow ends. Outward response is optional; leave it empty when speaking adds nothing and otherwise use one or two concise sentences. Never promise an absent action.",
+          "message": "Execute one internally authored plannerDecision using the supplied selectedRoutes, evidence, Robot Status, persona, and advertised capabilities. The plannerDecision is my own prospective intent, not a user request. Preserve its meaning while deciding whether I speak, use one advertised action, or request one novel body-local movement. Any outward response is optional and first-person; it expresses my perception, intention, or choice rather than compliance with an instruction. Prefer an advertised command when its description performs the intended effect; use movementRequest only when no advertised command covers it. Preserve body part, direction, timing, and hold details. Do not invent unrelated work.\n\nReturn strict JSON: response, actions, movementRequest, and taskDecision with objective, reason, outcome, objectiveComplete, continuationPolicy, and requiredCompletionBasis. Physical work uses outcome=act and objectiveComplete=false because Robot Action Result interprets the result after this workflow ends. Leave response empty when speaking adds nothing; otherwise use one or two concise sentences. Never promise an absent action.",
           "inputKey": ""
         }
       }
@@ -67,6 +88,15 @@
         "label": "Select Camera Frames for Current Action",
         "nodeType": "environment_image_input",
         "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsVision",
+              "truthy": true
+            }
+          ]
+        },
         "comment": "Selects the current valid camera frame. After an action finishes, it can also select the saved before-action frame for comparison."
       }
     },
@@ -99,6 +129,15 @@
         "properties": {
           "mode": "inner",
           "limit": 4
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsConversationHistory",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -115,6 +154,15 @@
         "properties": {
           "mode": "robot",
           "limit": 20
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsAction",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -130,6 +178,15 @@
         "nodeType": "robot_status",
         "properties": {
           "historyLimit": 3
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsRobotStatus",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -146,6 +203,15 @@
         "properties": {
           "topK": 3,
           "threshold": 0.65
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsMemory",
+              "truthy": true
+            }
+          ]
         },
         "comment": "Searches the authenticated profile's semantic memory index using the planner instruction. It supplies historical context only and never proves current physical state."
       }
@@ -191,7 +257,7 @@
         "label": "Build Robot Autonomy Context",
         "nodeType": "robot_operator_context_builder",
         "properties": {},
-        "comment": "Builds one bounded autonomy package from the dedicated planner handoff, current bridge evidence, Robot Status, persona, relevant memory, and histories."
+        "comment": "Builds one bounded autonomy package from the unchanged planner handoff, persona, and only the context routes selected by Intent Orchestrator."
       }
     },
     {
@@ -202,12 +268,13 @@
         "y": 210
       },
       "data": {
-        "label": "Choose One Action for This Instruction",
+        "label": "Choose One Self-Directed Consequence",
         "nodeType": "model_router",
         "properties": {
           "role": "environmentActionSelector",
           "maxTokens": 2048,
-          "temperature": 0.55,
+          "temperature": 0.1,
+          "repeatPenalty": 1.15,
           "format": "json"
         }
       }
@@ -375,6 +442,151 @@
     }
   ],
   "edges": [
+    {
+      "id": "e-planner-intent",
+      "source": "robot-operator-input",
+      "target": "intent-orchestrator",
+      "sourceHandle": "plannerInstruction",
+      "targetHandle": "message",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-history-intent",
+      "source": "conversation-history",
+      "target": "intent-orchestrator",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-intent-context",
+      "source": "intent-orchestrator",
+      "target": "autonomy-context",
+      "sourceHandle": "analysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-route-memory",
+      "source": "intent-orchestrator",
+      "target": "memory-router",
+      "sourceHandle": "needsMemory",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsMemory",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-status",
+      "source": "intent-orchestrator",
+      "target": "robot-status",
+      "sourceHandle": "needsRobotStatus",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsRobotStatus",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-environment",
+      "source": "intent-orchestrator",
+      "target": "observation",
+      "sourceHandle": "needsEnvironment",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsEnvironment",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-vision",
+      "source": "intent-orchestrator",
+      "target": "observation",
+      "sourceHandle": "needsVision",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsVision",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-action",
+      "source": "intent-orchestrator",
+      "target": "observation",
+      "sourceHandle": "needsAction",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsAction",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-inner-history",
+      "source": "intent-orchestrator",
+      "target": "inner-history",
+      "sourceHandle": "needsConversationHistory",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsConversationHistory",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-robot-history",
+      "source": "intent-orchestrator",
+      "target": "robot-history",
+      "sourceHandle": "needsAction",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsAction",
+          "truthy": true
+        }
+      }
+    },
     {
       "id": "e-observation-image",
       "source": "observation",

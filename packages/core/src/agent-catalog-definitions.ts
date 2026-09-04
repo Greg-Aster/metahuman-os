@@ -270,7 +270,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'robot-operator': {
     id: 'robot-operator',
     displayName: 'Robot Operator',
-    description: 'Owns robot-autonomy scheduling, cooldowns, mutual exclusion, and admission for Robot Status plus Boredom Observer, Movement, and Reflection while Active Operator is semi or full.',
+    description: 'Owns robot-autonomy scheduling, correlated-work completion tracking, mutual exclusion, and admission for Robot Status plus Goal Review, Boredom Observer, Movement, and Reflection while Active Operator is semi or full.',
     lifecycle: 'service',
     executionContext: 'system',
     servicePath: 'services/robot-operator.ts',

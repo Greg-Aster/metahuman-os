@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { storageClient } from '../../storage-client.js';
 import { extractPersonaFromTranscript, type ChatMessage } from '../../persona/extractor.js';
-import { loadExistingPersona, mergePersonaDraft, savePersona } from '../../persona/merger.js';
+import { applyPersonaDraft } from '../../persona/merger.js';
 import { captureEvent } from '../../memory.js';
 
 /**
@@ -35,17 +35,9 @@ export async function handleExtractOnboardingPersona(req: UnifiedRequest): Promi
     }
 
     const personaPath = personaCoreResult.path;
-    const currentPersona = loadExistingPersona(personaPath);
-
-    const backupDir = path.join(path.dirname(personaPath), 'backups');
-    fs.mkdirSync(backupDir, { recursive: true });
-
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = path.join(backupDir, `persona-core-onboarding-${timestamp}.json`);
-    fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
-
-    const { updated } = mergePersonaDraft(currentPersona, extracted, 'merge');
-    savePersona(personaPath, updated);
+    const { archiveFilename } = applyPersonaDraft(extracted, 'merge');
+    const backupPath = path.join(path.dirname(personaPath), 'archives', archiveFilename);
 
     const transcript = messages
       .map((m) => `${m.role === 'assistant' ? 'Interviewer' : 'You'}: ${m.content}`)

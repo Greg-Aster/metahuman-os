@@ -34,6 +34,25 @@ export const ROBOT_ACTION_RESULT_JSON_SCHEMA = {
     observationSummary: { type: 'string', minLength: 1, maxLength: 500 },
     completionEvidence: { type: 'string', maxLength: 1_000 },
   },
+  allOf: [{
+    anyOf: [
+      {
+        required: ['outcome', 'objectiveComplete', 'continuationPolicy'],
+        properties: {
+          outcome: { type: 'string', enum: ['complete'] },
+          objectiveComplete: { type: 'boolean', enum: [true] },
+          continuationPolicy: { type: 'string', enum: ['none'] },
+        },
+      },
+      {
+        required: ['outcome', 'objectiveComplete'],
+        properties: {
+          outcome: { type: 'string', enum: ['incomplete', 'failed', 'wait'] },
+          objectiveComplete: { type: 'boolean', enum: [false] },
+        },
+      },
+    ],
+  }],
 } as const
 
 const FIELDS: ReadonlySet<string> = new Set(ROBOT_ACTION_RESULT_JSON_SCHEMA.required)

@@ -65,6 +65,10 @@ interface PersonalityConfig {
     tone: string[];
     verbosity: string;
     emphasis: string;
+    formality?: string;
+    vocabularyLevel?: string;
+    preferredPronouns?: string;
+    humor?: string;
   };
   traits?: {
     openness: number;
@@ -73,6 +77,7 @@ interface PersonalityConfig {
     agreeableness: number;
     neuroticism: number;
   };
+  interests?: string[];
   [key: string]: unknown;
 }
 

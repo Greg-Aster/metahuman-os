@@ -9,6 +9,7 @@ import path from 'node:path';
 import {
   audit,
   addQuestion,
+  applyPersonaDraft,
   cleanupSessions,
   extractPersonaFromSession,
   generateDiffText,
@@ -18,11 +19,10 @@ import {
   getProfilePaths,
   getUserContext,
   listPersonaSessions as listSessions,
-  loadExistingPersona,
+  loadPersonaCore,
   loadPersonaSession as loadSession,
   mergePersonaDraft,
   recordAnswer,
-  savePersona,
   savePersonaSession as saveSession,
   startPersonaSession as startSession,
   type MergeStrategy,
@@ -201,10 +201,10 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
       const extracted = await extractPersonaFromSession(session);
 
       // Load existing persona
-      const currentPersona = loadExistingPersona(paths.personaCore);
+      const currentPersona = loadPersonaCore();
 
       // Generate diff
-      const { updated, diff } = mergePersonaDraft(currentPersona, extracted, 'merge');
+      const { diff } = mergePersonaDraft(currentPersona, extracted, 'merge');
       const diffText = generateDiffText(diff);
 
       console.log(diffText);
@@ -227,12 +227,8 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
       });
 
       if (applyAnswer.trim().toLowerCase() === 'yes' || applyAnswer.trim().toLowerCase() === 'y') {
-        // Create backup
-        const backupPath = path.join(paths.persona, `core-backup-${Date.now()}.json`);
-        fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
-
-        // Apply changes
-        savePersona(paths.personaCore, updated);
+        const { diff: appliedDiff, archiveFilename } = applyPersonaDraft(extracted, 'merge');
+        const backupPath = path.join(paths.persona, 'archives', archiveFilename);
 
         console.log(`\n✓ Persona updated successfully!`);
         console.log(`  Backup saved to: ${backupPath}`);
@@ -248,7 +244,7 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
           actor: 'cli',
           details: {
             sessionId: session.sessionId,
-            diffSummary: diff.summary,
+            diffSummary: appliedDiff.summary,
             backupPath,
           },
         });
@@ -386,21 +382,17 @@ export async function personaApply(sessionId: string, strategy: MergeStrategy = 
     const extracted = await extractPersonaFromSession(session);
 
     // Load existing persona
-    const currentPersona = loadExistingPersona(paths.personaCore);
+    const currentPersona = loadPersonaCore();
 
     // Generate diff
-    const { updated, diff } = mergePersonaDraft(currentPersona, extracted, strategy);
-    const diffText = generateDiffText(diff);
+    const { diff: previewDiff } = mergePersonaDraft(currentPersona, extracted, strategy);
+    const diffText = generateDiffText(previewDiff);
 
     console.log(diffText);
     console.log('\n' + '='.repeat(50));
 
-    // Create backup
-    const backupPath = path.join(paths.persona, `core-backup-${Date.now()}.json`);
-    fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
-
-    // Apply changes
-    savePersona(paths.personaCore, updated);
+    const { diff, archiveFilename } = applyPersonaDraft(extracted, strategy);
+    const backupPath = path.join(paths.persona, 'archives', archiveFilename);
 
     console.log(`\n✓ Persona updated successfully using "${strategy}" strategy`);
     console.log(`  Backup saved to: ${backupPath}`);

@@ -2,71 +2,9 @@ import fs from 'node:fs';
 import type { UnifiedHandler } from '../types.js';
 import { badRequestResponse, errorResponse, streamResponse } from '../types.js';
 import { getProfilePaths } from '../../path-builder.js';
-import { generateSpeech } from '../../tts.js';
-
-function splitIntoParagraphs(text: string): string[] {
-  const minParagraphLength = 400;
-  const maxParagraphLength = 800;
-  const rawParagraphs = text.split(/\n\s*\n/).map((paragraph) => paragraph.trim()).filter(Boolean);
-  const paragraphs: string[] = [];
-
-  for (const paragraph of rawParagraphs) {
-    if (paragraph.length <= maxParagraphLength) {
-      paragraphs.push(paragraph);
-      continue;
-    }
-
-    const sentences = paragraph.split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
-    let currentChunk: string[] = [];
-    let currentLength = 0;
-
-    for (const sentence of sentences) {
-      if (currentLength + sentence.length > maxParagraphLength && currentChunk.length > 0) {
-        paragraphs.push(currentChunk.join(' '));
-        currentChunk = [];
-        currentLength = 0;
-      }
-
-      currentChunk.push(sentence);
-      currentLength += sentence.length + 1;
-
-      if (currentLength >= minParagraphLength) {
-        paragraphs.push(currentChunk.join(' '));
-        currentChunk = [];
-        currentLength = 0;
-      }
-    }
-
-    if (currentChunk.length > 0) paragraphs.push(currentChunk.join(' '));
-  }
-
-  if (paragraphs.length === 0 && text.trim()) {
-    const sentences = text.trim().split(/(?<=[.!?])\s+/).map((sentence) => sentence.trim()).filter(Boolean);
-    let currentChunk: string[] = [];
-    let currentLength = 0;
-
-    for (const sentence of sentences) {
-      if (currentLength + sentence.length > maxParagraphLength && currentChunk.length > 0) {
-        paragraphs.push(currentChunk.join(' '));
-        currentChunk = [];
-        currentLength = 0;
-      }
-
-      currentChunk.push(sentence);
-      currentLength += sentence.length + 1;
-
-      if (currentLength >= minParagraphLength) {
-        paragraphs.push(currentChunk.join(' '));
-        currentChunk = [];
-        currentLength = 0;
-      }
-    }
-
-    if (currentChunk.length > 0) paragraphs.push(currentChunk.join(' '));
-  }
-
-  return paragraphs;
-}
+import { createKokoroTTSService, generateSpeech } from '../../tts.js';
+import { splitSpeechText } from '../../tts/speech-chunks.js';
+import type { KokoroStreamChunk } from '../../tts/providers/kokoro-service.js';
 
 function sse(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
@@ -82,6 +20,7 @@ export const handleTtsStream: UnifiedHandler = async (req) => {
       speed,
       pitchShift,
       langCode,
+      requestId,
     } = req.body ?? {};
 
     console.log('[TTS Stream] Request params:', { provider, voice, voiceId, speed, langCode });
@@ -98,10 +37,11 @@ export const handleTtsStream: UnifiedHandler = async (req) => {
         voiceId,
         speed,
         langCode,
+        requestId,
       });
     }
 
-    const paragraphs = splitIntoParagraphs(text);
+    const paragraphs = splitSpeechText(text);
     if (paragraphs.length === 0) {
       return badRequestResponse('No content to process');
     }
@@ -141,112 +81,49 @@ async function handleKokoroTtsStream(
     voiceId?: string;
     speed?: number;
     langCode?: string;
+    requestId?: string;
   },
 ) {
-  const kokoroConfig: {
-    voice: string;
-    speed: number;
-    langCode: string;
-    customVoicepack: string | null;
-    normalize: boolean;
-  } = {
-    voice: params.voiceId || params.voice || 'af_heart',
-    speed: params.speed || 1.0,
-    langCode: params.langCode || 'a',
-    customVoicepack: null,
-    normalize: false,
+  const service = createKokoroTTSService(username);
+  const response = streamResponse(streamKokoroSpeech(service.synthesizeStream(params.text, {
+    signal,
+    voice: params.voiceId || params.voice,
+    speakingRate: params.speed,
+    langCode: params.langCode,
+    requestId: params.requestId,
+  })));
+  return {
+    ...response,
+    headers: {
+      ...response.headers,
+      'X-Accel-Buffering': 'no',
+    },
   };
-
-  const profilePaths = getProfilePaths(username);
-  if (fs.existsSync(profilePaths.voiceConfig)) {
-    try {
-      const voiceConfig = JSON.parse(fs.readFileSync(profilePaths.voiceConfig, 'utf-8'));
-      if (voiceConfig.tts?.kokoro) {
-        const kConfig = voiceConfig.tts.kokoro;
-        console.log('[TTS Stream] Saved kConfig.voice:', kConfig.voice, 'useCustomVoicepack:', kConfig.useCustomVoicepack);
-        kokoroConfig.voice = params.voiceId || params.voice || kConfig.voice || 'af_heart';
-        kokoroConfig.speed = params.speed || kConfig.speed || 1.0;
-        kokoroConfig.langCode = params.langCode || kConfig.langCode || 'a';
-
-        const requestedVoice = params.voiceId || params.voice;
-        const isBuiltInVoiceRequested = requestedVoice && /^[a-z]{2}_[a-z]+$/.test(requestedVoice);
-
-        if (kConfig.useCustomVoicepack && kConfig.customVoicepackPath && !isBuiltInVoiceRequested) {
-          kokoroConfig.customVoicepack = kConfig.customVoicepackPath;
-          kokoroConfig.normalize = kConfig.normalizeCustomVoicepacks ?? true;
-        }
-        console.log('[TTS Stream] Final kokoroConfig.voice:', kokoroConfig.voice, 'customVoicepack:', kokoroConfig.customVoicepack, 'isBuiltInVoiceRequested:', isBuiltInVoiceRequested);
-      }
-    } catch (error) {
-      console.warn('[TTS Stream] Failed to load user voice config:', error);
-    }
-  }
-
-  const kokoroServerUrl = process.env.KOKORO_SERVER_URL || 'http://127.0.0.1:9882';
-
-  try {
-    const kokoroResponse = await fetch(`${kokoroServerUrl}/synthesize-stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: params.text,
-        lang_code: kokoroConfig.langCode,
-        voice: kokoroConfig.voice,
-        speed: kokoroConfig.speed,
-        custom_voicepack: kokoroConfig.customVoicepack,
-        normalize: kokoroConfig.normalize,
-      }),
-      signal,
-    });
-
-    if (!kokoroResponse.ok) {
-      const errorText = await kokoroResponse.text();
-      console.error('[TTS Stream] Kokoro server error:', errorText);
-      return errorResponse(`Kokoro server error: ${errorText}`, kokoroResponse.status);
-    }
-
-    const response = streamResponse(proxyReadableStream(kokoroResponse.body));
-    return {
-      ...response,
-      headers: {
-        ...response.headers,
-        'X-Accel-Buffering': 'no',
-      },
-    };
-  } catch (error) {
-    const errMsg = (error as Error).message || String(error);
-    const cause = (error as { cause?: { code?: string } }).cause;
-
-    if (cause?.code === 'ECONNREFUSED' || errMsg.includes('ECONNREFUSED') || errMsg.includes('fetch failed')) {
-      console.warn('[TTS Stream] Kokoro server not available (connection refused). TTS will be skipped.');
-      return {
-        status: 503,
-        data: {
-          error: 'Kokoro TTS server is not running. Start it with: ./bin/mh kokoro serve start',
-          serverUnavailable: true,
-        },
-      };
-    }
-
-    throw error;
-  }
 }
 
-async function* proxyReadableStream(body: ReadableStream<Uint8Array> | null): AsyncGenerator<string> {
-  if (!body) return;
-
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
+async function* streamKokoroSpeech(
+  chunks: AsyncIterable<KokoroStreamChunk>,
+): AsyncGenerator<string> {
+  let totalChunks = 0;
   try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) yield decoder.decode(value, { stream: true });
+    for await (const chunk of chunks) {
+      totalChunks = chunk.total;
+      yield sse({
+        chunk_index: chunk.index,
+        sentence_index: chunk.index,
+        total_sentences: chunk.total,
+        audio_base64: chunk.audio.toString('base64'),
+        audio_size: chunk.audio.length,
+        is_final: chunk.isFinal,
+        synthesis_ms: chunk.synthesisMs,
+        cache_hit: chunk.cacheHit,
+      });
     }
-    const finalChunk = decoder.decode();
-    if (finalChunk) yield finalChunk;
-  } finally {
-    reader.releaseLock();
+    yield sse({ event: 'complete', total_chunks: totalChunks });
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') return;
+    console.error('[TTS Stream] Kokoro synthesis failed:', error);
+    yield sse({ event: 'error', error: (error as Error).message });
   }
 }
 

@@ -24,6 +24,11 @@
   }
 
   interface VoiceConfig {
+    systemVoiceControl?: {
+      canConfigureDevices: boolean;
+      kokoroDeviceLockedByEnvironment: boolean;
+      whisperDeviceLockedByEnvironment: boolean;
+    };
     provider: 'piper' | 'sovits' | 'rvc' | 'kokoro';
     outputTarget: 'local' | 'robot';
     piper?: {
@@ -208,6 +213,16 @@
           throw new Error(error);
         }
         throw new Error(result.error || 'Failed to save settings');
+      }
+
+      if (config?.kokoro && (result.kokoroDevice === 'cpu' || result.kokoroDevice === 'cuda')) {
+        config.kokoro.device = result.kokoroDevice;
+      }
+      if (config?.stt && (result.whisperDevice === 'cpu' || result.whisperDevice === 'cuda')) {
+        config.stt.device = result.whisperDevice;
+        if (result.whisperComputeType === 'int8' || result.whisperComputeType === 'float16' || result.whisperComputeType === 'float32') {
+          config.stt.computeType = result.whisperComputeType;
+        }
       }
 
       successMessage = result.message || 'Settings saved successfully!';
@@ -903,11 +918,24 @@
 
         <div class="mb-6">
           <label for="kokoro-device" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Device for Inference</label>
-          <select id="kokoro-device" bind:value={config.kokoro.device} disabled class="select-field">
+          <select
+            id="kokoro-device"
+            bind:value={config.kokoro.device}
+            disabled={saving || !config.systemVoiceControl?.canConfigureDevices || config.systemVoiceControl?.kokoroDeviceLockedByEnvironment}
+            class="select-field"
+          >
             <option value="cpu">CPU - Fast & no GPU conflicts</option>
             <option value="cuda">GPU (CUDA) - Faster (requires GPU)</option>
           </select>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Shared system server setting from etc/voice-servers.json.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            {#if config.systemVoiceControl?.kokoroDeviceLockedByEnvironment}
+              Locked by the MH_KOKORO_DEVICE environment setting.
+            {:else if !config.systemVoiceControl?.canConfigureDevices}
+              Only the installation owner can change this shared system setting.
+            {:else}
+              Changing the device updates the shared server configuration and restarts Kokoro if it is running.
+            {/if}
+          </p>
         </div>
 
         <div class="mb-6">
@@ -963,11 +991,24 @@
 
         <div class="mb-6">
           <label for="stt-device" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Processing Device</label>
-          <select id="stt-device" bind:value={config.stt.device} disabled class="select-field">
+          <select
+            id="stt-device"
+            bind:value={config.stt.device}
+            disabled={saving || !config.systemVoiceControl?.canConfigureDevices || config.systemVoiceControl?.whisperDeviceLockedByEnvironment}
+            class="select-field"
+          >
             <option value="cpu">CPU</option>
             <option value="cuda">GPU (CUDA)</option>
           </select>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">This machine-level setting comes from etc/voice-servers.json.</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            {#if config.systemVoiceControl?.whisperDeviceLockedByEnvironment}
+              Locked by the MH_WHISPER_DEVICE environment setting.
+            {:else if !config.systemVoiceControl?.canConfigureDevices}
+              Only the installation owner can change this shared system setting.
+            {:else}
+              Changing the device updates the shared server configuration and restarts Whisper if it is running.
+            {/if}
+          </p>
         </div>
 
         <div class="mb-6">

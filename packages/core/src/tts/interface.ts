@@ -10,6 +10,10 @@ export interface TTSSynthesizeOptions {
   speakingRate?: number;
   /** Custom voice/model identifier */
   voice?: string;
+  /** Provider language code */
+  langCode?: string;
+  /** Correlation id retained across synthesis and playback telemetry */
+  requestId?: string;
   /** Pitch shift in semitones (RVC only, -12 to +12) */
   pitchShift?: number;
   /** Additional provider-specific options */
@@ -92,20 +96,11 @@ export interface KokoroConfig {
   langCode: string;           // Language code (e.g., 'a' for auto, 'en', 'ja', 'zh')
   voice: string;              // Built-in voice name (e.g., 'af_heart', 'af_bella')
   speed: number;              // Speaking speed multiplier (0.5-2.0, default: 1.0)
-  splitPattern: string;       // Regex pattern for splitting long text (default: '\n+')
   useCustomVoicepack: boolean; // Use custom trained voicepack instead of built-in voice
   customVoicepackPath: string; // Path to custom .pt voicepack file
   normalizeCustomVoicepacks?: boolean; // Auto-normalize custom voicepack volume to -3dB peak (default: true)
   autoFallbackToPiper: boolean; // Fallback to Piper if Kokoro fails
   outputFormat: 'wav';
-  device?: 'cuda' | 'cpu';    // Device for inference (default: "cpu")
-  // Server configuration
-  server: {
-    useServer: boolean;       // Use FastAPI server instead of direct Python calls
-    url: string;              // Server URL (default: http://127.0.0.1:9882)
-    autoStart: boolean;       // Auto-start server when needed
-    port: number;             // Server port (default: 9882)
-  };
 }
 
 export interface TTSConfig {

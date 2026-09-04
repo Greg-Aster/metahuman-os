@@ -1,5 +1,8 @@
 import { listDesiresByStatus, loadDesire } from './storage.js'
-import { reviewOutcomeViaGraph, type ReviewOutcomeResult } from './executor.js'
+import {
+  reviewDesireOutcomeViaGraph,
+  type DesireOutcomeReviewGraphResult,
+} from './executor.js'
 import type { Desire } from './types.js'
 
 export interface DesireOutcomeReviewOptions {
@@ -19,7 +22,7 @@ export interface DesireOutcomeReviewResult {
 export interface DesireOutcomeReviewDependencies {
   loadDesire: typeof loadDesire
   listReviewable: (username: string) => Promise<Desire[]>
-  reviewGraph: typeof reviewOutcomeViaGraph
+  reviewGraph: typeof reviewDesireOutcomeViaGraph
 }
 
 const activeReviews = new Set<string>()
@@ -48,7 +51,7 @@ export function createDesireOutcomeReviewer(
       )
       return groups.flat().filter(isReviewable)
     },
-    reviewGraph: reviewOutcomeViaGraph,
+    reviewGraph: reviewDesireOutcomeViaGraph,
     ...dependencies,
   }
 
@@ -93,7 +96,7 @@ export function createDesireOutcomeReviewer(
           result.skipped += 1
           continue
         }
-        const reviewed: ReviewOutcomeResult = await deps.reviewGraph(
+        const reviewed: DesireOutcomeReviewGraphResult = await deps.reviewGraph(
           desire,
           options.username,
           options.signal,

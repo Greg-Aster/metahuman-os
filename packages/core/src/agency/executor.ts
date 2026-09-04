@@ -2,7 +2,7 @@
  * Agency Executor
  *
  * Graph-level execution functions for the canonical desire execution and
- * outcome-review services.
+ * desire-outcome-review services.
  */
 
 import type { Desire, DesireExecution, DesireOutcomeReview, OutcomeVerdict } from './types.js';
@@ -59,17 +59,17 @@ export async function loadDesireExecutorGraph(): Promise<SvelteFlowGraph> {
 }
 
 /**
- * Load the outcome-reviewer cognitive graph
+ * Load the Desire Outcome Reviewer cognitive graph.
  */
-export async function loadOutcomeReviewerGraph(): Promise<SvelteFlowGraph> {
-  const loaded = await loadGraphFile(cognitiveGraphPath('outcome-reviewer.json'), {
+export async function loadDesireOutcomeReviewerGraph(): Promise<SvelteFlowGraph> {
+  const loaded = await loadGraphFile(cognitiveGraphPath('desire-outcome-reviewer.json'), {
     cache: graphCache,
-    cacheKey: 'outcome-reviewer',
+    cacheKey: 'desire-outcome-reviewer',
     logPrefix: LOG_PREFIX,
   });
 
   if (!loaded) {
-    throw new Error('Could not load outcome-reviewer graph');
+    throw new Error('Could not load Desire Outcome Reviewer graph');
   }
 
   return loaded.graph;
@@ -251,7 +251,7 @@ export async function executeDesireViaGraph(
 // Outcome Review via Graph
 // ============================================================================
 
-export interface ReviewOutcomeResult {
+export interface DesireOutcomeReviewGraphResult {
   success: boolean;
   desire?: Desire;
   outcomeReview?: DesireOutcomeReview;
@@ -269,50 +269,87 @@ export interface ReviewOutcomeResult {
  * @param username - The user context for the review
  * @returns Review result with verdict, outcome review data, and any errors
  */
-export async function reviewOutcomeViaGraph(
+export function evaluateDesireOutcomeReviewGraph(
+  graphResult: GraphExecutionState,
+): DesireOutcomeReviewGraphResult {
+  const reviewerOutputs = requireGraphNodeOutput(graphResult, 'desire_outcome_reviewer');
+  const transitionOutputs = requireGraphNodeOutput(graphResult, 'desire_updater');
+  const outcomeReview = reviewerOutputs.outcomeReview as DesireOutcomeReview | undefined;
+  const verdict = reviewerOutputs.verdict as OutcomeVerdict | undefined;
+  const updatedDesire = transitionOutputs.desire as Desire | undefined;
+  const summary = transitionOutputs.summary as string | undefined;
+  if (reviewerOutputs.success !== true || transitionOutputs.success !== true
+    || !outcomeReview || !verdict || !updatedDesire || !summary?.trim()) {
+    throw new Error('Desire Outcome Reviewer graph did not produce a durable Agency transition');
+  }
+
+  const innerOutputs = requireGraphNodeOutput(graphResult, 'inner_dialogue_buffer');
+  if (innerOutputs.saved !== true || innerOutputs.persisted !== true) {
+    throw new Error(
+      `Desire outcome Inner Dialogue Buffer persistence failed: ${innerOutputs.error || innerOutputs.reason || 'not saved'}`,
+    );
+  }
+  const admittedCount = Number(innerOutputs.savedCount);
+  if (!Number.isInteger(admittedCount) || admittedCount < 1) {
+    throw new Error('Desire outcome Inner Dialogue Buffer did not confirm an admitted summary');
+  }
+
+  const memoryOutputs = requireGraphNodeOutput(graphResult, 'inner_dialogue_saver');
+  if (memoryOutputs.saved !== true || memoryOutputs.success !== true
+    || memoryOutputs.savedCount !== admittedCount) {
+    throw new Error(
+      `Desire outcome Persona Memory persistence failed: expected ${admittedCount} saved entry or entries, received ${Number(memoryOutputs.savedCount) || 0}`,
+    );
+  }
+
+  return {
+    success: true,
+    desire: updatedDesire,
+    outcomeReview,
+    verdict,
+    action: transitionOutputs.action as string | undefined,
+    summary,
+  };
+}
+
+export async function reviewDesireOutcomeViaGraph(
   desire: Desire,
   username: string,
   signal?: AbortSignal,
-): Promise<ReviewOutcomeResult> {
+): Promise<DesireOutcomeReviewGraphResult> {
   try {
-    const graph = await loadOutcomeReviewerGraph();
+    const graph = await loadDesireOutcomeReviewerGraph();
+    if (graph.cognitiveMode !== 'agent') {
+      throw new Error('Desire Outcome Reviewer graph must declare cognitiveMode "agent"');
+    }
+    const activeUser = getUserContext();
+    if (!activeUser) throw new Error('Desire outcome review requires an authenticated user context');
+    if (activeUser.username !== username && activeUser.activeProfile !== username) {
+      throw new Error(`Desire outcome review context does not own profile ${username}`);
+    }
 
-    // Execute graph with context
-    // The desire_loader node checks for context.desire and uses it directly
     const graphContext = {
-      userId: username,
-      username, // Some nodes check context.username
+      userId: activeUser.userId,
+      username,
       allowMemoryWrites: true,
-      cognitiveMode: 'dual' as const,
-      // Pass desire in context - desire_loader checks context.desire
+      recordPersonaMemory: true,
+      cognitiveMode: graph.cognitiveMode,
       desire,
+      idempotencyKey: [
+        'desire-outcome-review',
+        desire.id,
+        desire.execution?.completedAt || desire.execution?.startedAt || desire.updatedAt,
+      ].join(':'),
       abortSignal: signal,
     };
 
     console.log(`${LOG_PREFIX} Reviewing outcome via graph pipeline for: ${desire.title}`);
     const graphResult = await runGraph({ graph, context: graphContext, signal });
     if (graphResult.status !== 'completed') {
-      throw new Error('Outcome reviewer graph did not complete');
+      throw new Error('Desire Outcome Reviewer graph did not complete');
     }
 
-    const reviewerOutputs = requireGraphNodeOutput(graphResult, 'outcome_reviewer');
-    const transitionOutputs = requireGraphNodeOutput(graphResult, 'desire_updater');
-    const outcomeReview = reviewerOutputs.outcomeReview as DesireOutcomeReview | undefined;
-    const verdict = reviewerOutputs.verdict as OutcomeVerdict | undefined;
-    const updatedDesire = transitionOutputs.desire as Desire | undefined;
-    if (reviewerOutputs.success !== true || transitionOutputs.success !== true
-      || !outcomeReview || !verdict || !updatedDesire) {
-      throw new Error('Outcome reviewer graph did not produce a durable Agency transition');
-    }
-
-    return {
-      success: true,
-      desire: updatedDesire,
-      outcomeReview,
-      verdict,
-      action: transitionOutputs.action as string | undefined,
-      summary: transitionOutputs.summary as string | undefined,
-    };
+    return evaluateDesireOutcomeReviewGraph(graphResult);
   } catch (graphError) {
     console.error(`${LOG_PREFIX} Graph review failed:`, (graphError as Error).message);
     return {

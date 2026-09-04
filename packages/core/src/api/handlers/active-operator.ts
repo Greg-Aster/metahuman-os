@@ -42,7 +42,6 @@ function authRequired(): UnifiedResponse {
  */
 export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> {
   try {
-    const config = loadActiveOperatorConfig();
     const controller = getModeController();
     const modeStatus = controller.getStatus();
     const manager = getQueueManager();
@@ -123,10 +122,6 @@ export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> 
           })),
           hasUserMessages: activeWork.some(task => task.type === 'user_message'),
         },
-        config: {
-          autonomyMode: config.autonomyMode,
-          cooldownMs: config.cooldownMs,
-        },
       },
     };
   } catch (error) {
@@ -167,10 +162,7 @@ export async function handleUpdateActiveOperatorConfig(req: UnifiedRequest): Pro
     }
 
     const input = { ...(req.body || {}) };
-    const body = {
-      autonomyMode: input.autonomyMode,
-      cooldownMs: input.cooldownMs,
-    };
+    const body = { autonomyMode: input.autonomyMode };
     const requestedMode = body.autonomyMode as AutonomyMode | undefined;
     if (requestedMode && !['reactive', 'semi', 'full'].includes(requestedMode)) {
       return { status: 400, error: 'autonomyMode must be reactive, semi, or full' };

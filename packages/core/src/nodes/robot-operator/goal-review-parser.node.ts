@@ -37,6 +37,35 @@ export const ROBOT_GOAL_REVIEW_JSON_SCHEMA = {
     completionEvidence: { type: 'string', maxLength: 1_000 },
     nextInstruction: { type: 'string', maxLength: 1_000 },
   },
+  allOf: [{
+    anyOf: [
+      {
+        required: ['outcome', 'objectiveComplete', 'nextInstruction'],
+        properties: {
+          outcome: { type: 'string', enum: ['continue'] },
+          objectiveComplete: { type: 'boolean', enum: [false] },
+          nextInstruction: { type: 'string', minLength: 1, maxLength: 1_000 },
+        },
+      },
+      {
+        required: ['outcome', 'objectiveComplete', 'continuationPolicy', 'nextInstruction'],
+        properties: {
+          outcome: { type: 'string', enum: ['complete'] },
+          objectiveComplete: { type: 'boolean', enum: [true] },
+          continuationPolicy: { type: 'string', enum: ['none'] },
+          nextInstruction: { type: 'string', maxLength: 0 },
+        },
+      },
+      {
+        required: ['outcome', 'objectiveComplete', 'nextInstruction'],
+        properties: {
+          outcome: { type: 'string', enum: ['wait', 'request_user'] },
+          objectiveComplete: { type: 'boolean', enum: [false] },
+          nextInstruction: { type: 'string', maxLength: 0 },
+        },
+      },
+    ],
+  }],
 } as const
 
 const FIELDS: ReadonlySet<string> = new Set(ROBOT_GOAL_REVIEW_JSON_SCHEMA.required)

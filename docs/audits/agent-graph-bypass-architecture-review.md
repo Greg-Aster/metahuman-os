@@ -123,7 +123,7 @@ fabricated success or silent empty results.
   finite workers over canonical Core storage/network contracts.
 - Desire Executor and Desire Outcome Reviewer Brain adapters delegate to Core
   services whose retained execution paths run `desire-executor.json` and
-  `outcome-reviewer.json`.
+  `desire-outcome-reviewer.json`.
 - Sleep Workflow is a bounded coordinator-owned composite. Its model-backed
   children run their own graphs; Sleep itself does not make model decisions.
 

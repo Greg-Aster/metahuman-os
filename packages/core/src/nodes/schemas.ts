@@ -734,7 +734,7 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'instruction', type: 'string', description: 'Graph-owned autonomy policy' },
       { name: 'stimulusInstruction', type: 'string', optional: true, description: 'Trigger-specific intention' },
-      { name: 'observation', type: 'object', description: 'Current correlated robot stimulus or result' },
+      { name: 'observation', type: 'object', optional: true, description: 'Current correlated robot observation when selected by the workflow' },
       { name: 'images', type: 'array', optional: true, description: 'Fresh correlated image content' },
       { name: 'frames', type: 'array', optional: true, description: 'Fresh correlated frame metadata' },
       { name: 'conversationHistory', type: 'array', optional: true, description: 'Narrative conversation context' },
@@ -749,6 +749,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'actionContext', type: 'object', optional: true, description: 'Work Coordinator record matched to the robot-reported action ID' },
       { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Bridge observation timestamp from Robot Operator Input' },
       { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Robot Operator acquired the current frame in this cycle' },
+      { name: 'routingAnalysis', type: 'object', optional: true, description: 'Intent Orchestrator route switches for an autonomous instruction' },
     ],
     outputs: [
       { name: 'messages', type: 'array', description: 'Bounded multimodal model messages' },
@@ -767,7 +768,7 @@ export const nodeSchemas: NodeSchema[] = [
         options: ['environment', 'delegation', 'action_result', 'goal_review'],
       },
     },
-    description: 'Builds one bounded autonomy context and separates verified robot actions from narrative memories.',
+    description: 'Builds one bounded Robot Operator context from the routes selected for the current workflow.',
   }),
   defineSchema({
     id: 'robot_operator_decision_parser',
@@ -918,7 +919,7 @@ export const nodeSchemas: NodeSchema[] = [
     name: 'Intent Orchestrator',
     category: 'chat',
     inputs: [
-      { name: 'message', type: 'string', description: 'User message to analyze' },
+      { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
       { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
       { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
       { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },

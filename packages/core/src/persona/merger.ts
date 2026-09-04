@@ -1,31 +1,32 @@
 /**
- * Persona Merger
+ * Persona draft merger.
  *
- * Merges extracted persona drafts with existing persona data.
- * Generates human-readable diffs for review before applying changes.
+ * Extraction produces a bounded draft. This module previews or applies that draft
+ * while identity.ts remains the sole owner of persona persistence and archives.
  */
 
-import type { PersonaDraft } from './extractor.js';
-import fs from 'node:fs';
+import {
+  archivePersonaCore,
+  loadPersonaCore,
+  savePersonaCore,
+  type GoalEntry,
+  type PersonaCore,
+} from '../identity.js';
+import {
+  validatePersonaDraft,
+  type BigFive,
+  type PersonaDraft,
+} from '../nodes/persona/persona-profile-extractor.node.js';
 
-/**
- * Merge strategy
- */
 export type MergeStrategy = 'replace' | 'merge' | 'append';
 
-/**
- * Persona diff entry
- */
 export interface DiffEntry {
   field: string;
-  oldValue: any;
-  newValue: any;
+  oldValue: unknown;
+  newValue: unknown;
   action: 'add' | 'update' | 'remove' | 'no-change';
 }
 
-/**
- * Persona diff result
- */
 export interface PersonaDiff {
   changes: DiffEntry[];
   summary: {
@@ -36,343 +37,232 @@ export interface PersonaDiff {
   };
 }
 
-/**
- * Load existing persona from file
- */
-export function loadExistingPersona(personaPath: string): any {
-  if (!fs.existsSync(personaPath)) {
-    return {};
-  }
+const MERGE_STRATEGIES = new Set<MergeStrategy>(['replace', 'merge', 'append']);
 
-  try {
-    return JSON.parse(fs.readFileSync(personaPath, 'utf-8'));
-  } catch (error) {
-    console.warn('[merger] Failed to load existing persona, starting fresh');
-    return {};
-  }
+function valuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
-/**
- * Merge persona draft with existing persona
- *
- * @param currentPersona - Existing persona data
- * @param draft - Extracted persona draft
- * @param strategy - How to merge (replace, merge, append)
- * @returns Updated persona and diff
- */
+function recordChange(
+  changes: DiffEntry[],
+  field: string,
+  oldValue: unknown,
+  newValue: unknown,
+): void {
+  const missing = oldValue === undefined || oldValue === null
+    || (Array.isArray(oldValue) && oldValue.length === 0);
+  changes.push({
+    field,
+    oldValue,
+    newValue,
+    action: valuesEqual(oldValue, newValue) ? 'no-change' : missing ? 'add' : 'update',
+  });
+}
+
+function mergeStrings(current: string[], proposed: string[], strategy: MergeStrategy): string[] {
+  if (strategy === 'replace') return proposed;
+  return [...new Set([...current, ...proposed])];
+}
+
+function goalEntries(goals: string[], status: string): GoalEntry[] {
+  return goals.map(goal => ({ goal, status }));
+}
+
+function mergeGoals(
+  current: GoalEntry[],
+  proposed: GoalEntry[],
+  strategy: MergeStrategy,
+): GoalEntry[] {
+  if (strategy === 'replace') return proposed;
+  const known = new Set(current.map(goal => goal.goal.trim().toLocaleLowerCase()));
+  return [...current, ...proposed.filter(goal => !known.has(goal.goal.trim().toLocaleLowerCase()))];
+}
+
 export function mergePersonaDraft(
-  currentPersona: any,
+  currentPersona: PersonaCore,
   draft: PersonaDraft,
-  strategy: MergeStrategy = 'merge'
-): { updated: any; diff: PersonaDiff } {
-  const updated = JSON.parse(JSON.stringify(currentPersona)); // Deep clone
+  strategy: MergeStrategy = 'merge',
+): { updated: PersonaCore; diff: PersonaDiff } {
+  if (!MERGE_STRATEGIES.has(strategy)) {
+    throw new Error(`Unsupported persona merge strategy: ${strategy}`);
+  }
+
+  const updated = structuredClone(currentPersona);
   const changes: DiffEntry[] = [];
 
-  // Merge Big Five traits
-  if (draft.bigFive) {
-    updated.personality = updated.personality || {};
-    const oldBigFive = updated.personality.bigFive || {};
-    const newBigFive = { ...oldBigFive };
-
-    for (const [trait, score] of Object.entries(draft.bigFive)) {
-      if (score !== undefined) {
-        const oldScore = oldBigFive[trait];
-        const action = oldScore === undefined ? 'add' : oldScore === score ? 'no-change' : 'update';
-
-        changes.push({
-          field: `personality.bigFive.${trait}`,
-          oldValue: oldScore,
-          newValue: score,
-          action,
-        });
-
-        if (strategy === 'replace' || strategy === 'merge') {
-          newBigFive[trait] = score;
-        }
-      }
+  if (draft.traits) {
+    const oldTraits = updated.personality?.traits;
+    if (!oldTraits) {
+      throw new Error('Cannot merge extracted traits because persona personality.traits is missing');
     }
-
-    updated.personality.bigFive = newBigFive;
+    const nextTraits = { ...oldTraits };
+    for (const [trait, score] of Object.entries(draft.traits) as Array<[keyof BigFive, number]>) {
+      if (score === undefined) continue;
+      const oldScore = oldTraits[trait];
+      const nextScore = strategy === 'append' && oldScore !== undefined ? oldScore : score;
+      nextTraits[trait] = nextScore;
+      recordChange(changes, `personality.traits.${trait}`, oldScore, nextScore);
+    }
+    updated.personality.traits = nextTraits;
   }
 
-  // Merge values
-  if (draft.values && draft.values.length > 0) {
-    updated.values = updated.values || {};
-    const oldValues = updated.values.core || [];
-
+  if (draft.values?.length) {
+    const oldValues = updated.values?.core;
+    if (!Array.isArray(oldValues)) {
+      throw new Error('Cannot merge values because persona values.core is missing');
+    }
+    let nextValues: typeof oldValues;
     if (strategy === 'replace') {
-      updated.values.core = draft.values;
-      changes.push({
-        field: 'values.core',
-        oldValue: oldValues,
-        newValue: draft.values,
-        action: oldValues.length === 0 ? 'add' : 'update',
-      });
+      nextValues = draft.values;
     } else if (strategy === 'merge') {
-      // Merge by replacing existing values with same name
-      const merged = [...draft.values];
-      for (const oldVal of oldValues) {
-        if (!draft.values.some((v) => v.value === oldVal.value)) {
-          merged.push(oldVal);
-        }
-      }
-      updated.values.core = merged;
-      changes.push({
-        field: 'values.core',
-        oldValue: oldValues,
-        newValue: merged,
-        action: 'update',
-      });
-    } else if (strategy === 'append') {
-      updated.values.core = [...oldValues, ...draft.values];
-      changes.push({
-        field: 'values.core',
-        oldValue: oldValues,
-        newValue: updated.values.core,
-        action: 'update',
-      });
+      const proposedNames = new Set(draft.values.map(value => value.value.toLocaleLowerCase()));
+      nextValues = [
+        ...draft.values,
+        ...oldValues.filter(value => !proposedNames.has(value.value.toLocaleLowerCase())),
+      ];
+    } else {
+      const existingNames = new Set(oldValues.map(value => value.value.toLocaleLowerCase()));
+      nextValues = [
+        ...oldValues,
+        ...draft.values.filter(value => !existingNames.has(value.value.toLocaleLowerCase())),
+      ];
     }
+    updated.values.core = nextValues;
+    recordChange(changes, 'values.core', oldValues, nextValues);
   }
 
-  // Merge communication style
   if (draft.communicationStyle) {
-    updated.personality = updated.personality || {};
-    const oldStyle = updated.personality.communicationStyle || {};
-
-    if (strategy === 'replace') {
-      updated.personality.communicationStyle = draft.communicationStyle;
-    } else {
-      updated.personality.communicationStyle = {
-        ...oldStyle,
-        ...draft.communicationStyle,
-      };
+    const oldStyle = updated.personality?.communicationStyle;
+    if (!oldStyle
+      || !Array.isArray(oldStyle.tone)
+      || typeof oldStyle.verbosity !== 'string'
+      || typeof oldStyle.emphasis !== 'string') {
+      throw new Error('Cannot merge communication style because persona communicationStyle is incomplete');
     }
-
-    changes.push({
-      field: 'personality.communicationStyle',
-      oldValue: oldStyle,
-      newValue: updated.personality.communicationStyle,
-      action: Object.keys(oldStyle).length === 0 ? 'add' : 'update',
-    });
+    const nextStyle = { ...oldStyle };
+    const nextRecord = nextStyle as unknown as Record<string, unknown>;
+    for (const [field, value] of Object.entries(draft.communicationStyle)) {
+      if (field === 'tone' || value === undefined) continue;
+      if (strategy !== 'append' || nextRecord[field] === undefined || nextRecord[field] === '') {
+        nextRecord[field] = value;
+      }
+    }
+    if (draft.communicationStyle.tone) {
+      nextStyle.tone = mergeStrings(oldStyle.tone, draft.communicationStyle.tone, strategy);
+    }
+    updated.personality.communicationStyle = nextStyle;
+    recordChange(changes, 'personality.communicationStyle', oldStyle, nextStyle);
   }
 
-  // Merge interests
-  if (draft.interests && draft.interests.length > 0) {
-    updated.personality = updated.personality || {};
-    const oldInterests = updated.personality.interests || [];
-
-    if (strategy === 'replace') {
-      updated.personality.interests = draft.interests;
-    } else if (strategy === 'merge' || strategy === 'append') {
-      // Combine and deduplicate
-      const combined = [...new Set([...oldInterests, ...draft.interests])];
-      updated.personality.interests = combined;
-    }
-
-    changes.push({
-      field: 'personality.interests',
-      oldValue: oldInterests,
-      newValue: updated.personality.interests,
-      action: oldInterests.length === 0 ? 'add' : 'update',
-    });
+  if (draft.interests?.length) {
+    const oldInterests = updated.personality?.interests || [];
+    updated.personality.interests = mergeStrings(oldInterests, draft.interests, strategy);
+    recordChange(changes, 'personality.interests', oldInterests, updated.personality.interests);
   }
 
-  // Merge goals (transform string arrays to goal objects)
   if (draft.goals) {
-    const oldGoals = updated.goals || {};
-
-    // Transform extracted goals (string arrays) to core.json format (object arrays)
-    const transformedGoals: any = {};
-
-    if (draft.goals.shortTerm) {
-      if (Array.isArray(draft.goals.shortTerm)) {
-        // Check if items are already objects with 'goal' property
-        const firstItem = draft.goals.shortTerm[0];
-        if (firstItem && typeof firstItem === 'object' && 'goal' in firstItem) {
-          // Already in correct format, pass through
-          transformedGoals.shortTerm = draft.goals.shortTerm;
-        } else {
-          // Transform string array to objects
-          transformedGoals.shortTerm = draft.goals.shortTerm.map(g => ({ goal: g, status: 'active' }));
-        }
-      } else if (typeof draft.goals.shortTerm === 'string') {
-        transformedGoals.shortTerm = [{ goal: draft.goals.shortTerm, status: 'active' }];
-      } else {
-        transformedGoals.shortTerm = draft.goals.shortTerm;
+    if (!updated.goals) throw new Error('Cannot merge goals because persona goals are missing');
+    const goalUpdates = [
+      ['shortTerm', draft.goals.shortTerm, 'active'],
+      ['midTerm', draft.goals.midTerm, 'planning'],
+      ['longTerm', draft.goals.longTerm, 'aspirational'],
+    ] as const;
+    for (const [tier, proposed, status] of goalUpdates) {
+      if (!proposed?.length) continue;
+      const current = updated.goals[tier];
+      if (!Array.isArray(current)) {
+        throw new Error(`Cannot merge goals because persona goals.${tier} is missing`);
       }
+      const next = mergeGoals(current, goalEntries(proposed, status), strategy);
+      updated.goals[tier] = next;
+      recordChange(changes, `goals.${tier}`, current, next);
     }
-
-    if (draft.goals.midTerm) {
-      if (Array.isArray(draft.goals.midTerm)) {
-        const firstItem = draft.goals.midTerm[0];
-        if (firstItem && typeof firstItem === 'object' && 'goal' in firstItem) {
-          transformedGoals.midTerm = draft.goals.midTerm;
-        } else {
-          transformedGoals.midTerm = draft.goals.midTerm.map(g => ({ goal: g, status: 'planning' }));
-        }
-      } else if (typeof draft.goals.midTerm === 'string') {
-        transformedGoals.midTerm = [{ goal: draft.goals.midTerm, status: 'planning' }];
-      } else {
-        transformedGoals.midTerm = draft.goals.midTerm;
-      }
-    }
-
-    if (draft.goals.longTerm) {
-      if (Array.isArray(draft.goals.longTerm)) {
-        const firstItem = draft.goals.longTerm[0];
-        if (firstItem && typeof firstItem === 'object' && 'goal' in firstItem) {
-          transformedGoals.longTerm = draft.goals.longTerm;
-        } else {
-          transformedGoals.longTerm = draft.goals.longTerm.map(g => ({ goal: g, status: 'aspirational' }));
-        }
-      } else if (typeof draft.goals.longTerm === 'string') {
-        transformedGoals.longTerm = [{ goal: draft.goals.longTerm, status: 'aspirational' }];
-      } else {
-        transformedGoals.longTerm = draft.goals.longTerm;
-      }
-    }
-
-    if (strategy === 'replace') {
-      updated.goals = transformedGoals;
-    } else {
-      updated.goals = {
-        ...oldGoals,
-        ...transformedGoals,
-      };
-    }
-
-    changes.push({
-      field: 'goals',
-      oldValue: oldGoals,
-      newValue: updated.goals,
-      action: Object.keys(oldGoals).length === 0 ? 'add' : 'update',
-    });
   }
 
-  // Add background if present
   if (draft.background) {
-    const oldBackground = updated.background;
-    updated.background = draft.background;
-    changes.push({
-      field: 'background',
-      oldValue: oldBackground,
-      newValue: draft.background,
-      action: oldBackground ? 'update' : 'add',
-    });
+    const existing = updated.background;
+    const oldNarrative = typeof existing === 'string' ? existing : existing?.narrative;
+    if (strategy !== 'append' || !oldNarrative) {
+      updated.background = strategy === 'merge' && existing && typeof existing === 'object'
+        ? { ...existing, narrative: draft.background }
+        : draft.background;
+    }
+    const nextNarrative = typeof updated.background === 'string'
+      ? updated.background
+      : updated.background?.narrative;
+    recordChange(
+      changes,
+      existing && typeof existing === 'object' ? 'background.narrative' : 'background',
+      oldNarrative,
+      nextNarrative,
+    );
   }
 
-  // Add current focus if present (ensure it's an array of strings, not characters)
-  if (draft.currentFocus && draft.currentFocus.length > 0) {
-    const oldFocus = Array.isArray(updated.currentFocus) ? updated.currentFocus : (updated.currentFocus ? [updated.currentFocus] : []);
-
-    // Ensure currentFocus is an array of strings, not a string split into characters
-    let normalizedFocus: string[];
-    if (typeof draft.currentFocus === 'string') {
-      // LLM returned a string instead of array - wrap it
-      normalizedFocus = [draft.currentFocus];
-    } else if (Array.isArray(draft.currentFocus)) {
-      // Filter out any accidental single-character entries (likely from string splitting)
-      normalizedFocus = draft.currentFocus.filter(item =>
-        typeof item === 'string' && item.length > 1
-      );
-    } else {
-      normalizedFocus = [];
+  if (draft.currentFocus?.length) {
+    if (!updated.context) {
+      throw new Error('Cannot merge current focus because persona context is missing');
     }
-
-    if (strategy === 'replace') {
-      updated.currentFocus = normalizedFocus;
-    } else {
-      // Combine and deduplicate, preserving order
-      updated.currentFocus = [...new Set([...oldFocus, ...normalizedFocus])];
+    const oldFocus = updated.context.currentFocus;
+    if (!Array.isArray(oldFocus)) {
+      throw new Error('Cannot merge current focus because persona context.currentFocus is missing');
     }
-
-    changes.push({
-      field: 'currentFocus',
-      oldValue: oldFocus,
-      newValue: updated.currentFocus,
-      action: oldFocus.length === 0 ? 'add' : 'update',
-    });
+    updated.context.currentFocus = mergeStrings(oldFocus, draft.currentFocus, strategy);
+    recordChange(changes, 'context.currentFocus', oldFocus, updated.context.currentFocus);
   }
 
-  // Update timestamp
   updated.lastUpdated = new Date().toISOString();
-
-  // Generate summary
   const summary = {
-    additions: changes.filter((c) => c.action === 'add').length,
-    updates: changes.filter((c) => c.action === 'update').length,
-    removals: changes.filter((c) => c.action === 'remove').length,
-    noChanges: changes.filter((c) => c.action === 'no-change').length,
+    additions: changes.filter(change => change.action === 'add').length,
+    updates: changes.filter(change => change.action === 'update').length,
+    removals: changes.filter(change => change.action === 'remove').length,
+    noChanges: changes.filter(change => change.action === 'no-change').length,
   };
-
-  return {
-    updated,
-    diff: { changes, summary },
-  };
+  return { updated, diff: { changes, summary } };
 }
 
-/**
- * Generate human-readable diff text
- */
+export function applyPersonaDraft(
+  draft: unknown,
+  strategy: MergeStrategy = 'merge',
+): { updated: PersonaCore; diff: PersonaDiff; archiveFilename: string } {
+  const validatedDraft = validatePersonaDraft(draft);
+  const currentPersona = loadPersonaCore();
+  const { updated, diff } = mergePersonaDraft(currentPersona, validatedDraft, strategy);
+  const archiveFilename = archivePersonaCore(currentPersona);
+  savePersonaCore(updated);
+  return { updated, diff, archiveFilename };
+}
+
 export function generateDiffText(diff: PersonaDiff): string {
-  const lines: string[] = [];
-
-  lines.push('Persona Changes Summary');
-  lines.push('='.repeat(50));
-  lines.push(`Additions: ${diff.summary.additions}`);
-  lines.push(`Updates: ${diff.summary.updates}`);
-  lines.push(`Removals: ${diff.summary.removals}`);
-  lines.push(`Unchanged: ${diff.summary.noChanges}`);
-  lines.push('');
-
-  if (diff.changes.length === 0) {
+  const lines = [
+    'Persona Changes Summary',
+    '='.repeat(50),
+    `Additions: ${diff.summary.additions}`,
+    `Updates: ${diff.summary.updates}`,
+    `Removals: ${diff.summary.removals}`,
+    `Unchanged: ${diff.summary.noChanges}`,
+    '',
+  ];
+  if (diff.changes.every(change => change.action === 'no-change')) {
     lines.push('No changes detected.');
     return lines.join('\n');
   }
 
-  lines.push('Detailed Changes:');
-  lines.push('-'.repeat(50));
-
+  lines.push('Detailed Changes:', '-'.repeat(50));
   for (const change of diff.changes) {
     if (change.action === 'no-change') continue;
-
-    lines.push('');
-    lines.push(`Field: ${change.field}`);
-    lines.push(`Action: ${change.action.toUpperCase()}`);
-
+    lines.push('', `Field: ${change.field}`, `Action: ${change.action.toUpperCase()}`);
     if (change.action === 'add') {
       lines.push(`New Value: ${formatValue(change.newValue)}`);
     } else if (change.action === 'update') {
       lines.push(`Old Value: ${formatValue(change.oldValue)}`);
       lines.push(`New Value: ${formatValue(change.newValue)}`);
-    } else if (change.action === 'remove') {
+    } else {
       lines.push(`Removed: ${formatValue(change.oldValue)}`);
     }
   }
-
   return lines.join('\n');
 }
 
-/**
- * Format value for display
- */
-function formatValue(value: any): string {
-  if (value === undefined || value === null) {
-    return '(empty)';
-  }
-
-  if (typeof value === 'object') {
-    return JSON.stringify(value, null, 2);
-  }
-
-  return String(value);
-}
-
-/**
- * Save merged persona to file
- */
-export function savePersona(personaPath: string, persona: any): void {
-  const dir = personaPath.substring(0, personaPath.lastIndexOf('/'));
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(personaPath, JSON.stringify(persona, null, 2), 'utf-8');
+function formatValue(value: unknown): string {
+  return value && typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value ?? '(empty)');
 }

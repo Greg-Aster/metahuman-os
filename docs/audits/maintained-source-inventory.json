@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-04T17:36:41.609Z",
-  "total": 1629,
+  "generatedAt": "2026-09-04T18:47:49.296Z",
+  "total": 1632,
   "byArea": {
     "agent-runtime": 4,
     "agents": 86,
@@ -8,7 +8,7 @@
     "brain-services": 2,
     "cli": 12,
     "config": 81,
-    "core-engine": 760,
+    "core-engine": 763,
     "docs": 51,
     "external-integration": 7,
     "local-model-service": 6,
@@ -21,7 +21,7 @@
     "web-interface": 471
   },
   "byKind": {
-    "code": 1386,
+    "code": 1389,
     "docs": 59,
     "json": 99,
     "other": 54,
@@ -139,14 +139,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 99
+      "lineCount": 159
     },
     {
       "path": "packages/core/src/agency/desire-outcome-service.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 117
+      "lineCount": 120
     },
     {
       "path": "packages/core/src/agency/desire-outcome-transition.spec.ts",
@@ -195,14 +195,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 323
+      "lineCount": 360
     },
     {
       "path": "packages/core/src/agency/index.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 122
+      "lineCount": 123
     },
     {
       "path": "packages/core/src/agency/lifecycle-policy.spec.ts",
@@ -1476,7 +1476,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 356
+      "lineCount": 233
     },
     {
       "path": "packages/core/src/api/handlers/tts.ts",
@@ -1546,7 +1546,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 989
+      "lineCount": 985
     },
     {
       "path": "packages/core/src/api/handlers/voice-status.ts",
@@ -2557,6 +2557,20 @@
       "lineCount": 135
     },
     {
+      "path": "packages/core/src/nodes/agency/desire-outcome-reviewer.node.spec.ts",
+      "area": "core-engine",
+      "kind": "code",
+      "priority": 1,
+      "lineCount": 87
+    },
+    {
+      "path": "packages/core/src/nodes/agency/desire-outcome-reviewer.node.ts",
+      "area": "core-engine",
+      "kind": "code",
+      "priority": 1,
+      "lineCount": 493
+    },
+    {
       "path": "packages/core/src/nodes/agency/desire-plan-generator.node.ts",
       "area": "core-engine",
       "kind": "code",
@@ -2618,20 +2632,6 @@
       "kind": "code",
       "priority": 1,
       "lineCount": 69
-    },
-    {
-      "path": "packages/core/src/nodes/agency/outcome-reviewer.node.spec.ts",
-      "area": "core-engine",
-      "kind": "code",
-      "priority": 1,
-      "lineCount": 43
-    },
-    {
-      "path": "packages/core/src/nodes/agency/outcome-reviewer.node.ts",
-      "area": "core-engine",
-      "kind": "code",
-      "priority": 1,
-      "lineCount": 489
     },
     {
       "path": "packages/core/src/nodes/agent/agent-timer.node.ts",
@@ -3849,14 +3849,14 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 989
+      "lineCount": 1112
     },
     {
       "path": "packages/core/src/nodes/robot-operator/context-builder.node.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 551
+      "lineCount": 607
     },
     {
       "path": "packages/core/src/nodes/robot-operator/decision-parser.node.ts",
@@ -4430,7 +4430,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 1979
+      "lineCount": 1974
     },
     {
       "path": "packages/core/src/progress-tracker.ts",
@@ -4717,7 +4717,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 263
+      "lineCount": 265
     },
     {
       "path": "packages/core/src/queue/work-submission.spec.ts",
@@ -5077,11 +5077,18 @@
       "lineCount": 256
     },
     {
+      "path": "packages/core/src/tts-synthesis-ownership.spec.ts",
+      "area": "core-engine",
+      "kind": "code",
+      "priority": 1,
+      "lineCount": 79
+    },
+    {
       "path": "packages/core/src/tts.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 582
+      "lineCount": 592
     },
     {
       "path": "packages/core/src/tts/cache.ts",
@@ -5109,7 +5116,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 123
+      "lineCount": 118
     },
     {
       "path": "packages/core/src/tts/providers/gpt-sovits-service.ts",
@@ -5119,11 +5126,18 @@
       "lineCount": 424
     },
     {
+      "path": "packages/core/src/tts/providers/kokoro-service.spec.ts",
+      "area": "core-engine",
+      "kind": "code",
+      "priority": 1,
+      "lineCount": 69
+    },
+    {
       "path": "packages/core/src/tts/providers/kokoro-service.ts",
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 386
+      "lineCount": 395
     },
     {
       "path": "packages/core/src/tts/providers/piper-service.ts",
@@ -5158,7 +5172,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 259
+      "lineCount": 174
     },
     {
       "path": "packages/core/src/tts/server-manager.ts",
@@ -5166,6 +5180,20 @@
       "kind": "code",
       "priority": 1,
       "lineCount": 338
+    },
+    {
+      "path": "packages/core/src/tts/speech-chunks.spec.ts",
+      "area": "core-engine",
+      "kind": "code",
+      "priority": 1,
+      "lineCount": 41
+    },
+    {
+      "path": "packages/core/src/tts/speech-chunks.ts",
+      "area": "core-engine",
+      "kind": "code",
+      "priority": 1,
+      "lineCount": 129
     },
     {
       "path": "packages/core/src/types/onboarding.ts",
@@ -5305,14 +5333,7 @@
       "area": "core-engine",
       "kind": "code",
       "priority": 1,
-      "lineCount": 33
-    },
-    {
-      "path": "packages/core/src/voice/tts-integration.ts",
-      "area": "core-engine",
-      "kind": "code",
-      "priority": 1,
-      "lineCount": 295
+      "lineCount": 22
     },
     {
       "path": "packages/core/src/voice/types.ts",
@@ -6768,14 +6789,14 @@
       "area": "web-interface",
       "kind": "code",
       "priority": 2,
-      "lineCount": 116
+      "lineCount": 184
     },
     {
       "path": "apps/site/src/lib/client/composables/useTTS.ts",
       "area": "web-interface",
       "kind": "code",
       "priority": 2,
-      "lineCount": 984
+      "lineCount": 964
     },
     {
       "path": "apps/site/src/lib/client/connection-manager.ts",
@@ -9253,7 +9274,7 @@
       "area": "external-integration",
       "kind": "code",
       "priority": 4,
-      "lineCount": 485
+      "lineCount": 197
     },
     {
       "path": "external/kokoro/server_defaults.py",
@@ -9736,7 +9757,7 @@
       "area": "config",
       "kind": "json",
       "priority": 5,
-      "lineCount": 4
+      "lineCount": 3
     },
     {
       "path": "etc/addons.json",
@@ -9810,7 +9831,7 @@
       "area": "config",
       "kind": "json",
       "priority": 5,
-      "lineCount": 959
+      "lineCount": 1171
     },
     {
       "path": "etc/cognitive-graphs/boredom-movement-mode.json",
@@ -9883,6 +9904,13 @@
       "lineCount": 36
     },
     {
+      "path": "etc/cognitive-graphs/desire-outcome-reviewer.json",
+      "area": "config",
+      "kind": "json",
+      "priority": 5,
+      "lineCount": 166
+    },
+    {
       "path": "etc/cognitive-graphs/desire-planner.json",
       "area": "config",
       "kind": "json",
@@ -9951,13 +9979,6 @@
       "kind": "json",
       "priority": 5,
       "lineCount": 82
-    },
-    {
-      "path": "etc/cognitive-graphs/outcome-reviewer.json",
-      "area": "config",
-      "kind": "json",
-      "priority": 5,
-      "lineCount": 166
     },
     {
       "path": "etc/cognitive-graphs/persona-extraction.json",
@@ -11150,7 +11171,7 @@
       "area": "repo-root",
       "kind": "json",
       "priority": 6,
-      "lineCount": 90
+      "lineCount": 91
     },
     {
       "path": "pnpm-lock.yaml",

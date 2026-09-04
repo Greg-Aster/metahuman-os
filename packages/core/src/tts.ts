@@ -236,6 +236,27 @@ function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceCon
   return resolved;
 }
 
+function buildKokoroService(config: VoiceConfig): KokoroService {
+  if (!config.tts.kokoro) {
+    throw new Error('Kokoro not configured. Please install the addon via System Settings.');
+  }
+  const piperService = config.tts.kokoro.autoFallbackToPiper && config.tts.piper
+    ? new PiperService(config.tts.piper, config.cache)
+    : undefined;
+  return new KokoroService(config.tts.kokoro, config.cache, piperService);
+}
+
+/**
+ * Construct the profile-resolved Kokoro owner used by batch, streaming, and
+ * robot delivery adapters.
+ */
+export function createKokoroTTSService(username?: string): KokoroService {
+  const userContext = getUserContext();
+  const activeUsername = username || userContext?.username || 'anonymous';
+  loadRawConfig(true);
+  return buildKokoroService(resolveConfigPaths(loadUserConfig(activeUsername), activeUsername));
+}
+
 /**
  * Create TTS service for specified provider
  * Uses current user context for profile-aware path resolution
@@ -292,18 +313,7 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'ko
     const piperService = new PiperService(cfg.tts.piper, cfg.cache);
     service = new RVCService(cfg.tts.rvc, cfg.cache, piperService);
   } else if (selectedProvider === 'kokoro') {
-    // Check if Kokoro config exists
-    if (!cfg.tts.kokoro) {
-      console.error('[TTS] Kokoro config missing. Config keys:', Object.keys(cfg.tts));
-      throw new Error('Kokoro not configured. Please install the addon via System Settings.');
-    }
-
-    // Create Piper fallback if auto-fallback is enabled
-    const piperService = cfg.tts.kokoro.autoFallbackToPiper && cfg.tts.piper
-      ? new PiperService(cfg.tts.piper, cfg.cache)
-      : undefined;
-
-    service = new KokoroService(cfg.tts.kokoro, cfg.cache, piperService);
+    service = buildKokoroService(cfg);
   } else {
     // Default to Piper
     if (!cfg.tts.piper) {

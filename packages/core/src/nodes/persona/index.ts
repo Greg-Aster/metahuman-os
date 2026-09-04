@@ -20,6 +20,7 @@ export {
   PersonaTranscriptInputNode,
   PersonaProfileExtractorNode,
   parsePersonaDraft,
+  validatePersonaDraft,
 } from './persona-profile-extractor.node.js';
 export {
   PersonaInterviewInputNode,

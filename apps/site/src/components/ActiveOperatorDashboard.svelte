@@ -42,7 +42,6 @@
     health: string;
     healthMessage?: string;
     isExecuting: boolean;
-    config: { cooldownMs: number };
     queue: { length: number; tasks: WorkSummary[] };
     robotOperator: {
       runtime: {
@@ -50,7 +49,6 @@
         mode: 'reactive' | 'semi' | 'full';
         lifecycle: string;
         reason: string;
-        fullCooldownMs?: number;
         children: Record<RobotOperatorChildId, RobotOperatorChildRuntime>;
       } | null;
       episodes: BoredomEpisode[];
@@ -122,8 +120,8 @@
         <div class="mt-1 font-semibold text-gray-900 dark:text-gray-100">{status.queue.length}</div>
       </div>
       <div class="rounded border border-gray-200 p-3 dark:border-gray-800">
-        <div class="text-xs text-gray-500 dark:text-gray-400">Full-mode cooldown</div>
-        <div class="mt-1 font-semibold text-gray-900 dark:text-gray-100">{Math.round(status.config.cooldownMs / 1000)}s</div>
+        <div class="text-xs text-gray-500 dark:text-gray-400">Scheduling</div>
+        <div class="mt-1 font-semibold text-gray-900 dark:text-gray-100">Completion-driven</div>
       </div>
     </div>
 
@@ -144,8 +142,8 @@
         <div class="border-b border-gray-200 p-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
           <span class="font-medium text-gray-800 dark:text-gray-200">{status.robotOperator.runtime.lifecycle}</span>
           · {status.robotOperator.runtime.reason}
-          {#if status.robotOperator.runtime.mode === 'full' && status.robotOperator.runtime.fullCooldownMs}
-            · next episode begins after completion plus a {Math.round(status.robotOperator.runtime.fullCooldownMs / 1000)}s cooldown
+          {#if status.robotOperator.runtime.mode === 'full'}
+            · next episode begins after the current correlated work finishes
           {:else if status.robotOperator.runtime.mode === 'semi'}
             · independent idle timers
           {/if}

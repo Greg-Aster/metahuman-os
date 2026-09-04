@@ -22,17 +22,11 @@
       "langCode": "a",
       "voice": "af_heart",
       "speed": 1.0,
-      "splitPattern": "\\n+",
       "useCustomVoicepack": false,
       "customVoicepackPath": "{PROFILE_DIR}/out/voices/kokoro-voicepacks/default.pt",
+      "normalizeCustomVoicepacks": true,
       "outputFormat": "wav",
-      "autoFallbackToPiper": true,
-      "server": {
-        "useServer": true,
-        "url": "http://127.0.0.1:9882",
-        "autoStart": true,
-        "port": 9882
-      }
+      "autoFallbackToPiper": true
     }
   },
   "stt": {
@@ -48,11 +42,6 @@
     "enabled": true,
     "directory": "./out/voice-cache",
     "maxSizeMB": 500
-  },
-  "webSocket": {
-    "path": "/voice-stream",
-    "maxPayloadMB": 10,
-    "audioChunkMs": 100
   },
   "training": {
     "enabled": true,

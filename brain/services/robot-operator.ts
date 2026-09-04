@@ -12,7 +12,6 @@ import {
   initGlobalLogger,
   isRobotOperatorChildEnabled,
   isSleepRuntimeActive,
-  loadActiveOperatorConfig,
   loadQueueState,
   loadRobotOperatorConfig,
   loadRobotStatus,
@@ -20,7 +19,6 @@ import {
   randomizedRobotOperatorIdleMs,
   readSystemActivityTimestamp,
   robotOperatorChildGraph,
-  robotOperatorFullDueAt,
   SLEEP_RUNTIME_FILE,
   systemPaths,
   writeRobotOperatorRuntimeState,
@@ -66,7 +64,6 @@ let shuttingDown = false
 let fullTimer: NodeJS.Timeout | null = null
 let fullCursor = 0
 let fullIdleConfirmations = 0
-let lastFullCycleCompletedAt = 0
 let lifecycle: 'starting' | 'armed' | 'dormant' | 'admitting' | 'stopped' = 'starting'
 let lifecycleReason = 'startup'
 
@@ -94,7 +91,6 @@ function publishRuntime(): void {
     mode: getOperatorMode(),
     lifecycle,
     reason: lifecycleReason,
-    fullCooldownMs: loadActiveOperatorConfig().cooldownMs,
     children,
   })
 }
@@ -177,7 +173,7 @@ function armSemiChild(child: RobotOperatorStimulusAgent, reason: string, minimum
   console.log(`[${SERVICE_ID}] Armed child=${child} reason=${reason} mode=semi due=${new Date(dueAt).toISOString()}`)
 }
 
-function armFull(reason: string, minimumDelayMs = 1_000): void {
+function armFull(reason: string, minimumDelayMs = 0): void {
   if (fullTimer) clearTimeout(fullTimer)
   fullTimer = null
   for (const child of CHILDREN) schedules[child].nextRunAt = 0
@@ -194,8 +190,7 @@ function armFull(reason: string, minimumDelayMs = 1_000): void {
   if (enabled.length === 0) return
   const child = nextRobotOperatorFullChild(enabled, fullCursor)
   if (!child) return
-  const cooldownMs = Math.max(1_000, loadActiveOperatorConfig().cooldownMs)
-  const dueAt = robotOperatorFullDueAt(Date.now(), lastFullCycleCompletedAt, cooldownMs, minimumDelayMs)
+  const dueAt = Date.now() + Math.max(0, minimumDelayMs)
   schedules[child].nextRunAt = dueAt
   fullTimer = setTimeout(() => void onDeadline(child, 'full'), dueAt - Date.now())
   console.log(`[${SERVICE_ID}] Armed child=${child} reason=${reason} mode=full due=${new Date(dueAt).toISOString()}`)
@@ -231,7 +226,6 @@ function checkFullCycle(): void {
     return
   }
   fullIdleConfirmations = 0
-  lastFullCycleCompletedAt = Date.now()
   lifecycle = 'armed'
   lifecycleReason = 'cycle-complete'
   armFull('cycle-complete')

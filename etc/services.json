@@ -43,7 +43,7 @@
       "boredomReflectionGraph": "boredom-reflection",
       "autonomyGraph": "boredom-autonomy",
       "environmentGraph": "environment",
-      "comment": "Robot-autonomy scheduler and admission owner. Semi mode gives Robot Goal Review its own idle timer. Full mode prioritizes Robot Goal Review while Robot Status records an unfinished objective; otherwise it rotates Robot Status and the three boredom planners between cooldowns. Every admitted workflow is finite."
+      "comment": "Robot-autonomy scheduler and admission owner. Semi mode gives Robot Goal Review its own idle timer. Full mode prioritizes Robot Goal Review while Robot Status records an unfinished objective; otherwise it rotates Robot Status and the three boredom planners after each correlated workflow chain finishes. Every admitted workflow is finite."
     },
     "maintenance-service": {
       "id": "maintenance-service",

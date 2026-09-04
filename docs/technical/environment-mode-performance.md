@@ -6,11 +6,13 @@ This document is the maintained paper trail for Environment Mode response-time w
 
 ## Current Status
 
-Source reconciled: 2026-09-03. Environment Mode has 20 nodes and 51 edges;
-Robot Autonomy Executor has 21 nodes and 52 edges. Interactive Environment Mode
-now begins with one route-only Intent Orchestrator and conditionally admits
-memory, Robot Status, bridge, and image context before its existing Environment
-Action Selector. Robot-originated turns may use the exact observation that
+Source reconciled: 2026-09-04. Environment Mode has 20 nodes and 51 edges;
+Robot Autonomy Executor has 22 nodes and 62 edges. Both workflows begin with a
+route-only Intent Orchestrator and conditionally admit memory, Robot Status,
+bridge, and image context before their existing Environment Action Selector.
+The autonomous instance interprets the unchanged internal planner intention as
+the robot's own prospective choice and keeps its response/action decision
+self-directed. Robot-originated turns may use the exact observation that
 triggered the run. A typed chat turn never treats a saved bridge frame as current;
 the selector may choose the advertised `captureImage` action when current vision
 is needed. This source repair did not restart the application, exercise a
@@ -63,6 +65,10 @@ Historical warm Environment Mode turns before the recent task-contract expansion
 ## Current Architecture Findings
 
 - Environment Mode currently has 20 nodes and 51 edges.
+- Robot Autonomy Executor currently has 22 nodes and 62 edges. Its route-only
+  orchestrator gates semantic memory, Robot Status, bridge state, images,
+  private reflection, and verified action history before one self-directed
+  response/action selector call.
 - Robot Status supplies bounded supporting self-context to the Environment
   Context Builder. It is not current sensory evidence, an action result, or
   proof of external state.
@@ -98,6 +104,24 @@ Historical warm Environment Mode turns before the recent task-contract expansion
 - Graph serialization and coordinator serialization are MetaHuman policies, not hard Ollama limitations.
 
 ## Work Log
+
+### 2026-09-04 - Self-directed Robot Autonomy routing parity
+
+Status: implemented in maintained source. Robot Autonomy Executor now reuses
+the Environment intent-routing contract for the unchanged internal planner
+instruction. Its instance prompt treats that instruction as the robot's own
+prospective intent, selects only relevant context and capability routes, and
+leaves the existing Environment Action Selector as the sole owner of an
+optional first-person response, advertised action, or off-script movement.
+The planner handoff, one-pass dispatch, Robot Action Result, and Robot Status
+owners remain unchanged.
+
+Validation: the focused Robot Operator suite passed 19 tests; the related
+Environment, Robot Status, and graph-executor suite passed 22 tests; all 39
+cognitive graphs, graph-executor coverage, node defaults, Core typecheck,
+Site typecheck, user-agnostic checks, and the architecture guardrail passed. No
+server restart, live autonomous cycle, Environment Bridge dispatch, or physical
+action was run.
 
 ### 2026-09-02 - Robot Autonomy Executor parity and naming
 

@@ -18,7 +18,6 @@ import {
   readRobotObserverCycle,
   robotObserverSourceAllowed,
   robotOperatorChildGraph,
-  robotOperatorFullDueAt,
   loadRobotOperatorConfig,
 } from './robot-operator.js'
 import { environmentSendActionNode } from './nodes/environment/send-action.node.js'
@@ -43,7 +42,7 @@ test('manual observer cycles remain available while autonomous cycles require se
   assert.equal(robotObserverSourceAllowed('full', 'autonomy'), true)
 })
 
-test('full autonomy rotates children after a completed episode cooldown', () => {
+test('full autonomy rotates children after each completed episode', () => {
   const children = ['robot-status', 'boredom-observer', 'boredom-movement', 'boredom-reflection'] as const
   assert.equal(nextRobotOperatorFullChild([...children], 0), 'robot-status')
   assert.equal(nextRobotOperatorFullChild([...children], 1), 'boredom-observer')
@@ -51,8 +50,6 @@ test('full autonomy rotates children after a completed episode cooldown', () => 
   assert.equal(nextRobotOperatorFullChild([...children], 3), 'boredom-reflection')
   assert.equal(nextRobotOperatorFullChild([...children], 4), 'robot-status')
   assert.equal(nextRobotOperatorFullChild([], 0), null)
-  assert.equal(robotOperatorFullDueAt(100_000, 90_000, 30_000), 120_000)
-  assert.equal(robotOperatorFullDueAt(100_000, 0, 30_000), 101_000)
 })
 
 test('robot autonomy activity follows the canonical correlated work chain', () => {
@@ -330,6 +327,7 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   assert.match(controller, /isSleepRuntimeActive\(\)/)
   assert.match(controller, /loadQueueState\(\)\?\.items/)
   assert.match(controller, /watchFullCycle\('cycle-active'\)/)
+  assert.doesNotMatch(controller, /cooldownMs|lastFullCycleCompletedAt|robotOperatorFullDueAt/)
   assert.doesNotMatch(controller, /getQueueManager|addEventListener/)
   assert.doesNotMatch(controller, /operatorInstruction:/)
 })

@@ -152,7 +152,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   name: 'Orchestrator LLM',
   category: 'chat',
   inputs: [
-    { name: 'message', type: 'string', description: 'User message to analyze' },
+    { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
     { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
@@ -250,7 +250,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
 
     if (!userMessage || typeof userMessage !== 'string' || userMessage.trim().length === 0) {
       if (environmentContract) {
-        throw new Error('Environment Intent Orchestrator requires a user message');
+        throw new Error('Intent Orchestrator requires an instruction or message');
       }
       return withAnalysis({
         needsMemory: false,

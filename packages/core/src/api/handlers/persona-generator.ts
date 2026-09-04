@@ -24,12 +24,12 @@ import {
   type ChatMessage,
 } from '../../persona/extractor.js';
 import {
-  loadExistingPersona,
+  applyPersonaDraft,
   mergePersonaDraft,
-  savePersona,
   generateDiffText,
   type MergeStrategy,
 } from '../../persona/merger.js';
+import { loadPersonaCore } from '../../identity.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -345,7 +345,7 @@ export async function handlePersonaGeneratorFinalize(req: UnifiedRequest): Promi
       throw new Error('Failed to resolve persona core path');
     }
 
-    const currentPersona = loadExistingPersona(personaCorePath);
+    const currentPersona = loadPersonaCore();
     const { updated, diff } = mergePersonaDraft(currentPersona, extracted, strategy);
     const diffText = generateDiffText(diff);
 
@@ -494,16 +494,8 @@ export async function handlePersonaGeneratorApply(req: UnifiedRequest): Promise<
 
     const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8'));
     const extracted = summary.extracted;
-    const currentPersona = loadExistingPersona(personaCorePath);
-
-    const backupDir = path.join(interviewsPath, sessionId, 'backups');
-    fs.mkdirSync(backupDir, { recursive: true });
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = path.join(backupDir, `persona-core-${timestamp}.json`);
-    fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
-
-    const { updated, diff } = mergePersonaDraft(currentPersona, extracted, strategy);
-    savePersona(personaCorePath, updated);
+    const { diff, archiveFilename } = applyPersonaDraft(extracted, strategy);
+    const backupPath = path.join(path.dirname(personaCorePath), 'archives', archiveFilename);
 
     const diffText = generateDiffText(diff);
 
@@ -603,16 +595,8 @@ export async function handlePersonaGeneratorAddNotes(req: UnifiedRequest): Promi
       return error('Access denied', 403);
     }
 
-    const currentPersona = loadExistingPersona(personaPath);
-    const backupDir = path.join(path.dirname(personaPath), 'backups');
-    fs.mkdirSync(backupDir, { recursive: true });
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = path.join(backupDir, `persona-core-notes-${timestamp}.json`);
-    fs.writeFileSync(backupPath, JSON.stringify(currentPersona, null, 2), 'utf-8');
-
-    const { updated } = mergePersonaDraft(currentPersona, extracted, 'merge');
-    savePersona(personaPath, updated);
+    const { archiveFilename } = applyPersonaDraft(extracted, 'merge');
+    const backupPath = path.join(path.dirname(personaPath), 'archives', archiveFilename);
 
     await captureEvent(`Persona Notes - Self-Reflection\n\n${notes}`, {
       type: 'observation',
