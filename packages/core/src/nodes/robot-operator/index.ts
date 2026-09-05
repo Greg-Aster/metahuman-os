@@ -4,3 +4,6 @@ export { robotOperatorDecisionParserNode } from './decision-parser.node.js';
 export { robotOperatorEnvironmentDispatchNode } from './environment-dispatch.node.js';
 export { robotActionResultParserNode } from './action-result-parser.node.js';
 export { robotGoalReviewParserNode } from './goal-review-parser.node.js';
+export { robotAutonomyControllerParserNode } from './autonomy-controller-parser.node.js';
+export { robotAutonomyTaskCatalogNode } from './task-catalog.node.js';
+export { robotAutonomyTaskDispatchNode } from './task-dispatch.node.js';

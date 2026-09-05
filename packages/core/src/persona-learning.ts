@@ -1,5 +1,9 @@
 import type { PersonaCore } from './identity.js'
-import type { PsychoanalyzerConfig, PsychoanalyzerFieldPath } from './psychoanalyzer-config.js'
+import {
+  PSYCHOANALYZER_FIELD_PATHS,
+  type PsychoanalyzerConfig,
+  type PsychoanalyzerFieldPath,
+} from './psychoanalyzer-config.js'
 
 export type PersonaLearningOperation = 'add' | 'remove' | 'update'
 
@@ -253,6 +257,74 @@ function removeProvenance(persona: PersonaCore, path: PsychoanalyzerFieldPath, k
   )
 }
 
+function findPersonaValue(
+  persona: PersonaCore,
+  path: PsychoanalyzerFieldPath,
+  key: string,
+): unknown {
+  const source = persona as Record<string, any>
+  if (path === 'personality.traits') return source.personality?.traits?.[key]
+
+  let collections: unknown[][]
+  switch (path) {
+    case 'personality.communicationStyle':
+      collections = [source.personality?.communicationStyle?.tone]
+      break
+    case 'personality.interests':
+      collections = [source.personality?.interests]
+      break
+    case 'values.core':
+      collections = [source.values?.core]
+      break
+    case 'goals':
+      collections = [source.goals?.shortTerm, source.goals?.midTerm, source.goals?.longTerm]
+      break
+    case 'context.domains':
+      collections = [source.context?.domains]
+      break
+    case 'context.currentFocus':
+      collections = [source.context?.currentFocus]
+      break
+    case 'context.projects':
+      collections = [source.context?.projects]
+      break
+    case 'decisionHeuristics':
+      collections = [source.decisionHeuristics]
+      break
+    case 'writingStyle.motifs':
+      collections = [source.writingStyle?.motifs]
+      break
+  }
+  for (const collection of collections) {
+    if (!Array.isArray(collection)) continue
+    const value = collection.find(item => comparableText(path, item) === key)
+    if (value !== undefined) return value
+  }
+  return undefined
+}
+
+/**
+ * Preserve only provenance for values that were not changed by a manual persona
+ * edit. Incoming provenance is never trusted, so a UI caller cannot make a
+ * manual value look Psychoanalyzer-owned.
+ */
+export function reconcilePersonaLearningProvenance(
+  previous: PersonaCore,
+  edited: PersonaCore,
+): PersonaCore {
+  const next = clonePersona(edited)
+  const allowedPaths = new Set<string>(PSYCHOANALYZER_FIELD_PATHS)
+  next.learningProvenance = (previous.learningProvenance ?? []).filter(entry => {
+    if (!allowedPaths.has(entry.path)) return false
+    const path = entry.path as PsychoanalyzerFieldPath
+    const before = findPersonaValue(previous, path, entry.key)
+    const after = findPersonaValue(next, path, entry.key)
+    return before !== undefined && after !== undefined
+      && JSON.stringify(before) === JSON.stringify(after)
+  })
+  return next
+}
+
 function removalAllowed(path: PsychoanalyzerFieldPath, config: PsychoanalyzerConfig): boolean {
   if (path === 'goals') return config.reconciliation.removeStaleGoals
   if (path === 'personality.interests') return config.reconciliation.removeStaleInterests
@@ -294,6 +366,11 @@ export function applyPersonaLearningProposal(
       const previousValue = traits[update.trait]
       if (previousValue === update.score) {
         rejected.push({ index, reason: 'trait already has the proposed value' })
+        return
+      }
+      if (config.updateStrategy.preserveUserEdits
+        && !next.learningProvenance?.some(entry => entry.path === change.path && entry.key === update.trait)) {
+        rejected.push({ index, reason: 'preserveUserEdits protects traits without psychoanalyzer provenance' })
         return
       }
       traits[update.trait] = update.score

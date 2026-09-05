@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, setContext } from 'svelte';
   import { writable } from 'svelte/store';
-  import { statusStore, statusRefreshTrigger, nodeEditorMode, rightSidebarOpen as rightSidebarStore, userDisplayNameStore } from '../stores/navigation';
+  import { graphEditorHref, statusStore, statusRefreshTrigger, nodeEditorMode, rightSidebarOpen as rightSidebarStore, userDisplayNameStore } from '../stores/navigation';
   import { clearSecurityPolicy, fetchSecurityPolicy, policyStore, isOwner, isReadOnly } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
   import { startWindowSession, stopWindowSession, isMultiWindow, windowCount } from '../lib/client/window-session';
@@ -583,17 +583,18 @@
           </div>
         {/if}
       </div>
-      <button
-        on:click={() => nodeEditorMode.update(v => !v)}
-        class={`flex items-center justify-center p-2 border-0 bg-transparent cursor-pointer rounded-md transition-all
-                ${$nodeEditorMode ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10'}`}
-        aria-label="Toggle node editor"
-        title={$nodeEditorMode ? 'Switch to Traditional View' : 'Switch to Node Editor View'}
+      <a
+        href={graphEditorHref()}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="flex items-center justify-center p-2 border-0 bg-transparent cursor-pointer rounded-md transition-all text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10"
+        aria-label="Open Graph Editor in a new tab"
+        title="Open Graph Editor in a new tab"
       >
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
         </svg>
-      </button>
+      </a>
       <button
         on:click={toggleRightSidebar}
         class="flex items-center justify-center p-2 border-0 bg-transparent text-purple-600 dark:text-purple-400 cursor-pointer rounded-md transition-all hover:bg-gray-100 dark:hover:bg-white/10"

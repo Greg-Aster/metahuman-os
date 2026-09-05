@@ -245,7 +245,7 @@ export function resolvePath(request: StorageRequest): StorageResponse {
 /**
  * Write data to storage.
  */
-export async function writeFile(request: WriteRequest): Promise<WriteResult> {
+export function writeFileSync(request: WriteRequest): WriteResult {
   const { username, data, encoding = 'utf8' } = request
   const resolvedUsername = resolveUsername(username)
   const pathResponse = resolvePath(request)
@@ -291,6 +291,7 @@ export async function writeFile(request: WriteRequest): Promise<WriteResult> {
       const encrypted = encrypt(dataBuffer, key)
       const encryptedPath = filePath + ENCRYPTED_EXTENSION
       writeAtomically(encryptedPath, JSON.stringify(encrypted), 'utf8')
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
       filePath = encryptedPath
       bytesWritten = dataBuffer.length
     } else {
@@ -340,10 +341,14 @@ export async function writeFile(request: WriteRequest): Promise<WriteResult> {
   }
 }
 
+export async function writeFile(request: WriteRequest): Promise<WriteResult> {
+  return writeFileSync(request)
+}
+
 /**
  * Read data from storage.
  */
-export async function readFile(request: ReadRequest): Promise<ReadResult> {
+export function readFileSync(request: ReadRequest): ReadResult {
   const { username, encoding } = request
   const resolvedUsername = resolveUsername(username)
   const pathResponse = resolvePath(request)
@@ -411,6 +416,10 @@ export async function readFile(request: ReadRequest): Promise<ReadResult> {
       error: `Failed to read file: ${(error as Error).message}`,
     }
   }
+}
+
+export async function readFile(request: ReadRequest): Promise<ReadResult> {
+  return readFileSync(request)
 }
 
 /**
@@ -491,6 +500,7 @@ export async function listFiles(request: StorageRequest): Promise<{
   files?: string[]
   error?: string
 }> {
+  const resolvedUsername = resolveUsername(request.username)
   const pathResponse = resolvePath(request)
 
   if (!pathResponse.success) {
@@ -503,6 +513,10 @@ export async function listFiles(request: StorageRequest): Promise<{
   const dirPath = pathResponse.path!
 
   try {
+    if (resolvedUsername) {
+      const readyStatus = isProfileReady(resolvedUsername)
+      if (!readyStatus.ready) return { success: false, error: readyStatus.error }
+    }
     if (!fs.existsSync(dirPath)) {
       return {
         success: true,
@@ -569,7 +583,9 @@ export const storage = {
   resolveProfileRoot,
   getProfileRoot: resolveProfileRoot,
   write: writeFile,
+  writeSync: writeFileSync,
   read: readFile,
+  readSync: readFileSync,
   delete: deleteFile,
   exists,
   list: listFiles,

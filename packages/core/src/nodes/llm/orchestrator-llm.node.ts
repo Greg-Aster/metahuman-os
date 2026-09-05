@@ -57,7 +57,7 @@ Default to FALSE for statements/observations. Only TRUE for actual recall questi
 When needsMemory is true, choose the semantic search scope:
 - memoryQuery describes what should be recalled.
 - memoryTypes is an array of exact stored record types when the request targets a particular kind of memory; otherwise use [].
-- Available record types include conversation, observation, reflection, reflection_summary, dream, daydream, audio, curiosity, action, tool_invocation, inner_dialogue, and card_response.
+- Available record types include conversation, observation, reflection, reflection_summary, dream, daydream, audio, curiosity, action, tool_invocation, and inner_dialogue.
 - Decide from the meaning and context of the request. The memory router will execute your selection without keyword-based intent rules.
 
 Output JSON:
@@ -88,6 +88,7 @@ const ENVIRONMENT_INTENT_FIELDS = [
   'needsEnvironment',
   'needsVision',
   'needsAction',
+  'needsTaskLifecycle',
 ] as const;
 
 export type EnvironmentIntentRouting = Record<typeof ENVIRONMENT_INTENT_FIELDS[number], boolean>;
@@ -169,6 +170,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'needsVision', type: 'boolean', description: 'Whether fresh correlated visual evidence is needed' },
     { name: 'needsRobotStatus', type: 'boolean', description: 'Whether downstream reasoning needs the current Robot Status snapshot' },
     { name: 'needsAction', type: 'boolean', description: 'Whether an action/skill is needed (routes to Big Brother)' },
+    { name: 'needsTaskLifecycle', type: 'boolean', description: 'Whether this turn creates, advances, completes, or otherwise changes a durable objective' },
     { name: 'actionType', type: 'string', description: 'Type of action to perform' },
     { name: 'actionParams', type: 'object', description: 'Parameters for the action' },
     { name: 'complexity', type: 'number', description: 'Task complexity 0-1 (>0.7 triggers Big Brother)' },

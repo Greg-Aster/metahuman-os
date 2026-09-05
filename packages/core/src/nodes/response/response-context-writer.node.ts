@@ -1,46 +1,30 @@
 /**
  * Response Context Writer Node
  *
- * Writes card-response context to the response buffer and long-term memory.
+ * Writes card-response context to the response buffer.
  * The downstream Conversation Buffer node exclusively owns chat persistence.
  *
  * This separation allows:
  * - Chat display (conversation buffer)
  * - Rolling context for follow-up messages (response buffer)
- * - Separate training data bucket (card_response memory type)
  *
  * Inputs:
  *   - response: LLM response text
  *   - responseBuffer: Response buffer to update
  *   - userId: User ID
- *   - cardType: Card type for memory metadata
  *   - actionTaken: Description of action taken
  *   - message: Original user message
- *   - desire: Desire object (for metadata)
  *
  * Outputs:
  *   - responseBufferId: ID of the response buffer
- *   - memorySaved: Whether memory was saved
+ *   - persisted: Whether both exchanges were durably written
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
 import {
-  appendToResponseBuffer,
-  touchResponseBufferNotification,
+  appendExchangeToResponseBuffer,
   type ResponseBuffer,
 } from '../../response-buffer.js';
-import { captureEvent } from '../../memory.js';
-import type { Desire } from '../../agency/types.js';
-
-interface ResponseContextWriterInput {
-  response?: string;
-  responseBuffer?: ResponseBuffer;
-  userId?: string;
-  cardType?: string;
-  actionTaken?: string;
-  message?: string;
-  desire?: Desire;
-}
 
 export const ResponseContextWriterNode: NodeDefinition = defineNode({
   id: 'response_context_writer',
@@ -50,110 +34,47 @@ export const ResponseContextWriterNode: NodeDefinition = defineNode({
     { name: 'response', type: 'string', description: 'LLM response text' },
     { name: 'responseBuffer', type: 'object', description: 'Response buffer' },
     { name: 'userId', type: 'string', description: 'User ID' },
-    { name: 'cardType', type: 'string', description: 'Card type' },
     { name: 'actionTaken', type: 'string', description: 'Action taken' },
     { name: 'message', type: 'string', description: 'Original user message' },
-    { name: 'desire', type: 'object', optional: true, description: 'Desire object' },
   ],
   outputs: [
     { name: 'responseBufferId', type: 'string', description: 'Response buffer ID' },
-    { name: 'memorySaved', type: 'boolean', description: 'Memory was saved' },
+    { name: 'persisted', type: 'boolean', description: 'Both exchanges were persisted' },
+    { name: 'exchangeCount', type: 'number', description: 'Number of exchanges written' },
     { name: 'response', type: 'string', description: 'Pass-through response' },
   ],
-  properties: {
-    saveMemory: true,
-  },
-  propertySchemas: {
-    saveMemory: {
-      type: 'boolean',
-      default: true,
-      label: 'Save Memory',
-      description: 'Whether to save the response as a card_response memory',
-    },
-  },
-  description: 'Updates card-response context and training memory before the Conversation Buffer node persists chat entries.',
+  properties: {},
+  description: 'Persists card-specific rolling context before canonical conversation nodes save the exchange.',
 
-  execute: async (inputs, context, properties) => {
-    const slot0 = inputs[0] as ResponseContextWriterInput | undefined;
-    const structuredInput = slot0 && typeof slot0 === 'object' && (
-      'response' in slot0 ||
-      'responseBuffer' in slot0 ||
-      'userId' in slot0
-    ) ? slot0 : undefined;
+  execute: async (inputs) => {
+    const response = typeof inputs.response === 'string' ? inputs.response : '';
+    const responseBuffer = inputs.responseBuffer as ResponseBuffer | undefined;
+    const userId = typeof inputs.userId === 'string' ? inputs.userId : '';
+    const actionTaken = typeof inputs.actionTaken === 'string' ? inputs.actionTaken : '';
+    const message = typeof inputs.message === 'string' ? inputs.message : '';
 
-    const response = structuredInput?.response || (inputs[0] as string | undefined) || '';
-    const responseBuffer = structuredInput?.responseBuffer || (inputs[1] as ResponseBuffer | undefined);
-    const userId = structuredInput?.userId || (inputs[2] as string | undefined) || context.userId || 'anonymous';
-    const cardType = structuredInput?.cardType || (inputs[3] as string | undefined) || context.cardType || 'unknown';
-    const actionTaken = structuredInput?.actionTaken || (inputs[4] as string | undefined) || '';
-    const message = structuredInput?.message || (inputs[5] as string | undefined) || context.userMessage || '';
-    const desire = structuredInput?.desire || (inputs[6] as Desire | undefined);
-    const questionId = typeof context.cardData?.questionId === 'string'
-      ? context.cardData.questionId
-      : undefined;
+    if (!response.trim()) throw new Error('Response Context Writer requires generated response text');
+    if (!responseBuffer?.id) throw new Error('Response Context Writer requires a response buffer');
+    if (!userId || userId === 'anonymous') throw new Error('Response Context Writer requires an authenticated user');
+    if (!message.trim()) throw new Error('Response Context Writer requires the original user message');
+    if (!actionTaken.trim()) throw new Error('Response Context Writer requires an action receipt');
 
-    const saveMemory = properties?.saveMemory !== false;
-    let memorySaved = false;
-    let responseBufferId = responseBuffer?.id || '';
+    const exchange = appendExchangeToResponseBuffer(
+      userId,
+      responseBuffer.id,
+      message,
+      response,
+      actionTaken,
+    );
+    if (!exchange) throw new Error(`Failed to persist exchange to response buffer ${responseBuffer.id}`);
 
-    console.log(`[response-context-writer] Writing response context for ${cardType}`);
-
-    // 1. Update Response Buffer (for multi-turn tracking)
-    if (responseBuffer) {
-      // First save the user message
-      appendToResponseBuffer(userId, responseBuffer.id, 'user', message);
-
-      // Then save the assistant response with action
-      appendToResponseBuffer(userId, responseBuffer.id, 'assistant', response, actionTaken);
-
-      responseBufferId = responseBuffer.id;
-      console.log(`[response-context-writer] Updated response buffer: ${responseBufferId}`);
-    }
-
-    // 2. Save to Memory (as card_response type for training)
-    // Note: captureEvent uses the current user context, so ensure context is set
-    if (saveMemory && userId !== 'anonymous') {
-      try {
-        // Save the exchange as a card_response memory
-        captureEvent(
-          `Card Response (${cardType}): ${response.substring(0, 200)}${response.length > 200 ? '...' : ''}`,
-          {
-            type: 'card_response', // NEW: Distinct type for LoRA training
-            tags: ['response-pipeline', cardType, 'card-interaction'],
-            metadata: {
-              // Note: cognitiveMode is restricted to 'dual'|'agent'|'emulation'
-              // Use responseSource to identify response pipeline for training separation
-              responseSource: 'response_pipeline',
-              cardType,
-              responseBufferId,
-              desireId: desire?.id,
-              desireTitle: desire?.title,
-              questionId,
-              userMessage: message,
-              assistantResponse: response,
-              actionTaken,
-              source: 'response_pipeline',
-              userId, // Include userId in metadata for context
-            },
-          }
-        );
-
-        memorySaved = true;
-        console.log(`[response-context-writer] Saved card_response memory`);
-      } catch (err) {
-        console.error('[response-context-writer] Failed to save memory:', err);
-      }
-    }
-
-    // Touch notification for SSE updates
-    if (responseBufferId) {
-      touchResponseBufferNotification(userId, responseBufferId);
-    }
+    console.log(`[response-context-writer] Updated response buffer: ${responseBuffer.id}`);
 
     return {
-      responseBufferId,
-      memorySaved,
-      response,
+      responseBufferId: responseBuffer.id,
+      persisted: true,
+      exchangeCount: 2,
+      response: response.trim(),
     };
   },
 });

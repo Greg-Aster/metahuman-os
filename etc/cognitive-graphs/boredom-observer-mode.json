@@ -3,9 +3,9 @@
   "format": "svelte-flow",
   "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Boredom Observer Mode",
-  "description": "Acquires one correlated camera frame, then uses it with persona, recent narrative, and verified action history to author an intention for Robot Autonomy Executor.",
+  "description": "Acquires one correlated camera frame, then uses it with Robot Status, persona, recent narrative, and verified action history to author an intention for Robot Autonomy Executor.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-09-03",
+  "last_modified": "2026-09-04",
   "nodes": [
     {
       "id": "observation",
@@ -31,6 +31,16 @@
     },
     { "id": "action-context", "type": "environmentNode", "position": { "x": 300, "y": 100 }, "data": { "label": "Verify Matched Sent Action", "nodeType": "environment_action_context_input", "properties": {}, "comment": "On the camera-result pass, verifies the robot-reported action ID against the trusted sent-action record Core already resolved." } },
     { "id": "robot-operator-input", "type": "operatorNode", "position": { "x": 560, "y": 100 }, "data": { "label": "Robot Operator Input", "nodeType": "robot_operator_input", "properties": {} } },
+    {
+      "id": "robot-status",
+      "type": "contextNode",
+      "position": { "x": 820, "y": 710 },
+      "data": {
+        "label": "Current Robot Status",
+        "nodeType": "robot_status",
+        "properties": { "historyLimit": 3 }
+      }
+    },
     {
       "id": "planner-policy",
       "type": "inputNode",
@@ -254,6 +264,15 @@
       "target": "planner-context",
       "sourceHandle": "observation",
       "targetHandle": "observation",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-status-context",
+      "source": "robot-status",
+      "target": "planner-context",
+      "sourceHandle": "context",
+      "targetHandle": "robotStatus",
       "type": "default",
       "data": { "type": "object" }
     },

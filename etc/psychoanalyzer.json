@@ -1,10 +1,10 @@
 {
   "version": "2.0.0",
   "description": "Psychoanalyzer configuration for evidence-backed persona learning",
-  "enabled": true,
   "memorySelection": {
     "strategy": "priority_recent",
     "daysBack": 30,
+    "maxScanFiles": 1000,
     "maxMemories": 30,
     "minMemories": 5,
     "excludeTypes": ["audit", "system", "inner_dialogue", "reflection", "reflection_summary", "dream", "curiosity_question", "summary"],
@@ -15,10 +15,11 @@
     "model": "psychotherapist",
     "temperature": 0.3,
     "maxTokens": 2200,
+    "maxEvidenceCharacters": 60000,
     "confidenceThreshold": 0.7
   },
   "updateStrategy": {
-    "preserveUserEdits": true,
+    "preserveUserEdits": false,
     "fields": {
       "personality.traits": true,
       "personality.communicationStyle": true,

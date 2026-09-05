@@ -69,11 +69,14 @@ function learnablePersona(persona: PersonaCore): Record<string, unknown> {
   }
 }
 
-function parseMemories(value: unknown): PsychoanalyzerMemoryInput[] {
+function parseMemories(value: unknown, config: PsychoanalyzerConfig): PsychoanalyzerMemoryInput[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error('Psychoanalyzer analysis requires evidence')
   }
-  return value.map((item, index) => {
+  if (value.length > config.memorySelection.maxMemories) {
+    throw new Error(`Psychoanalyzer evidence exceeds ${config.memorySelection.maxMemories} memories`)
+  }
+  const memories = value.map((item, index) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       throw new Error(`Psychoanalyzer evidence ${index + 1} must be an object`)
     }
@@ -93,6 +96,14 @@ function parseMemories(value: unknown): PsychoanalyzerMemoryInput[] {
       content: memory.content.trim(),
     }
   })
+  if (new Set(memories.map(memory => memory.id)).size !== memories.length) {
+    throw new Error('Psychoanalyzer evidence contains duplicate memory IDs')
+  }
+  const evidenceCharacters = memories.reduce((total, memory) => total + memory.content.length, 0)
+  if (evidenceCharacters > config.analysis.maxEvidenceCharacters) {
+    throw new Error(`Psychoanalyzer evidence exceeds ${config.analysis.maxEvidenceCharacters} characters`)
+  }
+  return memories
 }
 
 function parseModelJson(content: string): unknown {
@@ -112,15 +123,16 @@ export async function executePsychoanalyzerAnalysis(
   dependencies: PsychoanalyzerAnalysisDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<{ proposal: PersonaLearningProposal }> {
   throwIfAborted(context)
-  const memories = parseMemories(inputs.memories)
+  const config: PsychoanalyzerConfig = validatePsychoanalyzerConfig(inputs.config)
+  const memories = parseMemories(inputs.memories, config)
   if (!inputs.persona || typeof inputs.persona !== 'object' || Array.isArray(inputs.persona)) {
     throw new Error('Psychoanalyzer analysis requires the active persona')
   }
   const persona = inputs.persona as PersonaCore
-  const config: PsychoanalyzerConfig = validatePsychoanalyzerConfig(inputs.config)
   const instruction = typeof properties.instruction === 'string' && properties.instruction.trim()
     ? properties.instruction.trim()
     : DEFAULT_INSTRUCTION
+  if (instruction.length > 20000) throw new Error('Psychoanalyzer analysis instruction exceeds 20000 characters')
   const evidence = memories.map(memory => ({
     id: memory.id,
     timestamp: memory.timestamp,

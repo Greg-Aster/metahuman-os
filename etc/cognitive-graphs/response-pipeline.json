@@ -3,8 +3,8 @@
   "format": "svelte-flow",
   "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Response Pipeline (Card Responses)",
-  "description": "Focused card-response pipeline with explicit response-context, memory, and Conversation Buffer ownership.",
-  "last_modified": "2026-01-09T00:00:00.000Z",
+  "description": "Focused stateful card-response pipeline with explicit Response Buffer, Conversation Buffer, and Persona Memory ownership.",
+  "last_modified": "2026-09-04T00:00:00.000Z",
   "nodes": [
     {
       "id": "1",
@@ -80,9 +80,7 @@
       "height": 80,
       "data": {
         "nodeType": "response_context_writer",
-        "properties": {
-          "saveMemory": true
-        },
+        "properties": {},
         "title": "Response Context Writer"
       }
     },
@@ -225,6 +223,22 @@
       "type": "smoothstep"
     },
     {
+      "id": "e1-4-cardData",
+      "source": "1",
+      "sourceHandle": "cardData",
+      "target": "4",
+      "targetHandle": "cardData",
+      "type": "smoothstep"
+    },
+    {
+      "id": "e1-4-message",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "4",
+      "targetHandle": "message",
+      "type": "smoothstep"
+    },
+    {
       "id": "e2-4-responseBuffer",
       "source": "2",
       "sourceHandle": "responseBuffer",
@@ -265,14 +279,6 @@
       "type": "smoothstep"
     },
     {
-      "id": "e1-5-cardType",
-      "source": "1",
-      "sourceHandle": "cardType",
-      "target": "5",
-      "targetHandle": "cardType",
-      "type": "smoothstep"
-    },
-    {
       "id": "e4-5-actionTaken",
       "source": "4",
       "sourceHandle": "actionTaken",
@@ -286,14 +292,6 @@
       "sourceHandle": "message",
       "target": "5",
       "targetHandle": "message",
-      "type": "smoothstep"
-    },
-    {
-      "id": "e2-5-desire",
-      "source": "2",
-      "sourceHandle": "desire",
-      "target": "5",
-      "targetHandle": "desire",
       "type": "smoothstep"
     },
     {

@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import fs from 'node:fs'
 
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime'
+import { getTriggerConfigService } from '@metahuman/core/queue'
 import {
   acquireLock,
+  appendPersonaInsights,
   applyPersonaLearningProposal,
   archivePersonaCore,
   audit,
@@ -15,7 +16,6 @@ import {
   loadPsychoanalyzerConfig,
   requireGraphNodeOutput,
   runGraph,
-  safeWriteJSON,
   savePersonaCore,
   scanEpisodicMemoryRecords,
   storageClient,
@@ -27,16 +27,15 @@ import {
   type PersonaCore,
   type PersonaLearningApplyResult,
   type PersonaLearningProposal,
+  type PersonaInsightEntry,
   type PsychoanalyzerConfig,
 } from '@metahuman/core'
 
 export type { PsychoanalyzerConfig }
 
 const EXECUTION_STATE_VERSION = '1.0.0'
-const INSIGHTS_VERSION = '2.0.0'
 const ANALYSIS_ALGORITHM_VERSION = 'psychoanalyzer-v2'
 const MAX_EXECUTION_STATE_BYTES = 2 * 1024 * 1024
-const MAX_INSIGHTS_BYTES = 2 * 1024 * 1024
 const MAX_RECEIPTS = 100
 const PSYCHOANALYZER_GRAPH_FILE = 'psychoanalyzer.json'
 const psychoanalyzerGraphCache: Record<string, CachedGraphEntry | null> = {}
@@ -77,25 +76,6 @@ export interface PsychoanalyzerTarget {
   role: string
 }
 
-interface InsightEntry {
-  timestamp: string
-  type: 'addition' | 'removal' | 'update'
-  category: string
-  section: string
-  items: string[]
-  memoriesAnalyzed: number
-  confidence: number
-  reasoning: string
-  archiveCompared?: string
-  sessionId: string
-}
-
-interface InsightsFile {
-  version: string
-  lastUpdated: string
-  entries: InsightEntry[]
-}
-
 export interface PsychoanalyzerExecutionReceipt {
   runId: string
   status: 'prepared' | 'completed'
@@ -122,6 +102,7 @@ export interface PsychoanalyzerExecutionDependencies {
   now: () => Date
   withContext: <T>(target: PsychoanalyzerTarget, callback: () => T | Promise<T>) => Promise<T>
   acquireRunLock: (name: string) => { release: () => void }
+  isEnabled: () => boolean
   loadConfig: (username: string) => Promise<PsychoanalyzerConfig>
   selectMemories: (
     username: string,
@@ -147,6 +128,7 @@ export interface PsychoanalyzerExecutionDependencies {
   archivePersona: (persona: PersonaCore, archivedAt: Date) => string
   savePersona: (persona: PersonaCore, updatedAt: Date) => void
   persistInsights: (
+    username: string,
     receipt: PsychoanalyzerExecutionReceipt,
     applied: AppliedPersonaLearningChange[],
   ) => void | Promise<void>
@@ -216,7 +198,10 @@ export async function selectMemories(
   const selected: PsychoanalyzerMemory[] = []
   const seenIds = new Set<string>()
 
-  for (const outcome of scanEpisodicMemoryRecords(username)) {
+  for (const outcome of scanEpisodicMemoryRecords(username, {
+    maxFiles: config.memorySelection.maxScanFiles,
+    newestFirst: true,
+  })) {
     throwIfAborted(options.signal)
     if (outcome.status === 'failed') {
       throw new Error(`Cannot scan episodic memory ${outcome.relativePath}: ${outcome.error}`)
@@ -245,7 +230,13 @@ export async function selectMemories(
     if (selected.length > config.memorySelection.maxMemories) selected.pop()
   }
 
-  return selected
+  let remainingCharacters = config.analysis.maxEvidenceCharacters
+  return selected.flatMap(memory => {
+    if (remainingCharacters <= 0) return []
+    const content = memory.content.slice(0, Math.min(remainingCharacters, 4000))
+    remainingCharacters -= content.length
+    return content ? [{ ...memory, content }] : []
+  })
 }
 
 function learnablePersona(persona: PersonaCore): Record<string, unknown> {
@@ -331,83 +322,18 @@ export async function analyzePersonaEvidence(
   return validatePersonaLearningProposal(output.proposal, new Set(memories.map(memory => memory.id)))
 }
 
-function resolveInsightsPath(): string {
-  const result = storageClient.resolvePath({
-    category: 'config',
-    subcategory: 'persona',
-    relativePath: 'insights.json',
-  })
-  if (!result.success || !result.path) throw new Error('Cannot resolve persona insights path')
-  return result.path
-}
-
-function parseInsightEntry(value: unknown, index: number): InsightEntry {
-  if (!isRecord(value)) throw new Error(`Persona insights entries[${index}] must be an object`)
-  if (value.type !== 'addition' && value.type !== 'removal' && value.type !== 'update') {
-    throw new Error(`Persona insights entries[${index}].type is invalid`)
-  }
-  if (!Array.isArray(value.items) || value.items.some(item => typeof item !== 'string')) {
-    throw new Error(`Persona insights entries[${index}].items must be an array of strings`)
-  }
-  if (typeof value.memoriesAnalyzed !== 'number' || !Number.isInteger(value.memoriesAnalyzed)
-    || value.memoriesAnalyzed < 0) {
-    throw new Error(`Persona insights entries[${index}].memoriesAnalyzed must be a non-negative integer`)
-  }
-  if (typeof value.confidence !== 'number' || !Number.isFinite(value.confidence)
-    || value.confidence < 0 || value.confidence > 1) {
-    throw new Error(`Persona insights entries[${index}].confidence must be between 0 and 1`)
-  }
-  return {
-    timestamp: requireString(value.timestamp, `Persona insights entries[${index}].timestamp`),
-    type: value.type,
-    category: requireString(value.category, `Persona insights entries[${index}].category`),
-    section: requireString(value.section, `Persona insights entries[${index}].section`),
-    items: value.items as string[],
-    memoriesAnalyzed: value.memoriesAnalyzed,
-    confidence: value.confidence,
-    reasoning: requireString(value.reasoning, `Persona insights entries[${index}].reasoning`),
-    ...(value.archiveCompared === undefined
-      ? {}
-      : { archiveCompared: requireString(value.archiveCompared, `Persona insights entries[${index}].archiveCompared`) }),
-    sessionId: requireString(value.sessionId, `Persona insights entries[${index}].sessionId`),
-  }
-}
-
-function loadInsights(): InsightsFile {
-  const filePath = resolveInsightsPath()
-  if (!fs.existsSync(filePath)) return { version: INSIGHTS_VERSION, lastUpdated: '', entries: [] }
-  if (fs.statSync(filePath).size > MAX_INSIGHTS_BYTES) {
-    throw new Error(`Persona insights exceeds ${MAX_INSIGHTS_BYTES} bytes`)
-  }
-
-  let raw: unknown
-  try {
-    raw = JSON.parse(fs.readFileSync(filePath, 'utf8'))
-  } catch (error) {
-    throw new Error(`Cannot read persona insights: ${(error as Error).message}`)
-  }
-  if (!isRecord(raw) || !Array.isArray(raw.entries)) {
-    throw new Error('Persona insights must be a JSON object with an entries array')
-  }
-  return {
-    version: INSIGHTS_VERSION,
-    lastUpdated: typeof raw.lastUpdated === 'string' ? raw.lastUpdated : '',
-    entries: raw.entries.map(parseInsightEntry),
-  }
-}
-
 function formatChangeValue(change: AppliedPersonaLearningChange): string {
   if (typeof change.value === 'string') return change.value
   return JSON.stringify(change.value)
 }
 
-function persistInsights(
+async function persistInsights(
+  username: string,
   receipt: PsychoanalyzerExecutionReceipt,
   applied: AppliedPersonaLearningChange[],
-): void {
+): Promise<void> {
   if (!receipt.config.insights.enabled || applied.length === 0) return
-  const insights = loadInsights()
-  const entries: InsightEntry[] = applied.map(change => ({
+  const entries: PersonaInsightEntry[] = applied.map(change => ({
     timestamp: receipt.preparedAt,
     type: change.operation === 'add' ? 'addition' : change.operation === 'remove' ? 'removal' : 'update',
     category: change.path.split('.')[0],
@@ -420,14 +346,12 @@ function persistInsights(
     sessionId: receipt.runId,
   }))
 
-  safeWriteJSON(resolveInsightsPath(), {
-    version: INSIGHTS_VERSION,
-    lastUpdated: receipt.preparedAt,
-    entries: [
-      ...entries,
-      ...insights.entries.filter(entry => entry.sessionId !== receipt.runId),
-    ].slice(0, receipt.config.insights.maxEntries),
-  } satisfies InsightsFile)
+  await appendPersonaInsights(
+    username,
+    entries,
+    receipt.config.insights.maxEntries,
+    receipt.preparedAt,
+  )
 }
 
 function executionStateRequest(username: string) {
@@ -649,7 +573,7 @@ async function completePreparedReceipt(
   }
 
   throwIfAborted(signal)
-  await dependencies.persistInsights(receipt, applied)
+  await dependencies.persistInsights(username, receipt, applied)
   throwIfAborted(signal)
 
   const completedAt = dependencies.now().toISOString()
@@ -676,6 +600,11 @@ const productionDependencies: PsychoanalyzerExecutionDependencies = {
   now: () => new Date(),
   withContext: (target, callback) => withUserContext(target, callback),
   acquireRunLock: name => acquireLock(name, { exitOnSignal: false }),
+  isEnabled: () => {
+    const agent = getTriggerConfigService().load(false).config.agents.psychoanalyzer
+    if (!agent) throw new Error('Psychoanalyzer is not registered in the Agent Catalog')
+    return agent.enabled
+  },
   loadConfig,
   selectMemories: (username, config, now, signal) => selectMemories(config, { username, now, signal }),
   loadPersona: loadPersonaCore,
@@ -721,14 +650,14 @@ export async function executePsychoanalysis(
         )
       }
 
-      if (!config.enabled) {
+      if (!dependencies.isEnabled()) {
         return {
           memoriesAnalyzed: 0,
           confidence: 0,
           changesApplied: 0,
           changesRejected: 0,
           skipped: true,
-          skipReason: 'disabled',
+          skipReason: 'Disabled in Agent Catalog',
         }
       }
 

@@ -3,9 +3,9 @@
   "format": "svelte-flow",
   "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Persona Interview Question",
-  "description": "Admits an authenticated persona interview and generates its next adaptive question",
+  "description": "Admits an authenticated persona interview and generates one non-duplicate question for its deterministic target category",
   "cognitiveMode": "agent",
-  "last_modified": "2026-09-03",
+  "last_modified": "2026-09-04",
   "nodes": [
     {
       "id": "1",
@@ -27,7 +27,6 @@
   "edges": [
     { "id": "e-1-session-2-session", "source": "1", "target": "2", "sourceHandle": "session", "targetHandle": "session" },
     { "id": "e-1-config-2-config", "source": "1", "target": "2", "sourceHandle": "config", "targetHandle": "config" },
-    { "id": "e-1-profile-2-profile", "source": "1", "target": "2", "sourceHandle": "profile", "targetHandle": "profile" },
-    { "id": "e-1-gaps-2-gaps", "source": "1", "target": "2", "sourceHandle": "gaps", "targetHandle": "gaps" }
+    { "id": "e-1-target-2-target", "source": "1", "target": "2", "sourceHandle": "targetCategory", "targetHandle": "targetCategory" }
   ]
 }

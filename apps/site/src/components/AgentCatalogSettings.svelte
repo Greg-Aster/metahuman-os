@@ -23,8 +23,14 @@
   let busy = '';
   let feedback = '';
   let localError = '';
+  let psychoanalyzerConfigLoading = false;
+  let psychoanalyzerConfigError = '';
+  let preserveManualPersonaEdits = false;
 
-  onMount(() => release = useAgentCatalog());
+  onMount(() => {
+    release = useAgentCatalog();
+    void loadPsychoanalyzerConfig();
+  });
   onDestroy(() => release?.());
 
   $: normalizedSearch = search.trim().toLowerCase();
@@ -122,6 +128,45 @@
       busy = '';
     }
   }
+
+  async function loadPsychoanalyzerConfig() {
+    psychoanalyzerConfigLoading = true;
+    psychoanalyzerConfigError = '';
+    try {
+      const response = await apiFetch('/api/psychoanalyzer-config');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false || !data.config) {
+        throw new Error(data.error || 'Psychoanalyzer settings could not be loaded');
+      }
+      preserveManualPersonaEdits = data.config.updateStrategy?.preserveUserEdits === true;
+    } catch (error) {
+      psychoanalyzerConfigError = error instanceof Error ? error.message : String(error);
+    } finally {
+      psychoanalyzerConfigLoading = false;
+    }
+  }
+
+  async function updateManualEditProtection(enabled: boolean) {
+    psychoanalyzerConfigLoading = true;
+    psychoanalyzerConfigError = '';
+    try {
+      const response = await apiFetch('/api/psychoanalyzer-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updateStrategy: { preserveUserEdits: enabled } }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.success === false || !data.config) {
+        throw new Error(data.error || 'Psychoanalyzer settings could not be updated');
+      }
+      preserveManualPersonaEdits = data.config.updateStrategy?.preserveUserEdits === true;
+      feedback = `Manual persona edit protection ${preserveManualPersonaEdits ? 'enabled' : 'disabled'}.`;
+    } catch (error) {
+      psychoanalyzerConfigError = error instanceof Error ? error.message : String(error);
+    } finally {
+      psychoanalyzerConfigLoading = false;
+    }
+  }
 </script>
 
 <div class="mx-auto max-w-[1150px] p-6">
@@ -172,6 +217,26 @@
                 {#if agent.usesLLM}<span class="rounded bg-violet-500/10 px-2 py-0.5 text-[0.68rem] text-violet-700 dark:text-violet-300">LLM</span>{/if}
               </div>
               <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">{agent.description}</p>
+              {#if agent.id === 'psychoanalyzer'}
+                <div class="mt-3 rounded border border-gray-200 p-3 dark:border-gray-700">
+                  <label class="flex items-start gap-2 text-sm">
+                    <input
+                      class="mt-0.5"
+                      type="checkbox"
+                      checked={preserveManualPersonaEdits}
+                      disabled={psychoanalyzerConfigLoading || !!psychoanalyzerConfigError}
+                      on:change={event => updateManualEditProtection(event.currentTarget.checked)}
+                    />
+                    <span>
+                      <span class="font-medium">Preserve manual persona edits</span>
+                      <span class="mt-0.5 block text-xs text-gray-500">When enabled, Psychoanalyzer may update or remove only values it previously learned. This is off by default.</span>
+                    </span>
+                  </label>
+                  {#if psychoanalyzerConfigError}
+                    <div class="mt-2 text-xs text-red-700 dark:text-red-300">{psychoanalyzerConfigError} <button class="underline" on:click={loadPsychoanalyzerConfig}>Retry</button></div>
+                  {/if}
+                </div>
+              {/if}
               <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
                 <span>{ownerLabel(agent)}</span><span>ID: {agent.id}</span><span>Handler: {agent.handler}</span>
                 {#if agent.sourcePath}<span>Source: {agent.sourcePath}</span>{/if}

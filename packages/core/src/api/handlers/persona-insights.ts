@@ -1,31 +1,18 @@
-import fs from 'node:fs';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { getProfilePaths } from '../../paths.js';
+import { readPersonaInsights } from '../../persona-insights.js';
 
 export async function handleGetPersonaInsights(req: UnifiedRequest): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) return { status: 401, error: 'Authentication required' };
   try {
-    const profilePaths = getProfilePaths(req.user.username);
-    const insightsPath = `${profilePaths.persona}/insights.json`;
-
-    if (!fs.existsSync(insightsPath)) {
-      return {
-        status: 200,
-        data: {
-          version: '1.0.0',
-          lastUpdated: null,
-          entries: [],
-        },
-      };
-    }
-
     return {
       status: 200,
-      data: JSON.parse(fs.readFileSync(insightsPath, 'utf-8')),
+      data: await readPersonaInsights(req.user.username),
     };
-  } catch {
+  } catch (error) {
+    console.error('[persona-insights] Failed to load insights:', error);
     return {
       status: 500,
-      data: { error: 'Failed to load insights' },
+      error: error instanceof Error ? error.message : 'Failed to load insights',
     };
   }
 }

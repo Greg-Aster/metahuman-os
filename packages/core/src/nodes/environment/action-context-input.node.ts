@@ -30,7 +30,7 @@ export const environmentActionContextInputNode = defineNode({
       name: 'actionContext',
       label: 'Matched sent-action record',
       type: 'object',
-      description: 'Core’s pre-resolved record of the sent command: requested action, status, result, timestamps, timing, and autonomy details.',
+      description: 'Core’s pre-resolved record of the sent command: requested action, originating instruction, status, result, timestamps, timing, and autonomy details.',
     },
     {
       name: 'actionId',

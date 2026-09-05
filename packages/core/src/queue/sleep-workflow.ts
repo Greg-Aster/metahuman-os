@@ -1,5 +1,6 @@
 import type { UnifiedQueueManager } from './unified-queue-manager.js'
 import type { QueuedTask, TaskInput, TaskType } from './types.js'
+import { getTriggerConfigService } from './trigger-config-service.js'
 import {
   beginSleepSession,
   completeSleepSession,
@@ -11,12 +12,14 @@ import {
   type SleepStageDefinition,
 } from '../sleep-runtime.js'
 
-interface SleepWorkflowStage extends SleepStageDefinition {
+export interface SleepWorkflowStage extends SleepStageDefinition {
   type: TaskType
   agentId?: string
   args?: string[]
   maxAttempts: number
 }
+
+export type SleepStageEnabled = (stage: SleepWorkflowStage) => boolean
 
 export interface SleepWorkflowMarker {
   sessionId: string
@@ -90,9 +93,37 @@ function enqueueStage(
   return task
 }
 
+function catalogStageEnabled(): SleepStageEnabled {
+  const agents = getTriggerConfigService().load(false).config.agents
+  const psychoanalyzer = agents.psychoanalyzer
+  if (!psychoanalyzer) throw new Error('Sleep Workflow Psychoanalyzer stage has no Agent Catalog entry')
+  return stage => {
+    if (stage.agentId !== 'psychoanalyzer') return true
+    return psychoanalyzer.enabled
+  }
+}
+
+function findNextEnabledStage(
+  sessionId: string,
+  startIndex: number,
+  isStageEnabled: SleepStageEnabled,
+): number | null {
+  for (let stageIndex = startIndex; stageIndex < SLEEP_WORKFLOW_STAGES.length; stageIndex++) {
+    const stage = SLEEP_WORKFLOW_STAGES[stageIndex]
+    if (isStageEnabled(stage)) return stageIndex
+    updateSleepStage(sessionId, stage.id, {
+      state: 'skipped',
+      completedAt: new Date().toISOString(),
+      error: 'Disabled in Agent Catalog',
+    })
+  }
+  return null
+}
+
 export function beginSleepWorkflow(
   parent: QueuedTask,
   enqueue: UnifiedQueueManager['enqueue'],
+  isStageEnabled?: SleepStageEnabled,
 ): { sessionId: string; firstTaskId: string; stageCount: number; runtimeFile: string } | { skipped: true; reason: string } {
   const session = beginSleepSession({
     parentTaskId: parent.id,
@@ -102,12 +133,22 @@ export function beginSleepWorkflow(
     stages: SLEEP_WORKFLOW_STAGES,
   })
   if (!session) return { skipped: true, reason: 'sleep_already_active' }
+  const stageEnabled = isStageEnabled ?? catalogStageEnabled()
+  let firstIndex = 0
   try {
-    const first = enqueueStage(enqueue, session, 0)
+    const resolvedIndex = findNextEnabledStage(session.id, 0, stageEnabled)
+    if (resolvedIndex === null) {
+      completeSleepSession(session.id)
+      return { skipped: true, reason: 'no_enabled_sleep_stages' }
+    }
+    firstIndex = resolvedIndex
+    const current = readSleepRuntimeState().currentSession
+    if (!current || current.id !== session.id) throw new Error('Sleep Workflow session disappeared before first-stage admission')
+    const first = enqueueStage(enqueue, current, firstIndex)
     return { sessionId: session.id, firstTaskId: first.id, stageCount: SLEEP_WORKFLOW_STAGES.length, runtimeFile: SLEEP_RUNTIME_FILE }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    updateSleepStage(session.id, SLEEP_WORKFLOW_STAGES[0].id, { state: 'failed', completedAt: new Date().toISOString(), error: message })
+    updateSleepStage(session.id, SLEEP_WORKFLOW_STAGES[firstIndex].id, { state: 'failed', completedAt: new Date().toISOString(), error: message })
     wakeSleepSession(`Sleep workflow could not queue its first stage: ${message}`)
     throw error
   }
@@ -128,24 +169,28 @@ export function advanceSleepWorkflow(
   task: QueuedTask,
   outcome: 'completed' | 'failed',
   error?: string,
+  isStageEnabled?: SleepStageEnabled,
 ): QueuedTask | null {
   const marker = markerFor(task)
   if (!marker) return null
   const session = readSleepRuntimeState().currentSession
   if (!session || session.id !== marker.sessionId || session.state !== 'running') return null
+  const stageEnabled = isStageEnabled ?? catalogStageEnabled()
   updateSleepStage(marker.sessionId, marker.stageId, {
     state: outcome,
     completedAt: new Date().toISOString(),
     error,
   })
-  if (marker.stageIndex + 1 >= marker.totalStages) {
-    completeSleepSession(marker.sessionId)
-    return null
-  }
-  const current = readSleepRuntimeState().currentSession
-  if (!current || current.id !== marker.sessionId) return null
-  const nextIndex = marker.stageIndex + 1
+  let nextIndex = marker.stageIndex + 1
   try {
+    const resolvedIndex = findNextEnabledStage(marker.sessionId, nextIndex, stageEnabled)
+    if (resolvedIndex === null) {
+      completeSleepSession(marker.sessionId)
+      return null
+    }
+    nextIndex = resolvedIndex
+    const current = readSleepRuntimeState().currentSession
+    if (!current || current.id !== marker.sessionId) return null
     return enqueueStage(manager.enqueue.bind(manager), current, nextIndex)
   } catch (enqueueError) {
     const message = enqueueError instanceof Error ? enqueueError.message : String(enqueueError)

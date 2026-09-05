@@ -358,28 +358,6 @@ import {
   handleGetDependents,
 } from './handlers/projects.js';
 import {
-  handleExtractSuggestions,
-  handleListSuggestions,
-  handleGetSuggestion,
-  handleApproveSuggestion,
-  handleRejectSuggestion,
-  handleBulkApprove,
-  handleCleanupSuggestions,
-} from './handlers/task-suggestions.js';
-import {
-  handleLearnPreferences,
-  handleListPreferences,
-  handleGetPreferenceStats,
-  handleGetActivePreferences,
-  handleGetPreferencesByCategory,
-  handleGetPreference,
-  handleConfirmPreference,
-  handleRejectPreference,
-  handleModifyPreference,
-  handleFindContradictions,
-  handleCleanupPreferences,
-} from './handlers/preferences.js';
-import {
   handleGenerateReview,
   handleListReviews,
   handleGetLatestReview,
@@ -569,28 +547,6 @@ const routes: RouteDefinition[] = [
   { method: 'DELETE', pattern: /^\/api\/projects\/[^\/]+$/, handler: handleDeleteProject, requiresAuth: true },
   { method: 'POST', pattern: /^\/api\/projects\/[^\/]+\/tasks$/, handler: handleAssignTasksToProject, requiresAuth: true },
   { method: 'GET', pattern: /^\/api\/projects\/[^\/]+\/graph$/, handler: handleGetProjectGraph, requiresAuth: true },
-
-  // Task Suggestions (Phase 4: Reflection-to-Task)
-  { method: 'POST', pattern: '/api/task-suggestions/extract', handler: handleExtractSuggestions, requiresAuth: true },
-  { method: 'GET', pattern: '/api/task-suggestions', handler: handleListSuggestions, requiresAuth: true },
-  { method: 'POST', pattern: '/api/task-suggestions/bulk-approve', handler: handleBulkApprove, requiresAuth: true },
-  { method: 'POST', pattern: '/api/task-suggestions/cleanup', handler: handleCleanupSuggestions, requiresAuth: true },
-  { method: 'GET', pattern: /^\/api\/task-suggestions\/[^\/]+$/, handler: handleGetSuggestion, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/task-suggestions\/[^\/]+\/approve$/, handler: handleApproveSuggestion, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/task-suggestions\/[^\/]+\/reject$/, handler: handleRejectSuggestion, requiresAuth: true },
-
-  // Preferences (Phase 4: Continual Learning)
-  { method: 'POST', pattern: '/api/preferences/learn', handler: handleLearnPreferences, requiresAuth: true },
-  { method: 'GET', pattern: '/api/preferences', handler: handleListPreferences, requiresAuth: true },
-  { method: 'GET', pattern: '/api/preferences/stats', handler: handleGetPreferenceStats, requiresAuth: true },
-  { method: 'GET', pattern: '/api/preferences/active', handler: handleGetActivePreferences, requiresAuth: true },
-  { method: 'GET', pattern: '/api/preferences/by-category', handler: handleGetPreferencesByCategory, requiresAuth: true },
-  { method: 'POST', pattern: '/api/preferences/contradictions', handler: handleFindContradictions, requiresAuth: true },
-  { method: 'POST', pattern: '/api/preferences/cleanup', handler: handleCleanupPreferences, requiresAuth: true },
-  { method: 'GET', pattern: /^\/api\/preferences\/[^\/]+$/, handler: handleGetPreference, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/preferences\/[^\/]+\/confirm$/, handler: handleConfirmPreference, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/preferences\/[^\/]+\/reject$/, handler: handleRejectPreference, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/preferences\/[^\/]+\/modify$/, handler: handleModifyPreference, requiresAuth: true },
 
   // Goal Reviews (Phase 4: Continual Learning)
   { method: 'POST', pattern: '/api/goal-reviews/generate', handler: handleGenerateReview, requiresAuth: true },

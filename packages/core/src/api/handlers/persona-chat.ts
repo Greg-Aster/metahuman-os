@@ -10,7 +10,6 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { streamResponse, badRequestResponse } from '../types.js';
 import {
-  getConfirmedPreferences,
   getActiveFacet,
   loadPersonaWithFacet,
   withUserContext,
@@ -152,13 +151,9 @@ function buildSystemPrompt(mode: Mode, includePersonaSummary = true): string {
       const focus = Array.isArray(source.context?.currentFocus)
         ? source.context.currentFocus.filter((value: unknown): value is string => typeof value === 'string')
         : [];
-      const preferences = getConfirmedPreferences().map(preference =>
-        preference.userModification || preference.behavior || preference.description
-      );
       const learnedContext = [
         interests.length > 0 ? `Stable interests: ${interests.join(', ')}` : '',
         focus.length > 0 ? `Current focus: ${focus.join(', ')}` : '',
-        preferences.length > 0 ? `Confirmed preferences: ${preferences.join(', ')}` : '',
       ].filter(Boolean).join('\n');
 
       systemPrompt = `

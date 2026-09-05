@@ -11,7 +11,11 @@ test('tracked psychoanalyzer config satisfies the canonical contract', () => {
   const config = loadSystemPsychoanalyzerConfig()
   assert.equal(config.version, '2.0.0')
   assert.equal(config.memorySelection.strategy, 'priority_recent')
+  assert.equal(config.memorySelection.maxScanFiles, 1000)
   assert.equal(config.analysis.model, 'psychotherapist')
+  assert.equal(config.analysis.maxEvidenceCharacters, 60000)
+  assert.equal(config.updateStrategy.preserveUserEdits, false)
+  assert.equal('enabled' in config, false)
 })
 
 test('legacy installed profile config migrates to the complete version 2 contract', () => {
@@ -84,5 +88,17 @@ test('configuration updates are whitelisted and validated', () => {
   assert.throws(
     () => mergePsychoanalyzerConfig(tracked, { analysis: { imaginarySetting: true } }),
     /Unsupported analysis fields/,
+  )
+  assert.throws(
+    () => mergePsychoanalyzerConfig(tracked, { enabled: false }),
+    /Unsupported psychoanalyzer configuration fields/,
+  )
+  assert.throws(
+    () => mergePsychoanalyzerConfig(tracked, { memorySelection: { maxScanFiles: 0 } }),
+    /maxScanFiles/,
+  )
+  assert.throws(
+    () => mergePsychoanalyzerConfig(tracked, { analysis: { maxEvidenceCharacters: 999 } }),
+    /maxEvidenceCharacters/,
   )
 })

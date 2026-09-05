@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   createTTSPlaybackRequestTracker,
   normalizeTextForSpeech,
+  resumeAudioContextWithTimeout,
   useTTS,
 } from './useTTS.js';
 
@@ -9,6 +10,28 @@ assert.equal(
   normalizeTextForSpeech('First paragraph.\n\nSecond   paragraph.'),
   'First paragraph.\n\nSecond paragraph.',
   'speech normalization must preserve paragraph boundaries for chunking',
+);
+
+const blockedAudioContext = {
+  state: 'suspended' as AudioContextState,
+  resume: () => new Promise<void>(() => {}),
+};
+assert.equal(
+  await resumeAudioContextWithTimeout(blockedAudioContext, 5),
+  false,
+  'a browser autoplay block must settle instead of holding a delivery lease forever',
+);
+
+const resumableAudioContext = {
+  state: 'suspended' as AudioContextState,
+  async resume() {
+    this.state = 'running';
+  },
+};
+assert.equal(
+  await resumeAudioContextWithTimeout(resumableAudioContext, 5),
+  true,
+  'a browser audio context that resumes must admit queue playback',
 );
 
 const playbackRequests = createTTSPlaybackRequestTracker();

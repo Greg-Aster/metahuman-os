@@ -2,8 +2,9 @@
  * Response Pipeline API Handler
  *
  * Handles card-based responses through a dedicated, focused pipeline.
- * Unlike dual-consciousness, this uses a focused six-node graph:
- *   Card Input → Context → LLM → Action Router → Response Context → Conversation Buffer
+ * Unlike full conversation modes, this uses a focused seven-node graph:
+ *   Card Input → Context → LLM → Action Router → Response Context
+ *   → Conversation Buffer → Conversation Memory Saver
  *
  * Key differences from /api/persona_chat:
  * - No memory search (loads only card context)
@@ -11,10 +12,11 @@
  * - Single-pass LLM (no iterative refinement)
  * - Card-type-specific prompts
  * - Separate response buffer for multi-turn tracking
- * - Saves as 'card_response' memory type for LoRA training
+ * - Uses a card-specific response buffer while canonical conversation nodes own
+ *   short- and long-term conversation persistence
  */
 
-import type { UnifiedRequest, UnifiedResponse } from '../types.js';
+import type { UnifiedRequest, UnifiedResponse, UnifiedUser } from '../types.js';
 import {
   canWriteMemory as modeAllowsMemoryWrites,
   loadCognitiveMode,
@@ -22,18 +24,18 @@ import {
 } from '../../cognitive-mode.js';
 import {
   cognitiveGraphPath,
-  extractGraphOutput,
   getFirstFailedNode,
   listFailedNodes,
   loadGraphFile,
+  requireGraphNodeOutput,
   runGraph,
   sseData,
   type CachedGraphEntry,
 } from '../../graph-runtime.js';
 import type { SvelteFlowGraph } from '../../cognitive-graph-schema.js';
+import type { GraphExecutionState } from '../../graph-executor.js';
 import type { NodeExecutionContext } from '../../nodes/types.js';
 import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
-import { curiosityQuestionStore } from '../../curiosity-questions.js';
 
 // ============================================================================
 // Types
@@ -55,7 +57,7 @@ export interface ResponsePipelineRequest {
   /** Existing response buffer ID for multi-turn */
   responseBufferId?: string;
   /** Session ID */
-  sessionId?: string;
+  sessionId: string;
   /** Speech generation captured when this user turn was admitted. */
   ttsGeneration?: number;
 }
@@ -75,16 +77,54 @@ export interface ResponsePipelineResult {
   executionTimeMs?: number;
 }
 
+export const RESPONSE_PIPELINE_CARD_TYPES = [
+  'curiosity_response',
+  'desire_rejection',
+  'clarifying_questions',
+  'desire_plan',
+] as const;
+
+const RESPONSE_PIPELINE_CARD_TYPE_SET = new Set<string>(RESPONSE_PIPELINE_CARD_TYPES);
+
+export function validateResponsePipelineRequest(request: ResponsePipelineRequest): string | null {
+  if (!request.message || typeof request.message !== 'string' || !request.message.trim()) {
+    return 'Message is required';
+  }
+  if (!request.cardType || typeof request.cardType !== 'string') {
+    return 'Card type is required';
+  }
+  if (!RESPONSE_PIPELINE_CARD_TYPE_SET.has(request.cardType)) {
+    return `Unsupported response pipeline card type: ${request.cardType}`;
+  }
+  if (!request.cardData || typeof request.cardData !== 'object' || Array.isArray(request.cardData)) {
+    return 'Card data is required';
+  }
+  if (request.cardType === 'curiosity_response') {
+    if (typeof request.cardData.questionId !== 'string' || !request.cardData.questionId.trim()) {
+      return 'Curiosity response requires a questionId';
+    }
+  } else if (typeof request.cardData.desireId !== 'string' || !request.cardData.desireId.trim()) {
+    return `${request.cardType} requires a desireId`;
+  }
+  if (typeof request.sessionId !== 'string' || !request.sessionId.trim()) {
+    return 'Session ID is required';
+  }
+  return null;
+}
+
 export function buildResponsePipelineExecutionContext(
   request: ResponsePipelineRequest,
   username: string,
   cognitiveMode: CognitiveModeId,
+  signal?: AbortSignal,
+  userRole?: UnifiedUser['role'],
 ): NodeExecutionContext {
   return {
-    sessionId: request.sessionId || `response-${Date.now()}`,
+    sessionId: request.sessionId.trim(),
     userMessage: request.message.trim(),
     userId: username,
     username,
+    userRole,
     cardType: request.cardType,
     cardData: request.cardData,
     responseBufferId: request.responseBufferId,
@@ -93,6 +133,7 @@ export function buildResponsePipelineExecutionContext(
     recordPersonaMemory: true,
     environment: 'server',
     ttsGeneration: request.ttsGeneration,
+    abortSignal: signal,
   };
 }
 
@@ -101,19 +142,6 @@ export function buildResponsePipelineExecutionContext(
 // ============================================================================
 
 const graphCache: Record<string, CachedGraphEntry | null> = {};
-
-export async function resolveCuriosityAnswer(
-  request: ResponsePipelineRequest,
-  username: string,
-  resolver: Pick<typeof curiosityQuestionStore, 'resolve'> = curiosityQuestionStore,
-): Promise<void> {
-  if (request.cardType !== 'curiosity_response') return;
-  const questionId = request.cardData.questionId;
-  if (typeof questionId !== 'string' || !questionId.trim()) {
-    throw new Error('Curiosity response requires a questionId');
-  }
-  await resolver.resolve(username, questionId, 'answered');
-}
 
 /**
  * Load the response pipeline graph with caching
@@ -189,6 +217,58 @@ function getErrorSuggestion(error: string, failedNode: string | null): string {
   return 'An unexpected error occurred. Try:\n• Check the terminal/console for detailed error logs\n• Refresh the page\n• Restart the server\n• Report this issue with logs if it persists';
 }
 
+function failedNodeType(graphState: GraphExecutionState, nodeId: string | null): string | null {
+  return nodeId ? graphState.nodes.get(nodeId)?.definition?.type || nodeId : null;
+}
+
+export function extractResponsePipelineResult(
+  graphState: GraphExecutionState,
+): Omit<ResponsePipelineResult, 'success' | 'executionTimeMs'> {
+  if (graphState.status !== 'completed') {
+    const failed = listFailedNodes(graphState);
+    const detail = failed.map(node => `${node.nodeId}: ${node.error}`).join('; ');
+    throw new Error(detail || `Response pipeline graph ended with status ${graphState.status}`);
+  }
+
+  const action = requireGraphNodeOutput(graphState, 'response_action_router');
+  const responseContext = requireGraphNodeOutput(graphState, 'response_context_writer');
+  const conversation = requireGraphNodeOutput(graphState, 'conversation_buffer');
+  const memory = requireGraphNodeOutput(graphState, 'memory_capture');
+
+  const response = typeof action.response === 'string' ? action.response.trim() : '';
+  const responseBufferId = typeof responseContext.responseBufferId === 'string'
+    ? responseContext.responseBufferId.trim()
+    : '';
+  const actionTaken = typeof action.actionTaken === 'string' ? action.actionTaken.trim() : '';
+
+  if (!response) throw new Error('Response Action Router produced no response');
+  if (!responseBufferId) throw new Error('Response Context Writer produced no response buffer ID');
+  if (responseContext.persisted !== true || responseContext.exchangeCount !== 2) {
+    throw new Error('Response Context Writer did not persist the complete card exchange');
+  }
+  if (conversation.persisted !== true || conversation.messageCount !== 2) {
+    throw new Error('Conversation Buffer did not persist the complete user/assistant exchange');
+  }
+  if (memory.saved !== true || memory.savedCount !== conversation.messageCount) {
+    throw new Error('Conversation Memory Saver did not persist every admitted conversation entry');
+  }
+  if (!actionTaken) throw new Error('Response Action Router produced no action receipt');
+  if (typeof action.pipelineTriggered !== 'boolean') {
+    throw new Error('Response Action Router produced an invalid pipeline receipt');
+  }
+  if (action.nextStatus !== null && action.nextStatus !== undefined && typeof action.nextStatus !== 'string') {
+    throw new Error('Response Action Router produced an invalid next status');
+  }
+
+  return {
+    response,
+    responseBufferId,
+    actionTaken,
+    pipelineTriggered: action.pipelineTriggered,
+    nextStatus: action.nextStatus || undefined,
+  };
+}
+
 // ============================================================================
 // Main Handler
 // ============================================================================
@@ -198,7 +278,9 @@ function getErrorSuggestion(error: string, failedNode: string | null): string {
  */
 export async function handleResponsePipeline(
   request: ResponsePipelineRequest,
-  username: string
+  username: string,
+  signal?: AbortSignal,
+  userRole?: UnifiedUser['role'],
 ): Promise<ResponsePipelineResult> {
   const startTime = Date.now();
   const LOG = '[response-pipeline-handler]';
@@ -216,14 +298,10 @@ export async function handleResponsePipeline(
 
     // Step 2: Validate inputs
     logStep(2, 'Validating inputs');
-    if (!message || typeof message !== 'string' || message.trim().length === 0) {
-      console.error(`${LOG} Validation failed: Message is required`);
-      return { success: false, error: 'Message is required' };
-    }
-
-    if (!cardType || typeof cardType !== 'string') {
-      console.error(`${LOG} Validation failed: Card type is required`);
-      return { success: false, error: 'Card type is required' };
+    const validationError = validateResponsePipelineRequest(request);
+    if (validationError) {
+      console.error(`${LOG} Validation failed: ${validationError}`);
+      return { success: false, error: validationError };
     }
 
     logStep(2, 'Inputs validated', {
@@ -248,6 +326,8 @@ export async function handleResponsePipeline(
       { message, cardType, cardData, responseBufferId, sessionId, ttsGeneration },
       username,
       loadCognitiveMode().currentMode,
+      signal,
+      userRole,
     );
 
     logStep(4, 'Context built', {
@@ -259,7 +339,7 @@ export async function handleResponsePipeline(
     // Step 5: Execute the graph
     logStep(5, 'Starting graph execution');
     let nodeExecutionCount = 0;
-    const graphState = await runGraph({ graph, context: executionContext, eventHandler: (event) => {
+    const graphState = await runGraph({ graph, context: executionContext, signal, eventHandler: (event) => {
       // Log ALL events for comprehensive debugging
       if (event.type === 'node_start') {
         nodeExecutionCount++;
@@ -285,7 +365,7 @@ export async function handleResponsePipeline(
       // Find which node(s) failed and collect error details
       const failedNodes = listFailedNodes(graphState);
       const firstFailedNode = getFirstFailedNode(graphState);
-      const failedNode = firstFailedNode?.nodeId ?? null;
+      const failedNode = failedNodeType(graphState, firstFailedNode?.nodeId ?? null);
       const failedNodeError = firstFailedNode?.error ?? null;
 
       logStep(5.5, 'Graph failed - nodes with errors', { failedNodes });
@@ -303,40 +383,17 @@ export async function handleResponsePipeline(
 
     // Step 6: Extract output
     logStep(6, 'Extracting output from graph state');
-    const output = extractGraphOutput(graphState);
-
-    if (!output) {
-      console.error(`${LOG} FAILED: Graph produced no output`);
-      console.error(`${LOG} Graph state keys:`, Object.keys(graphState || {}));
-      console.error(`${LOG} Graph status:`, graphState.status);
-
-      // Log all node statuses for debugging
-      const nodeStatuses: any = {};
-      graphState.nodes.forEach((nodeState, nodeId) => {
-        nodeStatuses[nodeId] = nodeState.status;
-      });
-      console.error(`${LOG} Node statuses:`, nodeStatuses);
-
-      return {
-        success: false,
-        error: 'Pipeline produced no output',
-        errorDetails: `Graph completed with status '${graphState.status}' but no output was generated`,
-        suggestion: getErrorSuggestion('No output generated', null),
-        executionTimeMs,
-      };
-    }
+    const output = extractResponsePipelineResult(graphState);
 
     logStep(6, 'Output extracted', { outputKeys: Object.keys(output) });
 
     // Step 7: Build result
     logStep(7, 'Building response result');
-    const response = output.response || output.output || '';
-    const responseBufferIdResult = output.responseBufferId || responseBufferId;
+    const response = output.response || '';
+    const responseBufferIdResult = output.responseBufferId;
     const actionTaken = output.actionTaken || '';
-    const pipelineTriggered = output.pipelineTriggered || false;
-    const nextStatus = output.nextStatus || null;
-
-    await resolveCuriosityAnswer(request, username);
+    const pipelineTriggered = output.pipelineTriggered === true;
+    const nextStatus = output.nextStatus || undefined;
 
     logStep(7, 'Result ready', {
       hasResponse: !!response,
@@ -386,7 +443,9 @@ export async function handleResponsePipeline(
  */
 export function streamResponsePipeline(
   request: ResponsePipelineRequest,
-  username: string
+  username: string,
+  signal?: AbortSignal,
+  userRole?: UnifiedUser['role'],
 ): Response {
   const { message, cardType, cardData, responseBufferId, sessionId, ttsGeneration } = request;
 
@@ -406,6 +465,9 @@ export function streamResponsePipeline(
       };
 
       try {
+        const validationError = validateResponsePipelineRequest(request);
+        if (validationError) throw new Error(validationError);
+
         push('progress', { step: 'loading', message: 'Loading response pipeline...' });
 
         // Load graph
@@ -424,6 +486,8 @@ export function streamResponsePipeline(
           { message, cardType, cardData, responseBufferId, sessionId, ttsGeneration },
           username,
           loadCognitiveMode().currentMode,
+          signal,
+          userRole,
         );
 
         const startedAt = Date.now();
@@ -446,27 +510,35 @@ export function streamResponsePipeline(
         };
 
         // Execute
-        const graphState = await runGraph({ graph, context: executionContext, eventHandler });
+        const graphState = await runGraph({ graph, context: executionContext, eventHandler, signal });
         const duration = Date.now() - startedAt;
-        const output = extractGraphOutput(graphState);
-
-        if (!output) {
-          push('error', { message: 'Pipeline produced no output' });
+        if (graphState.status !== 'completed') {
+          const failedNodes = listFailedNodes(graphState);
+          const firstFailedNode = getFirstFailedNode(graphState);
+          const failedNode = failedNodeType(graphState, firstFailedNode?.nodeId ?? null);
+          const message = firstFailedNode?.error
+            || (signal?.aborted ? 'Response pipeline cancelled' : `Pipeline ended with status ${graphState.status}`);
+          push('error', {
+            message,
+            failedNode,
+            failedNodes,
+            suggestion: getErrorSuggestion(message, failedNode),
+          });
           closed = true;
           try { controller.close(); } catch {}
           return;
         }
 
-        await resolveCuriosityAnswer(request, username);
+        const output = extractResponsePipelineResult(graphState);
 
         // Send result
         push('progress', { step: 'complete', message: `Completed in ${duration}ms` });
 
         push('answer', {
-          response: output.response || output.output || '',
-          responseBufferId: output.responseBufferId || responseBufferId,
+          response: output.response || '',
+          responseBufferId: output.responseBufferId,
           actionTaken: output.actionTaken || '',
-          pipelineTriggered: output.pipelineTriggered || false,
+          pipelineTriggered: output.pipelineTriggered === true,
           nextStatus: output.nextStatus || null,
           executionTime: duration,
         });
@@ -529,45 +601,28 @@ export async function handleResponsePipelineApi(req: UnifiedRequest): Promise<Un
   }
 
   const body = req.body as (ResponsePipelineRequest & { streaming?: boolean }) | undefined;
-  const { message, cardType, cardData, responseBufferId, streaming } = body || {};
-
-  if (!message || typeof message !== 'string' || message.trim().length === 0) {
-    return {
-      status: 400,
-      data: { error: 'Message is required' },
-    };
-  }
-
-  if (!cardType || typeof cardType !== 'string') {
-    return {
-      status: 400,
-      data: { error: 'Card type is required' },
-    };
-  }
-
-  if (!cardData || typeof cardData !== 'object') {
-    return {
-      status: 400,
-      data: { error: 'Card data is required' },
-    };
-  }
+  const { message, cardType, cardData, responseBufferId, sessionId, streaming } = body || {};
 
   try {
+    const pipelineRequest: ResponsePipelineRequest = {
+      message: message as string,
+      cardType: cardType as string,
+      cardData: cardData as ResponsePipelineRequest['cardData'],
+      responseBufferId,
+      sessionId: sessionId as string,
+    };
+    const validationError = validateResponsePipelineRequest(pipelineRequest);
+    if (validationError) {
+      return { status: 400, data: { error: validationError } };
+    }
     const inheritedTTSGeneration = typeof req.metadata?.ttsGeneration === 'number'
       ? req.metadata.ttsGeneration
       : undefined;
-    const ttsGeneration = inheritedTTSGeneration
+    pipelineRequest.ttsGeneration = inheritedTTSGeneration
       ?? beginTTSUserTurn(req.user.username, 'user-input')?.generation;
-    const pipelineRequest = {
-      message,
-      cardType,
-      cardData,
-      responseBufferId,
-      ttsGeneration,
-    };
 
     if (streaming) {
-      const response = streamResponsePipeline(pipelineRequest, req.user.username);
+      const response = streamResponsePipeline(pipelineRequest, req.user.username, req.signal, req.user.role);
       return {
         status: response.status,
         stream: responseToChunks(response),
@@ -579,7 +634,7 @@ export async function handleResponsePipelineApi(req: UnifiedRequest): Promise<Un
       };
     }
 
-    const result = await handleResponsePipeline(pipelineRequest, req.user.username);
+    const result = await handleResponsePipeline(pipelineRequest, req.user.username, req.signal, req.user.role);
 
     if (!result.success) {
       return {

@@ -25,25 +25,13 @@
     dependencies?: string[];
   }
 
-  interface TaskSuggestion {
-    id: string;
-    title: string;
-    description: string;
-    priority: string;
-    confidence: number;
-    status: 'pending' | 'approved' | 'rejected' | 'created';
-    sourceContent: string;
-    projectSuggestion?: string;
-  }
-
   // State
   let projects: Project[] = [];
   let actionableTasks: Task[] = [];
   let blockedTasks: Task[] = [];
-  let suggestions: TaskSuggestion[] = [];
   let loading = true;
   let error = '';
-  let activeTab: 'projects' | 'actionable' | 'blocked' | 'suggestions' = 'projects';
+  let activeTab: 'projects' | 'actionable' | 'blocked' = 'projects';
   let searchQuery = '';
   let showCreateModal = false;
   let selectedProject: Project | null = null;
@@ -91,17 +79,6 @@
     }
   }
 
-  async function loadSuggestions() {
-    try {
-      const res = await apiFetch('/api/task-suggestions?status=pending');
-      if (!res.ok) return;
-      const data = await res.json();
-      suggestions = data.suggestions || [];
-    } catch (e) {
-      console.warn('Failed to load suggestions:', e);
-    }
-  }
-
   async function loadAll() {
     loading = true;
     error = '';
@@ -109,7 +86,6 @@
       loadProjects(),
       loadActionableTasks(),
       loadBlockedTasks(),
-      loadSuggestions(),
     ]);
     loading = false;
   }
@@ -154,45 +130,6 @@
     }
   }
 
-  async function approveSuggestion(id: string) {
-    try {
-      const res = await apiFetch(`/api/task-suggestions/${id}/approve`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to approve');
-      await loadSuggestions();
-      await loadActionableTasks();
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
-  async function rejectSuggestion(id: string) {
-    try {
-      const res = await apiFetch(`/api/task-suggestions/${id}/reject`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to reject');
-      await loadSuggestions();
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
-  async function extractSuggestions() {
-    try {
-      const res = await apiFetch('/api/task-suggestions/extract', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ maxReflections: 20, minConfidence: 0.5 }),
-      });
-      if (!res.ok) throw new Error('Failed to extract');
-      await loadSuggestions();
-    } catch (e) {
-      error = (e as Error).message;
-    }
-  }
-
   // Helpers
   function getPriorityColor(priority?: string): string {
     switch (priority) {
@@ -216,12 +153,6 @@
     }
   }
 
-  function getConfidenceColor(confidence: number): string {
-    if (confidence >= 0.8) return 'text-green-600 dark:text-green-400';
-    if (confidence >= 0.6) return 'text-yellow-600 dark:text-yellow-400';
-    return 'text-gray-500 dark:text-gray-400';
-  }
-
   $: filteredProjects = projects.filter(p =>
     !searchQuery || p.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -232,7 +163,7 @@
   <div class="flex justify-between items-start mb-6">
     <div>
       <h2 class="text-2xl font-bold text-gray-800 dark:text-gray-100">Projects & Tasks</h2>
-      <p class="text-gray-500 dark:text-gray-400 text-sm mt-1">Manage projects, dependencies, and task suggestions</p>
+      <p class="text-gray-500 dark:text-gray-400 text-sm mt-1">Manage projects, tasks, and dependencies</p>
     </div>
     <div>
       <button class="btn-primary" on:click={() => showCreateModal = true}>
@@ -242,7 +173,7 @@
   </div>
 
   <!-- Stats Row -->
-  <div class="grid grid-cols-4 max-md:grid-cols-2 gap-4 mb-6">
+  <div class="grid grid-cols-3 max-md:grid-cols-1 gap-4 mb-6">
     <div class="panel text-center">
       <div class="text-3xl font-bold text-blue-500">{projects.filter(p => p.status === 'active').length}</div>
       <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Active Projects</div>
@@ -254,10 +185,6 @@
     <div class="panel text-center">
       <div class="text-3xl font-bold text-blue-500">{blockedTasks.length}</div>
       <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Blocked Tasks</div>
-    </div>
-    <div class="panel text-center">
-      <div class="text-3xl font-bold text-blue-500">{suggestions.length}</div>
-      <div class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Pending Suggestions</div>
     </div>
   </div>
 
@@ -288,12 +215,6 @@
       on:click={() => activeTab = 'blocked'}
     >
       Blocked ({blockedTasks.length})
-    </button>
-    <button
-      class="px-4 py-3 bg-transparent border-none text-gray-500 dark:text-gray-400 text-sm cursor-pointer border-b-2 border-transparent transition-colors hover:text-blue-500 {activeTab === 'suggestions' ? '!text-blue-500 dark:!text-blue-400 !border-blue-500 dark:!border-blue-400' : ''}"
-      on:click={() => activeTab = 'suggestions'}
-    >
-      Suggestions ({suggestions.length})
     </button>
   </div>
 
@@ -410,54 +331,6 @@
         </div>
       {/if}
 
-    {:else if activeTab === 'suggestions'}
-      <!-- Task Suggestions Tab -->
-      <div class="flex justify-between items-center mb-4">
-        <p class="text-gray-500 dark:text-gray-400 text-sm">Tasks extracted from your reflections and inner dialogues</p>
-        <button class="btn-secondary" on:click={extractSuggestions}>
-          Extract from Reflections
-        </button>
-      </div>
-
-      {#if suggestions.length === 0}
-        <div class="text-center py-12 text-gray-500">
-          <div class="text-5xl mb-4">💡</div>
-          <div class="text-xl font-semibold text-gray-600 dark:text-gray-300 mb-2">No pending suggestions</div>
-          <div class="text-sm">Click "Extract from Reflections" to find actionable tasks</div>
-        </div>
-      {:else}
-        <div class="flex flex-col gap-3">
-          {#each suggestions as suggestion}
-            <div class="panel">
-              <div class="flex justify-between items-start mb-2">
-                <h4 class="font-semibold text-gray-800 dark:text-gray-100">{suggestion.title}</h4>
-                <span class="text-xs font-medium {getConfidenceColor(suggestion.confidence)}">
-                  {Math.round(suggestion.confidence * 100)}% confidence
-                </span>
-              </div>
-              <p class="text-sm text-gray-600 dark:text-gray-300 mb-3">{suggestion.description}</p>
-              <div class="flex gap-2 items-center mb-3">
-                <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium {getPriorityColor(suggestion.priority)}">{suggestion.priority}</span>
-                {#if suggestion.projectSuggestion}
-                  <span class="text-xs text-blue-500">Suggested project: {suggestion.projectSuggestion}</span>
-                {/if}
-              </div>
-              <div class="bg-gray-50 dark:bg-gray-900 rounded-md p-3 mb-3">
-                <span class="text-[0.625rem] uppercase text-gray-500 tracking-wide">From reflection:</span>
-                <p class="text-xs text-gray-600 dark:text-gray-400 italic mt-1">{suggestion.sourceContent.substring(0, 150)}...</p>
-              </div>
-              <div class="flex gap-2">
-                <button class="btn-success" on:click={() => approveSuggestion(suggestion.id)}>
-                  Approve
-                </button>
-                <button class="btn-danger" on:click={() => rejectSuggestion(suggestion.id)}>
-                  Reject
-                </button>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
     {/if}
   </div>
 
@@ -549,9 +422,5 @@
   }
   .animate-spin {
     animation: spin 0.8s linear infinite;
-  }
-  .btn-success {
-    @apply px-4 py-2 rounded-md font-medium text-sm transition-colors;
-    @apply bg-emerald-500 text-white hover:bg-emerald-600;
   }
 </style>

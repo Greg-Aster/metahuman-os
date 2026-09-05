@@ -1,17 +1,16 @@
 # Tasks and Projects
 
-MetaHuman OS keeps tasks and projects in the active profile. The web interface provides project, dependency, and suggestion views; the CLI intentionally exposes only the narrow task operations it implements.
+MetaHuman OS keeps tasks and projects in the active profile. The web interface provides project and dependency views; the CLI intentionally exposes only the narrow task operations it implements.
 
 ## Open Projects
 
-Select **Projects** in the left sidebar. The page shows four tabs:
+Select **Projects** in the left sidebar. The page shows three tabs:
 
 - **Projects** — active project cards, search, progress, priority, and project details.
 - **Actionable** — incomplete tasks whose dependencies do not block them.
 - **Blocked** — tasks with unresolved dependencies.
-- **Suggestions** — candidate tasks extracted from reflections and inner dialogue.
 
-The summary row shows active projects, actionable tasks, blocked tasks, and pending suggestions.
+The summary row shows active projects, actionable tasks, and blocked tasks.
 
 ## Create a Project
 
@@ -23,16 +22,6 @@ The summary row shows active projects, actionable tasks, blocked tasks, and pend
 6. Choose **Create Project**.
 
 Open a project card to inspect its current status, progress, and member tasks. The current project dialog is a status/detail view; it does not expose every underlying task field for editing.
-
-## Work with Suggested Tasks
-
-The Suggestions tab can extract actionable candidates from retained reflections:
-
-1. Choose **Extract from Reflections**.
-2. Review the title, description, proposed priority, source excerpt, confidence, and optional project suggestion.
-3. Choose **Approve** to create the task or **Reject** to dismiss it.
-
-Extraction is a proposal path. No task is created until approval succeeds.
 
 ## CLI Task Operations
 

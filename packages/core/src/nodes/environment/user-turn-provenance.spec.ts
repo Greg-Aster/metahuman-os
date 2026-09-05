@@ -28,6 +28,16 @@ test('a current user instruction owns provenance over an unfinished autonomous R
     instruction: 'What do you see?',
     userInstruction: 'What do you see?',
     inputSource: 'autonomy',
+    routingAnalysis: {
+      needsResponse: true,
+      needsConversationHistory: false,
+      needsMemory: false,
+      needsRobotStatus: true,
+      needsEnvironment: true,
+      needsVision: true,
+      needsAction: false,
+      needsTaskLifecycle: false,
+    },
     robotStatus: {
       task: {
         objective: 'Continue an earlier boredom movement.',
@@ -46,45 +56,25 @@ test('a current user instruction owns provenance over an unfinished autonomous R
   })
 
   const envelope = JSON.parse(String(result.message))
-  const requiredDecisionFields = (result.jsonSchema as any).properties.taskDecision.required
   assert.equal(result.currentInstruction, 'What do you see?')
   assert.equal(result.instructionSource, 'user')
   assert.equal(envelope.inputSource, 'user')
-  assert.equal(requiredDecisionFields.includes('objective'), false)
+  assert.deepEqual((result.jsonSchema as any).properties.taskDecision, { type: 'null' })
 })
 
-test('explicit autonomous provenance requires the Environment LLM to author its objective', async () => {
-  const context = await environmentContextBuilderNode.execute({
-    observation,
-    instruction: 'Choose one contextual consequence.',
-    inputSource: 'autonomy',
-  }, { username: 'owner' }, {
-    systemPrompt: 'Return one Environment decision.',
-    recentHistoryLimit: 4,
-  })
-  const requiredDecisionFields = (context.jsonSchema as any).properties.taskDecision.required
-  assert.equal(context.instructionSource, 'autonomy')
-  assert.equal(requiredDecisionFields.includes('objective'), true)
-
+test('a standalone action may omit task lifecycle state', async () => {
   const parsed = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will request a fresh frame.',
       actions: [{ type: 'captureImage' }],
       movementRequest: null,
-      taskDecision: {
-        outcome: 'act',
-        reason: 'Current visual evidence is needed.',
-        objectiveComplete: false,
-        continuationPolicy: 'bounded',
-        requiredCompletionBasis: 'visual_observation',
-        actionPurpose: 'information_gain',
-      },
+      taskDecision: null,
     }),
     observation,
     sessionId: observation.sessionId,
-    inputSource: 'autonomy',
   }, {}, {})
 
-  assert.deepEqual(parsed.actions, [])
-  assert.match(parsed.taskDecisionError, /objective must be a non-empty string/i)
+  assert.equal(parsed.actions[0]?.type, 'captureImage')
+  assert.equal(parsed.taskDecision, null)
+  assert.equal(parsed.taskDecisionError, '')
 })

@@ -64,6 +64,7 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'boredomReflectionInactivityThreshold',
   'boredomReflectionJitterMs',
   'robotStatusGraph',
+  'robotAutonomyControllerGraph',
   'robotGoalReviewGraph',
   'boredomObserverGraph',
   'boredomMovementGraph',
@@ -410,6 +411,17 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         value: typeof effective.robotStatusGraph === 'string' ? effective.robotStatusGraph : 'robot-status',
         applyMode: 'restart',
         writable: true,
+      },
+      {
+        key: 'robotAutonomyControllerGraph',
+        label: 'Robot Autonomy Controller Graph',
+        type: 'text',
+        value: typeof effective.robotAutonomyControllerGraph === 'string'
+          ? effective.robotAutonomyControllerGraph
+          : 'robot-autonomy-controller',
+        applyMode: 'restart',
+        writable: true,
+        description: 'Finite Full-mode LLM decision graph admitted by Robot Operator after the prior autonomy chain settles.',
       },
       {
         key: 'robotGoalReviewGraph',

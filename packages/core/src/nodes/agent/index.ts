@@ -12,11 +12,6 @@ export { PsychoanalyzerInputNode } from './psychoanalyzer-input.node.js';
 export { PsychoanalyzerAnalysisNode } from './psychoanalyzer-analysis.node.js';
 export { AudioTranscriptInputNode } from './audio-transcript-input.node.js';
 export { AudioMemorySaverNode } from './audio-memory-saver.node.js';
-export { ReflectionInputNode } from './reflection-input.node.js';
-export {
-  TaskSuggestionExtractorNode,
-  parseExtractedTaskSuggestions,
-} from './task-suggestion-extractor.node.js';
 export {
   GoalReviewInputNode,
   GoalReviewInsightsNode,

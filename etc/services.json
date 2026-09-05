@@ -37,13 +37,14 @@
       "boredomReflectionInactivityThreshold": 900,
       "boredomReflectionJitterMs": 180000,
       "robotStatusGraph": "robot-status",
+      "robotAutonomyControllerGraph": "robot-autonomy-controller",
       "robotGoalReviewGraph": "robot-goal-review",
       "boredomObserverGraph": "boredom-observer",
       "boredomMovementGraph": "boredom-movement",
       "boredomReflectionGraph": "boredom-reflection",
       "autonomyGraph": "boredom-autonomy",
       "environmentGraph": "environment",
-      "comment": "Robot-autonomy scheduler and admission owner. Semi mode gives Robot Goal Review its own idle timer. Full mode prioritizes Robot Goal Review while Robot Status records an unfinished objective; otherwise it rotates Robot Status and the three boredom planners after each correlated workflow chain finishes. Every admitted workflow is finite."
+      "comment": "Robot-autonomy scheduler and admission owner. Semi mode keeps the configured independent workflow timers. Full mode admits the Robot Autonomy Controller after each correlated workflow chain finishes; its LLM selects one contextually relevant catalog-backed finite task, delegates one embodied intention, or optionally speaks. Full mode does not rotate workflows. Every admitted workflow is finite."
     },
     "maintenance-service": {
       "id": "maintenance-service",

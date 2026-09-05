@@ -6,7 +6,6 @@ import {
   PersonaFacetConfigurationError,
   resolvePersonaFacetPath,
 } from './persona-facets.js';
-import { safeWriteJSON } from './safe-file.js';
 
 const LOG_PREFIX = '[identity]';
 
@@ -269,12 +268,45 @@ function ensurePersonaFile(filename: string, defaultGenerator: () => PersonaCore
   return userFilePath;
 }
 
-export function loadPersonaCore(): PersonaCore {
+function createInitialPersonaCore(): PersonaCore {
+  const systemPersonaDir = path.join(ROOT, 'persona');
+  const candidates = [
+    path.join(systemPersonaDir, 'core.json.template'),
+    path.join(systemPersonaDir, 'core.json'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return JSON.parse(fs.readFileSync(candidate, 'utf8')) as PersonaCore;
+  }
+  return getDefaultPersonaCore();
+}
 
+export function loadPersonaCore(username?: string): PersonaCore {
   try {
-    const filePath = ensurePersonaFile('core.json', getDefaultPersonaCore);
-    const content = fs.readFileSync(filePath, 'utf8');
-    return JSON.parse(content);
+    const request = {
+      username,
+      category: 'config' as const,
+      subcategory: 'persona',
+      relativePath: 'core.json',
+    };
+    const read = storageClient.readSync({ ...request, encoding: 'utf8' });
+    if (read.success) {
+      const content = typeof read.data === 'string' ? read.data : read.data?.toString('utf8');
+      if (!content) throw new Error('Persona core is empty');
+      return JSON.parse(content) as PersonaCore;
+    }
+    if (!read.error?.startsWith('File not found:')) {
+      throw new Error(read.error || 'Unknown storage error');
+    }
+
+    const initial = createInitialPersonaCore();
+    const write = storageClient.writeSync({
+      ...request,
+      data: JSON.stringify(initial, null, 2),
+      encoding: 'utf8',
+    });
+    if (!write.success) throw new Error(write.error || 'Unknown storage error');
+    console.log(`${LOG_PREFIX} ✓ Created core.json for user profile`);
+    return initial;
   } catch (error) {
     console.error(`${LOG_PREFIX} Error loading persona core:`, error);
     throw new Error(`Failed to load persona core: ${(error as Error).message}`);
@@ -360,38 +392,146 @@ export function loadDecisionRules(): DecisionRules {
   }
 }
 
-export function savePersonaCore(persona: PersonaCore, updatedAt = new Date()): void {
+export function savePersonaCore(persona: PersonaCore, updatedAt = new Date(), username?: string): void {
   try {
-    const result = storageClient.resolvePath({
+    persona.lastUpdated = updatedAt.toISOString();
+    const result = storageClient.writeSync({
+      username,
       category: 'config',
       subcategory: 'persona',
       relativePath: 'core.json',
+      data: JSON.stringify(persona, null, 2),
+      encoding: 'utf8',
     });
-    if (!result.success || !result.path) {
-      throw new Error('Cannot resolve persona core path');
-    }
-    persona.lastUpdated = updatedAt.toISOString();
-    safeWriteJSON(result.path, persona);
+    if (!result.success) throw new Error(result.error || 'Unknown storage error');
   } catch (error) {
     console.error(`${LOG_PREFIX} Error saving persona core:`, error);
     throw new Error(`Failed to save persona core: ${(error as Error).message}`);
   }
 }
 
-export function archivePersonaCore(persona: PersonaCore, archivedAt = new Date()): string {
-  const result = storageClient.resolvePath({
+export function archivePersonaCore(persona: PersonaCore, archivedAt = new Date(), username?: string): string {
+  const timestamp = archivedAt.toISOString().replace(/[:.]/g, '-');
+  const filename = `core-${timestamp}.json`;
+  const result = storageClient.writeSync({
+    username,
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: `archives/${filename}`,
+    data: JSON.stringify(persona, null, 2),
+    encoding: 'utf8',
+  });
+  if (!result.success) throw new Error(result.error || 'Cannot persist persona archive');
+  return filename;
+}
+
+export interface PersonaArchiveInfo {
+  filename: string;
+  timestamp: string;
+  createdAt: string;
+  version: string;
+  lastUpdated: string | null;
+  identity: { name: string; role: string };
+  size: number;
+}
+
+function requirePersonaArchiveFilename(filename: string): string {
+  const current = /^core-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.json$/;
+  const legacyPreRestore = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-pre-restore\.json$/;
+  if (!current.test(filename) && !legacyPreRestore.test(filename)) {
+    throw new Error('Invalid persona archive filename');
+  }
+  return filename;
+}
+
+function archiveCreatedAt(filename: string): string {
+  const legacy = filename.match(/^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2})-pre-restore\.json$/);
+  if (legacy) return `${legacy[1]}${legacy[2]}:${legacy[3]}:${legacy[4]}.000Z`;
+  const value = filename.slice('core-'.length, -'.json'.length);
+  const match = value.match(/^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2})-(\d{3}Z)$/);
+  if (!match) throw new Error('Invalid persona archive timestamp');
+  return `${match[1]}${match[2]}:${match[3]}:${match[4]}.${match[5]}`;
+}
+
+export function readPersonaCoreArchive(filename: string, username?: string): PersonaCore {
+  const logicalFilename = requirePersonaArchiveFilename(filename);
+  const read = storageClient.readSync({
+    username,
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: `archives/${logicalFilename}`,
+    encoding: 'utf8',
+  });
+  if (!read.success) throw new Error(read.error || 'Cannot read persona archive');
+  const content = typeof read.data === 'string' ? read.data : read.data?.toString('utf8');
+  if (!content) throw new Error(`Persona archive is empty: ${logicalFilename}`);
+  return JSON.parse(content) as PersonaCore;
+}
+
+export async function listPersonaCoreArchives(username?: string): Promise<PersonaArchiveInfo[]> {
+  const listed = await storageClient.list({
+    username,
     category: 'config',
     subcategory: 'persona',
     relativePath: 'archives',
   });
-  if (!result.success || !result.path) {
-    throw new Error('Cannot resolve persona archive path');
-  }
+  if (!listed.success) throw new Error(listed.error || 'Cannot list persona archives');
+  const filenames = [...new Set((listed.files ?? [])
+    .map(filename => filename.endsWith('.enc') ? filename.slice(0, -'.enc'.length) : filename)
+    .filter(filename => {
+      try {
+        requirePersonaArchiveFilename(filename);
+        return true;
+      } catch {
+        return false;
+      }
+    }))]
+    .sort()
+    .reverse();
 
-  const timestamp = archivedAt.toISOString().replace(/[:.]/g, '-');
-  const filename = `core-${timestamp}.json`;
-  safeWriteJSON(path.join(result.path, filename), persona);
-  return filename;
+  return filenames.map(filename => {
+    const persona = readPersonaCoreArchive(filename, username);
+    const serialized = JSON.stringify(persona, null, 2);
+    const createdAt = archiveCreatedAt(filename);
+    return {
+      filename,
+      timestamp: filename.slice(0, -'.json'.length),
+      createdAt,
+      version: persona.version || 'unknown',
+      lastUpdated: typeof persona.lastUpdated === 'string' ? persona.lastUpdated : null,
+      identity: {
+        name: persona.identity?.name || 'Unknown',
+        role: persona.identity?.role || 'Unknown',
+      },
+      size: Buffer.byteLength(serialized),
+    };
+  });
+}
+
+export async function deletePersonaCoreArchive(filename: string, username?: string): Promise<void> {
+  const logicalFilename = requirePersonaArchiveFilename(filename);
+  readPersonaCoreArchive(logicalFilename, username);
+  const deleted = await storageClient.delete({
+    username,
+    category: 'config',
+    subcategory: 'persona',
+    relativePath: `archives/${logicalFilename}`,
+  });
+  if (!deleted.success) throw new Error(deleted.error || 'Cannot delete persona archive');
+}
+
+export function restorePersonaCoreArchive(filename: string, username?: string): string {
+  const logicalFilename = requirePersonaArchiveFilename(filename);
+  const archivedPersona = readPersonaCoreArchive(logicalFilename, username);
+  const restoredAt = new Date();
+  const backupFile = archivePersonaCore(loadPersonaCore(username), restoredAt, username);
+  const restored = structuredClone(archivedPersona);
+  const note = `[${restoredAt.toISOString()}] Restored from archive: ${logicalFilename}`;
+  restored.notes = typeof restored.notes === 'string' && restored.notes.trim()
+    ? `${restored.notes.trim()}\n\n${note}`
+    : note;
+  savePersonaCore(restored, restoredAt, username);
+  return backupFile;
 }
 
 export function saveDecisionRules(rules: DecisionRules): void {

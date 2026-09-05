@@ -10,9 +10,10 @@ import path from 'node:path';
 import { audit } from '../audit.js';
 import {
   getPersonaSessionStoragePaths,
-  isCompletedPersonaSession,
+  listSessions,
+  loadSession,
+  removeSessionRecord,
   resolvePersonaInterviewsPath,
-  type SessionIndex,
   type SessionStatus,
 } from './session-manager.js';
 
@@ -59,29 +60,16 @@ export async function cleanupSessions(
     // Use the same storage category and layout as Session Manager.
     const interviewsDir = resolvePersonaInterviewsPath(username);
 
-    if (!fs.existsSync(interviewsDir)) {
-      console.log(`[cleanup] No interviews directory found for user: ${username}`);
-      return result;
-    }
-
-    // Load index
-    const indexPath = path.join(interviewsDir, 'index.json');
-    if (!fs.existsSync(indexPath)) {
-      console.log('[cleanup] No index.json found');
-      return result;
-    }
-
-    const index = JSON.parse(fs.readFileSync(indexPath, 'utf-8')) as SessionIndex;
+    const sessions = await listSessions(username);
     const now = Date.now();
     const maxAgeMs = options.maxAgeInDays * 24 * 60 * 60 * 1000;
 
     // Iterate through sessions
-    for (const sessionMeta of index.sessions) {
+    for (const sessionMeta of sessions) {
       const sessionPaths = getPersonaSessionStoragePaths(interviewsDir, sessionMeta.sessionId);
-      const sessionPath = sessionPaths.session;
       const artifactsPath = sessionPaths.artifacts;
 
-      if (!fs.existsSync(sessionPath)) {
+      if (!await loadSession(username, sessionMeta.sessionId)) {
         result.sessions.push({
           sessionId: sessionMeta.sessionId,
           status: sessionMeta.status,
@@ -137,10 +125,10 @@ export async function cleanupSessions(
           // Create archive directory
           const archivePath = path.join(interviewsDir, '_archive', sessionMeta.sessionId);
           fs.mkdirSync(archivePath, { recursive: true });
-          fs.renameSync(sessionPath, path.join(archivePath, 'session.json'));
           if (fs.existsSync(artifactsPath)) {
             fs.renameSync(artifactsPath, path.join(archivePath, 'artifacts'));
           }
+          await removeSessionRecord(username, sessionMeta.sessionId, true);
 
           result.sessions.push({
             sessionId: sessionMeta.sessionId,
@@ -150,10 +138,10 @@ export async function cleanupSessions(
           });
           result.archived++;
         } else {
-          fs.rmSync(sessionPath, { force: true });
           if (fs.existsSync(artifactsPath)) {
             fs.rmSync(artifactsPath, { recursive: true, force: true });
           }
+          await removeSessionRecord(username, sessionMeta.sessionId, false);
 
           result.sessions.push({
             sessionId: sessionMeta.sessionId,
@@ -172,24 +160,6 @@ export async function cleanupSessions(
           reason: (error as Error).message,
         });
         result.errors++;
-      }
-    }
-
-    // Update index to remove cleaned sessions (if not dry run)
-    if (!options.dryRun) {
-      const cleanedSessionIds = result.sessions
-        .filter((s) => s.action === 'cleaned' || s.action === 'archived')
-        .map((s) => s.sessionId);
-
-      if (cleanedSessionIds.length > 0) {
-        index.sessions = index.sessions.filter((session) => !cleanedSessionIds.includes(session.sessionId));
-        index.totalSessions = index.sessions.length;
-        index.completedCount = index.sessions.filter((session) =>
-          isCompletedPersonaSession(session.status)
-        ).length;
-        index.latestSessionId = index.sessions[0]?.sessionId || null;
-
-        fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
       }
     }
 

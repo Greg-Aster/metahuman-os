@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { audit } from '../audit.js'
 import { getOperatorMode } from '../active-operator/mode-controller.js'
 import { withUserContext } from '../context.js'
+import { canWriteMemory } from '../cognitive-mode.js'
 import {
   getEnvironmentActionSubscriberCount,
   summarizeEnvironmentBridgeState,
@@ -28,6 +29,12 @@ function requestedSessionId(task: QueuedTask, configuredSessionId?: string): str
 }
 
 function stimulusAgent(task: QueuedTask): RobotOperatorStimulusAgent {
+  if (
+    task.handler === 'workflow.robot-autonomy-controller'
+    || task.input.agentId === 'robot-autonomy-controller'
+  ) {
+    return 'robot-autonomy-controller'
+  }
   if (task.handler === 'workflow.robot-status' || task.input.agentId === 'robot-status') {
     return 'robot-status'
   }
@@ -82,6 +89,67 @@ async function executeRobotStatusGraph(
   return { graphExecuted: true, graph: graphName, persisted: true, agentId: 'robot-status' }
 }
 
+async function executeRobotAutonomyControllerGraph(
+  task: QueuedTask,
+  graphName: string,
+  autonomyGraph: string,
+  sessionId: string | undefined,
+  signal: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const [{ loadGraphForMode }, { listFailedNodes, runGraph }] = await Promise.all([
+    import('../graph-streaming.js'),
+    import('../graph-runtime.js'),
+  ])
+  const user = getUserByUsername(task.username)
+  if (!user) throw new Error(`Robot Autonomy Controller user not found: ${task.username}`)
+  const loaded = await loadGraphForMode(graphName, user.username)
+  if (!loaded) throw new Error(`Robot Autonomy Controller graph not found: ${graphName}`)
+  const cycleId = typeof task.input.cycleId === 'string' && task.input.cycleId.trim()
+    ? task.input.cycleId.trim()
+    : randomUUID()
+  const robotObserver: RobotObserverCycleMetadata = {
+    cycleId,
+    step: 1,
+    triggerSource: 'autonomy',
+    graph: graphName,
+    requestedBy: 'robot-autonomy-controller',
+  }
+  const graphState = await withUserContext(
+    { userId: user.id, username: user.username, role: user.role },
+    () => runGraph({
+      graph: loaded.graph,
+      signal,
+      context: {
+        userId: user.id,
+        username: user.username,
+        cognitiveMode: 'environment',
+        mode: 'system',
+        dialogueType: 'system',
+        allowMemoryWrites: canWriteMemory('environment'),
+        environment: 'server',
+        robotOperatorContext: {
+          robotObserver,
+          stimulusAgent: 'robot-autonomy-controller',
+          currentVisualEvidence: false,
+          ...(sessionId ? { sessionId } : {}),
+        },
+        robotOperatorEnvironmentGraph: autonomyGraph,
+        abortSignal: signal,
+      },
+    }),
+  )
+  const failures = listFailedNodes(graphState)
+  if (graphState.status !== 'completed' || failures.length > 0) {
+    throw new Error(`Robot Autonomy Controller graph failed: ${failures[0]?.error ?? graphState.status}`)
+  }
+  return {
+    graphExecuted: true,
+    graph: graphName,
+    agentId: 'robot-autonomy-controller',
+    cycle: robotObserver,
+  }
+}
+
 function anotherRobotAutonomyCycleIsActive(currentTaskId: string): boolean {
   return hasActiveRobotAutonomyCycle(getQueueManager().getAllTasks(), currentTaskId)
 }
@@ -104,6 +172,23 @@ export async function executeRobotAutonomyTriggerWork(
   }
 
   const config = loadRobotOperatorConfig()
+  if (agentId === 'robot-autonomy-controller') {
+    const result = await executeRobotAutonomyControllerGraph(
+      task,
+      robotOperatorChildGraph(config, agentId),
+      config.autonomyGraph,
+      requestedSessionId(task, config.sessionId),
+      context.signal,
+    )
+    audit({
+      level: 'info',
+      category: 'action',
+      event: 'robot_autonomy_controller_completed',
+      actor: agentId,
+      details: { taskId: task.id, mode, graph: robotOperatorChildGraph(config, agentId) },
+    })
+    return result
+  }
   if (agentId === 'robot-status') {
     const result = await executeRobotStatusGraph(task, robotOperatorChildGraph(config, agentId), context.signal)
     audit({

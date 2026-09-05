@@ -9,8 +9,6 @@
  * - Can execute tools (search files, run commands, query system state)
  * - Uses Claude Code for intelligent reasoning
  *
- * Falls back to local LLM if Big Brother is unavailable.
- *
  * Inputs:
  *   - cardType: Type of card for context
  *   - cardContext: Formatted context from context loader
@@ -59,7 +57,7 @@ At the end, output a JSON block with your decision:
 }
 \`\`\``,
 
-  clarifying_question: `## CRITICAL: User is Answering Clarifying Questions (NOT requesting help)
+  clarifying_questions: `## CRITICAL: User is Answering Clarifying Questions (NOT requesting help)
 
 The user has been asked clarifying questions about their desire/goal, and they are now PROVIDING ANSWERS to those questions.
 
@@ -114,53 +112,6 @@ At the end, output a JSON block:
 }
 \`\`\``,
 
-  desire_awaiting_input: `## Task: Respond to User Interaction with Desire Status
-
-The user is responding to a desire that's waiting for their input.
-This could be a desire in questioning, planning, or approval status.
-
-Your responsibilities:
-1. Acknowledge their message and understand what they want
-2. Check the current state of the desire using your tools if needed
-3. Provide helpful information or take appropriate action
-4. If they're asking about progress, system state, or files - USE YOUR TOOLS to get accurate information
-
-You have full access to tools - search files, check status, verify information.
-
-At the end, output a JSON block:
-\`\`\`json
-{
-  "suggestedAction": "provide_info" | "advance_desire" | "request_clarification" | "take_action",
-  "actionData": {
-    "desireStatus": "current status or next status",
-    "actionTaken": "description of what you did",
-    "needsFollowUp": true/false
-  }
-}
-\`\`\``,
-
-  agency_notification: `## Task: Respond to User Interaction with System Notification
-
-The user is responding to a system notification (agency message, status update, etc.).
-
-Your responsibilities:
-1. Acknowledge their response
-2. Take appropriate action based on their input
-3. Use your tools if they ask about system state, files, or tasks
-
-Keep the interaction focused and efficient.
-
-At the end, output a JSON block:
-\`\`\`json
-{
-  "suggestedAction": "acknowledge" | "create_task" | "dismiss" | "escalate",
-  "actionData": {
-    "notificationHandled": true/false,
-    "taskToCreate": "string if applicable"
-  }
-}
-\`\`\``,
-
   curiosity_response: `## Task: Respond to User's Answer to Curiosity Question
 
 The user is answering a curiosity question that you asked them.
@@ -176,113 +127,14 @@ Be warm and curious - this is about building connection and understanding.
 At the end, output a JSON block:
 \`\`\`json
 {
-  "suggestedAction": "engage" | "follow_up" | "save_memory" | "thank_and_close",
+  "suggestedAction": "resolve_answer",
   "actionData": {
     "topicExplored": "what the conversation was about",
-    "shouldSaveMemory": true/false,
     "followUpQuestion": "optional follow-up"
   }
 }
 \`\`\``,
 
-  selected_card: `## Task: Respond to User Interaction with Selected Message
-
-The user has selected a message/card in the chat and is responding to it directly.
-
-Your responsibilities:
-1. Read and understand the context of the selected card
-2. Process their message in that specific context
-3. Provide a helpful, relevant response
-4. Use your tools if they ask about files, system state, or need verification
-
-You have full access to tools - search files, check status, verify information.
-
-At the end, output a JSON block:
-\`\`\`json
-{
-  "suggestedAction": "respond" | "clarify" | "take_action" | "search",
-  "actionData": {
-    "contextUnderstood": true/false,
-    "actionTaken": "description if applicable"
-  }
-}
-\`\`\``,
-
-  assistant_message: `## Task: Respond to User Reply to Your Previous Message
-
-The user has selected one of your previous messages and is responding to it.
-
-Your responsibilities:
-1. Understand what specific part of your message they're responding to
-2. Continue the conversation naturally from that point
-3. Use your tools if they ask questions that need verification
-
-At the end, output a JSON block:
-\`\`\`json
-{
-  "suggestedAction": "continue" | "clarify" | "correct" | "expand",
-  "actionData": {
-    "topicContinued": "the topic being discussed"
-  }
-}
-\`\`\``,
-
-  reflection_card: `## Task: Respond to User Interaction with Reflection
-
-The user is responding to one of your reflections or inner thoughts.
-
-Your responsibilities:
-1. Acknowledge that they're engaging with your inner dialogue
-2. Expand on your thinking if they're curious
-3. Be authentic about your thought processes
-
-At the end, output a JSON block:
-\`\`\`json
-{
-  "suggestedAction": "expand" | "acknowledge" | "discuss",
-  "actionData": {
-    "reflectionTopic": "what the reflection was about"
-  }
-}
-\`\`\``,
-
-  dream_card: `## Task: Respond to User Interaction with Dream
-
-The user is responding to one of your dreams or daydreams.
-
-Your responsibilities:
-1. Engage with their curiosity about your dream
-2. Explore the imagery or themes if they're interested
-3. Be playful and imaginative
-
-At the end, output a JSON block:
-\`\`\`json
-{
-  "suggestedAction": "explore" | "interpret" | "acknowledge",
-  "actionData": {
-    "dreamElement": "the element they're asking about"
-  }
-}
-\`\`\``,
-
-  default: `## Task: Respond to Card-Based Interaction
-
-The user is interacting with a card in the chat interface.
-
-Your responsibilities:
-1. Process their message in the context of the selected card
-2. Provide a helpful, focused response
-3. Use your tools if they ask about files, system state, or need verification
-
-You have full access to tools - use them to provide accurate, helpful responses.
-
-At the end, output a JSON block:
-\`\`\`json
-{
-  "suggestedAction": "acknowledge" | "request_clarification" | "take_action",
-  "actionData": {}
-}
-\`\`\``,
 };
 
 const DEFAULT_BIG_BROTHER_PROMPT_TEMPLATE = `{{instructions}}
@@ -304,13 +156,14 @@ const DEFAULT_LOCAL_SYSTEM_PROMPT_TEMPLATE = `You are a helpful assistant respon
 
 Card Type: {{cardType}}
 {{desireLine}}
+{{instructions}}
 
 Respond helpfully to the user's message. Be conversational but focused.
 
-Output JSON with:
+Return only valid JSON with:
 {
   "response": "Your conversational response to the user",
-  "suggestedAction": "acknowledge" | "request_clarification" | "take_action",
+  "suggestedAction": "One of the actions allowed by the card instructions",
   "actionData": {}
 }`;
 
@@ -338,7 +191,8 @@ function buildBigBrotherPrompt(
   properties?: Record<string, any>
 ): string {
   const cardTypeInstructions = properties?.cardTypeInstructions || CARD_TYPE_INSTRUCTIONS;
-  const instructions = cardTypeInstructions[cardType] || cardTypeInstructions.default || CARD_TYPE_INSTRUCTIONS.default;
+  const instructions = cardTypeInstructions[cardType];
+  if (!instructions) throw new Error(`Response LLM has no instructions for card type ${cardType}`);
 
   let desireContext = '';
   if (desire) {
@@ -372,93 +226,84 @@ ${desire.clarifyingQuestions.questions.map((q, i) => `  ${i + 1}. ${q.text}${q.r
   );
 }
 
-/**
- * Parse Big Brother response to extract text response and JSON action
- */
-function parseBigBrotherResponse(rawResponse: string): ResponseLLMOutput {
-  console.log(`${LOG_PREFIX} ========== PARSING BIG BROTHER RESPONSE ==========`);
-  console.log(`${LOG_PREFIX} Raw response length: ${rawResponse.length} chars`);
-  console.log(`${LOG_PREFIX} First 500 chars:\n${rawResponse.substring(0, 500)}`);
-  console.log(`${LOG_PREFIX} Last 500 chars:\n${rawResponse.substring(Math.max(0, rawResponse.length - 500))}`);
-
-  // Try to find JSON block at the end
-  const jsonMatch = rawResponse.match(/```json\s*\n?([\s\S]*?)\n?```\s*$/);
-
-  if (jsonMatch) {
-    console.log(`${LOG_PREFIX} ✅ Found JSON code block at end`);
-    console.log(`${LOG_PREFIX} JSON block content:\n${jsonMatch[1]}`);
-    try {
-      const actionData = JSON.parse(jsonMatch[1]);
-      // Response is everything before the JSON block
-      const response = rawResponse.substring(0, rawResponse.lastIndexOf('```json')).trim();
-
-      console.log(`${LOG_PREFIX} ✅ Parsed JSON successfully`);
-      console.log(`${LOG_PREFIX} Response text length: ${response.length} chars`);
-      console.log(`${LOG_PREFIX} Suggested action: ${actionData.suggestedAction}`);
-
-      return {
-        response: response || rawResponse,
-        suggestedAction: actionData.suggestedAction || 'acknowledge',
-        actionData: actionData.actionData || actionData,
-      };
-    } catch (e) {
-      console.error(`${LOG_PREFIX} ❌ Failed to parse JSON action block:`, e);
-      console.error(`${LOG_PREFIX} JSON content was:\n${jsonMatch[1]}`);
-    }
-  } else {
-    console.log(`${LOG_PREFIX} ⚠️  No JSON code block found at end of response`);
+function requireResponseOutput(value: unknown, responseText: string): ResponseLLMOutput {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Response LLM action output must be an object');
   }
-
-  // Try to find bare JSON at the end (without code fence)
-  const bareJsonMatch = rawResponse.match(/\{[\s\S]*"suggestedAction"[\s\S]*\}\s*$/);
-  if (bareJsonMatch) {
-    console.log(`${LOG_PREFIX} ✅ Found bare JSON at end`);
-    try {
-      const actionData = JSON.parse(bareJsonMatch[0]);
-      const response = rawResponse.substring(0, rawResponse.lastIndexOf(bareJsonMatch[0])).trim();
-
-      console.log(`${LOG_PREFIX} ✅ Parsed bare JSON successfully`);
-      console.log(`${LOG_PREFIX} Response text length: ${response.length} chars`);
-
-      return {
-        response: response || rawResponse,
-        suggestedAction: actionData.suggestedAction || 'acknowledge',
-        actionData: actionData.actionData || actionData,
-      };
-    } catch (e) {
-      console.error(`${LOG_PREFIX} ❌ Failed to parse bare JSON:`, e);
-    }
-  } else {
-    console.log(`${LOG_PREFIX} ⚠️  No bare JSON with suggestedAction found`);
+  const record = value as Record<string, unknown>;
+  const response = typeof record.response === 'string' && record.response.trim()
+    ? record.response.trim()
+    : responseText.trim();
+  const suggestedAction = typeof record.suggestedAction === 'string'
+    ? record.suggestedAction.trim()
+    : '';
+  const actionData = record.actionData;
+  if (!response) throw new Error('Response LLM produced no conversational response');
+  if (!suggestedAction) throw new Error('Response LLM produced no suggestedAction');
+  if (!actionData || typeof actionData !== 'object' || Array.isArray(actionData)) {
+    throw new Error('Response LLM produced invalid actionData');
   }
-
-  // Fallback: return raw response with default action
-  console.log(`${LOG_PREFIX} ⚠️  FALLBACK: Using raw response as-is`);
-  console.log(`${LOG_PREFIX} Returning ${rawResponse.length} chars with 'acknowledge' action`);
-  return {
-    response: rawResponse,
-    suggestedAction: 'acknowledge',
-    actionData: {},
-  };
+  return { response, suggestedAction, actionData: actionData as Record<string, unknown> };
 }
 
-/**
- * Fallback to local LLM when Big Brother is unavailable
- */
-async function fallbackToLocalLLM(
+/** Parse a visible Big Brother response plus its required terminal action block. */
+export function parseBigBrotherResponse(rawResponse: string): ResponseLLMOutput {
+  const jsonMatch = rawResponse.match(/```json\s*\n?([\s\S]*?)\n?```\s*$/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[1]);
+      const response = rawResponse.substring(0, rawResponse.lastIndexOf('```json')).trim();
+      return requireResponseOutput(parsed, response);
+    } catch (error) {
+      throw new Error(`Response LLM returned an invalid JSON action block: ${(error as Error).message}`);
+    }
+  }
+
+  const bareJsonMatch = rawResponse.match(/\{[\s\S]*"suggestedAction"[\s\S]*\}\s*$/);
+  if (bareJsonMatch) {
+    try {
+      const parsed = JSON.parse(bareJsonMatch[0]);
+      const response = rawResponse.substring(0, rawResponse.lastIndexOf(bareJsonMatch[0])).trim();
+      return requireResponseOutput(parsed, response);
+    } catch (error) {
+      throw new Error(`Response LLM returned invalid JSON: ${(error as Error).message}`);
+    }
+  }
+
+  throw new Error('Response LLM output is missing its required JSON action block');
+}
+
+export function parseLocalResponse(rawResponse: string): ResponseLLMOutput {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawResponse);
+  } catch (error) {
+    throw new Error(`Local Response LLM returned invalid JSON: ${(error as Error).message}`);
+  }
+  return requireResponseOutput(parsed, '');
+}
+
+async function callLocalLLM(
   cardType: string,
   cardContext: string,
   message: string,
   desire?: Desire,
-  properties?: Record<string, any>
+  properties?: Record<string, any>,
+  signal?: AbortSignal,
 ): Promise<ResponseLLMOutput> {
-  console.log(`${LOG_PREFIX} Falling back to local LLM`);
+  console.log(`${LOG_PREFIX} Using configured local LLM route`);
+  if (signal?.aborted) throw new DOMException('Response LLM cancelled', 'AbortError');
+
+  const cardTypeInstructions = properties?.cardTypeInstructions || CARD_TYPE_INSTRUCTIONS;
+  const instructions = cardTypeInstructions[cardType];
+  if (!instructions) throw new Error(`Response LLM has no instructions for card type ${cardType}`);
 
   const systemPrompt = renderPromptTemplate(
     properties?.localSystemPromptTemplate ?? DEFAULT_LOCAL_SYSTEM_PROMPT_TEMPLATE,
     {
       cardType,
       desireLine: desire ? `Desire: ${desire.title} (${desire.status})` : '',
+      instructions,
       desire: desire || null,
     },
   );
@@ -486,22 +331,9 @@ async function fallbackToLocalLLM(
     },
   });
 
-  try {
-    const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-    const parsed = JSON.parse(content);
-    return {
-      response: parsed.response || content,
-      suggestedAction: parsed.suggestedAction || 'acknowledge',
-      actionData: parsed.actionData || {},
-    };
-  } catch {
-    const content = typeof result.content === 'string' ? result.content : String(result.content);
-    return {
-      response: content,
-      suggestedAction: 'acknowledge',
-      actionData: {},
-    };
-  }
+  const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+  if (signal?.aborted) throw new DOMException('Response LLM cancelled', 'AbortError');
+  return parseLocalResponse(content);
 }
 
 export const ResponseLLMNode: NodeDefinition = defineNode({
@@ -580,34 +412,29 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
       type: 'text_multiline',
       default: DEFAULT_LOCAL_SYSTEM_PROMPT_TEMPLATE,
       label: 'Local System Prompt Template',
-      description: 'Fallback local LLM system prompt template',
+      description: 'Configured local LLM system prompt template',
     },
     localUserPromptTemplate: {
       type: 'text_multiline',
       default: DEFAULT_LOCAL_USER_PROMPT_TEMPLATE,
       label: 'Local User Prompt Template',
-      description: 'Fallback local LLM user prompt template',
+      description: 'Configured local LLM user prompt template',
     },
   },
-  description: 'Generates focused response using Big Brother for tool execution. Falls back to local LLM if unavailable.',
+  description: 'Generates a strict card response through the configured Big Brother or local LLM route.',
 
   execute: async (inputs, context, properties) => {
-    const slot0 = inputs[0] as {
-      cardType?: string;
-      cardContext?: string;
-      message?: string;
-      desire?: Desire;
-    } | undefined;
-
-    const structuredInput = slot0 && typeof slot0 === 'object' && 'cardType' in slot0
-      ? slot0
-      : undefined;
-
-    const cardType = structuredInput?.cardType || (inputs[0] as string | undefined) || context.cardType || 'default';
-    const cardContext = structuredInput?.cardContext || (inputs[1] as string | undefined) || '';
-    const message = structuredInput?.message || (inputs[2] as string | undefined) || context.userMessage || '';
-    const desire = structuredInput?.desire || (inputs[3] as Desire | undefined);
+    const cardType = typeof inputs.cardType === 'string' ? inputs.cardType : '';
+    const cardContext = typeof inputs.cardContext === 'string' ? inputs.cardContext : '';
+    const message = typeof inputs.message === 'string' ? inputs.message : '';
+    const desire = inputs.desire as Desire | undefined;
     const username = context.userId || context.username;
+    const signal = (context.abortSignal ?? context.signal) as AbortSignal | undefined;
+
+    if (!username || username === 'anonymous') throw new Error('Response LLM requires an authenticated user');
+    if (!cardContext.trim()) throw new Error('Response LLM requires card context');
+    if (!message.trim()) throw new Error('Response LLM requires a user message');
+    if (signal?.aborted) throw new DOMException('Response LLM cancelled', 'AbortError');
 
     console.log(`${LOG_PREFIX} ========== PROCESSING RESPONSE ==========`);
     console.log(`${LOG_PREFIX} Card type: ${cardType}`);
@@ -627,59 +454,37 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
     console.log(`${LOG_PREFIX} Big Brother config: enabled=${bigBrotherEnabled}, property=${useBigBrotherProp}`);
     console.log(`${LOG_PREFIX} Decision: ${bigBrotherEnabled && useBigBrotherProp ? '→ Using Big Brother' : '→ Using local LLM'}`);
 
-    // Attempt Big Brother route if enabled
+    // Use the explicitly configured Big Brother route when enabled.
     if (bigBrotherEnabled && useBigBrotherProp) {
       console.log(`${LOG_PREFIX} 🤖 Routing to Big Brother for tool execution and terminal visibility`);
 
-      try {
-        const prompt = buildBigBrotherPrompt(cardType, cardContext, message, desire, properties);
+      const prompt = buildBigBrotherPrompt(cardType, cardContext, message, desire, properties);
+      const { escalate } = await import('../../escalation-backend.js');
+      console.log(`${LOG_PREFIX} Sending prompt to Big Brother backend (${preferredBackend || 'default'})`);
+      const result = await escalate(prompt, {
+        timeout: properties?.bigBrotherTimeoutMs ?? 300000,
+        username,
+        preferredBackend,
+        sessionId: context.sessionId,
+        signal,
+      });
+      if (!result.success) throw new Error(result.error || 'Big Brother execution failed');
+      if (signal?.aborted) throw new DOMException('Response LLM cancelled', 'AbortError');
 
-        const { escalate } = await import('../../escalation-backend.js');
-        console.log(`${LOG_PREFIX} Sending prompt to Big Brother backend (${preferredBackend || 'default'})`);
-
-        const result = await escalate(prompt, {
-          timeout: properties?.bigBrotherTimeoutMs ?? 300000,
-          username,
-          preferredBackend,
-        });
-
-        if (!result.success) {
-          throw new Error(result.error || 'Big Brother execution failed');
-        }
-
-        console.log(`${LOG_PREFIX} Received response from Big Brother backend (${result.output.length} chars)`);
-        const parsed = parseBigBrotherResponse(result.output);
-        console.log(`${LOG_PREFIX} ✅ Big Brother response parsed, action: ${parsed.suggestedAction}`);
-
-        return {
-          response: parsed.response,
-          suggestedAction: parsed.suggestedAction,
-          actionData: parsed.actionData,
-          rawOutput: { bigBrotherResponse: result.output, parsed, backend: preferredBackend },
-          usedBigBrother: true,
-        };
-      } catch (err) {
-        console.error(`${LOG_PREFIX} Big Brother error, falling back to local LLM:`, err);
-        const fallback = await fallbackToLocalLLM(cardType, cardContext, message, desire, properties);
-        return { ...fallback, usedBigBrother: false, fallbackReason: String(err) };
-      }
+      const parsed = parseBigBrotherResponse(result.output);
+      return {
+        response: parsed.response,
+        suggestedAction: parsed.suggestedAction,
+        actionData: parsed.actionData,
+        rawOutput: { backend: preferredBackend },
+        usedBigBrother: true,
+      };
     }
 
     // Big Brother not enabled - use local LLM
     console.log(`${LOG_PREFIX} Big Brother not enabled, using local LLM`);
-    try {
-      const result = await fallbackToLocalLLM(cardType, cardContext, message, desire, properties);
-      return { ...result, usedBigBrother: false };
-    } catch (err) {
-      console.error(`${LOG_PREFIX} LLM call failed:`, err);
-      return {
-        response: 'I apologize, but I encountered an error processing your message. Please try again.',
-        suggestedAction: 'error',
-        actionData: { error: String(err) },
-        rawOutput: null,
-        usedBigBrother: false,
-      };
-    }
+    const result = await callLocalLLM(cardType, cardContext, message, desire, properties, signal);
+    return { ...result, usedBigBrother: false };
   },
 });
 

@@ -15,7 +15,8 @@ import {
   generateDiffText,
   generateNextQuestion,
   getActiveAdapter,
-  getCompletionStatus,
+  evaluatePersonaInterviewCompletion,
+  loadPersonaInterviewConfig,
   getProfilePaths,
   getUserContext,
   listPersonaSessions as listSessions,
@@ -104,6 +105,7 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
       console.log('Starting new persona interview...\n');
       session = await startSession(userId, username);
     }
+    const interviewConfig = await loadPersonaInterviewConfig(username);
 
     // Interactive interview loop
     const rl = readline.createInterface({
@@ -140,7 +142,7 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
 
       if (session.answers.length >= session.questions.length) {
         // All questions answered, check completion
-        const status = getCompletionStatus(session);
+        const status = evaluatePersonaInterviewCompletion(session, interviewConfig);
 
         if (status.isComplete) {
           console.log('\n✓ Interview complete! All categories have sufficient coverage.\n');
@@ -186,7 +188,10 @@ export async function personaGenerate(options: { resume?: boolean } = {}) {
       }
 
       // Record answer
-      await recordAnswer(username, session.sessionId, currentQuestion.id, answer);
+      await recordAnswer(username, session.sessionId, currentQuestion.id, answer, {
+        minLength: interviewConfig.sessionDefaults.minAnswerLength,
+        maxLength: interviewConfig.sessionDefaults.maxAnswerLength,
+      });
       const loadedSession = await loadSession(username, session.sessionId);
       if (!loadedSession) throw new Error('Failed to reload session');
       session = loadedSession;

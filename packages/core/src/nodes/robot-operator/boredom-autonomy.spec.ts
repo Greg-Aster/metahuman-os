@@ -10,6 +10,9 @@ import { ModelRouterNode } from '../llm/model-router.node.js';
 import { robotOperatorContextBuilderNode } from './context-builder.node.js';
 import { robotOperatorDecisionParserNode } from './decision-parser.node.js';
 import { robotOperatorEnvironmentDispatchNode } from './environment-dispatch.node.js';
+import { robotAutonomyTaskDispatchNode } from './task-dispatch.node.js';
+import { robotAutonomyControllerParserNode } from './autonomy-controller-parser.node.js';
+import { robotAutonomyTaskCatalogNode } from './task-catalog.node.js';
 
 const ALL_AUTONOMY_ROUTES = {
   needsResponse: true,
@@ -19,6 +22,7 @@ const ALL_AUTONOMY_ROUTES = {
   needsEnvironment: true,
   needsVision: true,
   needsAction: true,
+  needsTaskLifecycle: true,
 };
 
 function robotObservation() {
@@ -505,7 +509,7 @@ test('Robot Autonomy Executor context carries trigger, semantic memory, delegate
     branch.properties?.taskDecision?.properties?.requiredCompletionBasis?.enum?.[0] === 'response'
   ));
   assert.equal(physicalBranch.properties.taskDecision.required.includes('actionPurpose'), false);
-  assert.equal('minLength' in responseBranch.properties.response, false);
+  assert.equal(responseBranch.properties.response.minLength, 1);
 });
 
 test('Robot Autonomy context admits only the routes selected for an internal intention', async () => {
@@ -521,6 +525,7 @@ test('Robot Autonomy context admits only the routes selected for an internal int
       needsEnvironment: false,
       needsVision: false,
       needsAction: false,
+      needsTaskLifecycle: false,
     },
     observation,
     robotObserver: observation.metadata.robotObserver,
@@ -744,6 +749,171 @@ test('Robot Operator dispatch accepts only a planner decision and preserves corr
   assert.equal(malformed.queued, false);
   assert.equal(malformed.status, 'invalid_decision');
   assert.equal(queued.length, 1);
+});
+
+test('Robot Autonomy Controller selects one catalog-backed task through Work Coordinator', async () => {
+  const availableTasks = [{
+    id: 'boredom-observer',
+    name: 'Boredom Observer',
+    description: 'Acquires and considers current visual evidence.',
+    kind: 'agent',
+    handler: 'workflow.boredom-observer',
+    taskType: 'generic',
+    priority: 'low',
+    tags: ['robot', 'vision'],
+  }];
+  const parsed = await robotAutonomyControllerParserNode.execute({
+    response: JSON.stringify({
+      response: '',
+      taskId: 'boredom-observer',
+      reason: 'The current objective needs new visual evidence.',
+      observationSummary: 'Robot Status records an unresolved visual objective.',
+      instruction: '',
+    }),
+    availableTasks,
+  }, {}, {});
+  assert.deepEqual(parsed.taskDecision, {
+    task: availableTasks[0],
+    reason: 'The current objective needs new visual evidence.',
+    observationSummary: 'Robot Status records an unresolved visual objective.',
+  });
+  assert.equal(parsed.executorDecision, null);
+
+  const queued: any[] = [];
+  const dispatched = await robotAutonomyTaskDispatchNode.execute({
+    decision: parsed.taskDecision,
+    robotObserver: {
+      cycleId: 'controller-cycle',
+      step: 1,
+      triggerSource: 'autonomy',
+      graph: 'robot-autonomy-controller',
+      requestedBy: 'robot-autonomy-controller',
+    },
+    sessionId: 'robot-1',
+  }, {
+    username: 'owner',
+    enqueueRobotAutonomyTask: async (input: unknown) => {
+      queued.push(input);
+      return { id: 'selected-agent-task' };
+    },
+  }, {});
+  assert.equal(dispatched.queued, true);
+  assert.equal(dispatched.selectedTaskId, 'boredom-observer');
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].handler, 'workflow.boredom-observer');
+  assert.equal(queued[0].source, 'autonomy');
+  assert.equal(queued[0].input.robotOperatorContext.robotObserver.cycleId, 'controller-cycle');
+});
+
+test('Robot Autonomy Controller receives contextual daytime tasks from the canonical Agent Catalog', async () => {
+  const catalog = await robotAutonomyTaskCatalogNode.execute({}, {}, {
+    taskIds: [
+      'robot-autonomy-executor',
+      'robot-goal-review',
+      'reflector',
+      'daydreamer',
+      'curiosity',
+      'inner-curiosity',
+      'desire-planner',
+      'desire-executor',
+    ],
+  });
+  assert.deepEqual(catalog.unavailableTaskIds, []);
+  assert.deepEqual(catalog.taskIds, [
+    'robot-autonomy-executor',
+    'robot-goal-review',
+    'reflector',
+    'daydreamer',
+    'curiosity',
+    'inner-curiosity',
+    'desire-planner',
+    'desire-executor',
+  ]);
+  const reflector = catalog.tasks.find((task: any) => task.id === 'reflector');
+  assert.match(reflector?.description ?? '', /reflection/i);
+  assert.equal(reflector?.handler, 'agent.reflector');
+});
+
+test('Robot Autonomy Controller context combines unfinished work, buffers, bridge state, persona, desires, and task meanings', async () => {
+  const tasks = [{
+    id: 'robot-goal-review',
+    name: 'Robot Goal Review',
+    description: 'Reviews whether the current Robot Status objective needs another step.',
+    kind: 'agent',
+    handler: 'workflow.robot-goal-review',
+    taskType: 'generic',
+    priority: 'low',
+    tags: ['robot', 'task'],
+  }];
+  const result = await robotOperatorContextBuilderNode.execute({
+    instruction: 'Choose what I should do next from current context.',
+    bridgeSummary: { enabled: true, sessions: [{ sessionId: 'robot-1', status: 'connected' }] },
+    robotStatus: {
+      task: {
+        objective: 'Find the missing keys.',
+        decision: { objectiveComplete: false, outcome: 'incomplete' },
+      },
+    },
+    conversationHistory: [{ role: 'user', content: 'Please keep looking for my keys.' }],
+    innerHistory: [{ role: 'reflection', content: 'The last view was too dark.' }],
+    actionHistory: [{ actionId: 'turn-1', status: 'completed', verified: true, requested: { type: 'robotCommand', command: 'turn-right' } }],
+    personaText: 'Curious, attentive, and persistent.',
+    activeDesires: [{ id: 'desire-1', title: 'Explore carefully', status: 'active' }],
+    availableTasks: tasks,
+    robotObserver: {
+      cycleId: 'controller-cycle',
+      step: 1,
+      triggerSource: 'autonomy',
+      graph: 'robot-autonomy-controller',
+      requestedBy: 'robot-autonomy-controller',
+    },
+  }, {}, { outputContract: 'autonomy_controller' });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.context.availableTaskCount, 1);
+  assert.equal(result.context.activeDesireCount, 1);
+  assert.equal(result.context.bridgeSummaryIncluded, true);
+  assert.deepEqual(result.jsonSchema.properties.taskId.enum, ['robot-goal-review', 'none']);
+  const encoded = JSON.stringify(result.messages);
+  assert.match(encoded, /Find the missing keys/);
+  assert.match(encoded, /Please keep looking for my keys/);
+  assert.match(encoded, /The last view was too dark/);
+  assert.match(encoded, /Robot Goal Review/);
+  assert.match(encoded, /Curious, attentive, and persistent/);
+  assert.match(encoded, /Explore carefully/);
+});
+
+test('Full autonomy graph visibly loads the decision context and routes one catalog-backed choice', () => {
+  const graph = JSON.parse(fs.readFileSync(
+    path.join(ROOT, 'etc/cognitive-graphs/robot-autonomy-controller-mode.json'),
+    'utf8',
+  ));
+  const nodeTypes = graph.nodes.map((node: any) => node.data?.nodeType);
+  assert.equal(nodeTypes.filter((type: string) => type === 'model_router').length, 1);
+  for (const required of [
+    'environment_bridge_input',
+    'robot_status',
+    'conversation_history',
+    'persona_loader',
+    'active_desires',
+    'robot_autonomy_task_catalog',
+    'robot_operator_context_builder',
+    'robot_autonomy_controller_parser',
+    'robot_autonomy_task_dispatch',
+  ]) {
+    assert.equal(nodeTypes.includes(required), true, `${required} must be visible in the controller graph`);
+  }
+  assert.equal(nodeTypes.filter((type: string) => type === 'conversation_history').length, 3);
+  assert.match(
+    graph.nodes.find((node: any) => node.id === 'policy')?.data?.properties?.message ?? '',
+    /Choose by present relevance and expected usefulness, not by list position, novelty, or rotation/,
+  );
+  assert.ok(graph.edges.some((edge: any) => (
+    edge.source === 'task-catalog'
+    && edge.sourceHandle === 'tasks'
+    && edge.target === 'parser'
+    && edge.targetHandle === 'availableTasks'
+  )));
 });
 
 test('Boredom Reflection delegates sampled memory once through the same planner contract', async () => {

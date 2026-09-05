@@ -143,9 +143,6 @@ function statusTask(
   const instruction = cleanText(inputs.instruction, 4_000)
     || (!userInstruction ? previousTask?.instruction ?? '' : '')
   const objective = cleanText(decision.objective, 1_000)
-    || instruction
-    || previousTask?.objective
-    || ''
   if (!objective) return undefined
   const selected = taskAction(currentAction(inputs))
   const id = actionId(inputs)
@@ -156,14 +153,17 @@ function statusTask(
   const newUserTurn = Boolean(userInstruction)
   const frame = selectedFrame(inputs.frames)
   const previousBaseline = !newUserTurn ? previousTask?.baselineFrame ?? null : null
+  const sameObjective = previousTask?.objective === objective
   return {
     objective,
     instruction: instruction || objective,
-    source: inputs.inputSource === 'autonomy'
-      ? 'autonomy'
-      : newUserTurn
-        ? 'user'
-        : previousTask?.source || 'user',
+    source: sameObjective
+      ? previousTask.source
+      : inputs.inputSource === 'autonomy'
+        ? 'autonomy'
+        : newUserTurn
+          ? 'user'
+          : previousTask?.source || 'user',
     decision: {
       outcome: cleanText(decision.outcome, 80),
       reason: cleanText(decision.reason, 1_000),
@@ -256,12 +256,12 @@ export const robotStatusOutNode = defineNode({
       || ''
     if (!semanticSummary) throw new Error('Robot Status Out requires a model decision, response, feedback, or prior status')
     const previousSituation = previous?.situation
-    const situation = {
+    const nextSituation = {
       situationalSummary: semanticSummary,
       environmentDescription: cleanText(decision?.observationSummary, 1_000)
         || previousSituation?.environmentDescription
         || semanticSummary,
-      currentGoal: task?.decision.objectiveComplete === true
+      currentGoal: task?.decision.objectiveComplete === true || task?.decision.outcome === 'abandon'
         ? ''
         : task?.objective || previousSituation?.currentGoal || '',
       currentIntent: cleanText(decision?.reason, 500)
@@ -270,6 +270,7 @@ export const robotStatusOutNode = defineNode({
       userContext: userInstruction || previousSituation?.userContext || '',
       uncertainties: previousSituation?.uncertainties ?? [],
     }
+    const situation = nextSituation
     const sourceUpdatedAt = previous?.sourceUpdatedAt ?? {
       environment: '',
       telemetry: '',

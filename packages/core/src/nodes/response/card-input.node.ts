@@ -23,7 +23,7 @@ export const CardInputNode: NodeDefinition = defineNode({
   category: 'input',
   inputs: [],
   outputs: [
-    { name: 'cardType', type: 'string', description: 'Type of card (desire_rejection, clarifying_question, etc.)' },
+    { name: 'cardType', type: 'string', description: 'Type of card (desire_rejection, clarifying_questions, etc.)' },
     { name: 'cardData', type: 'object', description: 'Full card metadata' },
     { name: 'message', type: 'string', description: 'User response message' },
     { name: 'responseBufferId', type: 'string', optional: true, description: 'Existing buffer ID for multi-turn' },
@@ -37,11 +37,21 @@ export const CardInputNode: NodeDefinition = defineNode({
 
   execute: async (_inputs, context) => {
     // Extract card data from context
-    const cardType = context.cardType || 'unknown';
-    const cardData = context.cardData || {};
-    const message = context.userMessage || '';
+    const cardType = typeof context.cardType === 'string' ? context.cardType.trim() : '';
+    const cardData = context.cardData;
+    const message = typeof context.userMessage === 'string' ? context.userMessage.trim() : '';
     const responseBufferId = context.responseBufferId || null;
     const isMultiTurn = !!responseBufferId;
+    const userId = typeof context.userId === 'string' ? context.userId.trim() : '';
+    const sessionId = typeof context.sessionId === 'string' ? context.sessionId.trim() : '';
+
+    if (!cardType) throw new Error('Card Input requires a card type');
+    if (!cardData || typeof cardData !== 'object' || Array.isArray(cardData)) {
+      throw new Error('Card Input requires card metadata');
+    }
+    if (!message) throw new Error('Card Input requires a user message');
+    if (!userId || userId === 'anonymous') throw new Error('Card Input requires an authenticated user');
+    if (!sessionId) throw new Error('Card Input requires a session ID');
 
     console.log(`[card-input] Processing ${cardType} card response`);
     console.log(`[card-input] Multi-turn: ${isMultiTurn}, buffer: ${responseBufferId || 'new'}`);
@@ -52,8 +62,8 @@ export const CardInputNode: NodeDefinition = defineNode({
       message,
       responseBufferId,
       isMultiTurn,
-      userId: context.userId || 'anonymous',
-      sessionId: context.sessionId || `session-${Date.now()}`,
+      userId,
+      sessionId,
       timestamp: new Date().toISOString(),
     };
   },

@@ -19,21 +19,13 @@ const observation: EnvironmentObservation = {
   },
 };
 
-test('an advertised command is admitted only with the strict selector lifecycle contract', async () => {
+test('an advertised standalone command is admitted without creating a durable task', async () => {
   const result = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'Executing the advertised stand command.',
       actions: [{ type: 'robotCommand', command: 'stand' }],
       movementRequest: null,
-      taskDecision: {
-        outcome: 'act',
-        reason: 'The exact advertised stand command satisfies the request.',
-        objectiveComplete: false,
-        continuationPolicy: 'none',
-        requiredCompletionBasis: 'action_result',
-        motionClass: 'open_loop_displacement',
-        actionPurpose: 'expression',
-      },
+      taskDecision: null,
     }),
     observation,
     sessionId: observation.sessionId,
@@ -43,10 +35,7 @@ test('an advertised command is admitted only with the strict selector lifecycle 
   assert.equal(result.actions[0]?.type, 'robotCommand');
   assert.equal(result.actions[0]?.command, 'stand');
   assert.equal(result.actionAdmission?.admitted, true);
-  assert.equal(result.taskDecision?.outcome, 'act');
-  assert.equal(result.taskDecision?.objectiveComplete, false);
-  assert.equal(result.taskDecision?.continuationPolicy, 'none');
-  assert.equal(result.taskDecision?.requiredCompletionBasis, 'action_result');
+  assert.equal(result.taskDecision, null);
 
   const malformed = await environmentActionParserNode.execute({
     response: 'status=complete',
@@ -56,6 +45,42 @@ test('an advertised command is admitted only with the strict selector lifecycle 
   assert.deepEqual(malformed.actions, []);
   assert.equal(malformed.taskDecision, null);
   assert.match(malformed.taskDecisionError, /strict JSON/i);
+});
+
+test('an empty selector result is rejected while a conversational result remains valid', async () => {
+  const empty = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: '',
+      actions: [],
+      movementRequest: null,
+      taskDecision: null,
+    }),
+    observation,
+    sessionId: observation.sessionId,
+  }, {}, {});
+
+  assert.equal(empty.hasResponse, false);
+  assert.deepEqual(empty.actions, []);
+  assert.equal(empty.taskDecision, null);
+  assert.match(
+    empty.taskDecisionError,
+    /must include a non-empty response, action, movementRequest, or taskDecision/i,
+  );
+
+  const conversation = await environmentActionParserNode.execute({
+    response: JSON.stringify({
+      response: 'I am here with you.',
+      actions: [],
+      movementRequest: null,
+      taskDecision: null,
+    }),
+    observation,
+    sessionId: observation.sessionId,
+  }, {}, {});
+
+  assert.equal(conversation.hasResponse, true);
+  assert.equal(conversation.response, 'I am here with you.');
+  assert.equal(conversation.taskDecisionError, '');
 });
 
 test('punctuation-only advertised commands are admitted unchanged', async () => {
@@ -73,15 +98,7 @@ test('punctuation-only advertised commands are admitted unchanged', async () => 
         response: `Executing the advertised ${command} command.`,
         actions: [{ type: 'robotCommand', command }],
         movementRequest: null,
-        taskDecision: {
-          outcome: 'act',
-          reason: `The exact advertised ${command} command satisfies the request.`,
-          objectiveComplete: false,
-          continuationPolicy: 'none',
-          requiredCompletionBasis: 'action_result',
-          motionClass: 'body_local',
-          actionPurpose: 'expression',
-        },
+        taskDecision: null,
       }),
       observation: punctuationObservation,
       sessionId: punctuationObservation.sessionId,
@@ -99,6 +116,7 @@ test('the parser rejects physical work that contradicts the LLM decision contrac
       actions: [{ type: 'robotCommand', command: 'stand' }],
       movementRequest: null,
       taskDecision: {
+        objective: 'Stand upright.',
         outcome: 'complete',
         reason: 'Standing is the selected consequence.',
         objectiveComplete: true,
@@ -117,7 +135,7 @@ test('the parser rejects physical work that contradicts the LLM decision contrac
   assert.match(result.taskDecisionError, /physical work requires taskDecision outcome=act/i);
 });
 
-test('autonomous selector output must author an objective', async () => {
+test('a task decision must author its durable objective', async () => {
   const autonomousObservation: EnvironmentObservation = {
     ...observation,
     metadata: {
@@ -148,7 +166,6 @@ test('autonomous selector output must author an objective', async () => {
     }),
     observation: autonomousObservation,
     sessionId: autonomousObservation.sessionId,
-    inputSource: 'autonomy',
     robotObserver: autonomousObservation.metadata?.robotObserver,
   }, {}, {});
 
@@ -172,6 +189,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
       actions: [{ type: 'captureImage' }],
       movementRequest: null,
       taskDecision: {
+        objective: 'Take the requested picture.',
         outcome: 'act',
         reason: 'No image content is attached.',
         objectiveComplete: false,
@@ -194,6 +212,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
       actions: [{ type: 'captureImage', command: 'neutral' }],
       movementRequest: null,
       taskDecision: {
+        objective: 'Wave until the requested visual condition is established.',
         outcome: 'act',
         reason: 'The user requested a picture.',
         objectiveComplete: false,
@@ -214,6 +233,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
       actions: [{ type: 'robotCommand', command: 'wave' }],
       movementRequest: null,
       taskDecision: {
+        objective: 'Wave until the requested visual condition is established.',
         outcome: 'act',
         reason: 'The visual stopping condition is not yet satisfied.',
         objectiveComplete: false,
@@ -239,6 +259,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
       actions: [{ type: 'robotCommand', command: 'wave' }],
       movementRequest: { description: 'Stand still and wave until the hand is visible.' },
       taskDecision: {
+        objective: 'Establish whether a hand is visible.',
         outcome: 'continue',
         reason: 'No hand is visible in the current correlated frame.',
         objectiveComplete: false,
@@ -275,6 +296,7 @@ test('action purpose and evidence remain on the validated LLM decision', async (
       actions: [],
       movementRequest: { description: 'Shift into one bounded expressive posture.' },
       taskDecision: {
+        objective: 'Express a posture that fits the current situation.',
         outcome: 'act',
         reason: 'The posture change is an expressive consequence.',
         objectiveComplete: false,
@@ -394,14 +416,7 @@ test('autonomy responses remain on the parser single response path', async () =>
       response: 'The quiet room makes me think of the slow afternoon light.',
       actions: [],
       movementRequest: null,
-      taskDecision: {
-        outcome: 'complete',
-        reason: 'A reflection is the meaningful consequence for this pass.',
-        objectiveComplete: true,
-        continuationPolicy: 'none',
-        requiredCompletionBasis: 'response',
-        actionPurpose: 'expression',
-      },
+      taskDecision: null,
     }),
     observation,
     sessionId: observation.sessionId,
@@ -414,14 +429,7 @@ test('autonomy responses remain on the parser single response path', async () =>
       response: 'That patch of light looks especially warm today.',
       actions: [],
       movementRequest: null,
-      taskDecision: {
-        outcome: 'report',
-        reason: 'This observation is worth sharing outwardly.',
-        objectiveComplete: true,
-        continuationPolicy: 'none',
-        requiredCompletionBasis: 'response',
-        actionPurpose: 'expression',
-      },
+      taskDecision: null,
     }),
     observation,
     sessionId: observation.sessionId,

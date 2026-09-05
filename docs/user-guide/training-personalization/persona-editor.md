@@ -48,6 +48,13 @@ Choose **Save Facets** after editing. A facet configuration does not train or ac
 
 The Insights tab displays derived persona information when the profile has an insights record. Refresh it after a workflow updates those insights. Treat the displayed data as a generated interpretation to review, not as an unquestionable fact about the person.
 
+Psychoanalyzer controls are in **System → Agent Catalog → Psychoanalyzer**.
+Its main Enabled switch controls both manual admission and the persona-review
+stage of Sleep. **Preserve manual persona edits** is a separate, profile-specific
+option and is off by default. Turn it on only when Psychoanalyzer should be
+limited to updating or removing values that it previously learned and still
+owns through provenance.
+
 ## Work with Archives
 
 The Archives tab lists snapshots known to the persona archive API. You can:

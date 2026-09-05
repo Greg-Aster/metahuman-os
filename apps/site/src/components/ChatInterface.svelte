@@ -35,6 +35,7 @@
   let input = '';
   let loading = false;
   let responsePipelineAbortController: AbortController | null = null; // For cancel button
+  let responsePipelineTaskId: string | null = null;
   let reasoningStages: ReasoningStage[] = [];
   let reasoningDepth: number = 0;
   const reasoningLabels = ['Off', 'Quick', 'Focused', 'Deep'];
@@ -907,12 +908,8 @@
   }
 
   /**
-   * Send a response to an agency card via the dedicated response pipeline.
-   * Uses a focused 5-node graph instead of the full dual-consciousness pipeline.
-   * - No memory search (only loads the card context)
-   * - No conversation buffer noise
-   * - Single-pass LLM with card-type-specific prompts
-   * - Saves as 'card_response' memory type for training
+   * Send a stateful Agency or Curiosity card reply through its focused graph.
+   * Ordinary selected-message replies stay on the active conversation graph.
    */
   async function sendResponsePipeline(
     message: string,
@@ -1137,7 +1134,13 @@
       thinkingTraceApi.appendTrace(`[${timestamp()}] `, 5);
       thinkingTraceApi.appendTrace(`[${timestamp()}] Step 1: Preparing request...`, 10);
 
-      const requestBody = buildResponsePipelineRequestBody(message, cardType, cardData, responseBufferId);
+      const requestBody = buildResponsePipelineRequestBody(
+        message,
+        cardType,
+        cardData,
+        $conversationSessionId,
+        responseBufferId,
+      );
 
       // Step 2: Enqueue request (no automatic timeout - user has cancel button)
       console.log('[response-pipeline] Step 2: Queueing response pipeline task');
@@ -1156,6 +1159,7 @@
         kind: 'response-pipeline',
         responsePipeline: requestBody,
       });
+      responsePipelineTaskId = task.id;
 
       const result: any = await new Promise((resolve, reject) => {
         const stream = apiEventSource(`/api/unified-queue/tasks/${encodeURIComponent(task.id)}/stream`);
@@ -1296,7 +1300,7 @@
       // Update thinking trace with result
       thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Action: ${result.actionTaken || 'completed'}`, 10);
       if (result.pipelineTriggered) {
-        thinkingTraceApi.appendTrace(`[${timestamp()}] 🔄 Re-planning triggered`, 10);
+        thinkingTraceApi.appendTrace(`[${timestamp()}] 🔄 Downstream Desire work queued`, 10);
       }
       if (result.nextStatus) {
         thinkingTraceApi.appendTrace(`[${timestamp()}] 📊 Status → ${result.nextStatus}`, 10);
@@ -1334,6 +1338,7 @@
 
       // Clear abort controller
       responsePipelineAbortController = null;
+      responsePipelineTaskId = null;
 
       loading = false;
       restorePassiveChatStreams();
@@ -1928,6 +1933,7 @@
     if (!loading) return;
 
     console.log('[stop-request] Stopping request...');
+    const queuedResponseTaskId = responsePipelineTaskId;
 
     // 1. Abort client-side fetch immediately
     if (responsePipelineAbortController) {
@@ -1936,7 +1942,22 @@
       responsePipelineAbortController = null;
     }
 
-    // 2. Notify server to stop processing (if session exists)
+    // 2. Cancel the canonical Work Coordinator item so its AbortSignal reaches
+    // the graph executor even if the browser stream has already closed.
+    if (queuedResponseTaskId) {
+      try {
+        const response = await apiFetch(`/api/unified-queue/tasks/${encodeURIComponent(queuedResponseTaskId)}`, {
+          method: 'DELETE',
+        });
+        if (!response.ok && response.status !== 409) {
+          console.error('[stop-request] Failed to cancel queued response task:', await response.text());
+        }
+      } catch (error) {
+        console.error('[stop-request] Error cancelling queued response task:', error);
+      }
+    }
+
+    // 3. Cancel any visible terminal-provider session correlated to this turn.
     if ($conversationSessionId) {
       try {
         console.log('[stop-request] Requesting server-side cancellation for session:', $conversationSessionId);

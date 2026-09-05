@@ -44,12 +44,14 @@
     cognitiveMode = null,
     onExecute = null,
     onGraphChange = null,
+    onGraphLoaded = null,
     onSelectionChange = null,
     onHistoryChange = null,
   }: {
     cognitiveMode?: string | null;
     onExecute?: ((graph: SvelteFlowGraph) => Promise<void>) | null;
     onGraphChange?: ((graph: SvelteFlowGraph) => void) | null;
+    onGraphLoaded?: ((fileName: string, scope: 'builtin' | 'custom' | 'backup') => void) | null;
     onSelectionChange?: ((node: Node | null, edge: Edge | null) => void) | null;
     onHistoryChange?: ((state: { canUndo: boolean; canRedo: boolean; canPaste: boolean }) => void) | null;
   } = $props();
@@ -261,7 +263,8 @@
       // Update unconnected status after loading
       updateUnconnectedStatusInternal();
 
-      // Notify parent of the loaded graph (includes name)
+      // Preserve the exact API-resolved file identity independently from graph metadata.
+      onGraphLoaded?.(data.name || templateName, data.scope || 'builtin');
       notifyGraphChange();
     } catch (e) {
       console.error('[FlowEditor] Error loading template:', e);

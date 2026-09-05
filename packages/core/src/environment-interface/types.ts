@@ -366,6 +366,7 @@ export interface EnvironmentActionContext {
     target?: string;
   };
   correlationId?: string;
+  originatingInstruction?: string;
   queuedAt: string;
   completedAt?: string;
   result?: {

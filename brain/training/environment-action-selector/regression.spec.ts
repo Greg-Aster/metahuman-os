@@ -64,8 +64,8 @@ test('the spiky-friend head-tilt regression exercises the generic information-ga
 
   const validation = validateEnvironmentSelectorOutput(JSON.stringify(expected), observation.sessionId)
   assert.equal(validation.valid, true, validation.errors.join('; '))
-  assert.equal(validation.value?.taskDecision.actionPurpose, 'information_gain')
-  assert.equal(validation.value?.taskDecision.requiredCompletionBasis, 'visual_observation')
+  assert.equal(validation.value?.taskDecision?.actionPurpose, 'information_gain')
+  assert.equal(validation.value?.taskDecision?.requiredCompletionBasis, 'visual_observation')
   assert.equal('presentation' in (validation.value?.taskDecision ?? {}), false)
 
   const parsed = await environmentActionParserNode.execute({

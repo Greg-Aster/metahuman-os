@@ -3,9 +3,9 @@
   "format": "svelte-flow",
   "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Boredom Movement Mode",
-  "description": "Uses current robot state, persona, recent narrative, and verified action history to author one embodied intention for Robot Autonomy Executor to execute.",
+  "description": "Uses Robot Status, current bridge state, persona, recent narrative, and verified action history to author one embodied intention for Robot Autonomy Executor to execute.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-09-03",
+  "last_modified": "2026-09-04",
   "nodes": [
     {
       "id": "observation",
@@ -32,6 +32,16 @@
       }
     },
     { "id": "robot-operator-input", "type": "operatorNode", "position": { "x": 560, "y": 100 }, "data": { "label": "Robot Operator Input", "nodeType": "robot_operator_input", "properties": {} } },
+    {
+      "id": "robot-status",
+      "type": "contextNode",
+      "position": { "x": 560, "y": 700 },
+      "data": {
+        "label": "Current Robot Status",
+        "nodeType": "robot_status",
+        "properties": { "historyLimit": 3 }
+      }
+    },
     {
       "id": "conversation-history",
       "type": "contextNode",
@@ -154,6 +164,15 @@
       "target": "planner-context",
       "sourceHandle": "observation",
       "targetHandle": "observation",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-status-context",
+      "source": "robot-status",
+      "target": "planner-context",
+      "sourceHandle": "context",
+      "targetHandle": "robotStatus",
       "type": "default",
       "data": { "type": "object" }
     },

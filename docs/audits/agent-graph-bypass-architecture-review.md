@@ -95,7 +95,6 @@ Their Brain cores no longer import or call model transport.
 ## Retained Core product flows migrated to graphs
 
 - Desire Check-in: `desire-checkin.json`
-- Project reflection task suggestions: `reflection-task-suggestions.json`
 - Persona transcript extraction: `persona-extraction.json`
 - Persona interview question generation: `persona-interview-question.json`
 - Preference learning and contradiction decisions: `preference-learning.json`
@@ -136,8 +135,8 @@ fabricated success or silent empty results.
   provider bridge, or backend transport.
 - Searches for the removed runtime classes and orphan Core exports find no live
   maintained caller; remaining mentions are historical records.
-- All 40 cognitive-graph JSON files resolve registered nodes and pass graph
-  validation.
+- All maintained cognitive-graph JSON files resolve registered nodes and pass
+  graph validation.
 
 ## Validation and limitations
 
@@ -145,9 +144,8 @@ Passed during this repair:
 
 - Agent Runtime package build after cleaning stale compiled outputs.
 - Focused unit tests for migrated parsing/node contracts and affected Brain
-  adapters, including Desire Planner, Desire Check-in, task suggestions,
-  preference learning, goal review, self-healing, semantic turns, and both
-  persona flows.
+  adapters, including Desire Planner, Desire Check-in, preference learning,
+  goal review, self-healing, semantic turns, and both persona flows.
 - Core, Brain, Agent Runtime, and CLI typechecks.
 - Cognitive-graph validation and the maintained-source architecture guardrail.
 - The complete root `pnpm build` chain, including all package typechecks, root

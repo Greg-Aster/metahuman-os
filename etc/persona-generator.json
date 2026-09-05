@@ -1,48 +1,6 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Configuration for persona generation interview system",
-  "baselineQuestions": [
-    {
-      "id": "q1",
-      "category": "values",
-      "prompt": "What core values guide your most important life decisions?"
-    },
-    {
-      "id": "q2",
-      "category": "goals",
-      "prompt": "What are you currently working toward? What do you hope to achieve in the next year?"
-    },
-    {
-      "id": "q3",
-      "category": "style",
-      "prompt": "How would you describe your communication style? Do you prefer direct and concise, or detailed and thorough?"
-    },
-    {
-      "id": "q4",
-      "category": "values",
-      "prompt": "When you face a difficult choice, what factors matter most to you?"
-    },
-    {
-      "id": "q5",
-      "category": "biography",
-      "prompt": "What experiences have shaped who you are today?"
-    },
-    {
-      "id": "q6",
-      "category": "current_focus",
-      "prompt": "What topics, projects, or areas of life are you most engaged with right now?"
-    },
-    {
-      "id": "q7",
-      "category": "style",
-      "prompt": "How do you prefer to process information - through conversation, quiet reflection, or hands-on experience?"
-    },
-    {
-      "id": "q8",
-      "category": "goals",
-      "prompt": "If you could master one new skill or area of knowledge, what would it be and why?"
-    }
-  ],
   "maxQuestionsPerSession": 15,
   "requireMinimumAnswers": 7,
   "categories": [
@@ -58,6 +16,10 @@
     "style": "Communication preferences, information processing, and interaction patterns",
     "biography": "Formative experiences, background, and personal history",
     "current_focus": "Present interests, active projects, and immediate priorities"
+  },
+  "interviewer": {
+    "corePhilosophy": "Evoke insight through curiosity rather than interrogation. Create psychological safety that supports authentic self-disclosure.",
+    "tone": "Warm, curious, professional, clear, and free of clinical jargon"
   },
   "privacyGuidelines": [
     "Never ask for full legal name, unless user volunteers it",
@@ -77,8 +39,6 @@
   "sessionDefaults": {
     "minAnswerLength": 20,
     "maxAnswerLength": 2000,
-    "targetCategoryCompletionPercentage": 80,
-    "allowResume": true,
-    "autoSaveInterval": 30000
+    "targetCategoryCompletionPercentage": 80
   }
 }

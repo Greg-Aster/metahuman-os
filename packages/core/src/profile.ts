@@ -565,18 +565,9 @@ async function createDefaultPersona(profileRoot: string, username: string): Prom
 
   // insights.json - Persona insights/learnings (empty by default)
   const insights = {
-    $schema: 'https://json-schema.org/draft/2020-12/schema',
-    version: '1.0.0',
-    lastUpdated: new Date().toISOString(),
-    insights: [] as Array<{
-      id: string;
-      type: string;
-      content: string;
-      source: string;
-      confidence: number;
-      createdAt: string;
-    }>,
-    notes: 'Automatically populated insights from memory analysis and psychoanalyzer runs.',
+    version: '2.0.0',
+    lastUpdated: null,
+    entries: [],
   };
 
   await writeJsonIfMissing(path.join(personaDir, 'insights.json'), insights);

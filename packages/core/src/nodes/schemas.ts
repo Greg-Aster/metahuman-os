@@ -13,6 +13,10 @@ import type {
   NodeSlot,
   PropertySchema,
 } from './types.js';
+import {
+  DEFAULT_ROBOT_AUTONOMY_TASK_IDS,
+  ROBOT_AUTONOMY_TASK_OPTIONS,
+} from './robot-operator/autonomy-task-options.js';
 
 // Re-export types for convenience
 export type { NodeCategory, PropertySchema, SlotType } from './types.js';
@@ -476,7 +480,6 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
       { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands and capabilities' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
-      { name: 'inputSource', type: 'string', optional: true, description: 'Instruction provenance supplied by the workflow input owner' },
       { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
     ],
     outputs: [
@@ -484,7 +487,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'firstAction', type: 'object', description: 'First parsed action' },
       { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
       { name: 'movementRequested', type: 'boolean', description: 'Whether off-script generation was requested' },
-      { name: 'taskDecision', type: 'object', description: 'Environment LLM completion and continuation decision' },
+      { name: 'taskDecision', type: 'object', description: 'Optional durable task decision; null for conversation or standalone action' },
       { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
       { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result' },
       { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
@@ -720,6 +723,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'memories', type: 'array', description: 'Planner-delegated historical memories' },
       { name: 'stimulusAgent', type: 'string', description: 'Robot Operator child that admitted this cycle' },
       { name: 'sourceObservationAt', type: 'string', description: 'Timestamp of the bridge observation used for this cycle' },
+      { name: 'sessionId', type: 'string', description: 'Environment Bridge session selected for this Robot Operator cycle' },
       { name: 'currentVisualEvidence', type: 'boolean', description: 'Whether this cycle includes a newly acquired current frame' },
       { name: 'inputSource', type: 'string', description: 'Robot Operator trigger source: user or autonomy' },
       { name: 'responseMetadata', type: 'object', description: 'Conversation provenance for an optional Robot Operator response' },
@@ -735,6 +739,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'instruction', type: 'string', description: 'Graph-owned autonomy policy' },
       { name: 'stimulusInstruction', type: 'string', optional: true, description: 'Trigger-specific intention' },
       { name: 'observation', type: 'object', optional: true, description: 'Current correlated robot observation when selected by the workflow' },
+      { name: 'bridgeSummary', type: 'object', optional: true, description: 'Current Environment Bridge connection and session summary' },
       { name: 'images', type: 'array', optional: true, description: 'Fresh correlated image content' },
       { name: 'frames', type: 'array', optional: true, description: 'Fresh correlated frame metadata' },
       { name: 'conversationHistory', type: 'array', optional: true, description: 'Narrative conversation context' },
@@ -743,6 +748,8 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'personaText', type: 'string', optional: true, description: 'Active persona' },
       { name: 'memoryContext', type: 'array', optional: true, description: 'Historical inspiration' },
       { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
+      { name: 'activeDesires', type: 'array', optional: true, description: 'Bounded active Agency Desire summaries' },
+      { name: 'availableTasks', type: 'array', optional: true, description: 'Catalog-backed tasks available to the Full-mode controller' },
       { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from Robot Operator Input' },
       { name: 'plannerDecision', type: 'object', optional: true, description: 'Planner decision from Robot Operator Input' },
       { name: 'delegatedMemories', type: 'array', optional: true, description: 'Planner-delegated memories from Robot Operator Input' },
@@ -765,7 +772,7 @@ export const nodeSchemas: NodeSchema[] = [
         type: 'select',
         default: 'environment',
         label: 'Output Contract',
-        options: ['environment', 'delegation', 'action_result', 'goal_review'],
+        options: ['environment', 'delegation', 'action_result', 'goal_review', 'autonomy_controller'],
       },
     },
     description: 'Builds one bounded Robot Operator context from the routes selected for the current workflow.',
@@ -795,24 +802,79 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'response', type: 'any', description: 'Strict JSON from the Robot Action Result LLM' },
     ],
     outputs: [
-      { name: 'taskDecision', type: 'object', description: 'Validated effect of the returned action result on the current objective' },
+      { name: 'taskDecision', type: 'object', description: 'Validated task effect, or null when the returned action was standalone' },
       { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
     ],
     description: 'Validates one LLM interpretation of a correlated robot success or failure. It neither sends an action nor schedules another workflow.',
   }),
   defineSchema({
     id: 'robot_goal_review_parser',
-    name: 'Interpret Robot Goal Review',
+    name: 'Validate Robot Goal Review',
     category: 'operator',
     inputs: [
       { name: 'response', type: 'any', description: 'Strict JSON from the Robot Goal Review LLM' },
     ],
     outputs: [
-      { name: 'decision', type: 'object', description: 'High-level next instruction only when the LLM chose to continue' },
+      { name: 'executorDecision', type: 'object', description: 'High-level next instruction only when the LLM chose to continue through Robot Autonomy Executor' },
       { name: 'taskDecision', type: 'object', description: 'Validated LLM assessment persisted to Robot Status' },
       { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
     ],
     description: 'Validates one LLM goal review and exposes a next instruction only when the LLM chose continuation.',
+  }),
+  defineSchema({
+    id: 'robot_autonomy_task_catalog',
+    name: 'Available Autonomy Tasks',
+    category: 'operator',
+    inputs: [],
+    outputs: [
+      { name: 'tasks', type: 'array', description: 'Configured tasks that are currently executable, with their Agent Catalog descriptions' },
+      { name: 'taskIds', type: 'array', description: 'Identifiers of the currently available tasks' },
+      { name: 'unavailableTaskIds', type: 'array', description: 'Configured tasks that are missing, disabled, or not executable' },
+      { name: 'count', type: 'number', description: 'Number of tasks currently available to the controller' },
+    ],
+    properties: { taskIds: [...DEFAULT_ROBOT_AUTONOMY_TASK_IDS] },
+    propertySchemas: {
+      taskIds: {
+        type: 'multiselect',
+        default: [...DEFAULT_ROBOT_AUTONOMY_TASK_IDS],
+        label: 'Available Tasks',
+        description: 'Tasks the Full-mode LLM may choose. Meanings and availability come from the canonical Agent Catalog.',
+        options: ROBOT_AUTONOMY_TASK_OPTIONS,
+      },
+    },
+    description: 'Loads configured Full-mode choices from the canonical Agent Catalog without choosing or starting a task.',
+  }),
+  defineSchema({
+    id: 'robot_autonomy_controller_parser',
+    name: 'Validate Autonomy Decision',
+    category: 'operator',
+    inputs: [
+      { name: 'response', type: 'any', description: 'Strict JSON from the Robot Autonomy Controller LLM' },
+      { name: 'availableTasks', type: 'array', description: 'Exact task catalog supplied to the controller LLM' },
+    ],
+    outputs: [
+      { name: 'taskDecision', type: 'object', description: 'Catalog-backed finite agent selection' },
+      { name: 'executorDecision', type: 'object', description: 'High-level intention for Robot Autonomy Executor' },
+      { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
+    ],
+    description: 'Validates one LLM-owned Full-mode decision against the exact task catalog it received.',
+  }),
+  defineSchema({
+    id: 'robot_autonomy_task_dispatch',
+    name: 'Start Selected Autonomy Task',
+    category: 'operator',
+    inputs: [
+      { name: 'decision', type: 'object', description: 'Validated Agent Catalog task selected by the controller' },
+      { name: 'robotObserver', type: 'object', description: 'Robot Operator cycle that owns this Full-mode decision' },
+      { name: 'sessionId', type: 'string', optional: true, description: 'Current Environment Bridge session, when available' },
+    ],
+    outputs: [
+      { name: 'queued', type: 'boolean', description: 'Whether the selected task was admitted' },
+      { name: 'taskId', type: 'string', description: 'Work Coordinator task ID' },
+      { name: 'selectedTaskId', type: 'string', description: 'Selected Agent Catalog task ID' },
+      { name: 'status', type: 'string', description: 'Dispatch result' },
+    ],
+    description: 'Submits one catalog-backed finite task through its existing Work Coordinator handler.',
   }),
   defineSchema({
     id: 'robot_operator_environment_dispatch',
@@ -936,6 +998,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'needsVision', type: 'boolean', description: 'Whether fresh correlated visual evidence is needed' },
       { name: 'needsRobotStatus', type: 'boolean', description: 'Whether downstream reasoning needs the current Robot Status snapshot' },
       { name: 'needsAction', type: 'boolean', description: 'Whether an action or skill is needed' },
+      { name: 'needsTaskLifecycle', type: 'boolean', description: 'Whether this turn creates, advances, completes, or otherwise changes a durable objective' },
       { name: 'actionType', type: 'string', description: 'LLM-interpreted action type' },
       { name: 'actionParams', type: 'object', description: 'Parameters for the action' },
       { name: 'complexity', type: 'number', description: 'Task complexity 0-1' },

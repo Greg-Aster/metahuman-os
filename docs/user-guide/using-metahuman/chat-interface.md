@@ -30,7 +30,7 @@ Changing these filters does not change where a new message will be written. Use 
 
 If another chat request is already running, the new request may enter the shared queue instead of starting immediately. The **Queue** tab in the right sidebar shows admitted work and its state.
 
-Select an existing message before sending to include it as focused reply context. Agency and curiosity cards use their dedicated response pipeline. In Environment mode, an ordinary selected-message reply stays in the Environment workflow so the same LLM decision can respond or select an environment action. Clear the selection when it is no longer relevant.
+Select an existing message before sending to include it as focused reply context. Ordinary replies stay in the active conversation workflow. Curiosity questions and Agency cards that can change Desire state use the dedicated response pipeline; passive Agency notices do not. In Environment mode, ordinary selected-message replies therefore remain in the Environment workflow so the same LLM decision can respond or select an environment action. Clear the selection when it is no longer relevant.
 
 ## Stop and Clear
 

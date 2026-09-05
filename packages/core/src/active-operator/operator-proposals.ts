@@ -7,7 +7,7 @@
  *
  * This enables:
  * 1. User involvement in every autonomous decision
- * 2. Preference learning from approvals/rejections
+ * 2. An auditable history of approvals and rejections
  * 3. Training data collection for RLHF-style fine-tuning
  */
 
@@ -1068,7 +1068,7 @@ export function getPostFeedbackStats(username: string): {
 
 /**
  * Export all feedback (approval + post-execution) as training data.
- * This provides a complete picture for preference learning.
+ * This provides a complete picture of operator feedback signals.
  */
 export function exportAllTrainingData(username: string): {
   approvalFeedback: ProposalFeedback[];

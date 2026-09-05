@@ -24,6 +24,7 @@ export interface ResponsePipelineRequestBody {
   message: string;
   cardType: string;
   cardData: Record<string, any>;
+  sessionId: string;
   responseBufferId?: string;
 }
 
@@ -91,27 +92,37 @@ export function buildResponsePipelineRequestBody(
   message: string,
   cardType: string,
   cardData: Record<string, any>,
+  sessionId: string,
   responseBufferId?: string | null
 ): ResponsePipelineRequestBody {
   return {
     message: message.trim(),
     cardType,
     cardData,
+    sessionId,
     responseBufferId: responseBufferId || undefined,
   };
 }
+
+const DESIRE_RESPONSE_CARD_TYPES: Readonly<Record<string, string>> = {
+  desire_rejection: 'desire_rejection',
+  desire_rejected: 'desire_rejection',
+  plan_rejected: 'desire_rejection',
+  clarifying_question: 'clarifying_questions',
+  clarifying_questions: 'clarifying_questions',
+  desire_plan: 'desire_plan',
+  desire_plan_complete: 'desire_plan',
+  plan_generated: 'desire_plan',
+  approval_request: 'desire_plan',
+  approval_requested: 'desire_plan',
+};
 
 export function responsePipelineCardTypeForReply(input: SelectedReplyRouteInput): string | null {
   if (input.questionId) return 'curiosity_response';
 
   const agencyReply = input.isAgencyMessage === true || input.dialogueSource === 'agency-system';
-  if (agencyReply) {
-    if (input.cardType && input.cardType !== 'selected_card') return input.cardType;
-    return input.desireId ? 'desire_awaiting_input' : 'agency_notification';
-  }
-
-  if (input.cognitiveMode === 'environment') return null;
-  return input.cardType || 'selected_card';
+  if (!agencyReply || !input.desireId || !input.cardType) return null;
+  return DESIRE_RESPONSE_CARD_TYPES[input.cardType] || null;
 }
 
 export function closeEventSourceConnections(logPrefix: string, connections: EventSourceConnectionRef[]): number {

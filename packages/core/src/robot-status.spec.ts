@@ -369,6 +369,150 @@ test('Robot Status Out persists the Environment LLM task and correlated action r
   assert.equal(loadRobotStatus(username)?.task?.decision.outcome, 'complete')
 })
 
+test('Robot Status Out persists the durable objective explicitly selected for an autonomous next step', async () => {
+  const username = 'robot-status-goal-continuation-owner'
+  await robotStatusOutNode.execute!({
+    taskDecision: {
+      objective: 'Find the cat.',
+      outcome: 'continue',
+      reason: 'A better-lit viewpoint may provide useful evidence.',
+      objectiveComplete: false,
+      requiredCompletionBasis: 'visual_observation',
+      observationSummary: 'The latest view is too dark to establish the cat location.',
+      nextInstruction: 'Move to a better-lit area and continue looking for the cat.',
+    },
+  }, { username })
+
+  const delegatedStep = await robotStatusOutNode.execute!({
+    instruction: 'Move to a better-lit area and continue looking for the cat.',
+    inputSource: 'autonomy',
+    taskDecision: {
+      objective: 'Find the cat.',
+      outcome: 'act',
+      reason: 'Changing viewpoint may improve the available visual evidence.',
+      objectiveComplete: false,
+      requiredCompletionBasis: 'action_result',
+    },
+    actions: [{ type: 'robotCommand', command: 'walk_forward' }],
+    bridgeRecord: {
+      status: 'coordinated_for_adapter',
+      requestedActions: [{ type: 'robotCommand', command: 'walk_forward' }],
+      commands: [{ id: 'continuation-action' }],
+    },
+  }, { username })
+
+  assert.equal(delegatedStep.task.objective, 'Find the cat.')
+  assert.equal(delegatedStep.task.instruction, 'Move to a better-lit area and continue looking for the cat.')
+  assert.equal(delegatedStep.task.source, 'user')
+  assert.equal(delegatedStep.task.selectedAction.command, 'walk_forward')
+})
+
+test('Robot Status Out does not replace an unfinished task for a standalone action', async () => {
+  const username = 'robot-status-standalone-action-owner'
+  await robotStatusOutNode.execute!({
+    instruction: 'Locate the missing object.',
+    userInstruction: 'Locate the missing object.',
+    inputSource: 'user',
+    taskDecision: {
+      objective: 'Locate the missing object.',
+      outcome: 'act',
+      reason: 'A new viewpoint is needed.',
+      objectiveComplete: false,
+      requiredCompletionBasis: 'visual_observation',
+    },
+    actions: [{ type: 'captureImage', target: 'current_surroundings' }],
+    bridgeRecord: {
+      status: 'coordinated_for_adapter',
+      requestedActions: [{ type: 'captureImage', target: 'current_surroundings' }],
+      commands: [{ id: 'search-capture' }],
+    },
+  }, { username })
+
+  const standalone = await robotStatusOutNode.execute!({
+    instruction: 'Turn right forty-five degrees.',
+    userInstruction: 'Turn right forty-five degrees.',
+    inputSource: 'user',
+    taskDecision: null,
+    actions: [{ type: 'robotCommand', command: 'turn_right_45' }],
+    bridgeRecord: {
+      status: 'coordinated_for_adapter',
+      requestedActions: [{ type: 'robotCommand', command: 'turn_right_45' }],
+      commands: [{ id: 'standalone-turn' }],
+    },
+  }, { username })
+
+  assert.equal(standalone.task.objective, 'Locate the missing object.')
+  assert.equal(standalone.task.actionId, 'search-capture')
+  assert.equal(standalone.lastAction.command, 'turn_right_45')
+  assert.equal(standalone.lastAction.actionId, 'standalone-turn')
+
+  const returned = await robotStatusOutNode.execute!({
+    taskDecision: null,
+    terminalFeedback: {
+      type: 'completed',
+      actionId: 'standalone-turn',
+      message: 'Turn completed.',
+    },
+    actionContext: {
+      actionId: 'standalone-turn',
+      requested: { type: 'robotCommand', command: 'turn_right_45' },
+    },
+  }, { username })
+
+  assert.equal(returned.task.objective, 'Locate the missing object.')
+  assert.equal(returned.task.actionId, 'search-capture')
+  assert.equal(returned.lastAction.command, 'turn_right_45')
+  assert.equal(returned.lastAction.status, 'completed')
+})
+
+test('Robot Status Out applies LLM-assessed current-objective evidence regardless of the triggering action ID', async () => {
+  const username = 'robot-status-overlapping-result-owner'
+  await robotStatusOutNode.execute!({
+    instruction: 'Inspect the work area.',
+    userInstruction: 'Inspect the work area.',
+    inputSource: 'user',
+    taskDecision: {
+      objective: 'Inspect the work area.',
+      outcome: 'act',
+      reason: 'A current image is needed.',
+      objectiveComplete: false,
+      requiredCompletionBasis: 'visual_observation',
+    },
+    actions: [{ type: 'captureImage', target: 'current_surroundings' }],
+    bridgeRecord: {
+      status: 'coordinated_for_adapter',
+      requestedActions: [{ type: 'captureImage', target: 'current_surroundings' }],
+      commands: [{ id: 'current-capture' }],
+    },
+  }, { username })
+
+  const result = await robotStatusOutNode.execute!({
+    taskDecision: {
+      objective: 'Inspect the work area.',
+      outcome: 'complete',
+      reason: 'The current visual evidence establishes the saved objective.',
+      objectiveComplete: true,
+      requiredCompletionBasis: 'visual_observation',
+      observationSummary: 'The work area is visible in the current camera frame.',
+    },
+    terminalFeedback: {
+      type: 'completed',
+      actionId: 'earlier-autonomy-action',
+      message: 'done',
+    },
+    actionContext: {
+      actionId: 'earlier-autonomy-action',
+      requested: { type: 'robotCommand', command: 'curious' },
+    },
+  }, { username })
+
+  assert.equal(result.task.objective, 'Inspect the work area.')
+  assert.equal(result.task.decision.objectiveComplete, true)
+  assert.equal(result.task.source, 'user')
+  assert.equal(result.status.situation.currentGoal, '')
+  assert.equal(result.lastAction.actionId, 'earlier-autonomy-action')
+})
+
 test('Environment selector receives the decision-bearing Robot Status fields', async () => {
   const username = 'robot-status-environment-owner'
   await robotStatusWriterNode.execute!({
@@ -439,8 +583,13 @@ test('Robot Status has one editable refresh graph and is read and written by act
       path.join(repositoryRoot, `etc/cognitive-graphs/${planner}-mode.json`),
       'utf8',
     ))
-    assert.equal(graph.nodes.some((node: any) => node.data?.nodeType === 'robot_status'), false)
-    assert.equal(graph.edges.some((edge: any) => edge.targetHandle === 'robotStatus'), false)
+    const statusNodes = graph.nodes.filter((node: any) => node.data?.nodeType === 'robot_status')
+    assert.equal(statusNodes.length, 1)
+    assert.equal(graph.edges.some((edge: any) => (
+      edge.source === statusNodes[0].id
+      && edge.sourceHandle === 'context'
+      && edge.targetHandle === 'robotStatus'
+    )), true)
   }
 })
 
@@ -472,24 +621,51 @@ test('Robot task lifecycle persists one result and delegates at most one later i
   assert.equal(resultTypes.includes('environment_send_action'), false)
   assert.equal(resultTypes.includes('robot_operator_environment_dispatch'), false)
 
+  const resultPolicy = resultGraph.nodes.find((node: any) => node.data?.label === 'Action Result Interpretation Task')
+  assert.match(resultPolicy?.data?.properties?.message, /use response for one concise, natural sentence/i)
+  assert.equal(resultGraph.edges.some((edge: any) => (
+    edge.source === 'parser'
+    && edge.sourceHandle === 'response'
+    && edge.target === 'conversation'
+    && edge.targetHandle === 'response'
+  )), true)
+
   const reviewTypes = reviewGraph.nodes.map((node: any) => node.data?.nodeType)
   assert.equal(reviewTypes.filter((type: string) => type === 'model_router').length, 1)
   assert.equal(reviewTypes.filter((type: string) => type === 'robot_status_out').length, 1)
   assert.equal(reviewTypes.filter((type: string) => type === 'robot_operator_environment_dispatch').length, 1)
+  assert.equal(reviewTypes.filter((type: string) => type === 'environment_image_input').length, 1)
   assert.equal(reviewTypes.includes('environment_send_action'), false)
   assert.equal(reviewTypes.includes('conditional_branch'), false)
+  assert.deepEqual(
+    reviewGraph.nodes
+      .filter((node: any) => node.data?.nodeType === 'conversation_history')
+      .map((node: any) => node.data?.properties?.mode)
+      .sort(),
+    ['conversation', 'inner', 'robot'],
+  )
+  assert.equal(
+    reviewGraph.nodes.find((node: any) => node.data?.nodeType === 'model_router')?.data?.properties?.role,
+    'persona',
+  )
+  assert.equal(reviewGraph.edges.some((edge: any) => (
+    edge.source === 'parser'
+    && edge.sourceHandle === 'executorDecision'
+    && edge.target === 'prompt-out'
+    && edge.targetHandle === 'decision'
+  )), true)
 
   const interpreted = await robotActionResultParserNode.execute({
     response: JSON.stringify({
       response: '',
-      outcome: 'incomplete',
-      reason: 'The requested turn completed, but the target is not visible.',
-      objective: 'Find the cat.',
-      objectiveComplete: false,
-      continuationPolicy: 'bounded',
-      requiredCompletionBasis: 'visual_observation',
-      observationSummary: 'The new view contains no visible cat.',
-      completionEvidence: '',
+      taskDecision: {
+        overallObjectiveState: 'not_achieved',
+        reason: 'The requested turn completed, but the target is not visible.',
+        objective: 'Find the cat.',
+        requiredCompletionBasis: 'visual_observation',
+        observationSummary: 'The new view contains no visible cat.',
+        completionEvidence: '',
+      },
     }),
   }, {})
   assert.equal(interpreted.taskDecision.objectiveComplete, false)
@@ -501,15 +677,13 @@ test('Robot task lifecycle persists one result and delegates at most one later i
       outcome: 'continue',
       reason: 'Another viewpoint may reveal the target.',
       objective: 'Find the cat.',
-      objectiveComplete: false,
-      continuationPolicy: 'bounded',
       requiredCompletionBasis: 'visual_observation',
       observationSummary: 'The last view did not contain the cat.',
       completionEvidence: '',
       nextInstruction: 'Inspect a different open area for the cat.',
     }),
-  }, {})
-  assert.deepEqual(reviewed.decision, {
+  }, {}, {})
+  assert.deepEqual(reviewed.executorDecision, {
     observed: 'The last view did not contain the cat.',
     instruction: 'Inspect a different open area for the cat.',
     reason: 'Another viewpoint may reveal the target.',

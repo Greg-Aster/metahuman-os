@@ -12,23 +12,33 @@ executor and the web editor.
 - Agent and workflow graphs own bounded background work such as curation,
   reflection, dreaming, agency, and Robot Operator behavior.
 - Model-backed product operations that are not cataloged Brain agents are also
-  explicit graphs: Desire Check-in, reflection task suggestions, persona
-  extraction and interview questions, preference learning, weekly goal review,
-  self-healing analysis, and semantic-turn classification. Their API and domain
-  services load these graphs; they do not reproduce prompts or model calls.
+  explicit graphs: Desire Check-in, persona extraction and interview questions,
+  weekly goal review, self-healing analysis, and semantic-turn classification.
+  Their API and domain services load these graphs; they do not reproduce prompts
+  or model calls.
 - `inner-curiosity.json` is the complete private self-question workflow. Its
   Brain adapter only resolves execution identity and runs this graph; the graph
   owns cognition, both Inner Dialogue persistence effects, and optional Train
   of Thought admission.
+- Robot Autonomy Controller (`robot-autonomy-controller-mode.json`) is the one
+  Full-mode LLM decision workflow. Its task-catalog node advertises configured,
+  currently executable finite agents with their canonical descriptions. After
+  the prior autonomy chain finishes, one LLM may select one of those tasks,
+  delegate one high-level embodied intention to Robot Autonomy Executor, and
+  optionally speak.
 - Boredom Observer, Movement, and Reflection are contextual planner graphs;
   Robot Autonomy Executor (`boredom-autonomy-mode.json`, stable runtime key
   `boredom-autonomy`) routes the unchanged internal intention, executes one
   self-directed consequence, records Robot Status, and ends.
 - `robot-action-result-mode.json` interprets one correlated returned action result
   and records it in Robot Status without selecting or dispatching another action.
-- `robot-goal-review-mode.json` is a separately scheduled LLM review of an
-  unfinished Robot Status objective. It may delegate one high-level instruction
-  to Robot Autonomy Executor and then ends.
+- `robot-goal-review-mode.json` is a separately scheduled, persona-guided LLM
+  review after a correlated action result leaves a Robot Status objective
+  incomplete or failed. It receives bounded conversation and reflection,
+  verified robot-action outcomes, Robot Status, current bridge facts, and only
+  genuinely current camera evidence. It may complete, continue, wait, request
+  the user, abandon, or speak; only continuation delegates one high-level
+  intention to Robot Autonomy Executor, and then the review ends.
 - `robot-status-mode.json` performs one bounded situational update. Its reusable
   Robot Status input node supplies supporting context without replacing fresh
   Environment evidence.

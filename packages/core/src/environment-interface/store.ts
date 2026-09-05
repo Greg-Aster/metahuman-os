@@ -39,19 +39,12 @@ const MAX_PROCESSED_TEXT_EVENTS = 1_000;
 const MAX_ORIGINATING_INSTRUCTION_CHARS = 4_000;
 const DEFAULT_MAX_ACTION_DURATION_MS = 1_500;
 const MAX_CONTROL_ACTION_AGE_MS = 2_000;
-const MAX_IMAGE_ACQUISITION_AGE_MS = 10_000;
 const ACTION_TYPES = new Set<EnvironmentActionType>([
   'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'speak', 'sendText',
 ]);
-const NON_REPLAYABLE_ACTION_TYPES = new Set<EnvironmentActionType>([
-  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach',
+const EXPIRING_CONTROL_ACTION_TYPES = new Set<EnvironmentActionType>([
+  'move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach',
 ]);
-
-function maxQueueAgeMs(type: EnvironmentActionType): number {
-  return type === 'captureImage'
-    ? MAX_IMAGE_ACQUISITION_AGE_MS
-    : MAX_CONTROL_ACTION_AGE_MS;
-}
 
 type ActionSubscriber = () => void;
 type BridgeStateSubscriber = () => void;
@@ -283,6 +276,10 @@ export function getEnvironmentActionContext(
   const taskInputMetadata = isRecord(task.input?.metadata)
     ? task.input.metadata
     : null;
+  const taskMetadata = isRecord(task.metadata) ? task.metadata : null;
+  const originatingInstruction = boundedOriginatingInstruction(
+    taskMetadata?.originatingInstruction,
+  );
   const resultFeedback = isRecord(task.result?.feedback) ? task.result.feedback : null;
   const taskFeedbackData = isRecord(resultFeedback?.data) ? resultFeedback.data : null;
   const observationFeedbackData = observation.feedback
@@ -308,6 +305,7 @@ export function getEnvironmentActionContext(
       ...(requested.target ? { target: requested.target } : {}),
     },
     ...(task.correlationId ? { correlationId: task.correlationId } : {}),
+    ...(originatingInstruction ? { originatingInstruction } : {}),
     queuedAt: task.createdAt,
     ...(task.completedAt ? { completedAt: task.completedAt } : {}),
     ...(resultFeedback
@@ -618,8 +616,8 @@ export function enqueueEnvironmentAction(
   }
 
   const sourceCreatedAt = action.createdAt ? Date.parse(action.createdAt) : Date.now();
-  const deadline = NON_REPLAYABLE_ACTION_TYPES.has(normalized.type)
-    ? new Date((Number.isFinite(sourceCreatedAt) ? sourceCreatedAt : Date.now()) + maxQueueAgeMs(normalized.type)).toISOString()
+  const deadline = EXPIRING_CONTROL_ACTION_TYPES.has(normalized.type)
+    ? new Date((Number.isFinite(sourceCreatedAt) ? sourceCreatedAt : Date.now()) + MAX_CONTROL_ACTION_AGE_MS).toISOString()
     : undefined;
   const task = manager.enqueue({
     type: 'environment_command',

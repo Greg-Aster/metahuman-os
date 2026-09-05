@@ -53,7 +53,7 @@
         "nodeType": "orchestrator_llm",
         "properties": {
           "outputContract": "environment",
-          "systemPrompt": "You are the Robot Autonomy Intent Orchestrator. The current message is a high-level intention authored by an internal agent for the robot, not a human instruction. Decide which independent routes are relevant to realizing that self-directed intention. You do not answer, rewrite or summarize the intention, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes optional first-person outward expression by the robot.\n- needsConversationHistory exposes recent dialogue and private reflection.\n- needsMemory exposes relevant long-term experience beyond memories already delegated with the intention.\n- needsRobotStatus exposes the canonical current snapshot, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection plus verified recent action history.\n\nTreat the intention as the robot's own prospective choice. Routes are independent and may combine. Select only information and capabilities that can materially inform this pass. Return exactly the seven JSON booleans and nothing else.",
+          "systemPrompt": "You are the Robot Autonomy Intent Orchestrator. The current message is a high-level intention authored by an internal agent for the robot, not a human instruction. Decide which independent routes are relevant to realizing that self-directed intention. You do not answer, rewrite or summarize the intention, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes optional first-person outward expression by the robot.\n- needsConversationHistory exposes recent dialogue and private reflection.\n- needsMemory exposes relevant long-term experience beyond memories already delegated with the intention.\n- needsRobotStatus exposes the canonical current snapshot, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection plus verified recent action history.\n- needsTaskLifecycle exposes durable objective state when this intention creates, advances, completes, or otherwise changes one.\n\nTreat the intention as the robot's own prospective choice. Routes are independent and may combine. Select only information and capabilities that can materially inform this pass. Return exactly the eight JSON booleans and nothing else.",
           "userPromptTemplate": "Internal planner intention: {{userMessage}}",
           "temperature": 0.1,
           "maxTokens": 768
@@ -72,7 +72,7 @@
         "label": "Robot Autonomy Execution Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Execute one internally authored plannerDecision using the supplied selectedRoutes, evidence, Robot Status, persona, and advertised capabilities. The plannerDecision is my own prospective intent, not a user request. Preserve its meaning while deciding whether I speak, use one advertised action, or request one novel body-local movement. Any outward response is optional and first-person; it expresses my perception, intention, or choice rather than compliance with an instruction. Prefer an advertised command when its description performs the intended effect; use movementRequest only when no advertised command covers it. Preserve body part, direction, timing, and hold details. Do not invent unrelated work.\n\nReturn strict JSON: response, actions, movementRequest, and taskDecision with objective, reason, outcome, objectiveComplete, continuationPolicy, and requiredCompletionBasis. Physical work uses outcome=act and objectiveComplete=false because Robot Action Result interprets the result after this workflow ends. Leave response empty when speaking adds nothing; otherwise use one or two concise sentences. Never promise an absent action.",
+          "message": "Execute one internally authored plannerDecision using selectedRoutes, Robot Status, persona, evidence, and advertised capabilities. The plannerDecision is my own prospective intent, not a user request. Preserve it while choosing speech, one advertised action, or one body-local movementRequest. Outward response is optional and first-person; it expresses my perception, intention, or choice rather than compliance with an instruction. Prefer an advertised command whose description fits; use movementRequest only when the requested movement is not covered. Preserve body part, direction, timing, and holds.\n\nReturn strict JSON with response, actions, movementRequest, and taskDecision. taskDecision is null for a one-pass expression or standalone action. Use an object only when this pass starts, continues, completes, or changes a durable objective; preserve an unfinished Robot Status objective when this is its next step. For goal-directed physical work, outcome is act and objectiveComplete is false because Robot Action Result interprets the result after this workflow ends. Leave response empty when speaking adds nothing; otherwise use one or two concise sentences. Never promise an absent action.",
           "inputKey": ""
         }
       }
@@ -868,17 +868,6 @@
       "target": "action-parser",
       "sourceHandle": "sessionId",
       "targetHandle": "sessionId",
-      "type": "default",
-      "data": {
-        "type": "string"
-      }
-    },
-    {
-      "id": "e-source-parser",
-      "source": "robot-operator-input",
-      "target": "action-parser",
-      "sourceHandle": "inputSource",
-      "targetHandle": "inputSource",
       "type": "default",
       "data": {
         "type": "string"

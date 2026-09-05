@@ -12,7 +12,7 @@ export async function handleGetPsychoanalyzerConfig(req: UnifiedRequest): Promis
   try {
     return successResponse({
       success: true,
-      config: loadPsychoanalyzerConfig(req.user.username),
+      config: await loadPsychoanalyzerConfig(req.user.username),
     })
   } catch (error) {
     console.error('[psychoanalyzer-config] Failed to load config:', error)
@@ -25,15 +25,23 @@ export async function handleSetPsychoanalyzerConfig(req: UnifiedRequest): Promis
   if (!user.isAuthenticated) return { status: 401, error: 'Authentication required' }
   if (user.role !== 'owner') return { status: 403, error: 'Only owner can update psychoanalyzer config' }
 
+  let current
+  try {
+    current = await loadPsychoanalyzerConfig(user.username)
+  } catch (error) {
+    console.error('[psychoanalyzer-config] Failed to load config for update:', error)
+    return { status: 500, error: (error as Error).message }
+  }
+
   let config
   try {
-    config = mergePsychoanalyzerConfig(loadPsychoanalyzerConfig(user.username), body)
+    config = mergePsychoanalyzerConfig(current, body)
   } catch (error) {
     return { status: 400, error: (error as Error).message }
   }
 
   try {
-    savePsychoanalyzerConfig(user.username, config)
+    await savePsychoanalyzerConfig(user.username, config)
     audit({
       level: 'info',
       category: 'system',

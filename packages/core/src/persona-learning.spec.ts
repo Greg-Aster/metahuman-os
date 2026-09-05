@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   applyPersonaLearningProposal,
+  reconcilePersonaLearningProvenance,
   validatePersonaLearningProposal,
 } from './persona-learning.js'
 import type { PersonaCore } from './identity.js'
@@ -11,10 +12,10 @@ import type { PsychoanalyzerConfig } from './psychoanalyzer-config.js'
 function config(): PsychoanalyzerConfig {
   return {
     version: '2.0.0',
-    enabled: true,
     memorySelection: {
       strategy: 'priority_recent',
       daysBack: 30,
+      maxScanFiles: 1000,
       maxMemories: 30,
       minMemories: 5,
       excludeTypes: [],
@@ -25,10 +26,11 @@ function config(): PsychoanalyzerConfig {
       model: 'psychotherapist',
       temperature: 0.3,
       maxTokens: 2200,
+      maxEvidenceCharacters: 60000,
       confidenceThreshold: 0.7,
     },
     updateStrategy: {
-      preserveUserEdits: true,
+      preserveUserEdits: false,
       fields: {
         'personality.traits': true,
         'personality.communicationStyle': true,
@@ -150,6 +152,8 @@ test('learning applies exact, grounded changes without touching identity', () =>
 })
 
 test('preserveUserEdits protects unowned entries while allowing owned reconciliation', () => {
+  const protectedConfig = config()
+  protectedConfig.updateStrategy.preserveUserEdits = true
   const addProposal = validatePersonaLearningProposal({
     summary: 'add a learned interest',
     confidence: 0.9,
@@ -161,7 +165,7 @@ test('preserveUserEdits protects unowned entries while allowing owned reconcilia
       reason: 'Explicit evidence',
     }],
   }, new Set(['memory-1']))
-  const afterAdd = applyPersonaLearningProposal(persona(), addProposal, config()).persona
+  const afterAdd = applyPersonaLearningProposal(persona(), addProposal, protectedConfig).persona
 
   const removeProposal = validatePersonaLearningProposal({
     summary: 'reconcile interests',
@@ -183,11 +187,46 @@ test('preserveUserEdits protects unowned entries while allowing owned reconcilia
       },
     ],
   }, new Set(['memory-2']))
-  const result = applyPersonaLearningProposal(afterAdd, removeProposal, config())
+  const result = applyPersonaLearningProposal(afterAdd, removeProposal, protectedConfig)
 
   assert.deepEqual((result.persona.personality as any).interests, ['manual interest'])
   assert.equal(result.applied.length, 1)
   assert.match(result.rejected[0]?.reason, /preserveUserEdits/)
+})
+
+test('manual edit protection covers traits and manual edits clear Psychoanalyzer ownership', () => {
+  const protectedConfig = config()
+  protectedConfig.updateStrategy.preserveUserEdits = true
+  const traitProposal = validatePersonaLearningProposal({
+    summary: 'trait adjustment',
+    confidence: 0.9,
+    changes: [{
+      operation: 'update',
+      path: 'personality.traits',
+      value: { trait: 'openness', score: 0.8 },
+      evidenceIds: ['memory-1'],
+      reason: 'Repeated evidence',
+    }],
+  }, new Set(['memory-1']))
+
+  const protectedResult = applyPersonaLearningProposal(persona(), traitProposal, protectedConfig)
+  assert.equal(protectedResult.applied.length, 0)
+  assert.match(protectedResult.rejected[0]?.reason ?? '', /preserveUserEdits/)
+
+  const learningConfig = config()
+  const learned = applyPersonaLearningProposal(persona(), traitProposal, learningConfig).persona
+  assert.equal(learned.learningProvenance?.[0]?.key, 'openness')
+  const manuallyEdited = structuredClone(learned)
+  if (manuallyEdited.personality.traits) manuallyEdited.personality.traits.openness = 0.6
+  manuallyEdited.learningProvenance = [{
+    path: 'personality.traits',
+    key: 'openness',
+    evidenceIds: ['forged'],
+    reason: 'forged',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }]
+  const reconciled = reconcilePersonaLearningProvenance(learned, manuallyEdited)
+  assert.deepEqual(reconciled.learningProvenance, [])
 })
 
 test('confidence threshold prevents persona mutation', () => {

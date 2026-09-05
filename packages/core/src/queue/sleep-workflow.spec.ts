@@ -43,6 +43,29 @@ test('sleep workflow admits exactly one ordered stage at a time', async () => {
     assert.equal(state.currentSession, undefined)
     assert.equal(state.recentSessions[0]?.state, 'completed')
     assert.ok(state.recentSessions[0]?.stages.every(stage => stage.state === 'completed'))
+
+    const stageEnabled = (stage: (typeof SLEEP_WORKFLOW_STAGES)[number]) => stage.id !== 'review-persona'
+    const skippedResult = beginSleepWorkflow({
+      id: 'sleep-parent-disabled-child-test',
+      username: 'test-owner',
+      source: 'user',
+      input: { force: true },
+    } as any, manager.enqueue.bind(manager), stageEnabled)
+    assert.equal('skipped' in skippedResult, false)
+
+    for (const stage of SLEEP_WORKFLOW_STAGES.filter(stageEnabled)) {
+      const [active] = manager.getAllTasks()
+      assert.equal(active?.handler, stage.handler)
+      const task = manager.claim(active.id)
+      assert.ok(task)
+      manager.complete(task.id, true, {})
+      advanceSleepWorkflow(manager, task, 'completed', undefined, stageEnabled)
+    }
+
+    const skippedState = runtime.readSleepRuntimeState()
+    const personaReview = skippedState.recentSessions[0]?.stages.find(stage => stage.id === 'review-persona')
+    assert.equal(personaReview?.state, 'skipped')
+    assert.equal(personaReview?.error, 'Disabled in Agent Catalog')
   } finally {
     fs.rmSync(runtimeFile, { force: true })
     delete process.env.MH_SLEEP_RUNTIME_FILE

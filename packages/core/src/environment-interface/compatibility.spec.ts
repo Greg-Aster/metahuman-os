@@ -411,6 +411,7 @@ try {
       status: contextualActionContext.status,
       requested: contextualActionContext.requested,
       correlationId: contextualActionContext.correlationId,
+      originatingInstruction: contextualActionContext.originatingInstruction,
       queuedAt: contextualActionContext.queuedAt,
       completedAt: contextualActionContext.completedAt,
       result: contextualActionContext.result,
@@ -420,6 +421,7 @@ try {
       status: 'completed',
       requested: { type: 'robotCommand', command: 'wave' },
       correlationId: 'conversation-turn-1',
+      originatingInstruction: 'Wave, then use the returned view to tell me what changed.',
       queuedAt: resultAction.createdAt,
       completedAt: manager.getTask(resultAction.id)?.completedAt,
       result: { type: 'completed', message: 'done' },
@@ -614,6 +616,7 @@ try {
     actions: [{ type: 'robotCommand', command: 'walk', units: 3 }],
     movementRequest: null,
     taskDecision: {
+      objective: 'Walk forward once.',
       outcome: 'act',
       reason: 'Walk once.',
       objectiveComplete: false,
@@ -636,6 +639,7 @@ try {
     actions: [],
     movementRequest: null,
     taskDecision: {
+      objective: 'Confirm the requested view.',
       outcome: 'complete',
       reason: 'The correlated frame visibly satisfies the objective.',
       objectiveComplete: true,
@@ -655,6 +659,7 @@ try {
     actions: [{ type: 'move', command: 'curious', durationMs: 750 }],
     movementRequest: null,
     taskDecision: {
+      objective: 'Reorient the robot.',
       outcome: 'act',
       reason: 'Reorient.',
       objectiveComplete: false,
@@ -815,6 +820,7 @@ try {
     manager.getTask(observerWorkflowCapture.commands[0]?.id)?.metadata?.originatingInstruction,
     'Interpret the returned image as one autonomous observation.',
   );
+  assert.equal(manager.getTask(observerWorkflowCapture.commands[0]?.id)?.deadline, undefined);
 
   const continuationObservation = {
     environmentId: 'ainekio',
@@ -847,6 +853,7 @@ try {
       actions: [{ type: 'robotCommand', command: 'wave' }],
       movementRequest: null,
       taskDecision: {
+        objective: 'Continue the original objective.',
         outcome: 'act',
         reason: 'The advertised wave command is the selected next action.',
         objectiveComplete: false,
@@ -1007,6 +1014,7 @@ try {
       actions: [],
       movementRequest: null,
       taskDecision: {
+        objective: captureGoal,
         outcome: 'complete',
         reason: 'The fresh correlated image supplies the requested visual answer.',
         objectiveComplete: true,

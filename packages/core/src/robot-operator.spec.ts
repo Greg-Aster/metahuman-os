@@ -13,9 +13,9 @@ import {
   isBoredomMovementEnabled,
   nextRobotObserverCycle,
   isRobotAutonomyWorkItem,
-  nextRobotOperatorFullChild,
   randomizedRobotOperatorIdleMs,
   readRobotObserverCycle,
+  robotGoalNeedsReview,
   robotObserverSourceAllowed,
   robotOperatorChildGraph,
   loadRobotOperatorConfig,
@@ -42,14 +42,25 @@ test('manual observer cycles remain available while autonomous cycles require se
   assert.equal(robotObserverSourceAllowed('full', 'autonomy'), true)
 })
 
-test('full autonomy rotates children after each completed episode', () => {
-  const children = ['robot-status', 'boredom-observer', 'boredom-movement', 'boredom-reflection'] as const
-  assert.equal(nextRobotOperatorFullChild([...children], 0), 'robot-status')
-  assert.equal(nextRobotOperatorFullChild([...children], 1), 'boredom-observer')
-  assert.equal(nextRobotOperatorFullChild([...children], 2), 'boredom-movement')
-  assert.equal(nextRobotOperatorFullChild([...children], 3), 'boredom-reflection')
-  assert.equal(nextRobotOperatorFullChild([...children], 4), 'robot-status')
-  assert.equal(nextRobotOperatorFullChild([], 0), null)
+test('full autonomy admits the controller instead of rotating child workflows', () => {
+  const serviceSource = fs.readFileSync(path.join(ROOT, 'brain/services/robot-operator.ts'), 'utf8')
+  assert.match(serviceSource, /FULL_CONTROLLER[^\n]+robot-autonomy-controller/)
+  assert.doesNotMatch(serviceSource, /nextRobotOperatorFullChild|fullCursor/)
+})
+
+test('goal review admission follows unresolved action results rather than reviewing its own decision again', () => {
+  const task = (outcome: string, objectiveComplete = false) => ({
+    objective: 'Find the cat.',
+    decision: { outcome, reason: 'Evidence assessment.', objectiveComplete },
+  }) as any
+
+  assert.equal(robotGoalNeedsReview(task('incomplete')), true)
+  assert.equal(robotGoalNeedsReview(task('failed')), true)
+  assert.equal(robotGoalNeedsReview(task('continue')), false)
+  assert.equal(robotGoalNeedsReview(task('wait')), false)
+  assert.equal(robotGoalNeedsReview(task('request_user')), false)
+  assert.equal(robotGoalNeedsReview(task('abandon')), false)
+  assert.equal(robotGoalNeedsReview(task('complete', true)), false)
 })
 
 test('robot autonomy activity follows the canonical correlated work chain', () => {
@@ -58,6 +69,18 @@ test('robot autonomy activity follows the canonical correlated work chain', () =
     handler: 'workflow.boredom-observer',
     state: 'queued',
     input: {},
+  } as any
+  const controller = {
+    id: 'controller-1',
+    handler: 'workflow.robot-autonomy-controller',
+    state: 'leased',
+    input: {},
+  } as any
+  const selectedAgent = {
+    id: 'reflection-1',
+    handler: 'agent.reflector',
+    state: 'queued',
+    input: { robotOperatorContext: { robotObserver: { cycleId: 'cycle-2' } } },
   } as any
   const observation = {
     id: 'observation-1',
@@ -84,11 +107,14 @@ test('robot autonomy activity follows the canonical correlated work chain', () =
     input: {},
   } as any
   assert.equal(isRobotAutonomyWorkItem(child), true)
+  assert.equal(isRobotAutonomyWorkItem(controller), true)
+  assert.equal(isRobotAutonomyWorkItem(selectedAgent), true)
   assert.equal(isRobotAutonomyWorkItem(observation), true)
   assert.equal(isRobotAutonomyWorkItem(command), true)
   assert.equal(isRobotAutonomyWorkItem(returnedResult), true)
   assert.equal(isRobotAutonomyWorkItem(unrelated), false)
   assert.equal(hasActiveRobotAutonomyCycle([child, observation, command, unrelated]), true)
+  assert.equal(hasActiveRobotAutonomyCycle([controller, selectedAgent]), true)
   assert.equal(hasActiveRobotAutonomyCycle([{ ...command, state: 'completed' }]), false)
   assert.equal(hasActiveRobotAutonomyCycle([child], child.id), false)
 })
@@ -212,6 +238,8 @@ test('each boredom child keeps its specialized policy in the editable workflow',
 })
 
 test('Robot Operator owns scheduling while Robot Status and boredom children own finite graph work', () => {
+  assert.equal(AGENT_CATALOG_DEFINITIONS['robot-autonomy-controller'].lifecycle, 'workflow')
+  assert.equal(AGENT_CATALOG_DEFINITIONS['robot-autonomy-controller'].handler, 'workflow.robot-autonomy-controller')
   assert.equal(AGENT_CATALOG_DEFINITIONS['robot-status'].lifecycle, 'workflow')
   assert.equal(AGENT_CATALOG_DEFINITIONS['robot-status'].handler, 'workflow.robot-status')
   assert.equal(AGENT_CATALOG_DEFINITIONS['robot-goal-review'].lifecycle, 'workflow')
@@ -238,7 +266,7 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   assert.equal(isBoredomReflectionEnabled(), true)
   assert.equal(services.services['robot-operator'].startOnSystemBoot, true)
   const catalog = getAgentCatalogSnapshot()
-  for (const child of ['robot-status', 'robot-goal-review', 'boredom-observer', 'boredom-movement', 'boredom-reflection']) {
+  for (const child of ['robot-autonomy-controller', 'robot-status', 'robot-goal-review', 'boredom-observer', 'boredom-movement', 'boredom-reflection']) {
     const catalogItem = catalog.agents.find(agent => agent.id === child)
     assert.equal(catalogItem?.owner, 'robot-operator')
     assert.equal(catalogItem?.triggerRegistered, false)
@@ -286,6 +314,7 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   assert.equal(variables.some(variable => variable.key === 'maxCycleSteps'), false)
   assert.equal(variables.some(variable => variable.key === 'graph'), false)
   assert.equal(variables.find(variable => variable.key === 'robotStatusGraph')?.value, 'robot-status')
+  assert.equal(variables.find(variable => variable.key === 'robotAutonomyControllerGraph')?.value, 'robot-autonomy-controller')
   assert.equal(variables.find(variable => variable.key === 'robotGoalReviewGraph')?.value, 'robot-goal-review')
   assert.equal(variables.find(variable => variable.key === 'boredomObserverGraph')?.value, 'boredom-observer')
   assert.equal(variables.find(variable => variable.key === 'boredomMovementGraph')?.value, 'boredom-movement')
@@ -295,6 +324,7 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   const config = loadRobotOperatorConfig()
   assert.equal('maxCycleSteps' in config, false)
   assert.equal(config.robotStatusGraph, 'robot-status')
+  assert.equal(config.robotAutonomyControllerGraph, 'robot-autonomy-controller')
   assert.equal(config.robotGoalReviewGraph, 'robot-goal-review')
   assert.equal(config.boredomObserverGraph, 'boredom-observer')
   assert.equal(config.boredomMovementGraph, 'boredom-movement')
@@ -302,6 +332,7 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   assert.equal(config.autonomyGraph, 'boredom-autonomy')
   assert.equal(config.environmentGraph, 'environment')
   assert.equal(robotOperatorChildGraph(config, 'robot-status'), 'robot-status')
+  assert.equal(robotOperatorChildGraph(config, 'robot-autonomy-controller'), 'robot-autonomy-controller')
   assert.equal(robotOperatorChildGraph(config, 'robot-goal-review'), 'robot-goal-review')
   assert.equal(robotOperatorChildGraph(config, 'boredom-observer'), 'boredom-observer')
 

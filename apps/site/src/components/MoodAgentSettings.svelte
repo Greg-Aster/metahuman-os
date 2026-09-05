@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
-  import { nodeEditorMode } from '../stores/navigation';
+  import { graphEditorHref } from '../stores/navigation';
 
   type BufferSource = 'conversation' | 'inner' | 'both';
   type MoodData = {
@@ -69,10 +69,6 @@
     }
   }
 
-  function openGraphEditor() {
-    nodeEditorMode.set(true);
-  }
-
   onMount(load);
 </script>
 
@@ -82,7 +78,7 @@
       <h3 class="font-semibold text-gray-900 dark:text-gray-100">Mood persona routing</h3>
       <p class="mt-1 max-w-3xl text-xs text-gray-500">Mood queues the editable <strong>Mood Persona Review</strong> graph after a message threshold. While Semi mode is active, it returns to the baseline facet after the idle cooldown.</p>
     </div>
-    <button class="rounded border px-3 py-2 text-xs dark:border-gray-700" on:click={openGraphEditor}>Open Graph Editor</button>
+    <a class="rounded border px-3 py-2 text-xs dark:border-gray-700" href={graphEditorHref()} target="_blank" rel="noopener noreferrer">Open Graph Editor</a>
   </div>
 
   {#if feedback}<div class="mt-3 rounded bg-emerald-500/10 p-2 text-xs text-emerald-700 dark:text-emerald-300">{feedback}</div>{/if}

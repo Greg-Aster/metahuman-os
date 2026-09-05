@@ -1,4 +1,9 @@
 import { writable, derived } from 'svelte/store';
+import {
+  GRAPH_EDITOR_WORKSPACE,
+  graphEditorLocation,
+  isGraphEditorLocation,
+} from '../lib/client/flow-editor/graph-editor-location';
 
 // Views that shouldn't be restored (trigger expensive operations on mount)
 const HEAVY_VIEWS = ['training'];
@@ -117,8 +122,47 @@ export const userDisplayNameStore = writable<string>('You');
 // YOLO mode store - shared between components
 export const yoloModeStore = writable<boolean>(false);
 
-// Node editor mode toggle - when true, shows node-based visual editor instead of traditional interface
-export const nodeEditorMode = writable<boolean>(false);
+function createNodeEditorModeStore() {
+  const globalKey = '__MH_NODE_EDITOR_MODE_STORE__';
+
+  if (typeof window !== 'undefined' && (window as any)[globalKey]) {
+    return (window as any)[globalKey];
+  }
+
+  const store = writable<boolean>(
+    typeof window !== 'undefined' && isGraphEditorLocation(window.location.href),
+  );
+
+  if (typeof window !== 'undefined') {
+    let syncingFromHistory = false;
+
+    store.subscribe(enabled => {
+      if (syncingFromHistory) return;
+      const nextUrl = graphEditorLocation(window.location.href, enabled);
+      if (nextUrl !== window.location.href) {
+        window.history.replaceState(window.history.state, '', nextUrl);
+      }
+    });
+
+    window.addEventListener('popstate', () => {
+      syncingFromHistory = true;
+      store.set(isGraphEditorLocation(window.location.href));
+      syncingFromHistory = false;
+    });
+
+    (window as any)[globalKey] = store;
+  }
+
+  return store;
+}
+
+// The editor workspace is URL-scoped so separate tabs can independently show Chat and Graph Editor.
+export const nodeEditorMode = createNodeEditorModeStore();
+
+export function graphEditorHref(): string {
+  if (typeof window === 'undefined') return `?workspace=${GRAPH_EDITOR_WORKSPACE}`;
+  return graphEditorLocation(window.location.href, true);
+}
 
 // Right sidebar open state - shared between ChatLayout and RightSidebar
 // Used to pause polling in ServerStatus when sidebar is collapsed

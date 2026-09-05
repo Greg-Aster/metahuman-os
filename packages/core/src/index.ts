@@ -16,42 +16,8 @@ export * from './deployment';  // Deployment mode configuration (local vs server
 export * from './identity';
 export * from './memory';
 export * from './memory-content-filter';  // Content mode filtering for agent reflections
-// Phase 4: Extract tasks from reflections
-export {
-  type TaskSuggestion,
-  type ExtractionResult as TaskExtractionResult,
-  type ExtractionOptions as TaskExtractionOptions,
-  extractTaskSuggestions,
-  listTaskSuggestions,
-  getTaskSuggestion,
-  approveTaskSuggestion,
-  rejectTaskSuggestion,
-  bulkApprove,
-  cleanupSuggestions,
-  reflectionToTask,
-} from './reflection-to-task';
-// Phase 4: Continual learning from preferences
-export {
-  type PreferenceCategory,
-  type LearnedPreference,
-  type PreferenceSnapshot,
-  type ExtractionResult as PreferenceExtractionResult,
-  type LearningOptions,
-  learnPreferences,
-  getPreferences,
-  getPreference,
-  confirmPreference,
-  rejectPreference,
-  modifyPreference,
-  getPreferenceStats,
-  getPreferencesByCategory,
-  getActivePreferences,
-  getConfirmedPreferences,
-  findContradictions,
-  cleanupPreferences,
-  preferenceLearner,
-} from './preference-learner';
 export * from './persona-learning';
+export * from './persona-insights';
 export * from './psychoanalyzer-config';
 export * from './goal-review';  // Phase 4: Weekly goal reviews
 export * from './system-operator';  // Phase 5: System operator maintenance skills

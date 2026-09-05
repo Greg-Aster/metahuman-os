@@ -3,6 +3,7 @@ import path from 'node:path'
 import { systemPaths } from './path-builder.js'
 import type { EnvironmentObservation } from './environment-interface/types.js'
 import type { AutonomyMode, QueuedTask } from './queue/types.js'
+import type { RobotStatusTask } from './robot-status.js'
 
 const SERVICES_CONFIG_PATH = path.join(systemPaths.etc, 'services.json')
 const AGENTS_CONFIG_PATH = path.join(systemPaths.etc, 'agents.json')
@@ -10,6 +11,7 @@ export const ROBOT_OPERATOR_RUNTIME_FILE = path.join(systemPaths.logs, 'run', 'r
 
 export type RobotObserverTriggerSource = 'user' | 'autonomy'
 export type RobotOperatorStimulusAgent =
+  | 'robot-autonomy-controller'
   | 'robot-status'
   | 'robot-goal-review'
   | 'boredom-observer'
@@ -20,6 +22,7 @@ export type RobotOperatorCycleRequester =
   | 'environment-perception'
 
 const ROBOT_AUTONOMY_HANDLERS = new Set([
+  'workflow.robot-autonomy-controller',
   'workflow.robot-status',
   'workflow.robot-goal-review',
   'workflow.boredom-observer',
@@ -48,6 +51,7 @@ export interface RobotOperatorConfig {
   boredomReflectionInactivityThresholdSeconds: number
   boredomReflectionJitterMs: number
   robotStatusGraph: string
+  robotAutonomyControllerGraph: string
   robotGoalReviewGraph: string
   boredomObserverGraph: string
   boredomMovementGraph: string
@@ -91,6 +95,7 @@ const DEFAULT_CONFIG: RobotOperatorConfig = {
   boredomReflectionInactivityThresholdSeconds: 900,
   boredomReflectionJitterMs: 180_000,
   robotStatusGraph: 'robot-status',
+  robotAutonomyControllerGraph: 'robot-autonomy-controller',
   robotGoalReviewGraph: 'robot-goal-review',
   boredomObserverGraph: 'boredom-observer',
   boredomMovementGraph: 'boredom-movement',
@@ -191,6 +196,10 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
       3_600_000,
     ),
     robotStatusGraph: configuredGraph(configured.robotStatusGraph, DEFAULT_CONFIG.robotStatusGraph),
+    robotAutonomyControllerGraph: configuredGraph(
+      configured.robotAutonomyControllerGraph,
+      DEFAULT_CONFIG.robotAutonomyControllerGraph,
+    ),
     robotGoalReviewGraph: configuredGraph(configured.robotGoalReviewGraph, DEFAULT_CONFIG.robotGoalReviewGraph),
     boredomObserverGraph: configuredGraph(configured.boredomObserverGraph, DEFAULT_CONFIG.boredomObserverGraph),
     boredomMovementGraph: configuredGraph(configured.boredomMovementGraph, DEFAULT_CONFIG.boredomMovementGraph),
@@ -229,6 +238,7 @@ export function isBoredomReflectionEnabled(): boolean {
 }
 
 export function isRobotOperatorChildEnabled(agent: RobotOperatorStimulusAgent): boolean {
+  if (agent === 'robot-autonomy-controller') return isConfiguredAgentEnabled('robot-autonomy-controller')
   if (agent === 'robot-status') return isRobotStatusEnabled()
   if (agent === 'robot-goal-review') return isConfiguredAgentEnabled('robot-goal-review')
   if (agent === 'boredom-observer') return isBoredomObserverEnabled()
@@ -240,6 +250,7 @@ export function robotOperatorChildGraph(
   config: RobotOperatorConfig,
   agent: RobotOperatorStimulusAgent,
 ): string {
+  if (agent === 'robot-autonomy-controller') return config.robotAutonomyControllerGraph
   if (agent === 'robot-status') return config.robotStatusGraph
   if (agent === 'robot-goal-review') return config.robotGoalReviewGraph
   if (agent === 'boredom-observer') return config.boredomObserverGraph
@@ -247,13 +258,14 @@ export function robotOperatorChildGraph(
   return config.boredomReflectionGraph
 }
 
-export function nextRobotOperatorFullChild(
-  enabled: RobotOperatorStimulusAgent[],
-  cursor: number,
-): RobotOperatorStimulusAgent | null {
-  if (enabled.length === 0) return null
-  const normalizedCursor = Number.isFinite(cursor) ? Math.max(0, Math.floor(cursor)) : 0
-  return enabled[normalizedCursor % enabled.length] ?? null
+/**
+ * A goal needs a new LLM review only after a terminal action result says the
+ * objective remains unresolved. Decisions made by Goal Review itself already
+ * describe what happens next and must not re-admit the reviewer immediately.
+ */
+export function robotGoalNeedsReview(task: RobotStatusTask | null | undefined): boolean {
+  if (!task?.objective.trim() || task.decision.objectiveComplete) return false
+  return task.decision.outcome === 'incomplete' || task.decision.outcome === 'failed'
 }
 
 function hasRobotObserverMetadata(value: unknown): boolean {
@@ -302,6 +314,7 @@ export function readRobotOperatorRuntimeState(): RobotOperatorRuntimeState | nul
     if (!['reactive', 'semi', 'full'].includes(parsed.mode)) return null
     if (!['starting', 'armed', 'dormant', 'admitting', 'stopped'].includes(parsed.lifecycle)) return null
     const childIds: RobotOperatorStimulusAgent[] = [
+      'robot-autonomy-controller',
       'robot-status',
       'robot-goal-review',
       'boredom-observer',
@@ -385,6 +398,7 @@ export function parseRobotObserverCycle(value: unknown): RobotObserverCycleMetad
     || (triggerSource !== 'user' && triggerSource !== 'autonomy')
     || (
       requestedBy !== 'boredom-observer'
+      && requestedBy !== 'robot-autonomy-controller'
       && requestedBy !== 'robot-goal-review'
       && requestedBy !== 'boredom-movement'
       && requestedBy !== 'boredom-reflection'

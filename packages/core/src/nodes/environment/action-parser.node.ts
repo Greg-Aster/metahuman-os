@@ -126,7 +126,6 @@ export const environmentActionParserNode = defineNode({
     { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
     { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
-    { name: 'inputSource', type: 'string', optional: true, description: 'Instruction provenance supplied by the workflow input owner' },
     { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
   ],
   outputs: [
@@ -150,12 +149,10 @@ export const environmentActionParserNode = defineNode({
       const observation = inputs.observation && typeof inputs.observation === 'object'
         ? inputs.observation as EnvironmentObservation
         : undefined;
-      const autonomous = inputs.inputSource === 'autonomy';
       const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
       const validation = validateEnvironmentSelectorOutput(
         inputs.response,
         sessionId,
-        { requireObjective: autonomous },
       );
       const validated = validation.value;
       const parsed = validated

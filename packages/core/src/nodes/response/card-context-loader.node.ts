@@ -22,7 +22,8 @@
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
-import { loadDesire } from '../../agency/index.js';
+import { loadDesire } from '../../agency/storage.js';
+import { curiosityQuestionStore } from '../../curiosity-questions.js';
 import {
   loadResponseBuffer,
   createResponseBuffer,
@@ -59,47 +60,53 @@ export const CardContextLoaderNode: NodeDefinition = defineNode({
   properties: {},
   description: 'Loads ONLY card-specific context. No memory search, no conversation buffer.',
 
-  execute: async (inputs, context) => {
-    const slot0 = inputs[0] as {
-      cardType?: string;
-      cardData?: CardData;
-      responseBufferId?: string;
-      userId?: string;
-      message?: string;
-    } | undefined;
-
-    const cardType = slot0?.cardType || context.cardType || 'unknown';
-    const cardData = (slot0?.cardData || context.cardData || {}) as CardData;
-    const responseBufferId = slot0?.responseBufferId || context.responseBufferId;
-    const userId = slot0?.userId || context.userId || 'anonymous';
-    const message = slot0?.message || context.userMessage || '';
+  execute: async (inputs) => {
+    const cardType = typeof inputs.cardType === 'string' ? inputs.cardType : '';
+    const cardData = (inputs.cardData || {}) as CardData;
+    const responseBufferId = typeof inputs.responseBufferId === 'string' ? inputs.responseBufferId : undefined;
+    const userId = typeof inputs.userId === 'string' ? inputs.userId : '';
+    const message = typeof inputs.message === 'string' ? inputs.message : '';
 
     console.log(`[card-context-loader] Loading context for ${cardType}`);
+    if (!userId || userId === 'anonymous') throw new Error('Card context requires an authenticated user');
+    if (!message.trim()) throw new Error('Card context requires the original user message');
 
     // Load desire if applicable
     let desire: Desire | null = null;
     if (cardData.desireId) {
-      try {
-        desire = await loadDesire(cardData.desireId, userId);
-        console.log(`[card-context-loader] Loaded desire: ${desire?.title || 'not found'}`);
-      } catch (err) {
-        console.error(`[card-context-loader] Failed to load desire:`, err);
-      }
+      desire = await loadDesire(cardData.desireId, userId);
+      if (!desire) throw new Error(`Desire not found: ${cardData.desireId}`);
+      console.log(`[card-context-loader] Loaded desire: ${desire.title}`);
     }
+
+    let cardContent = typeof cardData.content === 'string' ? cardData.content.trim() : '';
+    if (cardType === 'curiosity_response') {
+      const questionId = typeof cardData.questionId === 'string' ? cardData.questionId.trim() : '';
+      if (!questionId) throw new Error('Curiosity context requires a questionId');
+      const question = await curiosityQuestionStore.get(userId, questionId);
+      if (!question) throw new Error(`Curiosity question not found: ${questionId}`);
+      if (question.status !== 'pending') throw new Error(`Curiosity question is already resolved: ${questionId}`);
+      cardContent = question.question;
+    } else if (!cardContent && desire) {
+      cardContent = desire.title;
+    }
+    if (!cardContent) throw new Error(`Card content is unavailable for ${cardType}`);
 
     // Load or create response buffer
     let responseBuffer: ResponseBuffer | null = null;
+    const cardId = cardData.desireId || cardData.questionId;
+    if (!cardId) throw new Error(`Card identity is required for ${cardType}`);
     if (responseBufferId) {
       responseBuffer = loadResponseBuffer(userId, responseBufferId);
-      if (responseBuffer) {
-        console.log(`[card-context-loader] Loaded existing buffer with ${responseBuffer.exchanges.length} exchanges`);
+      if (!responseBuffer) throw new Error(`Response buffer not found or unreadable: ${responseBufferId}`);
+      if (responseBuffer.cardType !== cardType || responseBuffer.cardId !== cardId) {
+        throw new Error(`Response buffer ${responseBufferId} does not belong to ${cardType}:${cardId}`);
       }
+      console.log(`[card-context-loader] Loaded existing buffer with ${responseBuffer.exchanges.length} exchanges`);
     }
 
     if (!responseBuffer) {
       // Create new buffer
-      const cardContent = cardData.content || desire?.title || 'Unknown card';
-      const cardId = cardData.desireId || cardData.questionId || `card-${Date.now()}`;
       responseBuffer = createResponseBuffer(
         userId,
         cardType,
@@ -119,9 +126,7 @@ export const CardContextLoaderNode: NodeDefinition = defineNode({
     // Card information
     contextParts.push(`## Card Information`);
     contextParts.push(`Type: ${cardType}`);
-    if (cardData.content) {
-      contextParts.push(`Card Content: ${cardData.content}`);
-    }
+    contextParts.push(`Card Content: ${cardContent}`);
 
     // Desire information (if applicable)
     if (desire) {

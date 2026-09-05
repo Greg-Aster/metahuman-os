@@ -23,6 +23,7 @@
   let leaseDurationMs = 20_000;
   let queueGeneration = 0;
   let activeDeliveryId = '';
+  let unlockAttempt: Promise<boolean> | null = null;
   const queueInterruptedDeliveries = new Set<string>();
 
   type DeliveryAction = 'complete' | 'renew' | 'retry' | 'suppress' | 'interrupt';
@@ -76,6 +77,16 @@
       return;
     }
 
+    activeDeliveryId = item.id;
+    const audioUnlocked = await ttsApi.ensureAudioUnlocked();
+    if (!audioUnlocked) {
+      console.warn(`[tts-queue] Deferring ${item.id} until browser audio is unlocked`);
+      await updateDelivery(item, 'retry');
+      pauseQueueUntilAudioUnlocked();
+      if (activeDeliveryId === item.id) activeDeliveryId = '';
+      return;
+    }
+
     let renewInFlight = false;
     const renewLease = async (): Promise<void> => {
       if (renewInFlight || !mounted) return;
@@ -93,8 +104,6 @@
 
     try {
       console.log(`[tts-queue] Playing node-admitted item from ${source} (${text.length} chars)`);
-      activeDeliveryId = item.id;
-      await ttsApi.ensureAudioUnlocked();
       if (!mounted) return;
       if (
         queueInterruptedDeliveries.delete(item.id)
@@ -186,27 +195,59 @@
     };
   }
 
-  function unlockAudio(): void {
-    void ttsApi.ensureAudioUnlocked();
+  function removeAudioUnlockListeners(): void {
+    window.removeEventListener('pointerdown', requestAudioUnlock, { capture: true });
+    window.removeEventListener('keydown', requestAudioUnlock, { capture: true });
+  }
+
+  function armAudioUnlockListeners(): void {
+    window.addEventListener('pointerdown', requestAudioUnlock, { capture: true });
+    window.addEventListener('keydown', requestAudioUnlock, { capture: true });
+  }
+
+  function pauseQueueUntilAudioUnlocked(): void {
+    queueStream?.close();
+    queueStream = null;
+    armAudioUnlockListeners();
+  }
+
+  async function enableQueuePlayback(): Promise<boolean> {
+    if (!mounted) return false;
+    if (unlockAttempt) return unlockAttempt;
+
+    unlockAttempt = (async () => {
+      const unlocked = await ttsApi.ensureAudioUnlocked();
+      if (!mounted || !unlocked) return false;
+      removeAudioUnlockListeners();
+      connectQueueStream();
+      return true;
+    })();
+
+    try {
+      return await unlockAttempt;
+    } finally {
+      unlockAttempt = null;
+    }
+  }
+
+  function requestAudioUnlock(): void {
+    void enableQueuePlayback();
   }
 
   onMount(() => {
     mounted = true;
     consumerId = `tts-client-${crypto.randomUUID()}`;
-    connectQueueStream();
-
-    // Preserve a user gesture for later robot-initiated responses, which do
-    // not originate from an interaction in the browser.
-    window.addEventListener('pointerdown', unlockAudio, { once: true, capture: true });
-    window.addEventListener('keydown', unlockAudio, { once: true, capture: true });
+    armAudioUnlockListeners();
+    // Browsers with autoplay permission connect immediately. Others retain
+    // queued speech without leasing it until the first application gesture.
+    void enableQueuePlayback();
   });
 
   onDestroy(() => {
     mounted = false;
     queueStream?.close();
     queueStream = null;
-    window.removeEventListener('pointerdown', unlockAudio, { capture: true });
-    window.removeEventListener('keydown', unlockAudio, { capture: true });
+    removeAudioUnlockListeners();
     ttsApi.cleanup();
   });
 </script>

@@ -15,9 +15,9 @@ import {
   loadQueueState,
   loadRobotOperatorConfig,
   loadRobotStatus,
-  nextRobotOperatorFullChild,
   randomizedRobotOperatorIdleMs,
   readSystemActivityTimestamp,
+  robotGoalNeedsReview,
   robotOperatorChildGraph,
   SLEEP_RUNTIME_FILE,
   systemPaths,
@@ -34,13 +34,15 @@ const AGENTS_CONFIG = path.join(systemPaths.etc, 'agents.json')
 const RETRY_DELAY_MS = 30_000
 const FULL_CYCLE_POLL_MS = 1_000
 const FULL_IDLE_CONFIRMATIONS = 2
-const CHILDREN: RobotOperatorStimulusAgent[] = [
+const FULL_CONTROLLER: RobotOperatorStimulusAgent = 'robot-autonomy-controller'
+const SEMI_CHILDREN: RobotOperatorStimulusAgent[] = [
   'robot-status',
   'robot-goal-review',
   'boredom-observer',
   'boredom-movement',
   'boredom-reflection',
 ]
+const CHILDREN: RobotOperatorStimulusAgent[] = [FULL_CONTROLLER, ...SEMI_CHILDREN]
 
 interface ChildSchedule {
   timer: NodeJS.Timeout | null
@@ -62,7 +64,6 @@ let activeSince = Date.now()
 let previousMode = getOperatorMode()
 let shuttingDown = false
 let fullTimer: NodeJS.Timeout | null = null
-let fullCursor = 0
 let fullIdleConfirmations = 0
 let lifecycle: 'starting' | 'armed' | 'dormant' | 'admitting' | 'stopped' = 'starting'
 let lifecycleReason = 'startup'
@@ -145,18 +146,18 @@ function robotAutonomyCycleActive(): boolean {
   return hasActiveRobotAutonomyCycle(loadQueueState()?.items ?? [])
 }
 
-function robotGoalNeedsReview(username: string): boolean {
-  const task = loadRobotStatus(username)?.task
-  return Boolean(task?.objective.trim() && task.decision.objectiveComplete === false)
-}
-
 function dormantReason(): string | null {
   const config = loadRobotOperatorConfig()
   const mode = getOperatorMode()
   if (!config.enabled) return 'Robot Operator disabled'
   if (mode === 'reactive') return 'Active Operator is reactive'
   if (isSleepRuntimeActive()) return 'sleep workflow active'
-  if (!CHILDREN.some(isRobotOperatorChildEnabled)) return 'all child triggers disabled'
+  if (mode === 'full' && !isRobotOperatorChildEnabled(FULL_CONTROLLER)) {
+    return 'Robot Autonomy Controller disabled'
+  }
+  if (mode === 'semi' && !SEMI_CHILDREN.some(isRobotOperatorChildEnabled)) {
+    return 'all scheduled robot workflows disabled'
+  }
   return null
 }
 
@@ -176,30 +177,19 @@ function armSemiChild(child: RobotOperatorStimulusAgent, reason: string, minimum
 function armFull(reason: string, minimumDelayMs = 0): void {
   if (fullTimer) clearTimeout(fullTimer)
   fullTimer = null
-  for (const child of CHILDREN) schedules[child].nextRunAt = 0
+  schedules[FULL_CONTROLLER].nextRunAt = 0
   if (shuttingDown || getOperatorMode() !== 'full') return
-  const configured = CHILDREN.filter(isRobotOperatorChildEnabled)
-  const activeUser = getCurrentlyActiveUser()
-  const goalReviewPending = Boolean(
-    activeUser?.role === 'owner'
-    && robotGoalNeedsReview(activeUser.username),
-  )
-  const enabled = goalReviewPending && configured.includes('robot-goal-review')
-    ? ['robot-goal-review'] as RobotOperatorStimulusAgent[]
-    : configured.filter(child => child !== 'robot-goal-review')
-  if (enabled.length === 0) return
-  const child = nextRobotOperatorFullChild(enabled, fullCursor)
-  if (!child) return
+  if (!isRobotOperatorChildEnabled(FULL_CONTROLLER)) return
   const dueAt = Date.now() + Math.max(0, minimumDelayMs)
-  schedules[child].nextRunAt = dueAt
-  fullTimer = setTimeout(() => void onDeadline(child, 'full'), dueAt - Date.now())
-  console.log(`[${SERVICE_ID}] Armed child=${child} reason=${reason} mode=full due=${new Date(dueAt).toISOString()}`)
+  schedules[FULL_CONTROLLER].nextRunAt = dueAt
+  fullTimer = setTimeout(() => void onDeadline(FULL_CONTROLLER, 'full'), dueAt - Date.now())
+  console.log(`[${SERVICE_ID}] Armed child=${FULL_CONTROLLER} reason=${reason} mode=full due=${new Date(dueAt).toISOString()}`)
 }
 
 function watchFullCycle(reason: string): void {
   if (fullTimer) clearTimeout(fullTimer)
   fullTimer = null
-  for (const child of CHILDREN) schedules[child].nextRunAt = 0
+  schedules[FULL_CONTROLLER].nextRunAt = 0
   if (shuttingDown || getOperatorMode() !== 'full') return
   lifecycle = 'armed'
   lifecycleReason = reason
@@ -249,7 +239,7 @@ function armForMode(reason: string): void {
     if (robotAutonomyCycleActive()) watchFullCycle('cycle-active')
     else armFull(reason)
   }
-  else for (const child of CHILDREN) armSemiChild(child, reason)
+  else for (const child of SEMI_CHILDREN) armSemiChild(child, reason)
   publishRuntime()
 }
 
@@ -297,12 +287,15 @@ async function onDeadline(
     publishRuntime()
     return
   }
-  if (child === 'robot-goal-review' && !robotGoalNeedsReview(activeUser.username)) {
-    schedule.lastOutcome = 'no_unfinished_goal'
+  if (
+    expectedMode === 'semi'
+    && child === 'robot-goal-review'
+    && !robotGoalNeedsReview(loadRobotStatus(activeUser.username)?.task)
+  ) {
+    schedule.lastOutcome = 'no_reviewable_action_result'
     lifecycle = 'armed'
     lifecycleReason = 'goal-review-not-needed'
-    if (expectedMode === 'full') armFull('goal-review-not-needed')
-    else armSemiChild(child, 'goal-review-not-needed')
+    armSemiChild(child, 'goal-review-not-needed')
     publishRuntime()
     return
   }
@@ -332,9 +325,6 @@ async function onDeadline(
     schedule.lastAdmittedAt = admittedAt
     schedule.lastTaskId = task.id
     schedule.lastOutcome = 'admitted'
-    if (expectedMode === 'full') {
-      fullCursor += 1
-    }
     console.log(`[${SERVICE_ID}] ${child} admitted task=${task.id} mode=${expectedMode}`)
     audit({
       level: 'info',
@@ -379,7 +369,7 @@ function watchFile(file: string, onChange: () => void): fs.FSWatcher | null {
 export async function run(): Promise<void> {
   const lock = acquireLock('agent-robot-operator', { exitOnSignal: false })
   initGlobalLogger(SERVICE_ID)
-  console.log(`[${SERVICE_ID}] Started; Robot Status and boredom schedules are owned here`)
+  console.log(`[${SERVICE_ID}] Started; Semi schedules and Full autonomy-controller admission are owned here`)
 
   const watchers = [
     watchFile(ACTIVITY_STATE_FILE, () => armForMode('system-activity')),

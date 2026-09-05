@@ -33,15 +33,15 @@ observation, and physical result.
 ```text
 Active Operator mode
   -> Robot Operator service timing and admission
-  -> Robot Status or one boredom planner graph
-  -> one-pass Robot Autonomy Executor
+  -> Robot Autonomy Controller in Full mode
+  -> one catalog-backed finite agent or one-pass Robot Autonomy Executor
   -> Environment selector and specialized evidence inputs
   -> Environment Bridge transport
   -> Ainekio body runtime and safety
   -> correlated result and fresh observation
   -> one-pass Robot Action Result evaluation
   -> Robot Status Out task and action update
-  -> later Robot Goal Review when the mode permits and the objective remains incomplete
+  -> later Robot Goal Review when the result records the objective as incomplete or failed
 ```
 
 The maintained owners are:
@@ -49,15 +49,16 @@ The maintained owners are:
 | Responsibility | Canonical owner |
 | --- | --- |
 | Reactive, Semi, and Full mode transitions | `packages/core/src/active-operator/mode-controller.ts` |
-| Full-mode completion/cooldown admission | `brain/services/robot-operator.ts` |
+| Full-mode completion-driven admission | `brain/services/robot-operator.ts` |
 | Finite-work ordering and execution admission | `packages/core/src/queue/queue-system.ts` |
-| Robot Status, Goal Review, and boredom timing/admission | `brain/services/robot-operator.ts` |
+| Semi Robot Status, Goal Review, and boredom timing; Full controller admission | `brain/services/robot-operator.ts` |
+| Full contextual task selection | `etc/cognitive-graphs/robot-autonomy-controller-mode.json` |
 | Reusable profile-resolved situational snapshot | `packages/core/src/robot-status.ts` and `etc/cognitive-graphs/robot-status-mode.json` |
 | Contextual autonomous intentions | `boredom-observer-mode.json`, `boredom-movement-mode.json`, and `boredom-reflection-mode.json` |
 | One-pass autonomous action selection and execution | `etc/cognitive-graphs/boredom-autonomy-mode.json` |
 | Reactive user-instruction execution | `etc/cognitive-graphs/environment-mode.json` |
 | Correlated result interpretation | `etc/cognitive-graphs/robot-action-result-mode.json` |
-| Later unfinished-goal review | `etc/cognitive-graphs/robot-goal-review-mode.json` |
+| Later persona-guided goal outcome and continuation review | `etc/cognitive-graphs/robot-goal-review-mode.json` |
 | Objective continuity and persisted status | `packages/core/src/robot-status.ts` and `packages/core/src/nodes/robot-status/out.node.ts` |
 | Terminal feedback correlation and visual frame selection | `feedback.node.ts` and `image-input.node.ts` |
 | External-environment connection and transport | `brain/agents/environment-bridge` |
@@ -73,11 +74,11 @@ bridge, or retry loop around these owners.
 | Area | Current source state | Evidence still required |
 | --- | --- | --- |
 | Active Operator modes | Implemented in the mode controller and coordinator contracts | Current-build runtime transition and suppression evidence |
-| Robot Operator admission | Registered as a persistent service with five finite child workflows | Current-build Agent Monitor and queue admission evidence |
+| Robot Operator admission | Registered as a persistent service; Semi owns five workflow timers and Full admits only the finite autonomy controller | Current-build Agent Monitor and queue admission evidence |
 | Robot Status | Implemented as one bounded graph and profile-resolved snapshot owner | Current profile read/write and downstream-consumption evidence |
 | Boredom planning | Three separate planner graphs feed one-pass Robot Autonomy Executor runs | Repeated runtime cycles proving no competing execution path |
 | Environment execution | Environment Mode and Robot Autonomy Executor choose one action; Robot Action Result evaluates returned evidence once | Success, explicit failure, cancellation, and repeated-invocation evidence |
-| Goal continuation | Robot Goal Review reads Robot Status and may delegate one later instruction | Semi timer and Full sequential-review evidence |
+| Goal continuation | Robot Goal Review reads bounded status, dialogue, reflection, verified action outcomes, bridge facts, persona, and current camera evidence; in Full mode the contextual controller decides when that review is relevant | Semi timer and Full controller-selection evidence |
 | Environment transport | One Environment Bridge service owns the external connection | Authenticated adapter connection and correlated round-trip evidence |
 | Physical behavior | Body runtime owns device-specific execution and safety | Fresh, correlated physical observation for each claimed behavior |
 
@@ -96,7 +97,7 @@ it must not be presented as proof of the current build without a fresh retest.
   never owns its own continuation.
 - Keep feedback correlation and image selection in their specialized Environment
   nodes. Robot Action Result interprets one return, Robot Status Out persists it,
-  and a later Robot Goal Review owns any continuation decision.
+  and a later Robot Goal Review owns any completion, deferral, abandonment, or continuation decision.
 - Reject unsupported capabilities, malformed results, missing correlations, and
   exhausted action budgets explicitly.
 - Remove superseded nodes, graph wiring, configuration, tests, and documentation

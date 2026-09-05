@@ -93,6 +93,7 @@ test('Environment Mode uses one route-only orchestrator before selected context 
     needsEnvironment: true,
     needsVision: false,
     needsAction: true,
+    needsTaskLifecycle: false,
   })), {
     needsResponse: true,
     needsConversationHistory: false,
@@ -101,6 +102,7 @@ test('Environment Mode uses one route-only orchestrator before selected context 
     needsEnvironment: true,
     needsVision: false,
     needsAction: true,
+    needsTaskLifecycle: false,
   });
   assert.throws(
     () => parseEnvironmentIntentRouting('{"needsResponse":true}'),
@@ -211,5 +213,5 @@ test('ordinary selected-message replies remain on Environment Mode while dedicat
   assert.equal(responsePipelineCardTypeForReply({
     cognitiveMode: 'dual',
     cardType: 'selected_card',
-  }), 'selected_card');
+  }), null);
 });

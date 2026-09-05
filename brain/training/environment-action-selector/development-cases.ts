@@ -70,17 +70,34 @@ function observation(overrides: Partial<EnvironmentObservation> = {}): Environme
 }
 
 function complete(response: string, basis: 'response' | 'environment_state' | 'visual_observation' = 'response'): EnvironmentModelOutput {
+  void basis;
+  return {
+    response,
+    actions: [],
+    movementRequest: null,
+    taskDecision: null,
+  };
+}
+
+function completeObjective(
+  response: string,
+  objective: string,
+  basis: 'response' | 'environment_state' | 'visual_observation',
+  overrides: Partial<NonNullable<EnvironmentModelOutput['taskDecision']>> = {},
+): EnvironmentModelOutput {
   return {
     response,
     actions: [],
     movementRequest: null,
     taskDecision: {
+      objective,
       outcome: 'complete',
-      reason: 'The requested non-action result is available.',
+      reason: 'The requested result is established for the durable objective.',
       objectiveComplete: true,
       continuationPolicy: 'none',
       requiredCompletionBasis: basis,
       ...(basis === 'visual_observation' ? { visualEvidenceMode: 'single' as const } : {}),
+      ...overrides,
     },
   };
 }
@@ -94,21 +111,14 @@ function namedAction(
     response,
     actions: [{ type: 'robotCommand', command }],
     movementRequest: null,
-    taskDecision: {
-      outcome: 'act',
-      reason: `The exact advertised ${command} command satisfies the request.`,
-      objectiveComplete: false,
-      continuationPolicy: 'none',
-      requiredCompletionBasis: 'action_result',
-      motionClass,
-      actionPurpose: 'task_effect',
-    },
+    taskDecision: null,
   };
 }
 
 function advertisedObjectiveStep(
   command: string,
   response: string,
+  objective: string,
   motionClass: 'body_local' | 'open_loop_displacement' = 'body_local',
 ): EnvironmentModelOutput {
   return {
@@ -116,6 +126,7 @@ function advertisedObjectiveStep(
     actions: [{ type: 'robotCommand', command }],
     movementRequest: null,
     taskDecision: {
+      objective,
       outcome: 'act',
       reason: `The advertised ${command} effect is an appropriate current step; the broader objective remains open.`,
       objectiveComplete: false,
@@ -133,15 +144,7 @@ function generatedMovement(description: string): EnvironmentModelOutput {
     response: 'Preparing the requested off-script body motion.',
     actions: [],
     movementRequest: { description },
-    taskDecision: {
-      outcome: 'act',
-      reason: 'No advertised named command expresses this body-local motion.',
-      objectiveComplete: false,
-      continuationPolicy: 'none',
-      requiredCompletionBasis: 'action_result',
-      motionClass: 'body_local',
-      actionPurpose: 'expression',
-    },
+    taskDecision: null,
   };
 }
 
@@ -151,6 +154,7 @@ function capture(): EnvironmentModelOutput {
     actions: [{ type: 'captureImage' }],
     movementRequest: null,
     taskDecision: {
+      objective: 'Answer the current request using a fresh camera frame.',
       outcome: 'act',
       reason: 'The visual question needs a fresh frame and capture is advertised.',
       objectiveComplete: false,
@@ -312,6 +316,7 @@ for (const entry of advertisedSearchSteps) {
     advertisedObjectiveStep(
       entry.command,
       entry.response,
+      'Find the missing item.',
       entry.command === 'walk_forward' ? 'open_loop_displacement' : 'body_local',
     ),
     {
@@ -437,7 +442,7 @@ const failedWaveTask = persistedTask({
   motionClass: 'body_local',
   selectedAction: { type: 'robotCommand', command: 'wave' },
 });
-add('persisted-failure', 'high', ['Original objective: Wave once. Exact terminal feedback: type=failed; command=wave.', 'The prior wave failed; continue the original objective.', 'Retry the outstanding wave objective after its failed result.', 'Choose the next action for the failed wave task.'], namedAction('wave', 'Retrying the advertised wave command.'), {
+add('persisted-failure', 'high', ['Original objective: Wave once. Exact terminal feedback: type=failed; command=wave.', 'The prior wave failed; continue the original objective.', 'Retry the outstanding wave objective after its failed result.', 'Choose the next action for the failed wave task.'], advertisedObjectiveStep('wave', 'Retrying the advertised wave command.', failedWaveTask.objective), {
   robotStatus: { task: failedWaveTask },
   observation: observation({
     metadata: { actionId: 'failed-wave-action' },
@@ -463,15 +468,16 @@ const approachTask = persistedTask({
   baselineFrame: { id: 'before-frame', timestamp: '2030-01-15T11:59:58.000Z' },
   selectedAction: { type: 'robotCommand', command: 'walk_forward' },
 });
-add('persisted-visual-complete', 'high', ['The before and after frames show the object is now closer.', 'Evaluate the outstanding approach objective from both frames.', 'The current view clearly confirms the requested closer perspective.', 'Finish the persisted visual objective using the correlated comparison.'], {
-  ...complete('The current frame shows the object closer than in the baseline frame.', 'visual_observation'),
-  taskDecision: {
-    ...complete('The current frame shows the object closer than in the baseline frame.', 'visual_observation').taskDecision,
+add('persisted-visual-complete', 'high', ['The before and after frames show the object is now closer.', 'Evaluate the outstanding approach objective from both frames.', 'The current view clearly confirms the requested closer perspective.', 'Finish the persisted visual objective using the correlated comparison.'], completeObjective(
+  'The current frame shows the object closer than in the baseline frame.',
+  approachTask.objective,
+  'visual_observation',
+  {
     continuationPolicy: 'bounded',
     visualEvidenceMode: 'comparison',
     motionClass: 'open_loop_displacement',
   },
-}, {
+), {
   robotStatus: { task: approachTask },
   observation: observation({
     visual: {
@@ -484,7 +490,7 @@ add('persisted-visual-complete', 'high', ['The before and after frames show the 
     metadata: { correlationId: 'approach-cycle', actionId: 'approach-action' },
   }),
 });
-add('persisted-visual-incomplete', 'high', ['The comparison does not show that the object is closer.', 'Continue the approach objective because the visual condition is unmet.', 'The returned frame does not yet satisfy the closer-view objective.', 'Select the next action for the incomplete approach task.'], namedAction('walk_forward', 'The visual objective remains incomplete, so I will take one more bounded forward step.', 'open_loop_displacement'), {
+add('persisted-visual-incomplete', 'high', ['The comparison does not show that the object is closer.', 'Continue the approach objective because the visual condition is unmet.', 'The returned frame does not yet satisfy the closer-view objective.', 'Select the next action for the incomplete approach task.'], advertisedObjectiveStep('walk_forward', 'The visual objective remains incomplete, so I will take one more bounded forward step.', approachTask.objective, 'open_loop_displacement'), {
   robotStatus: { task: approachTask },
 });
 
@@ -529,6 +535,7 @@ add('target-relative', 'high', ['Move closer to the selected visible target.', '
   actions: [{ type: 'visualApproach', visualTarget: target }],
   movementRequest: null,
   taskDecision: {
+    objective: 'Move closer to the visible object.',
     outcome: 'act',
     reason: 'Current target-relative feedback capability and a current frame-bound target are advertised.',
     objectiveComplete: false,
@@ -548,22 +555,24 @@ function instructionSet(first: string, second: string, third: string, fourth: st
 function retryNamedAction(
   command: string,
   response: string,
+  objective: string,
   motionClass: 'body_local' | 'open_loop_displacement',
 ): EnvironmentModelOutput {
-  const output = namedAction(command, response, motionClass);
-  output.taskDecision.reason = 'The persisted objective is incomplete and the advertised retry action is still authorized.';
+  const output = advertisedObjectiveStep(command, response, objective, motionClass);
+  output.taskDecision!.reason = 'The persisted objective is incomplete and the advertised retry action is still authorized.';
   return output;
 }
 
 function completedComparison(
   response: string,
+  objective: string,
   motionClass: 'body_local' | 'open_loop_displacement',
 ): EnvironmentModelOutput {
-  const output = complete(response, 'visual_observation');
-  output.taskDecision.continuationPolicy = 'bounded';
-  output.taskDecision.visualEvidenceMode = 'comparison';
-  output.taskDecision.motionClass = motionClass;
-  return output;
+  return completeObjective(response, objective, 'visual_observation', {
+    continuationPolicy: 'bounded',
+    visualEvidenceMode: 'comparison',
+    motionClass,
+  });
 }
 
 const persistedCounterfactuals = [
@@ -593,6 +602,7 @@ for (const entry of persistedCounterfactuals) {
   ), retryNamedAction(
     entry.command,
     `Retrying the advertised ${entry.command} command after its failed result.`,
+    robotStatusTask.objective,
     entry.motionClass,
   ), {
     fold: entry.fold,
@@ -638,7 +648,7 @@ for (const entry of persistedCounterfactuals) {
     `Finish the persisted ${entry.command} task using the correlated comparison.`,
     `The current frame satisfies the required visual condition; do not act again.`,
     `Mark the bounded objective complete from the matching before and after frames.`,
-  ), completedComparison(completedResponse, entry.motionClass), {
+  ), completedComparison(completedResponse, comparisonTask.objective, entry.motionClass), {
     fold: entry.fold,
     robotStatus: { task: comparisonTask },
     observation: comparisonObservation,
@@ -652,6 +662,7 @@ for (const entry of persistedCounterfactuals) {
   ), retryNamedAction(
     entry.command,
     `The visual condition remains incomplete, so I will retry ${entry.command} once.`,
+    comparisonTask.objective,
     entry.motionClass,
   ), {
     fold: entry.fold,
@@ -804,6 +815,7 @@ for (let fold = 0; fold < 4; fold += 1) {
     actions: [{ type: 'visualApproach', visualTarget }],
     movementRequest: null,
     taskDecision: {
+      objective: `Approach sanitized target ${fold}.`,
       outcome: 'act',
       reason: 'Current target-relative feedback capability and a current frame-bound target are advertised.',
       objectiveComplete: false,
@@ -970,7 +982,7 @@ for (const entry of authorityRefinementCases) {
     `Close the persisted ${entry.completedCommand} objective from the matching visual evidence.`,
     `The required external condition is satisfied; do not repeat ${entry.completedCommand}.`,
     `Mark this bounded ${entry.completedCommand} task complete without another physical action.`,
-  ), completedComparison(completedResponse, entry.completedMotionClass), {
+  ), completedComparison(completedResponse, completedTask.objective, entry.completedMotionClass), {
     fold: entry.fold,
     robotStatus: { task: completedTask },
     observation: observation({
@@ -1003,6 +1015,7 @@ for (const entry of authorityRefinementCases) {
   ), retryNamedAction(
     entry.positiveCommand,
     `Retrying the advertised ${entry.positiveCommand} command after its failed result.`,
+    retryTask.objective,
     entry.positiveMotionClass,
   ), {
     fold: entry.fold,

@@ -27,6 +27,7 @@ interface Prediction {
 
 interface DecisionView {
   selection: string
+  hasTask: boolean
   outcome: string
   objectiveComplete: boolean
   continuationPolicy: string
@@ -68,8 +69,21 @@ function decisionView(value: unknown): DecisionView | null {
   const validation = validateEnvironmentSelectorOutput(text)
   if (!validation.valid || !validation.value) return null
   const decision = validation.value.taskDecision
+  if (!decision) {
+    return {
+      selection: rawSelection(validation.value),
+      hasTask: false,
+      outcome: '',
+      objectiveComplete: false,
+      continuationPolicy: '',
+      requiredCompletionBasis: '',
+      motionClass: '',
+      visualEvidenceMode: '',
+    }
+  }
   return {
     selection: rawSelection(validation.value),
+    hasTask: true,
     outcome: decision.outcome,
     objectiveComplete: decision.objectiveComplete,
     continuationPolicy: decision.continuationPolicy ?? '',

@@ -17,6 +17,7 @@ import type { TrustLevel } from '../skills.js';
  * Higher weights = higher priority when competing for execution.
  */
 export type DesireSource =
+  | 'user_request'      // Explicit want stated by the user (weight: 1.0)
   | 'persona_goal'      // Explicit goals from persona/core.json (weight: 1.0)
   | 'urgent_task'       // High-priority tasks (weight: 0.85)
   | 'task'              // Regular tasks (weight: 0.7)
@@ -31,6 +32,7 @@ export type DesireSource =
  * Default weights for each desire source.
  */
 export const DESIRE_SOURCE_WEIGHTS: Record<DesireSource, number> = {
+  user_request: 1.0,
   persona_goal: 1.0,
   urgent_task: 0.85,
   task: 0.7,
@@ -60,9 +62,12 @@ export type DesireStatus =
   | 'approved'          // Ready for execution
   | 'executing'         // Currently being executed
   | 'awaiting_review'   // Execution done, waiting for outcome review
+  | 'needs_attention'   // A non-approval problem requires an explicit owner decision
+  | 'paused'            // Intentionally dormant and excluded from autonomous work
   | 'completed'         // Successfully executed
   | 'rejected'          // User rejected or LLM review rejected
   | 'abandoned'         // Decayed below threshold
+  | 'archived'          // Explicitly archived while retaining its full history
   | 'failed';           // Execution failed
 
 /**
@@ -78,8 +83,11 @@ export type DesireStage =
   | 'user_approval'     // Waiting for user approval (if required)
   | 'executing'         // Canonical Agency executor is executing the plan
   | 'outcome_review'    // Reviewing execution outcomes
+  | 'user_attention'    // Waiting for a non-approval owner decision
+  | 'paused'            // Intentionally dormant
   | 'complete'          // Terminal state - done
   | 'failed'            // Terminal state - failed
+  | 'archived'          // Terminal state - explicitly archived
   | 'abandoned';        // Terminal state - decayed/given up
 
 /**
@@ -324,6 +332,10 @@ export function statusToStage(status: DesireStatus): DesireStage {
       return 'executing';
     case 'awaiting_review':
       return 'outcome_review';
+    case 'needs_attention':
+      return 'user_attention';
+    case 'paused':
+      return 'paused';
     case 'completed':
       return 'complete';
     case 'rejected':
@@ -331,6 +343,8 @@ export function statusToStage(status: DesireStatus): DesireStage {
       return 'failed';
     case 'abandoned':
       return 'abandoned';
+    case 'archived':
+      return 'archived';
     default:
       return 'nascent';
   }
@@ -536,6 +550,16 @@ export interface DesireClarifyingQuestions {
   completedAt?: string;
 }
 
+/** One immutable observation that affected a desire. */
+export interface DesireEvidence {
+  id: string;
+  kind: 'origin' | 'reinforcement' | 'contradiction' | 'withdrawal' | 'completion';
+  source: DesireSource;
+  sourceId?: string;
+  summary: string;
+  observedAt: string;
+}
+
 // ============================================================================
 // Core Desire Interface
 // ============================================================================
@@ -570,6 +594,8 @@ export interface Desire {
   sourceId?: string;
   /** Relevant data from source for context */
   sourceData?: Record<string, unknown>;
+  /** Immutable evidence already applied to this desire. */
+  evidence?: DesireEvidence[];
 
   // Strength & threshold
   /** Current desire strength (0.0 - 1.0) */
@@ -579,11 +605,13 @@ export interface Desire {
   /** Activation threshold (default: 0.7) */
   threshold: number;
 
-  // Decay tracking (run-based, not time-based)
-  /** How much strength decays per generator run */
+  // Decay tracking
+  /** Strength lost per elapsed day without reinforcement */
   decayRate: number;
-  /** ISO timestamp of last generator run that reviewed this desire */
+  /** ISO timestamp of last evidence or decay review */
   lastReviewedAt: string;
+  /** ISO timestamp through which elapsed-time decay has been applied */
+  lastDecayAt?: string;
   /** Number of times this desire was reinforced by related inputs */
   reinforcements: number;
   /** Number of generator runs this desire has survived */
@@ -610,6 +638,8 @@ export interface Desire {
   activatedAt?: string;
   /** ISO timestamp when completed/rejected/abandoned */
   completedAt?: string;
+  /** Explanation for an archived or owner-attention state. */
+  dispositionReason?: string;
 
   // Plan (populated after planning phase)
   /** Current execution plan for this desire */
@@ -821,12 +851,12 @@ export interface DesireSourceConfig {
 
 /**
  * Decay configuration for desires.
- * Decay is run-based: applied once per generator run, not time-based.
+ * Decay is time-based and idempotent through each desire's lastDecayAt value.
  */
 export interface DesireDecayConfig {
   /** Whether decay is enabled */
   enabled: boolean;
-  /** Strength lost per generator run (small value, e.g., 0.03) */
+  /** Strength lost per elapsed day (small value, e.g., 0.03) */
   ratePerRun: number;
   /** Minimum strength before abandonment */
   minStrength: number;
@@ -1176,30 +1206,24 @@ export function getSourceWeight(source: DesireSource): number {
 }
 
 /**
- * Calculate effective strength with source weight.
- * Handles corrupted baseWeight values (objects, NaN, undefined) by defaulting to 1.0
+ * Source weight orders competing desires; it must never make an enabled source
+ * mathematically incapable of activation.
  */
 export function calculateEffectiveStrength(strength: number, sourceWeight: number): number {
-  // Handle corrupted sourceWeight (objects like {}, NaN, undefined)
-  const validWeight = typeof sourceWeight === 'number' && !isNaN(sourceWeight) ? sourceWeight : 1.0;
-  return Math.min(1.0, strength * validWeight);
+  void sourceWeight;
+  return Math.max(0, Math.min(1.0, Number.isFinite(strength) ? strength : 0));
 }
 
 /**
  * Check if a desire has crossed the activation threshold.
  */
 export function isAboveThreshold(desire: Desire): boolean {
-  // Handle corrupted baseWeight values
-  const baseWeight = typeof desire.baseWeight === 'number' && !isNaN(desire.baseWeight)
-    ? desire.baseWeight
-    : 1.0;
-  const effectiveStrength = calculateEffectiveStrength(desire.strength, baseWeight);
+  const effectiveStrength = calculateEffectiveStrength(desire.strength, desire.baseWeight);
   return effectiveStrength >= desire.threshold;
 }
 
 /**
- * Apply run-based decay to a desire's strength.
- * Called once per generator run for desires not reinforced.
+ * Apply an already-calculated decay reduction to a desire's strength.
  */
 export function applyDecay(
   currentStrength: number,
@@ -1207,6 +1231,19 @@ export function applyDecay(
   minStrength: number
 ): number {
   return Math.max(minStrength, currentStrength - decayRate);
+}
+
+/** Calculate elapsed-time decay without allowing repeated runs to compound it. */
+export function calculateElapsedDecay(
+  lastDecayAt: string | undefined,
+  now: string,
+  ratePerDay: number,
+): number {
+  const previous = Date.parse(lastDecayAt || now);
+  const current = Date.parse(now);
+  if (!Number.isFinite(previous) || !Number.isFinite(current) || current <= previous) return 0;
+  const elapsedDays = (current - previous) / 86_400_000;
+  return Math.max(0, ratePerDay) * elapsedDays;
 }
 
 /**

@@ -32,6 +32,31 @@ export interface TTSPlaybackRequestHandle {
   readonly requestId?: string;
 }
 
+const AUDIO_UNLOCK_TIMEOUT_MS = 500;
+
+export async function resumeAudioContextWithTimeout(
+  context: Pick<AudioContext, 'state' | 'resume'>,
+  timeoutMs = AUDIO_UNLOCK_TIMEOUT_MS,
+): Promise<boolean> {
+  const isRunning = () => context.state === 'running';
+  if (isRunning()) return true;
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([
+      context.resume().then(() => 'resumed' as const),
+      new Promise<'timed-out'>((resolve) => {
+        timeout = setTimeout(() => resolve('timed-out'), timeoutMs);
+      }),
+    ]);
+    return outcome === 'resumed' && isRunning();
+  } catch {
+    return false;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export function createTTSPlaybackRequestTracker() {
   let activeRequest: TTSPlaybackRequestHandle | null = null;
 
@@ -289,8 +314,8 @@ function createTTS() {
   /**
    * Ensure audio is unlocked (required by browser autoplay policies)
    */
-  async function ensureAudioUnlocked(): Promise<void> {
-    if (audioUnlocked) return;
+  async function ensureAudioUnlocked(): Promise<boolean> {
+    if (audioUnlocked && audioCtx?.state === 'running') return true;
     try {
       // Create a short silent buffer to satisfy autoplay policies
       audioCtx = audioCtx || new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -299,10 +324,15 @@ function createTTS() {
       source.buffer = buffer;
       source.connect(audioCtx.destination);
       source.start(0);
-      await audioCtx.resume();
-      audioUnlocked = true;
+      audioUnlocked = await resumeAudioContextWithTimeout(audioCtx);
+      if (!audioUnlocked) {
+        console.info('[useTTS] Browser audio is waiting for a user gesture');
+      }
+      return audioUnlocked;
     } catch (e) {
+      audioUnlocked = false;
       console.warn('[useTTS] Failed to unlock audio:', e);
+      return false;
     }
   }
 
@@ -777,6 +807,7 @@ function createTTS() {
       try { audioCtx.close(); } catch {}
       audioCtx = null;
     }
+    audioUnlocked = false;
   }
 
   // Native TTS state

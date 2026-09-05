@@ -1,22 +1,23 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { storageClient } from '../../storage-client.js';
-import { systemPaths } from '../../path-builder.js';
 import { audit } from '../../audit.js';
 import { captureEvent } from '../../memory.js';
 import {
   startSession,
   addQuestion,
+  findPendingPersonaQuestion,
   loadSession,
   listSessions,
   recordAnswer,
+  updateAnswer,
   saveSession,
   discardSession,
-  type Question,
   type Session,
 } from '../../persona/session-manager.js';
 import {
   generateNextQuestion,
-  getCompletionStatus,
+  evaluatePersonaInterviewCompletion,
+  loadPersonaInterviewConfig,
 } from '../../persona/question-generator.js';
 import {
   extractPersonaFromSession,
@@ -122,17 +123,6 @@ function resolvePersonaPath(relativePath: string): string | null {
   return pathResult.success && pathResult.path ? pathResult.path : null;
 }
 
-function loadBaselineQuestions(): Question[] {
-  const configPath = path.join(systemPaths.root, 'etc', 'persona-generator.json');
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  return config.baselineQuestions.map((q: any) => ({
-    id: q.id,
-    prompt: q.prompt,
-    category: q.category,
-    generatedAt: new Date().toISOString(),
-  }));
-}
-
 async function loadOwnedSession(
   username: string,
   userId: string,
@@ -160,13 +150,9 @@ export async function handlePersonaGeneratorStart(req: UnifiedRequest): Promise<
     }
 
     const session = await startSession(req.user.userId, req.user.username);
-    const baselineQuestions = loadBaselineQuestions();
-    if (baselineQuestions.length === 0) {
-      return error('No baseline questions configured', 500);
-    }
-
-    const firstQuestion = baselineQuestions[0];
-    await addQuestion(req.user.username, session.sessionId, firstQuestion);
+    const result = await generateNextQuestion(session);
+    if (!result) throw new Error('Persona interview completed before its first question');
+    const firstQuestion = await addQuestion(req.user.username, session.sessionId, result.question);
 
     return json({
       success: true,
@@ -215,48 +201,66 @@ export async function handlePersonaGeneratorAnswer(req: UnifiedRequest): Promise
     }
 
     const { sessionId, questionId, answer: answerContent } = req.body ?? {};
-    if (!sessionId || !questionId || !answerContent) {
+    if (typeof sessionId !== 'string' || !sessionId
+      || typeof questionId !== 'string' || !questionId
+      || typeof answerContent !== 'string') {
       return error('sessionId, questionId, and answer are required', 400);
     }
 
     const { session, response } = await loadOwnedSession(req.user.username, req.user.userId, sessionId);
     if (response) return response;
 
-    if (session!.status !== 'active') {
+    if (session!.status !== 'active' && session!.status !== 'completed') {
       return error('Session is not active', 400);
     }
 
-    await recordAnswer(req.user.username, sessionId, questionId, answerContent);
+    const config = await loadPersonaInterviewConfig(req.user.username);
+    const answerLength = answerContent.trim().length;
+    if (answerLength < config.sessionDefaults.minAnswerLength
+      || answerLength > config.sessionDefaults.maxAnswerLength) {
+      return error(
+        `Answer must be between ${config.sessionDefaults.minAnswerLength} and ${config.sessionDefaults.maxAnswerLength} characters`,
+        400,
+      );
+    }
+    const existingQuestion = session!.questions.find(question => question.id === questionId);
+    if (!existingQuestion) return error('Question not found in session', 404);
+    const existingAnswer = session!.answers.find(answer => answer.questionId === questionId);
+    if (existingAnswer && existingAnswer.content.trim() !== answerContent.trim()) {
+      return error('An answer has already been recorded for this question', 409);
+    }
+    if (session!.status === 'completed' && !existingAnswer) {
+      return error('Session is not active', 400);
+    }
+    await recordAnswer(req.user.username, sessionId, questionId, answerContent, {
+      minLength: config.sessionDefaults.minAnswerLength,
+      maxLength: config.sessionDefaults.maxAnswerLength,
+    });
 
     const updatedSession = await loadSession(req.user.username, sessionId);
     if (!updatedSession) {
       throw new Error('Failed to reload session after recording answer');
     }
 
-    const status = getCompletionStatus(updatedSession);
+    let status = evaluatePersonaInterviewCompletion(updatedSession, config);
     let nextQuestion = null;
     let reasoning = null;
 
-    if (!status.isComplete) {
-      try {
-        const result = await generateNextQuestion(updatedSession);
-        if (result) {
-          await addQuestion(req.user.username, sessionId, result.question);
-          nextQuestion = result.question;
-          reasoning = result.reasoning;
-        } else {
-          status.isComplete = true;
-          updatedSession.status = 'completed';
-          await saveSession(req.user.username, updatedSession);
-        }
-      } catch (err) {
-        console.error('[persona/generator/answer] Error generating next question:', err);
-        return json({
-          error: 'Failed to generate next question',
-          details: err instanceof Error ? err.message : 'Unknown error',
-          progress: status.progress,
-          isComplete: status.isComplete,
-        }, 500);
+    const pendingQuestion = findPendingPersonaQuestion(updatedSession);
+    if (pendingQuestion) {
+      nextQuestion = pendingQuestion;
+    } else if (!status.isComplete) {
+      const result = await generateNextQuestion(updatedSession);
+      if (result) {
+        nextQuestion = await addQuestion(req.user.username, sessionId, result.question);
+        reasoning = result.reasoning;
+        const withNextQuestion = await loadSession(req.user.username, sessionId);
+        if (!withNextQuestion) throw new Error('Failed to reload session after adding question');
+        status = evaluatePersonaInterviewCompletion(withNextQuestion, config);
+      } else {
+        updatedSession.status = 'completed';
+        await saveSession(req.user.username, updatedSession);
+        status = evaluatePersonaInterviewCompletion(updatedSession, config);
       }
     } else {
       updatedSession.status = 'completed';
@@ -297,19 +301,30 @@ export async function handlePersonaGeneratorUpdateAnswer(req: UnifiedRequest): P
       return response.status === 403 ? error('Access denied', 403) : response;
     }
 
-    const answerIndex = session!.answers.findIndex((a) => a.questionId === questionId);
-    if (answerIndex === -1) {
+    if (!session!.answers.some(answer => answer.questionId === questionId)) {
       return error('Answer not found', 404);
     }
+    if (session!.status !== 'active' && session!.status !== 'completed') {
+      return error('Session answers can no longer be edited', 400);
+    }
 
-    session!.answers[answerIndex].content = content;
-    session!.answers[answerIndex].editedAt = new Date().toISOString();
-
-    await saveSession(req.user.username, session!);
+    const config = await loadPersonaInterviewConfig(req.user.username);
+    const answerLength = content.trim().length;
+    if (answerLength < config.sessionDefaults.minAnswerLength
+      || answerLength > config.sessionDefaults.maxAnswerLength) {
+      return error(
+        `Answer must be between ${config.sessionDefaults.minAnswerLength} and ${config.sessionDefaults.maxAnswerLength} characters`,
+        400,
+      );
+    }
+    const answer = await updateAnswer(req.user.username, sessionId, questionId, content, {
+      minLength: config.sessionDefaults.minAnswerLength,
+      maxLength: config.sessionDefaults.maxAnswerLength,
+    });
 
     return json({
       success: true,
-      answer: session!.answers[answerIndex],
+      answer,
     });
   } catch (err) {
     console.error('[persona/generator/update-answer] Error:', err);

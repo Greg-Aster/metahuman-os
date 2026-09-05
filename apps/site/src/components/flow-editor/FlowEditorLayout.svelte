@@ -6,7 +6,6 @@
   import GraphInspector from './GraphInspector.svelte';
   import EdgeInspector from './EdgeInspector.svelte';
   import ExecutionPanel from './ExecutionPanel.svelte';
-  import { nodeEditorMode } from '../../stores/navigation';
   import { apiFetch } from '../../lib/client/api-config';
   import type { SvelteFlowGraph } from '../../lib/client/flow-editor/template-converter';
   import type { Edge, Node } from '@xyflow/svelte';
@@ -25,6 +24,21 @@
     updateTimeline,
     type ExecutionTimelineEntry,
   } from '../../lib/client/flow-editor/execution-observability';
+  import {
+    normalizeGraphFileName,
+    overwritesDifferentGraph,
+    saveDialogFileName,
+  } from '../../lib/client/flow-editor/graph-file-identity';
+  import { groupWorkflows } from '../../lib/client/flow-editor/workflow-groups';
+
+  type GraphScope = 'builtin' | 'custom' | 'backup';
+  type GraphSummary = {
+    name: string;
+    title: string;
+    description: string;
+    scope: GraphScope;
+    originalName?: string;
+  };
 
   // Props
   let { cognitiveMode = null }: { cognitiveMode?: string | null } = $props();
@@ -39,9 +53,11 @@
   let saveFileName = $state(''); // Filename to save as
   let saveError = $state('');
   let saveSuccess = $state(false);
+  let saveCreatedBackup = $state(false);
   let showLoadMenu = $state(false);
-  let savedGraphs = $state<Array<{ name: string; title: string; description: string; scope: string }>>([]);
-  let backupGraphs = $state<Array<{ name: string; title: string; originalName?: string }>>([]);
+  let knownGraphFileNames = $state<string[]>([]);
+  let savedGraphs = $state<GraphSummary[]>([]);
+  let backupGraphs = $state<GraphSummary[]>([]);
   let graphsLoading = $state(false);
   let schemas = $state<any[]>([]);
   let selectedNode = $state<Node | null>(null);
@@ -57,6 +73,7 @@
   let isDirty = $state(false);
   const authoringIssues = $derived(currentGraph ? validateAuthoringGraph(currentGraph) : []);
   const schemaHealth = $derived(currentGraph ? inspectSchemaHealth(currentGraph.nodes) : null);
+  const workflowGroups = $derived(groupWorkflows(savedGraphs));
 
   $effect(() => {
     if (flowEditorRef && !currentGraph) {
@@ -86,7 +103,9 @@
         const data = await res.json();
         // Show all graphs (builtin + custom), exclude the main modes already hardcoded
         const excludeHardcoded = ['dual-mode', 'agent-mode', 'emulation-mode', 'environment-mode'];
-        savedGraphs = data.graphs?.filter((g: any) => !excludeHardcoded.includes(g.name)) || [];
+        const availableGraphs: GraphSummary[] = data.graphs || [];
+        knownGraphFileNames = availableGraphs.map(graph => graph.name);
+        savedGraphs = availableGraphs.filter(graph => !excludeHardcoded.includes(graph.name));
         backupGraphs = data.backups || [];
       }
     } catch (e) {
@@ -146,11 +165,6 @@
     };
   });
 
-  function exitNodeEditor() {
-    if (!mayDiscardChanges()) return;
-    nodeEditorMode.set(false);
-  }
-
   function newGraph() {
     if (!mayDiscardChanges()) return;
     flowEditorRef?.clearGraph();
@@ -165,21 +179,11 @@
     if (currentGraph) markGraphClean(currentGraph);
   }
 
-  // Convert display name to valid filename (slug)
-  function toSlug(name: string): string {
-    return name
-      .toLowerCase()
-      .replace(/[()]/g, '') // Remove parentheses
-      .replace(/[^a-z0-9]+/g, '-') // Replace non-alphanumeric with hyphens
-      .replace(/^-+|-+$/g, '') // Trim leading/trailing hyphens
-      .substring(0, 50); // Limit length
-  }
-
   function openSaveDialog() {
-    // Use existing filename if we have one, otherwise generate from display name
-    saveFileName = graphFileName || toSlug(graphName);
+    saveFileName = saveDialogFileName(graphFileName, graphName);
     saveError = '';
     saveSuccess = false;
+    saveCreatedBackup = false;
     showSaveDialog = true;
   }
 
@@ -190,9 +194,17 @@
     saveSuccess = false;
 
     // Validate filename
-    const validFileName = saveFileName.toLowerCase().replace(/[^a-z0-9_\-]/g, '-');
+    const validFileName = normalizeGraphFileName(saveFileName);
     if (!validFileName) {
       saveError = 'Invalid filename - use alphanumeric characters, hyphens, or underscores';
+      return;
+    }
+
+    saveFileName = validFileName;
+    if (
+      overwritesDifferentGraph(graphFileName, validFileName, knownGraphFileNames)
+      && !window.confirm(`A different graph named "${validFileName}.json" already exists. Overwrite it?`)
+    ) {
       return;
     }
 
@@ -221,6 +233,7 @@
       const result = await res.json();
       graphFileName = validFileName;
       saveSuccess = true;
+      saveCreatedBackup = Boolean(result.backupCreated);
       currentGraph = authoringGraph;
       markGraphClean(authoringGraph);
 
@@ -240,7 +253,7 @@
     }
   }
 
-  async function loadGraph(name: string, scope?: string) {
+  async function loadGraph(name: string, scope?: GraphScope, saveTargetName?: string) {
     if (!mayDiscardChanges()) return;
     try {
       const url = scope
@@ -253,7 +266,9 @@
           const sfGraph = enrichGraphWithSchemas(data.graph);
           flowEditorRef.loadGraph(sfGraph);
           graphName = sfGraph.name || name;
-          graphFileName = scope === 'backup' ? '' : name; // Don't keep backup filename
+          const resolvedName = typeof data.name === 'string' ? data.name : name;
+          const resolvedScope: GraphScope = data.scope || scope || 'custom';
+          graphFileName = resolvedScope === 'backup' ? (saveTargetName || '') : resolvedName;
           currentGraph = sfGraph;
           selectedNode = null;
           selectedEdge = null;
@@ -269,8 +284,8 @@
     showLoadMenu = false;
   }
 
-  async function loadBackup(backupName: string) {
-    await loadGraph(backupName, 'backup');
+  async function loadBackup(backup: GraphSummary) {
+    await loadGraph(backup.name, 'backup', backup.originalName);
   }
 
   async function loadTemplate(templateId: string) {
@@ -453,12 +468,12 @@
     if (graph.name && graph.name !== 'Untitled Graph') {
       graphName = graph.name;
     }
-    // Set filename based on cognitive mode (e.g., "dual" -> "dual-mode")
-    if (graph.cognitiveMode) {
-      graphFileName = `${graph.cognitiveMode}-mode`;
-    }
     if (!cleanGraphSignature) markGraphClean(graph);
     else isDirty = graphSignature(graph) !== cleanGraphSignature;
+  }
+
+  function handleGraphLoaded(fileName: string, scope: GraphScope) {
+    if (scope !== 'backup') graphFileName = fileName;
   }
 
   function handleNodeSelected(nodeType: string) {
@@ -532,17 +547,7 @@
 <div class="w-screen h-screen flex flex-col bg-[#0a0a0a]">
   <!-- Header -->
   <header class="h-[60px] bg-[#1a1a1a] border-b border-neutral-700 flex items-center justify-between px-6 gap-4 flex-shrink-0">
-    <div class="flex items-center gap-6">
-      <button
-        class="flex items-center gap-2 px-4 py-2 bg-transparent border border-neutral-600 text-neutral-400 rounded-md cursor-pointer transition-all text-sm hover:bg-neutral-800 hover:border-neutral-500 hover:text-white"
-        onclick={exitNodeEditor}
-      >
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-        </svg>
-        <span>Exit</span>
-      </button>
-
+    <div class="flex items-center">
       <div class="flex items-center gap-2 text-white font-medium text-lg">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
@@ -568,6 +573,8 @@
         <button
           class="flex items-center gap-2 px-4 py-2 bg-neutral-800 border border-neutral-600 text-neutral-300 rounded-md cursor-pointer transition-all text-sm hover:bg-neutral-700 hover:border-neutral-500 hover:text-white"
           onclick={() => (showLoadMenu = !showLoadMenu)}
+          aria-expanded={showLoadMenu}
+          aria-controls="workflow-load-menu"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
@@ -575,38 +582,61 @@
           Load
         </button>
         {#if showLoadMenu}
-          <div class="absolute top-full left-0 mt-2 min-w-[250px] bg-[#1a1a1a] border border-neutral-600 rounded-md shadow-2xl z-[1000] overflow-hidden">
-            <div class="px-4 py-3 text-xs font-semibold text-neutral-500 uppercase bg-[#151515] border-b border-neutral-700">Cognitive Mode Templates</div>
-            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('dual-mode')}>
+          <div id="workflow-load-menu" class="absolute top-full right-0 mt-2 w-[340px] max-w-[calc(100vw-2rem)] max-h-[70vh] overflow-y-auto overscroll-contain bg-[#1a1a1a] border border-neutral-600 rounded-md shadow-2xl z-[1000]" aria-label="Load workflow">
+            <div class="sticky top-0 z-10 px-4 py-3 text-xs font-semibold text-neutral-400 uppercase bg-[#151515] border-b border-neutral-700">Core Cognitive Modes</div>
+            <button class="block w-full px-4 py-2.5 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('dual-mode')}>
               Dual Consciousness Mode
             </button>
-            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('agent-mode')}>
+            <button class="block w-full px-4 py-2.5 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('agent-mode')}>
               Agent Mode
             </button>
-            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('emulation-mode')}>
+            <button class="block w-full px-4 py-2.5 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('emulation-mode')}>
               Emulation Mode
             </button>
-            <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('environment-mode')}>
+            <button class="block w-full px-4 py-2.5 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadTemplate('environment-mode')}>
               Environment Mode
             </button>
-            {#if savedGraphs.length > 0}
-              <div class="h-px bg-neutral-700 my-2"></div>
-              <div class="px-4 py-3 text-xs font-semibold text-neutral-500 uppercase bg-[#151515] border-b border-neutral-700">All Graphs</div>
-              {#each savedGraphs as graph}
-                <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800 last:border-b-0" onclick={() => loadGraph(graph.name)}>
-                  {graph.title || graph.name}
-                </button>
+
+            {#if graphsLoading}
+              <div class="px-4 py-3 text-sm text-neutral-500">Loading workflows…</div>
+            {:else}
+              {#each workflowGroups as group}
+                <details class="group border-t border-neutral-700" open={group.id === 'robot-autonomy' || group.id === 'desires-agency'}>
+                  <summary class="flex cursor-pointer list-none items-center justify-between gap-3 bg-[#151515] px-4 py-3 text-xs font-semibold uppercase text-neutral-300 hover:bg-neutral-800">
+                    <span>{group.label}</span>
+                    <span class="flex items-center gap-2">
+                      <span class="rounded-full bg-neutral-800 px-2 py-0.5 text-[10px] tabular-nums text-neutral-400">{group.workflows.length}</span>
+                      <svg class="h-3.5 w-3.5 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" />
+                      </svg>
+                    </span>
+                  </summary>
+                  {#each group.workflows as graph}
+                    <button class="block w-full px-5 py-2.5 bg-transparent border-none border-t border-neutral-800 text-neutral-300 text-left cursor-pointer text-sm hover:bg-neutral-800" onclick={() => loadGraph(graph.name)}>
+                      {graph.title || graph.name}
+                    </button>
+                  {/each}
+                </details>
               {/each}
             {/if}
 
             {#if backupGraphs.length > 0}
-              <div class="h-px bg-neutral-700 my-2"></div>
-              <div class="px-4 py-3 text-xs font-semibold text-neutral-500 uppercase bg-[#151515] border-b border-neutral-700">Backups</div>
-              {#each backupGraphs.slice(0, 10) as backup}
-                <button class="block w-full px-4 py-3 bg-transparent border-none border-b border-neutral-800 text-neutral-400 text-left cursor-pointer text-[0.8rem] hover:bg-neutral-800 last:border-b-0" onclick={() => loadBackup(backup.name)}>
-                  {backup.title}
-                </button>
-              {/each}
+              <details class="group border-t border-neutral-700">
+                <summary class="flex cursor-pointer list-none items-center justify-between gap-3 bg-[#151515] px-4 py-3 text-xs font-semibold uppercase text-neutral-400 hover:bg-neutral-800">
+                  <span>Recent Backups</span>
+                  <span class="flex items-center gap-2">
+                    <span class="rounded-full bg-neutral-800 px-2 py-0.5 text-[10px] tabular-nums text-neutral-500">{Math.min(backupGraphs.length, 10)}</span>
+                    <svg class="h-3.5 w-3.5 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 5 7 7-7 7" />
+                    </svg>
+                  </span>
+                </summary>
+                {#each backupGraphs.slice(0, 10) as backup}
+                  <button class="block w-full px-5 py-2.5 bg-transparent border-none border-t border-neutral-800 text-neutral-400 text-left cursor-pointer text-[0.8rem] hover:bg-neutral-800" onclick={() => loadBackup(backup)}>
+                    {backup.title}
+                  </button>
+                {/each}
+              </details>
             {/if}
           </div>
         {/if}
@@ -690,6 +720,7 @@
           bind:this={flowEditorRef}
           {cognitiveMode}
           onGraphChange={handleGraphChange}
+          onGraphLoaded={handleGraphLoaded}
           onSelectionChange={handleSelectionChange}
           onHistoryChange={(state) => (historyState = state)}
         />
@@ -745,9 +776,15 @@
     <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-[1000]">
       <div class="bg-[#1a1a1a] border border-neutral-700 rounded-lg p-8 min-w-[400px]" role="dialog" aria-modal="true" aria-labelledby="save-graph-title" tabindex="-1">
         <h3 id="save-graph-title" class="m-0 mb-6 text-white text-xl">Save Graph</h3>
-        <div class="flex items-center gap-2 mb-4 p-3 bg-[#0a0a0a] rounded-md">
-          <span class="text-neutral-500 text-sm">Graph:</span>
-          <span class="text-white font-medium">{graphName}</span>
+        <div class="mb-4 space-y-2 rounded-md bg-[#0a0a0a] p-3">
+          <div class="flex items-center gap-2">
+            <span class="text-neutral-500 text-sm">Workflow:</span>
+            <span class="text-white font-medium">{graphName}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-neutral-500 text-sm">Current file:</span>
+            <span class="font-mono text-sm text-blue-300">{graphFileName ? `${graphFileName}.json` : 'New unsaved graph'}</span>
+          </div>
         </div>
         <div class="mb-4">
           <label for="save-filename" class="block mb-2 text-neutral-500 text-sm">Filename:</label>
@@ -761,13 +798,19 @@
             />
             <span class="px-3 py-3 bg-neutral-700 border border-neutral-600 border-l-0 rounded-r-md text-neutral-500 text-sm">.json</span>
           </div>
-          <p class="mt-2 text-neutral-600 text-xs leading-relaxed">Change the filename to save as a new graph, or keep it to overwrite (backup created automatically)</p>
+          {#if normalizeGraphFileName(saveFileName) === graphFileName && graphFileName}
+            <p class="mt-2 text-blue-300 text-xs leading-relaxed">This updates the graph currently loaded. A backup is created before overwriting it.</p>
+          {:else if overwritesDifferentGraph(graphFileName, normalizeGraphFileName(saveFileName), knownGraphFileNames)}
+            <p class="mt-2 text-amber-300 text-xs leading-relaxed">This filename belongs to a different graph. You will be asked to confirm before it is overwritten.</p>
+          {:else}
+            <p class="mt-2 text-neutral-500 text-xs leading-relaxed">This saves a new graph file. Change the filename only when you intend to use Save As.</p>
+          {/if}
         </div>
         {#if saveError}
           <div class="p-2 mb-4 bg-red-500/10 border border-red-600 rounded text-red-300 text-sm">{saveError}</div>
         {/if}
         {#if saveSuccess}
-          <div class="p-2 mb-4 bg-green-500/10 border border-green-600 rounded text-green-300 text-sm">Saved! Backup created.</div>
+          <div class="p-2 mb-4 bg-green-500/10 border border-green-600 rounded text-green-300 text-sm">{saveCreatedBackup ? 'Saved. Backup created.' : 'Saved as a new graph.'}</div>
         {/if}
         <div class="flex gap-3 justify-end">
           <button class="px-5 py-2.5 rounded-md cursor-pointer text-sm border-none bg-neutral-700 text-neutral-300 hover:bg-neutral-600" onclick={() => (showSaveDialog = false)}>Cancel</button>

@@ -17,6 +17,7 @@ Agent Monitor and Boot Manager own persistent services configured in
 | `mood` | Reviews recent conversation or inner dialogue and selects an enabled persona facet through the editable Mood Review graph |
 | `dreamer` | Creates surreal dreams from memory fragments |
 | `sleep-workflow` | Coordinator workflow that admits bounded dream and persona-review children |
+| `robot-autonomy-controller` | Selects one relevant catalog-backed autonomy task from current robot, dialogue, Agency, perception, and persona context in Full mode |
 | `robot-status` | Builds and publishes a bounded situational snapshot from canonical robot state |
 | `boredom-observer` | Requests one fresh camera observation for Robot Operator autonomy |
 | `boredom-movement` | Authors one embodied intention from current state and advertised capabilities |
@@ -39,7 +40,7 @@ Agent Monitor and Boot Manager own persistent services configured in
 | Service | Purpose |
 |---------|---------|
 | `environment-bridge` | Transfers semantic actions, observations, speech, and correlated feedback through the configured environment adapter |
-| `robot-operator` | Owns robot-autonomy timing, cooldowns, mutual exclusion, and admission of Robot Status and boredom workflows |
+| `robot-operator` | Owns robot-autonomy timing, mutual exclusion, and admission; Full runs the autonomy controller after each completed chain |
 | `maintenance-service` | Performs stale-lock health checks, audit-log cleanup, and embedding preload |
 
 Environment Bridge is the only persistent service whose source remains under

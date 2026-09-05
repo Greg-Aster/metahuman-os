@@ -23,10 +23,10 @@ test('psychoanalyzer accepts only an explicit username option', () => {
 function config(insightsEnabled = true): PsychoanalyzerConfig {
   return {
     version: '2.0.0',
-    enabled: true,
     memorySelection: {
       strategy: 'priority_recent',
       daysBack: 30,
+      maxScanFiles: 1000,
       maxMemories: 30,
       minMemories: 1,
       excludeTypes: [],
@@ -37,6 +37,7 @@ function config(insightsEnabled = true): PsychoanalyzerConfig {
       model: 'psychotherapist',
       temperature: 0.3,
       maxTokens: 2200,
+      maxEvidenceCharacters: 60000,
       confidenceThreshold: 0.7,
     },
     updateStrategy: {
@@ -100,6 +101,7 @@ const memories: PsychoanalyzerMemory[] = [{
 }]
 
 function createHarness(options: {
+  enabled?: boolean
   insightsEnabled?: boolean
   archiveFailures?: number
   insightsFailures?: number
@@ -127,6 +129,7 @@ function createHarness(options: {
       return callback()
     },
     acquireRunLock: () => ({ release: () => { runtime.lockReleases++ } }),
+    isEnabled: () => options.enabled ?? true,
     loadConfig: async () => psychoConfig,
     selectMemories: async () => memories,
     loadPersona: () => structuredClone(runtime.persona),
@@ -166,7 +169,7 @@ function createHarness(options: {
       updated.lastUpdated = updatedAt.toISOString()
       runtime.persona = structuredClone(updated)
     },
-    persistInsights: async receipt => {
+    persistInsights: async (_username, receipt) => {
       if (!receipt.config.insights.enabled) return
       runtime.insightCalls++
       if (runtime.insightsFailures-- > 0) throw new Error('insights failed')
@@ -174,6 +177,15 @@ function createHarness(options: {
   }
   return { runtime, dependencies }
 }
+
+test('Agent Catalog is the sole enable switch for new Psychoanalyzer work', async () => {
+  const { runtime, dependencies } = createHarness({ enabled: false })
+  const result = await executePsychoanalysis(target, {}, dependencies)
+  assert.equal(result.skipped, true)
+  assert.equal(result.skipReason, 'Disabled in Agent Catalog')
+  assert.equal(runtime.analyzeCalls, 0)
+  assert.equal(runtime.savedStates.length, 0)
+})
 
 test('canonical execution uses the resolved identity and records explicit outcomes', async () => {
   const { runtime, dependencies } = createHarness()

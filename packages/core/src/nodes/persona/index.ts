@@ -27,9 +27,3 @@ export {
   PersonaInterviewQuestionNode,
   parsePersonaInterviewQuestion,
 } from './persona-interview-question.node.js';
-export {
-  PreferenceLearningInputNode,
-  PreferenceLearningNode,
-  parseExtractedPreferences,
-  parsePreferenceContradiction,
-} from './preference-learning.node.js';

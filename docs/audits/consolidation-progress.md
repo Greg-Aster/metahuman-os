@@ -2726,3 +2726,49 @@ These are future scoped goals. They are not open required steps for the complete
    `README.md`, `STARTUP.md`, and any `docs/technical/README.md` references that point at missing or stale files.
 2. Mark historical planning/status docs as archive-only unless refreshed:
    `docs/NEXT-STEPS.md`, `docs/MOBILE-IMPLEMENTATION.md`, `docs/UNIFIED-API-LAYER.md`, `docs/REMAINING-WORK.md`, and `docs/OPTIONAL-NEXT-STEPS-STATUS.md`.
+
+## Psychoanalyzer Ownership and Storage Repair - 2026-09-04
+
+Scope and surviving owners:
+
+- Kept Psychoanalyzer as finite, graph-backed persona-learning work. The Agent
+  Catalog entry in `etc/agents.json` is its sole enable switch; Sleep Workflow
+  remains its automatic parent and records the stage as skipped when that entry
+  is disabled.
+- Core Persona Learning owns proposal validation, provenance, and bounded
+  mutation. Core Identity owns persona core and archives, while the new narrow
+  Persona Insights owner owns the generated insight history. All profile writes
+  use the existing encryption-aware storage client.
+
+Repair and consolidation:
+
+- Removed the competing `enabled` field from Psychoanalyzer profile config and
+  made direct agent execution consume the same Trigger configuration as manual
+  UI and Sleep admission.
+- Added bounded episodic file scanning and evidence-character limits, with the
+  graph node revalidating memory count, unique IDs, and total evidence before
+  model invocation.
+- Made manual-edit protection optional and off by default. When enabled it now
+  protects unowned Big Five traits as well as collection removals. Manual persona
+  saves reconcile provenance from the previous canonical persona and reject
+  caller-supplied ownership claims.
+- Consolidated the duplicate Brain/API insight readers and writers into one Core
+  owner, migrated the retired profile seed shape, and corrected new-profile
+  creation to use the maintained insight contract.
+- Routed profile Psycho config, persona core saves, archives, archive API actions,
+  and insights through the storage client. Synchronous identity consumers reuse
+  synchronous methods on that same owner; encrypted writes remove a superseded
+  plaintext copy after the encrypted atomic write succeeds.
+
+Validation:
+
+- Eight focused Psychoanalyzer, Persona Learning, Persona Insights, graph-node,
+  Sleep Workflow, and API test files pass. Agent Catalog, Trigger Manager, and
+  Agent Catalog UI architecture suites pass.
+- Core, Brain, and Site typechecks pass. All 38 cognitive graphs, node defaults,
+  the user-agnostic guard, Agent Monitor's 69 checks, the zero-violation
+  architecture guard, the production Site build, and `./bin/audit check` pass.
+  The audit retains the pre-existing large tracked environment-action-selector
+  training-file warning.
+- A live Psychoanalyzer model run and real encrypted-profile mutation were not
+  performed because both would modify installation-owner profile data.

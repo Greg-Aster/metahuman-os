@@ -2,8 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { systemPaths } from './path-builder.js'
-import { getProfilePaths } from './paths.js'
-import { safeWriteJSON } from './safe-file.js'
 import { storageClient } from './storage-client.js'
 
 export const PSYCHOANALYZER_FIELD_PATHS = [
@@ -23,10 +21,10 @@ export type PsychoanalyzerFieldPath = typeof PSYCHOANALYZER_FIELD_PATHS[number]
 
 export interface PsychoanalyzerConfig {
   version: string
-  enabled: boolean
   memorySelection: {
     strategy: 'priority_recent'
     daysBack: number
+    maxScanFiles: number
     maxMemories: number
     minMemories: number
     excludeTypes: string[]
@@ -37,6 +35,7 @@ export interface PsychoanalyzerConfig {
     model: 'psychotherapist'
     temperature: number
     maxTokens: number
+    maxEvidenceCharacters: number
     confidenceThreshold: number
   }
   updateStrategy: {
@@ -145,10 +144,12 @@ export function validatePsychoanalyzerConfig(value: unknown): PsychoanalyzerConf
 
   return {
     version: CURRENT_CONFIG_VERSION,
-    enabled: asBoolean(root.enabled, 'enabled'),
     memorySelection: {
       strategy,
       daysBack: asInteger(memorySelection.daysBack, 'memorySelection.daysBack', 1, 3650),
+      maxScanFiles: memorySelection.maxScanFiles === undefined
+        ? 1000
+        : asInteger(memorySelection.maxScanFiles, 'memorySelection.maxScanFiles', 1, 10000),
       maxMemories,
       minMemories,
       excludeTypes: asStringArray(memorySelection.excludeTypes, 'memorySelection.excludeTypes'),
@@ -163,6 +164,9 @@ export function validatePsychoanalyzerConfig(value: unknown): PsychoanalyzerConf
       maxTokens: analysis.maxTokens === undefined
         ? 2200
         : asInteger(analysis.maxTokens, 'analysis.maxTokens', 256, 8192),
+      maxEvidenceCharacters: analysis.maxEvidenceCharacters === undefined
+        ? 60000
+        : asInteger(analysis.maxEvidenceCharacters, 'analysis.maxEvidenceCharacters', 1000, 500000),
       confidenceThreshold: asNumber(
         analysis.confidenceThreshold,
         'analysis.confidenceThreshold',
@@ -193,36 +197,54 @@ export function validatePsychoanalyzerConfig(value: unknown): PsychoanalyzerConf
   }
 }
 
-export function loadPsychoanalyzerConfig(username?: string): PsychoanalyzerConfig {
-  const profilePath = username
-    ? path.join(getProfilePaths(username).etc, 'psychoanalyzer.json')
-    : (() => {
-        const profileResult = storageClient.resolvePath({
-          category: 'config',
-          subcategory: 'etc',
-          relativePath: 'psychoanalyzer.json',
-        })
-        return profileResult.success ? profileResult.path : undefined
-      })()
-  const configPath = profilePath && fs.existsSync(profilePath)
-    ? profilePath
-    : path.join(systemPaths.etc, 'psychoanalyzer.json')
-
-  if (!fs.existsSync(configPath)) {
-    throw new Error(`Psychoanalyzer configuration not found: ${configPath}`)
-  }
-
-  return validatePsychoanalyzerConfig(JSON.parse(fs.readFileSync(configPath, 'utf8')))
-}
-
 export function loadSystemPsychoanalyzerConfig(): PsychoanalyzerConfig {
   const configPath = path.join(systemPaths.etc, 'psychoanalyzer.json')
   return validatePsychoanalyzerConfig(JSON.parse(fs.readFileSync(configPath, 'utf8')))
 }
 
-export function savePsychoanalyzerConfig(username: string, config: PsychoanalyzerConfig): void {
+export async function savePsychoanalyzerConfig(username: string, config: PsychoanalyzerConfig): Promise<void> {
   const validated = validatePsychoanalyzerConfig(config)
-  safeWriteJSON(path.join(getProfilePaths(username).etc, 'psychoanalyzer.json'), validated)
+  const write = await storageClient.write({
+    username,
+    category: 'config',
+    subcategory: 'etc',
+    relativePath: 'psychoanalyzer.json',
+    data: JSON.stringify(validated, null, 2),
+    encoding: 'utf8',
+  })
+  if (!write.success) throw new Error(write.error || 'Cannot persist psychoanalyzer configuration')
+}
+
+export async function loadPsychoanalyzerConfig(username?: string): Promise<PsychoanalyzerConfig> {
+  if (!username) return loadSystemPsychoanalyzerConfig()
+  const read = await storageClient.read({
+    username,
+    category: 'config',
+    subcategory: 'etc',
+    relativePath: 'psychoanalyzer.json',
+    encoding: 'utf8',
+  })
+  if (!read.success) {
+    if (!read.error?.startsWith('File not found:')) {
+      throw new Error(read.error || 'Cannot read psychoanalyzer configuration')
+    }
+    const initial = loadSystemPsychoanalyzerConfig()
+    await savePsychoanalyzerConfig(username, initial)
+    return initial
+  }
+  const serialized = typeof read.data === 'string' ? read.data : read.data?.toString('utf8')
+  if (!serialized) throw new Error('Psychoanalyzer configuration is empty')
+  let raw: unknown
+  try {
+    raw = JSON.parse(serialized)
+  } catch (error) {
+    throw new Error(`Cannot parse psychoanalyzer configuration: ${(error as Error).message}`)
+  }
+  const validated = validatePsychoanalyzerConfig(raw)
+  if (JSON.stringify(raw) !== JSON.stringify(validated)) {
+    await savePsychoanalyzerConfig(username, validated)
+  }
+  return validated
 }
 
 export function mergePsychoanalyzerConfig(
@@ -230,15 +252,15 @@ export function mergePsychoanalyzerConfig(
   patch: unknown,
 ): PsychoanalyzerConfig {
   const input = asRecord(patch, 'configuration patch')
-  const allowed = new Set(['enabled', 'memorySelection', 'analysis', 'updateStrategy', 'reconciliation', 'insights'])
+  const allowed = new Set(['memorySelection', 'analysis', 'updateStrategy', 'reconciliation', 'insights'])
   const unsupported = Object.keys(input).filter(key => !allowed.has(key))
   if (unsupported.length > 0) {
     throw new Error(`Unsupported psychoanalyzer configuration fields: ${unsupported.join(', ')}`)
   }
 
   const allowedNested: Partial<Record<keyof PsychoanalyzerConfig, string[]>> = {
-    memorySelection: ['strategy', 'daysBack', 'maxMemories', 'minMemories', 'excludeTypes', 'priorityTags', 'userInputOnly'],
-    analysis: ['model', 'temperature', 'maxTokens', 'confidenceThreshold'],
+    memorySelection: ['strategy', 'daysBack', 'maxScanFiles', 'maxMemories', 'minMemories', 'excludeTypes', 'priorityTags', 'userInputOnly'],
+    analysis: ['model', 'temperature', 'maxTokens', 'maxEvidenceCharacters', 'confidenceThreshold'],
     updateStrategy: ['preserveUserEdits', 'fields'],
     reconciliation: ['removeStaleGoals', 'removeStaleInterests', 'removeContradictedValues', 'removeUnusedHeuristics'],
     insights: ['enabled', 'maxEntries'],
@@ -275,7 +297,6 @@ export function mergePsychoanalyzerConfig(
 
   return validatePsychoanalyzerConfig({
     ...current,
-    ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
     memorySelection: mergeObject('memorySelection'),
     analysis: mergeObject('analysis'),
     updateStrategy,

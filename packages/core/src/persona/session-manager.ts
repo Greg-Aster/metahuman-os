@@ -5,7 +5,6 @@
  * Each session stores questions asked, answers received, and progress tracking.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
 import { storageClient } from '../storage-client.js';
 import { audit } from '../audit.js';
@@ -14,10 +13,15 @@ import { getUserContext } from '../context.js';
 /**
  * Interview question with category tagging
  */
+export const PERSONA_INTERVIEW_CATEGORIES = [
+  'values', 'goals', 'style', 'biography', 'current_focus',
+] as const;
+export type PersonaCategory = typeof PERSONA_INTERVIEW_CATEGORIES[number];
+
 export interface Question {
   id: string;
   prompt: string;
-  category: 'values' | 'goals' | 'style' | 'biography' | 'current_focus';
+  category: PersonaCategory;
   generatedAt?: string;
 }
 
@@ -51,6 +55,13 @@ export interface CategoryCoverage {
   current_focus: number; // 0-100
 }
 
+export interface PersonaCoveragePolicy {
+  categories: PersonaCategory[];
+  sessionDefaults: {
+    targetCategoryCompletionPercentage: number;
+  };
+}
+
 /**
  * Interview session
  */
@@ -68,7 +79,7 @@ export interface Session {
   questions: Question[];
   answers: Answer[];
   categoryCoverage: CategoryCoverage;
-  personaDraft?: any; // Populated after finalization
+  personaDraft?: unknown; // Populated after finalization
 }
 
 /**
@@ -96,11 +107,100 @@ export interface SessionIndex {
   sessions: SessionMetadata[];
 }
 
+export function findPendingPersonaQuestion(session: Session): Question | undefined {
+  return session.questions.find(question => (
+    !session.answers.some(answer => answer.questionId === question.id)
+  ));
+}
+
+export function getPersonaInterviewCategoryGaps(
+  session: Session,
+  policy: PersonaCoveragePolicy,
+): PersonaCategory[] {
+  return policy.categories.filter(category => (
+    session.categoryCoverage[category] < policy.sessionDefaults.targetCategoryCompletionPercentage
+  ));
+}
+
+export function selectPersonaInterviewCategory(
+  session: Session,
+  policy: PersonaCoveragePolicy,
+): PersonaCategory {
+  const gaps = getPersonaInterviewCategoryGaps(session, policy);
+  const selectable = gaps.length > 0 ? gaps : policy.categories;
+  const selected = [...selectable].sort((left, right) => (
+    session.categoryCoverage[left] - session.categoryCoverage[right]
+    || policy.categories.indexOf(left) - policy.categories.indexOf(right)
+  ))[0];
+  if (!selected) throw new Error('Persona interview policy has no selectable category');
+  return selected;
+}
+
 export function getPersonaSessionStoragePaths(interviewsDir: string, sessionId: string) {
   return {
     session: path.join(interviewsDir, `${sessionId}.json`),
     artifacts: path.join(interviewsDir, sessionId),
   };
+}
+
+function sessionRequest(username: string, sessionId: string) {
+  if (!/^session-[A-Za-z0-9][A-Za-z0-9-]{0,127}$/.test(sessionId)) {
+    throw new Error('Invalid persona interview session ID');
+  }
+  return {
+    username,
+    category: 'config' as const,
+    subcategory: 'persona',
+    relativePath: `therapy/${sessionId}.json`,
+  };
+}
+
+function archivedSessionRequest(username: string, sessionId: string) {
+  sessionRequest(username, sessionId);
+  return {
+    username,
+    category: 'config' as const,
+    subcategory: 'persona',
+    relativePath: `therapy/_archive/${sessionId}/session.json`,
+  };
+}
+
+function indexRequest(username: string) {
+  return {
+    username,
+    category: 'config' as const,
+    subcategory: 'persona',
+    relativePath: 'therapy/index.json',
+  };
+}
+
+async function readStoredJson<T>(
+  request: ReturnType<typeof sessionRequest> | ReturnType<typeof indexRequest> | ReturnType<typeof archivedSessionRequest>,
+): Promise<T | null> {
+  const result = await storageClient.read({ ...request, encoding: 'utf8' });
+  if (!result.success) {
+    if (result.error?.startsWith('File not found:')) return null;
+    throw new Error(`Cannot read persona interview data: ${result.error || 'unknown error'}`);
+  }
+  try {
+    return JSON.parse(String(result.data)) as T;
+  } catch (error) {
+    throw new Error(`Persona interview data is not valid JSON: ${(error as Error).message}`);
+  }
+}
+
+async function writeStoredJson(
+  request: ReturnType<typeof sessionRequest> | ReturnType<typeof indexRequest> | ReturnType<typeof archivedSessionRequest>,
+  value: unknown,
+): Promise<void> {
+  const result = await storageClient.write({
+    ...request,
+    data: JSON.stringify(value, null, 2),
+    encoding: 'utf8',
+  });
+  if (!result.success) {
+    throw new Error(`Cannot write persona interview data: ${result.error || 'unknown error'}`);
+  }
 }
 
 export function applySessionLifecycleTimestamps(session: Session, now: string): void {
@@ -128,15 +228,9 @@ export function resolvePersonaInterviewsPath(username: string): string {
  */
 export async function startSession(userId: string, username: string): Promise<Session> {
   const ctx = getUserContext();
-  if (!ctx || ctx.userId !== userId) {
+  if (!ctx || ctx.userId !== userId
+    || (ctx.username !== username && ctx.activeProfile !== username)) {
     throw new Error('User context mismatch');
-  }
-
-  const interviewsDir = resolvePersonaInterviewsPath(username);
-
-  // Create interviews directory if it doesn't exist
-  if (!fs.existsSync(interviewsDir)) {
-    fs.mkdirSync(interviewsDir, { recursive: true });
   }
 
   // Generate session ID
@@ -163,8 +257,7 @@ export async function startSession(userId: string, username: string): Promise<Se
   };
 
   // Save session file
-  const sessionPath = getPersonaSessionStoragePaths(interviewsDir, sessionId).session;
-  fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
+  await writeStoredJson(sessionRequest(username, sessionId), session);
 
   // Update index
   await updateSessionIndex(username, session);
@@ -188,16 +281,8 @@ export async function startSession(userId: string, username: string): Promise<Se
  * Load an existing session by ID
  */
 export async function loadSession(username: string, sessionId: string): Promise<Session | null> {
-  const sessionPath = getPersonaSessionStoragePaths(
-    resolvePersonaInterviewsPath(username),
-    sessionId,
-  ).session;
-
-  if (!fs.existsSync(sessionPath)) {
-    return null;
-  }
-
-  const session: Session = JSON.parse(fs.readFileSync(sessionPath, 'utf-8'));
+  const session = await readStoredJson<Session>(sessionRequest(username, sessionId));
+  if (!session) return null;
 
   // Verify ownership
   if (session.username !== username) {
@@ -216,17 +301,11 @@ export async function saveSession(username: string, session: Session): Promise<v
     throw new Error('Session does not belong to this user');
   }
 
-  const sessionPath = getPersonaSessionStoragePaths(
-    resolvePersonaInterviewsPath(username),
-    session.sessionId,
-  ).session;
-
   // Update lifecycle timestamps at the canonical persistence boundary.
   const now = new Date().toISOString();
   applySessionLifecycleTimestamps(session, now);
 
-  // Save
-  fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
+  await writeStoredJson(sessionRequest(username, session.sessionId), session);
 
   // Update index
   await updateSessionIndex(username, session);
@@ -236,13 +315,8 @@ export async function saveSession(username: string, session: Session): Promise<v
  * List all sessions for a user
  */
 export async function listSessions(username: string): Promise<SessionMetadata[]> {
-  const indexPath = path.join(resolvePersonaInterviewsPath(username), 'index.json');
-  if (!fs.existsSync(indexPath)) {
-    return [];
-  }
-
-  const index: SessionIndex = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-  return index.sessions;
+  const index = await readStoredJson<SessionIndex>(indexRequest(username));
+  return index?.sessions || [];
 }
 
 /**
@@ -272,24 +346,70 @@ export async function discardSession(username: string, sessionId: string): Promi
   });
 }
 
+export async function removeSessionRecord(
+  username: string,
+  sessionId: string,
+  archiveBeforeDelete: boolean,
+): Promise<void> {
+  const session = await loadSession(username, sessionId);
+  if (!session) throw new Error('Session not found');
+  if (archiveBeforeDelete) {
+    await writeStoredJson(archivedSessionRequest(username, sessionId), session);
+  }
+  const deleted = await storageClient.delete(sessionRequest(username, sessionId));
+  if (!deleted.success) {
+    throw new Error(`Cannot delete persona interview session: ${deleted.error || 'unknown error'}`);
+  }
+  const index = await readStoredJson<SessionIndex>(indexRequest(username));
+  if (!index) return;
+  index.sessions = index.sessions.filter(item => item.sessionId !== sessionId);
+  index.totalSessions = index.sessions.length;
+  index.completedCount = index.sessions.filter(item => isCompletedPersonaSession(item.status)).length;
+  index.latestSessionId = index.sessions[0]?.sessionId || null;
+  await writeStoredJson(indexRequest(username), index);
+}
+
 /**
  * Add a question to a session
  */
+export function applyQuestionToSession(
+  session: Session,
+  question: Question,
+): { question: Question; created: boolean } {
+  if (session.status !== 'active') {
+    throw new Error('Session is not active');
+  }
+  if (!question.id.trim() || !question.prompt.trim() || question.prompt.length > 2_000
+    || !PERSONA_INTERVIEW_CATEGORIES.includes(question.category)) {
+    throw new Error('Question is invalid');
+  }
+  const existing = session.questions.find(item => item.id === question.id);
+  if (existing) {
+    if (existing.prompt.trim() !== question.prompt.trim() || existing.category !== question.category) {
+      throw new Error('Question ID conflicts with an existing question');
+    }
+    return { question: existing, created: false };
+  }
+  const unanswered = findPendingPersonaQuestion(session);
+  if (unanswered) return { question: unanswered, created: false };
+
+  const storedQuestion = { ...question, id: question.id.trim(), prompt: question.prompt.trim() };
+  session.questions.push(storedQuestion);
+  return { question: storedQuestion, created: true };
+}
+
 export async function addQuestion(
   username: string,
   sessionId: string,
   question: Question
-): Promise<void> {
+): Promise<Question> {
   const session = await loadSession(username, sessionId);
   if (!session) {
     throw new Error('Session not found');
   }
 
-  if (session.status !== 'active') {
-    throw new Error('Session is not active');
-  }
-
-  session.questions.push(question);
+  const result = applyQuestionToSession(session, question);
+  if (!result.created) return result.question;
   await saveSession(username, session);
 
   // Audit log
@@ -299,10 +419,51 @@ export async function addQuestion(
     event: 'question_asked',
     details: {
       sessionId,
-      questionId: question.id,
-      category: question.category,
+      questionId: result.question.id,
+      category: result.question.category,
     },
   });
+  return result.question;
+}
+
+export interface PersonaAnswerLimits {
+  minLength: number;
+  maxLength: number;
+}
+
+function validatedAnswerContent(content: string, limits: PersonaAnswerLimits): string {
+  const normalized = content.trim();
+  if (!Number.isInteger(limits.minLength) || !Number.isInteger(limits.maxLength)
+    || limits.minLength < 1 || limits.maxLength < limits.minLength) {
+    throw new Error('Persona answer limits are invalid');
+  }
+  if (normalized.length < limits.minLength || normalized.length > limits.maxLength) {
+    throw new Error(`Answer must be between ${limits.minLength} and ${limits.maxLength} characters`);
+  }
+  return normalized;
+}
+
+export function applyAnswerToSession(
+  session: Session,
+  questionId: string,
+  content: string,
+  limits: PersonaAnswerLimits,
+  now: string,
+): { answer: Answer; created: boolean } {
+  if (!session.questions.some(question => question.id === questionId)) {
+    throw new Error('Question not found in session');
+  }
+  const normalized = validatedAnswerContent(content, limits);
+  const existing = session.answers.find(answer => answer.questionId === questionId);
+  if (existing) {
+    if (existing.content.trim() === normalized) return { answer: existing, created: false };
+    throw new Error('An answer has already been recorded for this question');
+  }
+  if (session.status !== 'active') throw new Error('Session is not active');
+  const answer: Answer = { questionId, content: normalized, capturedAt: now };
+  session.answers.push(answer);
+  updateCategoryCoverage(session);
+  return { answer, created: true };
 }
 
 /**
@@ -312,35 +473,17 @@ export async function recordAnswer(
   username: string,
   sessionId: string,
   questionId: string,
-  content: string
-): Promise<void> {
+  content: string,
+  limits: PersonaAnswerLimits,
+): Promise<Answer> {
   const session = await loadSession(username, sessionId);
   if (!session) {
     throw new Error('Session not found');
   }
 
-  if (session.status !== 'active') {
-    throw new Error('Session is not active');
-  }
-
-  // Verify question exists
   const question = session.questions.find((q) => q.id === questionId);
-  if (!question) {
-    throw new Error('Question not found in session');
-  }
-
-  // Add answer
-  const answer: Answer = {
-    questionId,
-    content,
-    capturedAt: new Date().toISOString(),
-  };
-
-  session.answers.push(answer);
-
-  // Update category coverage
-  updateCategoryCoverage(session);
-
+  const result = applyAnswerToSession(session, questionId, content, limits, new Date().toISOString());
+  if (!result.created) return result.answer;
   await saveSession(username, session);
 
   // Audit log
@@ -351,10 +494,39 @@ export async function recordAnswer(
     details: {
       sessionId,
       questionId,
-      category: question.category,
-      answerLength: content.length,
+      category: question!.category,
+      answerLength: result.answer.content.length,
     },
   });
+  return result.answer;
+}
+
+export async function updateAnswer(
+  username: string,
+  sessionId: string,
+  questionId: string,
+  content: string,
+  limits: PersonaAnswerLimits,
+): Promise<Answer> {
+  const session = await loadSession(username, sessionId);
+  if (!session) throw new Error('Session not found');
+  if (session.status !== 'active' && session.status !== 'completed') {
+    throw new Error('Session answers can no longer be edited');
+  }
+  const answer = session.answers.find(item => item.questionId === questionId);
+  if (!answer) throw new Error('Answer not found');
+  const normalized = validatedAnswerContent(content, limits);
+  if (answer.content === normalized) return answer;
+  answer.content = normalized;
+  answer.editedAt = new Date().toISOString();
+  await saveSession(username, session);
+  await audit({
+    category: 'action',
+    level: 'info',
+    event: 'answer_updated',
+    details: { sessionId, questionId, answerLength: normalized.length },
+  });
+  return answer;
 }
 
 /**
@@ -388,19 +560,8 @@ function updateCategoryCoverage(session: Session): void {
  * Update session index
  */
 async function updateSessionIndex(username: string, session: Session): Promise<void> {
-  const indexPath = path.join(resolvePersonaInterviewsPath(username), 'index.json');
-  const indexDir = path.dirname(indexPath);
-
-  // Create directory if needed
-  if (!fs.existsSync(indexDir)) {
-    fs.mkdirSync(indexDir, { recursive: true });
-  }
-
-  // Load existing index or create new
-  let index: SessionIndex;
-  if (fs.existsSync(indexPath)) {
-    index = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-  } else {
+  let index = await readStoredJson<SessionIndex>(indexRequest(username));
+  if (!index) {
     index = {
       latestSessionId: null,
       totalSessions: 0,
@@ -439,8 +600,7 @@ async function updateSessionIndex(username: string, session: Session): Promise<v
   // Sort by createdAt descending (newest first)
   index.sessions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  // Save index
-  fs.writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+  await writeStoredJson(indexRequest(username), index);
 }
 
 /**

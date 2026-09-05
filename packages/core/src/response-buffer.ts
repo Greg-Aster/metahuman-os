@@ -34,7 +34,7 @@ export interface ResponseBufferExchange {
 
 export interface ResponseBuffer {
   id: string;
-  cardType: string;              // 'desire_rejection', 'clarifying_question', etc.
+  cardType: string;              // 'desire_rejection', 'clarifying_questions', etc.
   cardId: string;                // desireId, questionId, etc.
   cardContent: string;           // Original card text
   createdAt: string;
@@ -210,6 +210,46 @@ export function appendToResponseBuffer(
   console.log(`${LOG_PREFIX} Appended ${role} to buffer ${bufferId} (${buffer.exchanges.length} exchanges)`);
   touchResponseBufferNotification(username, bufferId);
 
+  return buffer;
+}
+
+/**
+ * Append one complete user/assistant exchange with a single durable write.
+ * Card-response graphs use this owner contract so a failed second write cannot
+ * leave half of an exchange behind while the graph reports success.
+ */
+export function appendExchangeToResponseBuffer(
+  username: string,
+  bufferId: string,
+  userContent: string,
+  assistantContent: string,
+  action: string
+): ResponseBuffer | null {
+  const buffer = loadResponseBuffer(username, bufferId);
+  if (!buffer) {
+    console.error(`${LOG_PREFIX} Cannot append exchange: buffer ${bufferId} not found`);
+    return null;
+  }
+
+  const userMessage = userContent.trim();
+  const assistantMessage = assistantContent.trim();
+  const actionTaken = action.trim();
+  if (!userMessage || !assistantMessage || !actionTaken) {
+    throw new Error('Response buffer exchange requires user text, assistant text, and an action receipt');
+  }
+
+  const timestamp = new Date().toISOString();
+  buffer.exchanges.push(
+    { role: 'user', content: userMessage, timestamp },
+    { role: 'assistant', content: assistantMessage, timestamp, action: actionTaken },
+  );
+  buffer.updatedAt = timestamp;
+
+  const bufferPath = getResponseBufferPath(username, bufferId);
+  fs.writeFileSync(bufferPath, JSON.stringify(buffer, null, 2));
+
+  console.log(`${LOG_PREFIX} Appended complete exchange to buffer ${bufferId} (${buffer.exchanges.length} entries)`);
+  touchResponseBufferNotification(username, bufferId);
   return buffer;
 }
 

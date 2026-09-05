@@ -90,8 +90,8 @@ export function normalizedEnvironmentMotionClass(value: unknown): EnvironmentMot
 export interface EnvironmentTaskDecision {
   outcome: EnvironmentTaskOutcome;
   reason: string;
-  /** Model-authored objective. Autonomous workflows may require this field. */
-  objective?: string;
+  /** Model-authored durable objective. A decision without an objective is not a task. */
+  objective: string;
   objectiveComplete: boolean;
   continuationPolicy?: EnvironmentContinuationPolicy;
   requiredCompletionBasis?: EnvironmentCompletionBasis;
@@ -508,6 +508,9 @@ function parseTaskDecision(
   const objective = typeof record.objective === 'string'
     ? record.objective.replace(/\s+/g, ' ').trim().slice(0, 1_000)
     : '';
+  if (!objective) {
+    return { decision: null, error: 'taskDecision objective must be a non-empty string' };
+  }
   const requiredCompletionBasis = typeof record.requiredCompletionBasis === 'string'
     ? record.requiredCompletionBasis.trim() as EnvironmentCompletionBasis
     : undefined;
@@ -560,7 +563,7 @@ function parseTaskDecision(
     decision: {
       outcome,
       reason,
-      ...(objective ? { objective } : {}),
+      objective,
       objectiveComplete: typeof record.objectiveComplete === 'boolean'
         ? record.objectiveComplete
         : outcome === 'complete',
@@ -582,7 +585,7 @@ export interface EnvironmentModelOutput {
   movementRequest: (Omit<EnvironmentMovementRequest, 'motionClass'> & {
     motionClass?: EnvironmentMovementRequest['motionClass'];
   }) | null;
-  taskDecision: EnvironmentTaskDecision;
+  taskDecision: EnvironmentTaskDecision | null;
 }
 
 const SELECTOR_SCHEMA_STRING = { type: 'string' } as const;
@@ -662,8 +665,8 @@ export interface EnvironmentSelectorJsonSchemaInput {
   actions?: readonly string[];
   robotCommands?: readonly string[];
   actionRouteSelected?: boolean;
+  taskLifecycleSelected?: boolean;
   requireAction?: boolean;
-  requireObjective?: boolean;
   requireProgress?: boolean;
   requireAutonomousConsequence?: boolean;
 }
@@ -692,9 +695,26 @@ export function buildEnvironmentSelectorJsonSchema(
   ));
   const movementSupported = actionRouteSelected
     && (!capabilityBound || advertisedActions.has('robotMotionPlan'));
+  const nonActionOutcomes = ENVIRONMENT_TASK_OUTCOMES.filter(outcome => outcome !== 'act');
+  const taskDecisionObjectSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      ...SELECTOR_SCHEMA_DECISION_REQUIRED,
+      'objective',
+    ],
+    properties: {
+      ...SELECTOR_SCHEMA_DECISION_PROPERTIES,
+      outcome: {
+        type: 'string',
+        enum: directActionTypes.length > 0 || movementSupported
+          ? [...ENVIRONMENT_TASK_OUTCOMES]
+          : nonActionOutcomes,
+      },
+    },
+  };
   const progressBranches: Record<string, unknown>[] = [];
   const autonomyWorkBranches: Record<string, unknown>[] = [];
-  const nonActionOutcomes = ENVIRONMENT_TASK_OUTCOMES.filter(outcome => outcome !== 'act');
   const outputRouteBranches: Record<string, unknown>[] = [{
     properties: {
       actions: { maxItems: 0 },
@@ -761,7 +781,7 @@ export function buildEnvironmentSelectorJsonSchema(
   });
   const autonomyCompletionBranch = {
     properties: {
-      response: SELECTOR_SCHEMA_STRING,
+      response: { type: 'string', minLength: 1 },
       actions: { maxItems: 0 },
       movementRequest: { type: 'null' },
       taskDecision: {
@@ -775,7 +795,22 @@ export function buildEnvironmentSelectorJsonSchema(
     },
   };
   const autonomyBranches = [...autonomyWorkBranches, autonomyCompletionBranch];
-  const routeConstraints: Record<string, unknown>[] = [{ anyOf: outputRouteBranches }];
+  const meaningfulOutputBranches: Record<string, unknown>[] = [
+    { properties: { response: { type: 'string', minLength: 1 } } },
+    ...(directActionTypes.length > 0
+      ? [{ properties: { actions: { type: 'array', minItems: 1 } } }]
+      : []),
+    ...(movementSupported
+      ? [{ properties: { movementRequest: { type: 'object' } } }]
+      : []),
+    ...(input.taskLifecycleSelected === false
+      ? []
+      : [{ properties: { taskDecision: { type: 'object' } } }]),
+  ];
+  const routeConstraints: Record<string, unknown>[] = [
+    { anyOf: outputRouteBranches },
+    { anyOf: meaningfulOutputBranches },
+  ];
   if (input.requireAutonomousConsequence === true) {
     const requiredBranches = input.requireAction === true ? autonomyWorkBranches : autonomyBranches;
     if (requiredBranches.length > 0) routeConstraints.push({ anyOf: requiredBranches });
@@ -816,21 +851,11 @@ export function buildEnvironmentSelectorJsonSchema(
           }
         : { type: 'null' },
       taskDecision: {
-        type: 'object',
-        additionalProperties: false,
-        required: [
-          ...SELECTOR_SCHEMA_DECISION_REQUIRED,
-          ...(input.requireObjective === true ? ['objective'] : []),
-        ],
-        properties: {
-          ...SELECTOR_SCHEMA_DECISION_PROPERTIES,
-          outcome: {
-            type: 'string',
-            enum: directActionTypes.length > 0 || movementSupported
-              ? [...ENVIRONMENT_TASK_OUTCOMES]
-              : nonActionOutcomes,
-          },
-        },
+        ...(input.taskLifecycleSelected === true
+          ? taskDecisionObjectSchema
+          : input.taskLifecycleSelected === false
+            ? { type: 'null' }
+            : { anyOf: [{ type: 'null' }, taskDecisionObjectSchema] }),
       },
     },
   };
@@ -893,7 +918,6 @@ const SELECTOR_ACTION_FIELDS = new Set([
 export function validateEnvironmentSelectorOutput(
   text: unknown,
   sessionId?: string,
-  input: { requireObjective?: boolean } = {},
 ): EnvironmentSelectorValidationResult {
   if (typeof text !== 'string') {
     return {
@@ -933,9 +957,9 @@ export function validateEnvironmentSelectorOutput(
   if (raw.movementRequest !== null && !isRecord(raw.movementRequest)) {
     errors.push('movementRequest must be an object or null');
   }
-  if (!isRecord(raw.taskDecision)) {
-    errors.push('taskDecision must be an object');
-  } else {
+  if (raw.taskDecision !== null && !isRecord(raw.taskDecision)) {
+    errors.push('taskDecision must be an object or null');
+  } else if (isRecord(raw.taskDecision)) {
     for (const field of Object.keys(raw.taskDecision)) {
       if (!SELECTOR_TASK_DECISION_FIELDS.has(field)) {
         errors.push(`taskDecision.${field} is not supported`);
@@ -944,6 +968,7 @@ export function validateEnvironmentSelectorOutput(
     for (const field of [
       'outcome',
       'reason',
+      'objective',
       'objectiveComplete',
       'continuationPolicy',
       'requiredCompletionBasis',
@@ -953,11 +978,8 @@ export function validateEnvironmentSelectorOutput(
     if (typeof raw.taskDecision.reason !== 'string' || !raw.taskDecision.reason.trim()) {
       errors.push('taskDecision.reason must be a non-empty string');
     }
-    if (
-      input.requireObjective === true
-      && (typeof raw.taskDecision.objective !== 'string' || !raw.taskDecision.objective.trim())
-    ) {
-      errors.push('taskDecision.objective must be a non-empty string for autonomous work');
+    if (typeof raw.taskDecision.objective !== 'string' || !raw.taskDecision.objective.trim()) {
+      errors.push('taskDecision.objective must be a non-empty string');
     }
     if (typeof raw.taskDecision.objectiveComplete !== 'boolean') {
       errors.push('taskDecision.objectiveComplete must be boolean');
@@ -991,14 +1013,20 @@ export function validateEnvironmentSelectorOutput(
   if (task.error) errors.push(task.error);
 
   const decision = task.decision;
+  const response = typeof raw.response === 'string' ? raw.response.trim() : '';
   const physicalWorkSelected = normalizedActions.length > 0 || Boolean(movement.request);
+  if (!response && !physicalWorkSelected && !decision) {
+    errors.push(
+      'selector output must include a non-empty response, action, movementRequest, or taskDecision',
+    );
+  }
   if (decision && physicalWorkSelected && (decision.outcome !== 'act' || decision.objectiveComplete)) {
     errors.push('physical work requires taskDecision outcome=act and objectiveComplete=false');
   }
   if (decision && !physicalWorkSelected && decision.outcome === 'act') {
     errors.push('taskDecision outcome=act requires an action or movementRequest');
   }
-  if (errors.length > 0 || !decision) {
+  if (errors.length > 0) {
     return { jsonValid: true, valid: false, errors };
   }
   return {
@@ -1006,7 +1034,7 @@ export function validateEnvironmentSelectorOutput(
     valid: true,
     errors,
     value: {
-      response: String(raw.response).trim(),
+      response,
       actions: normalizedActions,
       movementRequest: movement.request
         ? {

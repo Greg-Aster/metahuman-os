@@ -14,6 +14,7 @@ import {
 import { ROBOT_OPERATOR_DECISION_JSON_SCHEMA } from './decision-parser.node.js';
 import { ROBOT_ACTION_RESULT_JSON_SCHEMA } from './action-result-parser.node.js';
 import { ROBOT_GOAL_REVIEW_JSON_SCHEMA } from './goal-review-parser.node.js';
+import { buildRobotAutonomyControllerJsonSchema } from './autonomy-controller-parser.node.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -218,8 +219,8 @@ function autonomySelectorSchema(
     robotCommands: observation?.capabilities.robotCommands ?? [],
     actionRouteSelected: routingAnalysis.needsAction === true
       || (routingAnalysis.needsVision === true && !currentVisionAvailable),
+    taskLifecycleSelected: routingAnalysis.needsTaskLifecycle === true,
     requireAction: robotObserver?.requestedBy === 'boredom-movement',
-    requireObjective: true,
     requireProgress: true,
     requireAutonomousConsequence: true,
   });
@@ -289,6 +290,7 @@ export const robotOperatorContextBuilderNode = defineNode({
     { name: 'instruction', type: 'string', description: 'Graph-owned Robot Operator instructions' },
     { name: 'stimulusInstruction', type: 'string', optional: true, description: 'Specialized trigger instruction for this autonomous cycle' },
     { name: 'observation', type: 'object', optional: true, description: 'Current correlated robot observation when an environment, vision, or action route was selected' },
+    { name: 'bridgeSummary', type: 'object', optional: true, description: 'Current Environment Bridge connection and session summary' },
     { name: 'images', type: 'array', optional: true, description: 'Validated image content parts' },
     { name: 'frames', type: 'array', optional: true, description: 'Validated visual frame metadata' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Canonical recent conversation with unified inner context when enabled' },
@@ -297,6 +299,8 @@ export const robotOperatorContextBuilderNode = defineNode({
     { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona' },
     { name: 'memoryContext', type: 'array', optional: true, description: 'Historical memories supplied as inspiration, never current-world evidence' },
     { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
+    { name: 'activeDesires', type: 'array', optional: true, description: 'Bounded active Agency Desire summaries' },
+    { name: 'availableTasks', type: 'array', optional: true, description: 'Catalog-backed finite tasks available to the Full-mode controller' },
     { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from Robot Operator Input' },
     { name: 'plannerDecision', type: 'object', optional: true, description: 'Planner decision from Robot Operator Input' },
     { name: 'delegatedMemories', type: 'array', optional: true, description: 'Planner-delegated memories from Robot Operator Input' },
@@ -319,7 +323,7 @@ export const robotOperatorContextBuilderNode = defineNode({
       type: 'select',
       default: 'environment',
       label: 'Output Contract',
-      options: ['environment', 'delegation', 'action_result', 'goal_review'],
+      options: ['environment', 'delegation', 'action_result', 'goal_review', 'autonomy_controller'],
       description: 'Choose the exact structured decision expected from this graph’s LLM.',
     },
   },
@@ -353,7 +357,7 @@ export const robotOperatorContextBuilderNode = defineNode({
       || routingAnalysis?.needsVision === true
       || routingAnalysis?.needsAction === true;
     const observation = environmentSelected ? suppliedObservation : null;
-    if (environmentSelected && !observation?.sessionId) {
+    if (environmentSelected && outputContract !== 'autonomy_controller' && !observation?.sessionId) {
       return invalid('Robot Operator context requires a robot observation with a session ID for the selected route.');
     }
 
@@ -440,6 +444,15 @@ export const robotOperatorContextBuilderNode = defineNode({
     const robotStatus = robotStatusSelected && isRecord(inputs.robotStatus)
       ? boundedObject(inputs.robotStatus, 6_000)
       : null;
+    const bridgeSummary = outputContract === 'autonomy_controller' && isRecord(inputs.bridgeSummary)
+      ? boundedObject(inputs.bridgeSummary, 4_000)
+      : null;
+    const activeDesires = outputContract === 'autonomy_controller' && Array.isArray(inputs.activeDesires)
+      ? inputs.activeDesires.map(desire => boundedObject(desire, 1_500)).slice(0, 10)
+      : [];
+    const availableTasks = outputContract === 'autonomy_controller' && Array.isArray(inputs.availableTasks)
+      ? inputs.availableTasks.filter(isRecord).map(task => boundedObject(task, 2_000)).slice(0, 30)
+      : [];
     const taskNarrative = recentContext.filter(entry => (
       isRecord(entry.context) && cleanText(entry.context.correlationId, 200) === cycleId
     ));
@@ -538,6 +551,23 @@ export const robotOperatorContextBuilderNode = defineNode({
                 },
               }
             : {}),
+          ...(bridgeSummary ? { environmentBridge: bridgeSummary } : {}),
+          ...(activeDesires.length > 0
+            ? {
+                activeDesires: {
+                  provenance: 'canonical_agency_storage',
+                  entries: activeDesires,
+                },
+              }
+            : {}),
+          ...(availableTasks.length > 0
+            ? {
+                availableAutonomyTasks: {
+                  provenance: 'canonical_agent_catalog',
+                  entries: availableTasks,
+                },
+              }
+            : {}),
           ...(historicalLatestAction
             ? {
                 recentActionContext: {
@@ -573,6 +603,8 @@ export const robotOperatorContextBuilderNode = defineNode({
           ? ROBOT_ACTION_RESULT_JSON_SCHEMA
           : outputContract === 'goal_review'
             ? ROBOT_GOAL_REVIEW_JSON_SCHEMA
+            : outputContract === 'autonomy_controller'
+              ? buildRobotAutonomyControllerJsonSchema(availableTasks)
             : autonomySelectorSchema(
                 observation,
                 robotObserver,
@@ -592,6 +624,9 @@ export const robotOperatorContextBuilderNode = defineNode({
         historicalLatestActionIncluded: Boolean(historicalLatestAction),
         memoryContextCount: memoryContext.length,
         robotStatusIncluded: Boolean(robotStatus),
+        bridgeSummaryIncluded: Boolean(bridgeSummary),
+        activeDesireCount: activeDesires.length,
+        availableTaskCount: availableTasks.length,
         plannerDecisionIncluded: Boolean(plannerDecision),
         reflectionMaterialIncluded: reflectionTrigger && memoryContext.length > 0,
         imageCount: images.length,

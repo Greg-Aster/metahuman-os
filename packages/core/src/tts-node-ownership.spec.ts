@@ -152,6 +152,21 @@ assert.match(
   'the playback client must renew its lease and distinguish completion, interruption, and failure',
 );
 assert.match(
+  queueConsumer,
+  /audioUnlocked = await ttsApi\.ensureAudioUnlocked\(\)[\s\S]*?if \(!audioUnlocked\)[\s\S]*?updateDelivery\(item, 'retry'\)[\s\S]*?pauseQueueUntilAudioUnlocked\(\)/,
+  'audio-blocked playback must release its lease and pause claims until a user gesture',
+);
+assert.match(
+  queueConsumer,
+  /onMount\([\s\S]*?armAudioUnlockListeners\(\)[\s\S]*?enableQueuePlayback\(\)/,
+  'the queue consumer must establish audio readiness before opening its claim stream',
+);
+assert.match(
+  ttsComposable,
+  /resumeAudioContextWithTimeout[\s\S]*?Promise\.race[\s\S]*?ensureAudioUnlocked\(\): Promise<boolean>/,
+  'browser audio unlock must have an explicit bounded readiness result',
+);
+assert.match(
   deliveryQueue,
   /interrupt\([\s\S]*?advanceGeneration[\s\S]*?queue\.items = \[\][\s\S]*?updateDelivery\(/,
   'the TTS delivery owner must atomically supersede queued speech and retain explicit item lifecycle updates',

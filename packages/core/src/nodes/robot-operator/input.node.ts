@@ -25,6 +25,7 @@ export const robotOperatorInputNode = defineNode({
     { name: 'memories', type: 'array', description: 'Planner-delegated historical memories' },
     { name: 'stimulusAgent', type: 'string', description: 'Robot Operator child that admitted this cycle' },
     { name: 'sourceObservationAt', type: 'string', description: 'Timestamp of the bridge observation used for this cycle' },
+    { name: 'sessionId', type: 'string', description: 'Environment Bridge session selected for this Robot Operator cycle' },
     { name: 'currentVisualEvidence', type: 'boolean', description: 'Whether this cycle includes a newly acquired current frame' },
     { name: 'inputSource', type: 'string', description: 'Robot Operator trigger source: user or autonomy' },
     { name: 'responseMetadata', type: 'object', description: 'Conversation provenance for an optional Robot Operator response' },
@@ -67,6 +68,7 @@ export const robotOperatorInputNode = defineNode({
       memories,
       stimulusAgent: cleanText(supplied?.stimulusAgent, 100),
       sourceObservationAt: cleanText(supplied?.sourceObservationAt, 100),
+      sessionId: cleanText(supplied?.sessionId, 200),
       currentVisualEvidence: supplied?.currentVisualEvidence === true,
       inputSource: robotObserver?.triggerSource ?? 'user',
       responseMetadata: robotObserver?.triggerSource === 'autonomy'

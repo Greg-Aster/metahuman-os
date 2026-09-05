@@ -96,6 +96,7 @@ test('Environment Context Builder packages only orchestrator-selected context an
       needsEnvironment: true,
       needsVision: true,
       needsAction: true,
+      needsTaskLifecycle: false,
     },
     images: [{ type: 'image_url', image_url: { url: TEST_JPEG } }],
     conversationHistory: [
@@ -164,6 +165,7 @@ test('Environment Context Builder does not present a saved camera frame as curre
       needsEnvironment: true,
       needsVision: true,
       needsAction: false,
+      needsTaskLifecycle: false,
     },
     images: imageSelection.images,
   }, { username: 'owner' }, {
@@ -191,14 +193,15 @@ test('Environment Context Builder does not present a saved camera frame as curre
       needsEnvironment: false,
       needsVision: false,
       needsAction: false,
+      needsTaskLifecycle: false,
     },
   }, { username: 'owner' }, { systemPrompt: 'Return one Environment decision.' })
   const conversationEnvelope = JSON.parse(String(conversationOnly.message))
   assert.equal(conversationEnvelope.currentEnvironment, null)
   assert.equal(conversationOnly.messages.length, 2)
-  assert.equal(
-    (conversationOnly.jsonSchema as any).properties.taskDecision.properties.outcome.enum.includes('act'),
-    false,
+  assert.deepEqual(
+    (conversationOnly.jsonSchema as any).properties.taskDecision,
+    { type: 'null' },
   )
 })
 
@@ -206,6 +209,7 @@ test('Environment selector schema exposes conversation, advertised action, and F
   const schema = buildEnvironmentSelectorJsonSchema({
     actions: ['robotCommand', 'robotMotionPlan'],
     robotCommands: ['stand', '#1', '#2'],
+    taskLifecycleSelected: true,
   }) as any
   const routes = schema.allOf[0].anyOf
 
@@ -220,4 +224,19 @@ test('Environment selector schema exposes conversation, advertised action, and F
   assert.deepEqual(routes[2].properties.taskDecision.properties.outcome.enum, ['act'])
   assert.deepEqual(routes[2].properties.taskDecision.properties.objectiveComplete.enum, [false])
   assert.deepEqual(routes[2].properties.taskDecision.properties.motionClass.enum, ['body_local'])
+
+  const meaningfulOutputs = schema.allOf[1].anyOf
+  assert.deepEqual(meaningfulOutputs[0].properties.response, { type: 'string', minLength: 1 })
+  assert.deepEqual(meaningfulOutputs[1].properties.actions, { type: 'array', minItems: 1 })
+  assert.deepEqual(meaningfulOutputs[2].properties.movementRequest, { type: 'object' })
+  assert.deepEqual(meaningfulOutputs[3].properties.taskDecision, { type: 'object' })
+  assert.equal(schema.properties.taskDecision.type, 'object')
+
+  const standaloneSchema = buildEnvironmentSelectorJsonSchema({
+    actions: ['robotCommand', 'robotMotionPlan'],
+    robotCommands: ['stand'],
+    taskLifecycleSelected: false,
+  }) as any
+  assert.deepEqual(standaloneSchema.properties.taskDecision, { type: 'null' })
+  assert.equal(standaloneSchema.allOf[1].anyOf.length, 3)
 })

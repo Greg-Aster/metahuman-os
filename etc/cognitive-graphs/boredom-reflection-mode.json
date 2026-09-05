@@ -3,9 +3,9 @@
   "format": "svelte-flow",
   "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
   "name": "Boredom Reflection Mode",
-  "description": "Uses a sampled memory with persona, recent narrative, current state, and verified action history to author one consequential intention for Robot Autonomy Executor.",
+  "description": "Uses a sampled memory with Robot Status, persona, recent narrative, current bridge state, and verified action history to author one consequential intention for Robot Autonomy Executor.",
   "cognitiveMode": "environment",
-  "last_modified": "2026-09-03",
+  "last_modified": "2026-09-04",
   "nodes": [
     {
       "id": "observation",
@@ -32,6 +32,16 @@
       }
     },
     { "id": "robot-operator-input", "type": "operatorNode", "position": { "x": 560, "y": 100 }, "data": { "label": "Robot Operator Input", "nodeType": "robot_operator_input", "properties": {} } },
+    {
+      "id": "robot-status",
+      "type": "contextNode",
+      "position": { "x": 820, "y": 700 },
+      "data": {
+        "label": "Current Robot Status",
+        "nodeType": "robot_status",
+        "properties": { "historyLimit": 3 }
+      }
+    },
     {
       "id": "memory-sampler",
       "type": "memoryNode",
@@ -164,6 +174,15 @@
       "target": "planner-context",
       "sourceHandle": "observation",
       "targetHandle": "observation",
+      "type": "default",
+      "data": { "type": "object" }
+    },
+    {
+      "id": "e-status-context",
+      "source": "robot-status",
+      "target": "planner-context",
+      "sourceHandle": "context",
+      "targetHandle": "robotStatus",
       "type": "default",
       "data": { "type": "object" }
     },

@@ -11,7 +11,6 @@
 import { queryIndex, getIndexStatus } from './vector-index.js';
 import { loadPersonaCore } from './identity.js';
 import { getPersonaValueNames } from './persona-summary.js';
-import { getConfirmedPreferences } from './preference-learner.js';
 import { loadShortTermState } from './state.js';
 import { audit } from './audit.js';
 import { listActiveTasks } from './memory.js';
@@ -374,7 +373,6 @@ export interface PersonaSummary {
   interests: string[];
   currentFocus: string[];
   projects: string[];
-  confirmedPreferences: string[];
 }
 
 /**
@@ -707,9 +705,6 @@ export async function buildContextPackage(
           ? source.context.currentFocus.filter((focus: unknown): focus is string => typeof focus === 'string')
           : [],
         projects,
-        confirmedPreferences: getConfirmedPreferences().map(preference =>
-          preference.userModification || preference.behavior || preference.description
-        ),
       };
     }),
     // Load state
@@ -726,7 +721,6 @@ export async function buildContextPackage(
         interests: [],
         currentFocus: [],
         projects: [],
-        confirmedPreferences: [],
       };
 
   if (personaResult.status === 'rejected') {
@@ -1007,9 +1001,6 @@ export function formatContextForPrompt(
       sections.push(`Projects: ${context.persona.projects.join(', ')}.`);
     }
 
-    if (context.persona.confirmedPreferences.length > 0) {
-      sections.push(`Confirmed preferences: ${context.persona.confirmedPreferences.join(', ')}.`);
-    }
   }
 
   // Current focus (orchestrator state)

@@ -7,10 +7,9 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-import { promises as fs } from 'node:fs';
-import { existsSync } from 'node:fs';
-import { getProfilePaths } from '../../paths.js';
 import { audit } from '../../audit.js';
+import { loadPersonaCore, savePersonaCore, type PersonaCore } from '../../identity.js';
+import { reconcilePersonaLearningProvenance } from '../../persona-learning.js';
 
 const DEFAULT_PERSONA = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -91,17 +90,7 @@ export async function handleGetPersonaCoreManage(req: UnifiedRequest): Promise<U
       });
     }
 
-    const paths = getProfilePaths(user.username);
-    const personaPath = paths.personaCore;
-
-    if (!existsSync(personaPath)) {
-      return {
-        status: 404,
-        error: 'Persona core file not found',
-      };
-    }
-
-    const personaData = JSON.parse(await fs.readFile(personaPath, 'utf-8'));
+    const personaData = loadPersonaCore(user.username);
 
     return successResponse({
       success: true,
@@ -130,25 +119,17 @@ export async function handleUpdatePersonaCoreManage(req: UnifiedRequest): Promis
       return { status: 400, error: 'Invalid persona data' };
     }
 
-    const paths = getProfilePaths(user.username);
-    const personaPath = paths.personaCore;
+    const existingData = loadPersonaCore(user.username);
+    const updatedAt = new Date();
 
-    // Preserve $schema and version from original if not provided
-    let existingData: Record<string, any> = {};
-    if (existsSync(personaPath)) {
-      existingData = JSON.parse(await fs.readFile(personaPath, 'utf-8'));
-    }
-
-    // Update lastUpdated timestamp
-    const updatedPersona = {
+    const updatedPersona = reconcilePersonaLearningProvenance(existingData, {
+      ...persona,
       $schema: persona.$schema || existingData.$schema || "https://json-schema.org/draft/2020-12/schema",
       version: persona.version || existingData.version || "0.2.0",
-      lastUpdated: new Date().toISOString(),
-      ...persona
-    };
+      lastUpdated: updatedAt.toISOString(),
+    } as PersonaCore);
 
-    // Write the updated persona
-    await fs.writeFile(personaPath, JSON.stringify(updatedPersona, null, 2));
+    savePersonaCore(updatedPersona, updatedAt, user.username);
 
     // Audit the change
     audit({

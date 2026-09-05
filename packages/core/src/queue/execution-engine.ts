@@ -317,6 +317,7 @@ export class ExecutionEngine {
       };
     });
     for (const handler of [
+      'workflow.robot-autonomy-controller',
       'workflow.robot-status',
       'workflow.robot-goal-review',
       'workflow.boredom-observer',

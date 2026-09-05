@@ -96,6 +96,25 @@
       ],
       "startupPolicy": "skip"
     },
+    "robot-autonomy-controller": {
+      "id": "robot-autonomy-controller",
+      "displayName": "Robot Autonomy Controller",
+      "description": "Runs one Full-mode LLM decision over current Robot Status, Environment Bridge facts, recent conversation, inner dialogue, verified action outcomes, active desires, and persona, then selects one relevant catalog-backed autonomy task or delegates one embodied intention.",
+      "enabled": true,
+      "type": "manual",
+      "lifecycle": "workflow",
+      "runtimeOwner": "robot-operator",
+      "handler": "workflow.robot-autonomy-controller",
+      "priority": "low",
+      "agentPath": "coordinator:workflow.robot-autonomy-controller",
+      "usesLLM": true,
+      "allowedModes": [
+        "full"
+      ],
+      "startupPolicy": "skip",
+      "maxRetries": 1,
+      "comment": "Finite Full-mode decision workflow. Robot Operator is its sole automatic admission owner; the workflow may dispatch one catalog-backed finite task through Work Coordinator and never schedules itself."
+    },
     "robot-status": {
       "id": "robot-status",
       "displayName": "Robot Status",
@@ -120,7 +139,7 @@
     "robot-goal-review": {
       "id": "robot-goal-review",
       "displayName": "Robot Goal Review",
-      "description": "Reads Robot Status, uses one LLM decision to close an objective or author one high-level next instruction, and optionally delegates that instruction to Robot Autonomy Executor.",
+      "description": "Reviews one Robot Status objective from current perception, recent dialogue and reflection, verified action outcomes, active persona, and status. One LLM may complete, continue, wait, request the user, abandon, or speak; continuation delegates one high-level intention to Robot Autonomy Executor.",
       "enabled": true,
       "type": "manual",
       "lifecycle": "workflow",
@@ -136,7 +155,7 @@
       ],
       "startupPolicy": "skip",
       "maxRetries": 1,
-      "comment": "Finite Robot Operator child. Reactive permits explicit manual runs only; Semi uses its configured idle timer; Full prioritizes it while Robot Status contains an unfinished objective."
+      "comment": "Finite Robot Operator child. Reactive permits explicit manual runs only; Semi uses its configured idle timer; Full admits it after a correlated action result reports an incomplete or failed objective. Its own decision is not immediately reviewed again."
     },
     "boredom-observer": {
       "id": "boredom-observer",

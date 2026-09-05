@@ -15,10 +15,13 @@ claimed it.
   inactivity-based producers are paused.
 - **Semi-autonomous** also enables the configured interval, time-of-day, and
   inactivity producers in `etc/agents.json`.
-- **Fully autonomous** lets Robot Operator admit one bounded robot workflow
-  chain at a time. A later Robot Goal Review or planner run begins only after
-  the preceding work reaches a terminal state and the configured cooldown has
-  elapsed. All work still uses coordinator priority and lifecycle rules.
+- **Fully autonomous** lets Robot Operator admit one bounded Robot Autonomy
+  Controller decision at a time. The controller reads current robot, dialogue,
+  inner-dialogue, Agency, Environment Bridge, and persona context, then its LLM
+  may select one configured finite agent, delegate one embodied intention, and
+  optionally speak. A new decision begins only after the selected correlated
+  work reaches a terminal state. All work still uses coordinator priority and
+  lifecycle rules.
 
 Changing mode does not stop the coordinator. Interactive and safety work remain
 available in every mode.
@@ -48,6 +51,14 @@ review desire outcomes, dream from memories, review persona learnings, and
 refresh the memory index. Organizer, Curator, Dreamer, Psychoanalyzer, and the
 four desire agents are workflow children rather than independent scheduled
 producers.
+
+Psychoanalyzer has one enable switch in **System → Agent Catalog**. Disabling
+it blocks manual runs and causes its Sleep stage to be recorded as skipped;
+there is no second enable flag in the profile configuration. The same catalog
+card exposes **Preserve manual persona edits**. That option is off by default.
+When enabled, Psychoanalyzer may update or remove only persona values that still
+carry its own learning provenance. Evidence scanning, selected memories, and
+prompt evidence are bounded by the profile Psychoanalyzer configuration.
 
 Audio Organizer and Profile Sync remain manual. Robot Operator owns its own
 robot and boredom timers through its persistent service contract; those are not
@@ -80,8 +91,10 @@ facet.
 
 Active Operator is the mode controller above the coordinator. It owns no queue,
 retry loop, process scheduler, or task executor. In Full mode, Robot Operator
-owns completion/cooldown-driven robot workflow admission; there is no separate
-general Operator Policy graph or LLM scheduling loop.
+owns correlated-work completion-driven admission of the one Robot Autonomy
+Controller graph; the controller selects from Agent Catalog-backed task
+descriptions instead of rotating producers. There is no separate general
+Operator Policy graph or LLM scheduling loop.
 
 ## Monitoring and controls
 
