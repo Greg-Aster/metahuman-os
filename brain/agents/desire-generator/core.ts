@@ -21,6 +21,7 @@
  */
 
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import {
@@ -43,6 +44,9 @@ import {
   loadTrustLevel,
   curiosityQuestionStore,
   getUserContext,
+  loadBufferForUser,
+  submitDesireAgent,
+  type ConversationMessage,
   type CachedGraphEntry,
 } from '@metahuman/core';
 
@@ -58,11 +62,12 @@ import {
   type ReflectionSummary,
   type DreamSummary,
   type DesireSummary,
-  generateDesireId,
-  initializeDesireMetrics,
-  applyDecay,
-  applyReinforcement,
-  isAboveThreshold,
+  type DesireReinforcementDecision,
+  DESIRE_SOURCE_WEIGHTS,
+  createDesireFromCandidate,
+  hasDesireActivationCapacity,
+  isDesireActivationEligible,
+  calculateElapsedDecay,
   calculateEffectiveStrength,
 } from '@metahuman/core';
 
@@ -81,15 +86,21 @@ import {
   listDesiresByStatus,
   incrementMetric,
   initializeAgencyStorage,
+  reinforceDesire,
+  depreciateDesire,
+  filterUnanalyzedGeneratorInputs,
+  markGeneratorInputsAnalyzed,
 } from '@metahuman/core';
 
 // ─────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────
 
-const LOG_PREFIX = '[desire-generator]';
+const LOG_PREFIX = '[desire-agent]';
 const GRAPH_FILE = 'desire-generator.json';
 const graphCache: Record<string, CachedGraphEntry | null> = {};
+const MAX_USER_REQUESTS = 20;
+const MAX_USER_REQUEST_CHARS = 1_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -107,6 +118,93 @@ export interface DesireGeneratorResult {
   totalGenerated: number;
   errors: string[];
   stats: Record<string, number>;
+}
+
+interface AgencyModelCallReport {
+  operation: 'generate' | 'reinforce';
+  cognitiveMode: string | null;
+  role: string;
+  provider: string;
+  model: string;
+  modelId: string;
+  latencyMs?: number;
+  tokens?: { prompt: number; completion: number; total: number };
+}
+
+interface AgencyStrengthChange {
+  desireId: string;
+  title: string;
+  previousStrength: number;
+  newStrength: number;
+  change: number;
+  reason: string;
+  evidence?: DesireReinforcementDecision['evidence'];
+}
+
+interface AgencyActivation {
+  desireId: string;
+  title: string;
+  strength: number;
+  effectiveStrength: number;
+  threshold: number;
+}
+
+interface AgencyGoalProposal {
+  desireId: string;
+  title: string;
+  goalId: string;
+}
+
+interface AgencyCreatedDesire {
+  desireId: string;
+  title: string;
+  source: DesireSource;
+  sourceId?: string;
+  strength: number;
+  status: Desire['status'];
+  reason: string;
+}
+
+interface NurtureResult {
+  reinforced: AgencyStrengthChange[];
+  decayed: AgencyStrengthChange[];
+  archived: AgencyStrengthChange[];
+  goalsProposed: AgencyGoalProposal[];
+}
+
+export interface AgencyReviewReport {
+  reviewedAt: string;
+  freshEvidenceCount: number;
+  evidenceBySource: Record<string, number>;
+  modelCalls: AgencyModelCallReport[];
+  reinforced: AgencyStrengthChange[];
+  decayed: AgencyStrengthChange[];
+  archived: AgencyStrengthChange[];
+  activated: AgencyActivation[];
+  created: AgencyCreatedDesire[];
+  goalsProposed: AgencyGoalProposal[];
+  candidatesRejectedAsDuplicates: number;
+  candidatesBlockedByCapacity: number;
+  generationSkippedReason: string | null;
+}
+
+function auditCycleOutcome(result: DesireGeneratorResult, username?: string): void {
+  const success = result.success
+  audit({
+    category: 'agent',
+    level: success ? 'info' : 'error',
+    event: success ? 'desire_agent_completed' : 'desire_agent_failed',
+    message: success
+      ? 'Desire Agent completed its review and admitted required lifecycle stages'
+      : 'Desire Agent failed before completing its lifecycle review',
+    actor: 'desire-agent',
+    details: {
+      username,
+      totalGenerated: result.totalGenerated,
+      usersProcessed: result.usersProcessed,
+      errors: result.errors,
+    },
+  })
 }
 
 // ============================================================================
@@ -441,6 +539,45 @@ export async function loadDreams(count: number = 3): Promise<DreamSummary[]> {
 }
 
 /**
+ * Convert the bounded canonical conversation buffer into stable Desire Agent
+ * evidence. Reading happens only when the Desire Agent is intentionally run;
+ * persisting a user message never invokes Desire work.
+ */
+export function selectRecentUserRequests(
+  messages: ConversationMessage[],
+  limit = MAX_USER_REQUESTS,
+): DesireGeneratorInputs['userRequests'] {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => message.role === 'user' && message.content.trim().length > 0)
+    .slice(-Math.max(1, limit))
+    .map(({ message, index }) => {
+      const content = message.content.trim().slice(0, MAX_USER_REQUEST_CHARS);
+      const persistedId = isRecord(message.meta) && typeof message.meta.idempotencyKey === 'string'
+        ? message.meta.idempotencyKey.trim()
+        : '';
+      const fallbackId = createHash('sha256')
+        .update(`${index}\n${message.timestamp ?? ''}\n${content}`)
+        .digest('hex')
+        .slice(0, 24);
+      const timestamp = typeof message.timestamp === 'number' && Number.isFinite(message.timestamp)
+        ? new Date(message.timestamp).toISOString()
+        : '1970-01-01T00:00:00.000Z';
+      return {
+        id: persistedId || `conversation:${fallbackId}`,
+        content,
+        timestamp,
+      };
+    });
+}
+
+export function loadRecentUserRequests(): DesireGeneratorInputs['userRequests'] {
+  const username = getUserContext()?.username;
+  if (!username) throw new Error('Conversation desire input requires an authenticated user context');
+  return selectRecentUserRequests(loadBufferForUser(username, 'conversation').messages);
+}
+
+/**
  * Load existing desires for duplicate checking
  */
 async function loadExistingDesires(): Promise<{
@@ -448,11 +585,10 @@ async function loadExistingDesires(): Promise<{
   rejected: DesireSummary[];
 }> {
     const active = await listActiveDesires();
-    const pending = await listPendingDesires();
     const nascent = await listNascentDesires();
     const rejected = await listDesiresByStatus('rejected');
 
-    const activeSummaries: DesireSummary[] = [...active, ...pending, ...nascent].map(d => ({
+    const activeSummaries: DesireSummary[] = [...active, ...nascent].map(d => ({
       id: d.id,
       title: d.title,
       source: d.source,
@@ -484,6 +620,7 @@ export async function gatherInputs(enabledSources: DesireSource[]): Promise<Desi
     curiosityQuestions,
     reflections,
     dreams,
+    userRequests,
     existingDesires,
   ] = await Promise.all([
     enabledSources.includes('persona_goal') ? loadPersonaGoals() : Promise.resolve([]),
@@ -494,6 +631,7 @@ export async function gatherInputs(enabledSources: DesireSource[]): Promise<Desi
     enabledSources.includes('curiosity') ? loadCuriosityQuestions() : Promise.resolve([]),
     enabledSources.includes('reflection') ? loadReflections(5) : Promise.resolve([]),
     enabledSources.includes('dream') ? loadDreams(3) : Promise.resolve([]),
+    enabledSources.includes('user_request') ? Promise.resolve(loadRecentUserRequests()) : Promise.resolve([]),
     loadExistingDesires(),
   ]);
 
@@ -503,6 +641,7 @@ export async function gatherInputs(enabledSources: DesireSource[]): Promise<Desi
     : [];
 
   return {
+    userRequests,
     personaGoals,
     urgentTasks: tasks.urgent,
     activeTasks: tasks.regular,
@@ -551,68 +690,55 @@ async function runDesireGenerationGraph(
   return requireGraphNodeOutput(graphState, 'desire_generation')
 }
 
+function readModelCallReport(
+  output: Record<string, unknown>,
+  operation: 'generate' | 'reinforce',
+): AgencyModelCallReport | null {
+  const report = output.modelCall
+  if (report === undefined || report === null) return null
+  if (!isRecord(report)
+    || report.operation !== operation
+    || (report.cognitiveMode !== null && typeof report.cognitiveMode !== 'string')
+    || typeof report.role !== 'string'
+    || typeof report.provider !== 'string'
+    || typeof report.model !== 'string'
+    || typeof report.modelId !== 'string') {
+    throw new Error(`Desire Generator graph did not report its ${operation} model call`)
+  }
+  if (report.latencyMs !== undefined && typeof report.latencyMs !== 'number') {
+    throw new Error(`Desire Generator graph reported invalid ${operation} latency`)
+  }
+  const tokens = report.tokens
+  if (tokens !== undefined && (!isRecord(tokens)
+    || typeof tokens.prompt !== 'number'
+    || typeof tokens.completion !== 'number'
+    || typeof tokens.total !== 'number')) {
+    throw new Error(`Desire Generator graph reported invalid ${operation} token usage`)
+  }
+  return {
+    operation,
+    cognitiveMode: report.cognitiveMode,
+    role: report.role,
+    provider: report.provider,
+    model: report.model,
+    modelId: report.modelId,
+    latencyMs: report.latencyMs as number | undefined,
+    tokens: tokens as AgencyModelCallReport['tokens'],
+  }
+}
+
 export async function identifyDesires(
   inputs: DesireGeneratorInputs,
   signal?: AbortSignal,
-): Promise<DesireCandidate[]> {
+): Promise<{ candidates: DesireCandidate[]; modelCall: AgencyModelCallReport | null }> {
   const output = await runDesireGenerationGraph('generate', inputs, [], signal)
   if (!Array.isArray(output.candidates)) {
     throw new Error('Desire Generator graph returned invalid candidates')
   }
-  return output.candidates as DesireCandidate[]
-}
-
-// ============================================================================
-// Desire Creation
-// ============================================================================
-
-/**
- * Convert candidate to full desire object.
- * New desires start with LOW initial strength and grow through reinforcement.
- */
-function createDesire(candidate: DesireCandidate, config: Awaited<ReturnType<typeof loadConfig>>): Desire {
-  const now = new Date().toISOString();
-  const sourceConfig = config.sources[candidate.source];
-  if (!sourceConfig?.enabled) {
-    throw new Error(`Desire source '${candidate.source}' is not enabled in Agency configuration`);
-  }
-  const sourceWeight = sourceConfig.weight;
-
-  // Calculate initial strength based on source weight:
-  // - Base strength from config (0.15 default)
-  // - Source weight adds up to 0.5 boost for highest-priority sources
-  // - This allows persona_goals (weight 1.0) to start at 0.65, one reinforcement from activation
-  // - Low-priority sources (dreams, weight 0.3) start at 0.30, needing more reinforcement
-  const baseStrength = config.thresholds.decay.initialStrength;
-  const sourceBoost = sourceWeight * 0.5;
-  const initialStrength = Math.min(0.80, baseStrength + sourceBoost);
-
   return {
-    id: generateDesireId(),
-    title: candidate.title,
-    description: candidate.description,
-    reason: candidate.reason,
-    source: candidate.source,
-    sourceId: candidate.sourceId,
-    strength: initialStrength,  // Start small!
-    baseWeight: sourceWeight,
-    threshold: config.thresholds.activation,
-    decayRate: config.thresholds.decay.ratePerRun,
-    lastReviewedAt: now,
-    reinforcements: 0,
-    runCount: 1,  // First run
-    risk: candidate.risk,
-    requiredTrustLevel: candidate.risk === 'none' || candidate.risk === 'low'
-      ? 'suggest'
-      : candidate.risk === 'medium'
-        ? 'supervised_auto'
-        : 'bounded_auto',
-    status: 'nascent',
-    createdAt: now,
-    updatedAt: now,
-    tags: [candidate.source, candidate.risk],
-    metrics: initializeDesireMetrics(),
-  };
+    candidates: output.candidates as DesireCandidate[],
+    modelCall: readModelCallReport(output, 'generate'),
+  }
 }
 
 /**
@@ -649,79 +775,197 @@ async function identifyReinforcedDesires(
   existingDesires: Desire[],
   inputs: DesireGeneratorInputs,
   signal?: AbortSignal,
-): Promise<Map<string, string>> {
+): Promise<{
+  reinforcements: Map<string, DesireReinforcementDecision>;
+  modelCall: AgencyModelCallReport | null;
+}> {
   const output = await runDesireGenerationGraph('reinforce', inputs, existingDesires, signal)
   if (!Array.isArray(output.reinforcements)) {
     throw new Error('Desire Generator graph returned invalid reinforcements')
   }
-  const result = new Map<string, string>()
+  const validDesireIds = new Set(existingDesires.map(desire => desire.id))
+  const result = new Map<string, DesireReinforcementDecision>()
   for (const item of output.reinforcements) {
     if (!item || typeof item !== 'object' || Array.isArray(item)
-      || typeof item.id !== 'string' || typeof item.reason !== 'string') {
+      || typeof item.id !== 'string' || !validDesireIds.has(item.id)
+      || result.has(item.id) || typeof item.reason !== 'string' || !item.reason.trim()
+      || !Array.isArray(item.evidenceIds) || item.evidenceIds.length === 0
+      || item.evidenceIds.some((id: unknown) => typeof id !== 'string' || !id.trim())
+      || !Array.isArray(item.evidence) || item.evidence.length === 0
+      || item.evidence.some((evidence: unknown) => (
+        !isRecord(evidence)
+        || typeof evidence.source !== 'string'
+        || !Object.hasOwn(DESIRE_SOURCE_WEIGHTS, evidence.source)
+        || typeof evidence.sourceId !== 'string' || !evidence.sourceId.trim()
+        || typeof evidence.summary !== 'string' || !evidence.summary.trim()
+      ))) {
       throw new Error('Desire Generator graph returned an invalid reinforcement')
     }
-    result.set(item.id, item.reason)
+    result.set(item.id, item as DesireReinforcementDecision)
   }
-  return result
+  return {
+    reinforcements: result,
+    modelCall: readModelCallReport(output, 'reinforce'),
+  }
+}
+
+function inputEvidenceToken(prefix: string, item: { id: string }): string {
+  const contentHash = createHash('sha256')
+    .update(JSON.stringify(item))
+    .digest('hex')
+    .slice(0, 20)
+  return `${prefix}:${item.id}:${contentHash}`
+}
+
+function inputEvidenceTokens(inputs: DesireGeneratorInputs): string[] {
+  return [
+    ...inputs.userRequests.map(item => inputEvidenceToken('user_request', item)),
+    ...inputs.personaGoals.map(item => inputEvidenceToken('persona_goal', item)),
+    ...inputs.urgentTasks.map(item => inputEvidenceToken('urgent_task', item)),
+    ...inputs.activeTasks.map(item => inputEvidenceToken('task', item)),
+    ...inputs.recentMemories.map(item => inputEvidenceToken('memory_pattern', item)),
+    ...inputs.pendingCuriosityQuestions.map(item => inputEvidenceToken('curiosity', item)),
+    ...inputs.recentReflections.map(item => inputEvidenceToken('reflection', item)),
+    ...inputs.recentDreams.map(item => inputEvidenceToken('dream', item)),
+  ].sort()
+}
+
+async function filterFreshGeneratorInputs(
+  username: string,
+  inputs: DesireGeneratorInputs,
+): Promise<{ inputs: DesireGeneratorInputs; tokens: string[] }> {
+  const allTokens = inputEvidenceTokens(inputs)
+  const freshTokens = await filterUnanalyzedGeneratorInputs(allTokens, username)
+  const fresh = new Set(freshTokens)
+  const filter = <T extends { id: string }>(prefix: string, items: T[]): T[] =>
+    items.filter(item => fresh.has(inputEvidenceToken(prefix, item)))
+  const recentMemories = filter('memory_pattern', inputs.recentMemories)
+  return {
+    tokens: freshTokens,
+    inputs: {
+      ...inputs,
+      userRequests: filter('user_request', inputs.userRequests),
+      personaGoals: filter('persona_goal', inputs.personaGoals),
+      urgentTasks: filter('urgent_task', inputs.urgentTasks),
+      activeTasks: filter('task', inputs.activeTasks),
+      recentMemories,
+      memoryPatterns: detectMemoryPatterns(recentMemories),
+      pendingCuriosityQuestions: filter('curiosity', inputs.pendingCuriosityQuestions),
+      recentReflections: filter('reflection', inputs.recentReflections),
+      recentDreams: filter('dream', inputs.recentDreams),
+    },
+  }
+}
+
+function reinforcementEvidenceFingerprint(decision: DesireReinforcementDecision): string {
+  return createHash('sha256')
+    .update(JSON.stringify([...decision.evidenceIds].sort()))
+    .digest('hex')
+    .slice(0, 24)
 }
 
 /**
- * Nurture existing desires: apply decay to unreinforced, boost reinforced.
- * This is the heart of the run-based desire system.
+ * Load the only Desire states governed by reinforcement and decay.
  */
-async function nurtureExistingDesires(
-  username: string,
-  inputs: DesireGeneratorInputs,
-  config: Awaited<ReturnType<typeof loadConfig>>,
-  signal?: AbortSignal,
-): Promise<{ reinforced: number; decayed: number; abandoned: number; goalsProposed: number }> {
-  // Load ALL nascent and pending desires
-  const nascentDesires = await listNascentDesires(username);
-  const pendingDesires = await listPendingDesires(username);
-  const allDesires = [...nascentDesires, ...pendingDesires];
+async function loadNurturableDesires(username: string): Promise<Desire[]> {
+  const [nascentDesires, pendingDesires] = await Promise.all([
+    listNascentDesires(username),
+    listPendingDesires(username),
+  ])
+  return [...nascentDesires, ...pendingDesires]
+}
 
-  if (allDesires.length === 0) {
-    console.log(`${LOG_PREFIX} No existing desires to nurture`);
-    return { reinforced: 0, decayed: 0, abandoned: 0, goalsProposed: 0 };
+function projectedArchiveCount(
+  desires: Desire[],
+  reinforcements: Map<string, DesireReinforcementDecision>,
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  now: string,
+): number {
+  if (!config.thresholds.decay.enabled) return 0
+  return desires.filter(desire => {
+    if (reinforcements.has(desire.id)) return false
+    const reduction = calculateElapsedDecay(
+      desire.lastDecayAt || desire.lastReviewedAt || desire.updatedAt,
+      now,
+      desire.decayRate ?? config.thresholds.decay.ratePerDay,
+    )
+    return reduction > 0
+      && Math.max(0, desire.strength - reduction) <= config.thresholds.decay.minStrength
+  }).length
+}
+
+/**
+ * Commit already-validated nurture decisions. No model work is allowed here:
+ * a malformed generation or reinforcement response must fail before storage changes.
+ */
+async function applyNurtureDecisions(
+  username: string,
+  desires: Desire[],
+  reinforcements: Map<string, DesireReinforcementDecision>,
+  config: Awaited<ReturnType<typeof loadConfig>>,
+  now: string,
+): Promise<NurtureResult> {
+  if (desires.length === 0) {
+    console.log(`${LOG_PREFIX} No existing desires to nurture`)
+    return { reinforced: [], decayed: [], archived: [], goalsProposed: [] }
   }
 
-  console.log(`${LOG_PREFIX} Nurturing ${allDesires.length} existing desires...`);
+  console.log(`${LOG_PREFIX} Nurturing ${desires.length} existing desires...`)
+  const reinforced: AgencyStrengthChange[] = [];
+  const decayed: AgencyStrengthChange[] = [];
+  const archived: AgencyStrengthChange[] = [];
+  const goalsProposed: AgencyGoalProposal[] = [];
 
-  // Use LLM to identify which desires are reinforced
-  const reinforcements = await identifyReinforcedDesires(allDesires, inputs, signal);
+  for (const desire of desires) {
+    const decision = reinforcements.get(desire.id)
 
-  const now = new Date().toISOString();
-  let reinforced = 0;
-  let decayed = 0;
-  let abandoned = 0;
-  let goalsProposed = 0;
+    if (decision) {
+      const primaryEvidence = decision.evidence[0]
+      if (!primaryEvidence) {
+        throw new Error(`Reinforcement for desire ${desire.id} has no validated evidence`)
+      }
+      const evidenceFingerprint = reinforcementEvidenceFingerprint(decision)
+      const updated = await reinforceDesire(desire.id, {
+        boost: config.thresholds.decay.reinforcementBoost,
+        reason: decision.reason,
+        sourceInput: decision.evidenceIds.join(', '),
+        evidence: {
+          id: `generator:${desire.id}:${evidenceFingerprint}`,
+          kind: 'reinforcement',
+          source: primaryEvidence.source,
+          sourceId: primaryEvidence.sourceId,
+          summary: decision.reason,
+          observedAt: now,
+        },
+      }, username);
+      if (!updated || updated.metrics.reinforcementCount === (desire.metrics?.reinforcementCount || 0)) {
+        continue;
+      }
+      const newStrength = updated.strength;
 
-  for (const desire of allDesires) {
-    const isReinforced = reinforcements.has(desire.id);
-
-    if (isReinforced) {
-      // Reinforce: boost strength
-      const newStrength = applyReinforcement(desire.strength, config.thresholds.decay.reinforcementBoost);
-      desire.strength = newStrength;
-      desire.reinforcements += 1;
-      desire.updatedAt = now;
-      desire.lastReviewedAt = now;
-      desire.runCount = (desire.runCount || 0) + 1;
-
-      console.log(`${LOG_PREFIX} ✓ Reinforced "${desire.title}" → ${newStrength.toFixed(2)} (${desire.reinforcements} times)`);
-      reinforced++;
+      console.log(`${LOG_PREFIX} ✓ Reinforced "${desire.title}" → ${newStrength.toFixed(2)} (${updated.reinforcements} times)`);
+      reinforced.push({
+        desireId: desire.id,
+        title: desire.title,
+        previousStrength: desire.strength,
+        newStrength,
+        change: newStrength - desire.strength,
+        reason: decision.reason,
+        evidence: decision.evidence,
+      });
 
       audit({
         category: 'agent',
         level: 'info',
         event: 'desire_reinforced',
-        actor: 'desire-generator',
+        actor: 'desire-agent',
         details: {
           desireId: desire.id,
           title: desire.title,
           newStrength,
-          reinforcements: desire.reinforcements,
-          reason: reinforcements.get(desire.id),
+          reinforcements: updated.reinforcements,
+          reason: decision.reason,
+          evidenceIds: decision.evidenceIds,
           username,
         },
       });
@@ -733,7 +977,7 @@ async function nurtureExistingDesires(
       // =========================================================================
       if (
         newStrength >= GOAL_PROPOSAL_THRESHOLDS.minStrength &&
-        desire.reinforcements >= GOAL_PROPOSAL_THRESHOLDS.minReinforcements
+        updated.reinforcements >= GOAL_PROPOSAL_THRESHOLDS.minReinforcements
       ) {
         console.log(`${LOG_PREFIX} 🎯 Desire "${desire.title}" qualifies for goal promotion!`);
 
@@ -743,25 +987,32 @@ async function nurtureExistingDesires(
           description: desire.description,
           reason: desire.reason,
           strength: newStrength,
-          reinforcements: desire.reinforcements,
+          reinforcements: updated.reinforcements,
           source: desire.source,
         });
 
         if (proposalResult.proposed) {
-          goalsProposed++;
+          if (!proposalResult.goalId) {
+            throw new Error(`Goal proposal for desire ${desire.id} did not return a goal ID`)
+          }
+          goalsProposed.push({
+            desireId: desire.id,
+            title: desire.title,
+            goalId: proposalResult.goalId,
+          });
           console.log(`${LOG_PREFIX} 🎯 ${proposalResult.message}`);
 
           audit({
             category: 'agent',
             level: 'info',
             event: 'goal_proposed_from_desire',
-            actor: 'desire-generator',
+            actor: 'desire-agent',
             details: {
               desireId: desire.id,
               desireTitle: desire.title,
               goalId: proposalResult.goalId,
               strength: newStrength,
-              reinforcements: desire.reinforcements,
+              reinforcements: updated.reinforcements,
               source: desire.source,
               username,
             },
@@ -771,44 +1022,57 @@ async function nurtureExistingDesires(
         }
       }
     } else {
-      // Decay: reduce strength
-      const newStrength = applyDecay(
-        desire.strength,
-        config.thresholds.decay.ratePerRun,
-        config.thresholds.decay.minStrength
+      if (!config.thresholds.decay.enabled) continue;
+      const reduction = calculateElapsedDecay(
+        desire.lastDecayAt || desire.lastReviewedAt || desire.updatedAt,
+        now,
+        desire.decayRate ?? config.thresholds.decay.ratePerDay,
       );
+      if (reduction <= 0) continue;
+      const finalStrength = Math.max(0, desire.strength - reduction);
+      const shouldAbandon = finalStrength <= config.thresholds.decay.minStrength;
+      const updated = await depreciateDesire(desire.id, {
+        reduction,
+        reason: `Elapsed-time decay through ${now}`,
+        terminalStatus: shouldAbandon ? 'archived' : undefined,
+      }, username);
+      if (!updated) continue;
 
-      desire.strength = newStrength;
-      desire.updatedAt = now;
-      desire.lastReviewedAt = now;
-      desire.runCount = (desire.runCount || 0) + 1;
-
-      // Check for abandonment
-      if (newStrength <= config.thresholds.decay.minStrength) {
-        desire.status = 'abandoned';
-        desire.completedAt = now;
-        abandoned++;
-        console.log(`${LOG_PREFIX} ✗ Abandoned "${desire.title}" (decayed below minimum)`);
+      if (shouldAbandon) {
+        archived.push({
+          desireId: desire.id,
+          title: desire.title,
+          previousStrength: desire.strength,
+          newStrength: updated.strength,
+          change: updated.strength - desire.strength,
+          reason: `Elapsed-time decay through ${now} reduced strength to the archive threshold`,
+        });
+        console.log(`${LOG_PREFIX} 📦 Archived "${desire.title}" (decayed below minimum)`);
 
         audit({
           category: 'agent',
           level: 'info',
-          event: 'desire_abandoned',
-          actor: 'desire-generator',
-          details: { desireId: desire.id, title: desire.title, finalStrength: newStrength, username },
+          event: 'desire_archived_after_decay',
+          actor: 'desire-agent',
+          details: { desireId: desire.id, title: desire.title, finalStrength: updated.strength, username },
         });
       } else {
-        decayed++;
-        console.log(`${LOG_PREFIX} ↓ Decayed "${desire.title}" → ${newStrength.toFixed(2)}`);
+        decayed.push({
+          desireId: desire.id,
+          title: desire.title,
+          previousStrength: desire.strength,
+          newStrength: updated.strength,
+          change: updated.strength - desire.strength,
+          reason: `No fresh reinforcing evidence; elapsed-time decay applied through ${now}`,
+        });
+        console.log(`${LOG_PREFIX} ↓ Decayed "${desire.title}" → ${updated.strength.toFixed(2)}`);
       }
     }
-
-    // Save updated desire
-    await saveDesire(desire, username);
   }
 
-  console.log(`${LOG_PREFIX} Nurture complete: ${reinforced} reinforced, ${decayed} decayed, ${abandoned} abandoned, ${goalsProposed} goals proposed`);
-  return { reinforced, decayed, abandoned, goalsProposed };
+  console.log(`${LOG_PREFIX} Nurture complete: ${reinforced.length} reinforced, ${decayed.length} decayed, ${archived.length} archived, ${goalsProposed.length} goals proposed`);
+  if (archived.length > 0) await incrementMetric('totalAbandoned', archived.length, username)
+  return { reinforced, decayed, archived, goalsProposed };
 }
 
 // ============================================================================
@@ -822,43 +1086,48 @@ async function nurtureExistingDesires(
 async function checkActivations(
   username: string,
   config: Awaited<ReturnType<typeof loadConfig>>
-): Promise<number> {
+): Promise<AgencyActivation[]> {
   const nascentDesires = await listNascentDesires(username);
-  const pendingDesires = await listPendingDesires(username);
   const activeDesires = await listActiveDesires(username);
 
   const now = new Date().toISOString();
-  let activated = 0;
+  const activated: AgencyActivation[] = [];
 
   // Check limit
-  const currentActive = activeDesires.length + pendingDesires.length;
+  const currentActive = activeDesires.length;
   const maxActive = config.limits.maxActiveDesires;
 
   for (const desire of nascentDesires) {
-    if (currentActive + activated >= maxActive) {
+    if (!hasDesireActivationCapacity(currentActive + activated.length, config)) {
       console.log(`${LOG_PREFIX} Active desire limit reached (${maxActive})`);
       break;
     }
 
     // Check if above threshold
-    if (isAboveThreshold(desire)) {
+    if (isDesireActivationEligible(desire)) {
       const oldStatus = desire.status;
       desire.status = 'pending';
+      desire.currentStage = 'strengthening';
       desire.activatedAt = now;
       desire.updatedAt = now;
-      activated++;
-
       // Move from nascent to pending
       await moveDesire(desire, oldStatus, 'pending', username);
 
       const effectiveStrength = calculateEffectiveStrength(desire.strength, desire.baseWeight);
+      activated.push({
+        desireId: desire.id,
+        title: desire.title,
+        strength: desire.strength,
+        effectiveStrength,
+        threshold: desire.threshold,
+      });
       console.log(`${LOG_PREFIX} ⬆ Activated "${desire.title}" (effective: ${effectiveStrength.toFixed(2)}, threshold: ${desire.threshold})`);
 
       audit({
         category: 'agent',
         level: 'info',
         event: 'desire_activated',
-        actor: 'desire-generator',
+        actor: 'desire-agent',
         details: {
           desireId: desire.id,
           title: desire.title,
@@ -874,11 +1143,116 @@ async function checkActivations(
     }
   }
 
-  if (activated > 0) {
-    console.log(`${LOG_PREFIX} ${activated} desire(s) activated (crossed threshold)`);
+  if (activated.length > 0) {
+    console.log(`${LOG_PREFIX} ${activated.length} desire(s) activated (crossed threshold)`);
   }
 
   return activated;
+}
+
+function countEvidenceBySource(inputs: DesireGeneratorInputs): Record<string, number> {
+  return {
+    'user requests': inputs.userRequests.length,
+    'persona goals': inputs.personaGoals.length,
+    'urgent tasks': inputs.urgentTasks.length,
+    tasks: inputs.activeTasks.length,
+    memories: inputs.recentMemories.length,
+    'memory patterns': inputs.memoryPatterns.length,
+    'curiosity questions': inputs.pendingCuriosityQuestions.length,
+    reflections: inputs.recentReflections.length,
+    dreams: inputs.recentDreams.length,
+  }
+}
+
+function reportText(value: string, maxLength = 360): string {
+  const compact = value.replace(/\s+/g, ' ').trim()
+  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 1)}…`
+}
+
+function reportStrength(value: number): string {
+  return value.toFixed(4)
+}
+
+export function formatAgencyReview(report: AgencyReviewReport): string {
+  const lines = [
+    '💭 Agency Review',
+    '',
+    `Reviewed ${report.freshEvidenceCount} new evidence item(s) at ${report.reviewedAt}.`,
+  ]
+  const evidenceCounts = Object.entries(report.evidenceBySource)
+    .filter(([, count]) => count > 0)
+    .map(([source, count]) => `${count} ${source}`)
+  lines.push(evidenceCounts.length > 0
+    ? `Evidence: ${evidenceCounts.join(', ')}.`
+    : 'Evidence: none; no previously analyzed input was reconsidered.')
+
+  lines.push('', `Model calls (${report.modelCalls.length}):`)
+  if (report.modelCalls.length === 0) {
+    lines.push('• None.')
+  } else {
+    for (const call of report.modelCalls) {
+      const duration = call.latencyMs === undefined ? '' : `, ${(call.latencyMs / 1_000).toFixed(2)}s`
+      const tokens = call.tokens ? `, ${call.tokens.total} tokens` : ''
+      lines.push(`• ${call.operation === 'reinforce' ? 'Reinforcement review' : 'New-desire review'}: ${call.provider}/${call.model} (${call.cognitiveMode ?? 'default'} mode, ${call.role} role${duration}${tokens}).`)
+    }
+  }
+
+  lines.push('', `Reinforced desires (${report.reinforced.length}):`)
+  if (report.reinforced.length === 0) {
+    lines.push('• None.')
+  } else {
+    for (const change of report.reinforced) {
+      lines.push(`• ${change.title} [${change.desireId}]: ${reportStrength(change.previousStrength)} → ${reportStrength(change.newStrength)} (+${reportStrength(change.change)}).`)
+      lines.push(`  Reason: ${reportText(change.reason)}`)
+      for (const evidence of change.evidence ?? []) {
+        lines.push(`  Evidence (${evidence.source}:${evidence.sourceId}): ${reportText(evidence.summary)}`)
+      }
+    }
+  }
+
+  lines.push('', `Elapsed-time decay (${report.decayed.length}):`)
+  if (report.decayed.length === 0) {
+    lines.push('• None.')
+  } else {
+    for (const change of report.decayed) {
+      lines.push(`• ${change.title} [${change.desireId}]: ${reportStrength(change.previousStrength)} → ${reportStrength(change.newStrength)} (${reportStrength(change.change)}); no fresh reinforcing evidence.`)
+    }
+  }
+
+  lines.push('', `Archived after decay (${report.archived.length}):`)
+  if (report.archived.length === 0) {
+    lines.push('• None.')
+  } else {
+    for (const change of report.archived) {
+      lines.push(`• ${change.title} [${change.desireId}]: ${reportStrength(change.previousStrength)} → ${reportStrength(change.newStrength)}; reached the archive threshold.`)
+    }
+  }
+
+  lines.push('', `New desires created (${report.created.length}):`)
+  if (report.created.length === 0) {
+    lines.push('• None.')
+  } else {
+    for (const desire of report.created) {
+      lines.push(`• ${desire.title} [${desire.desireId}]: strength ${reportStrength(desire.strength)}, status ${desire.status}, source ${desire.source}:${desire.sourceId ?? 'unknown'}.`)
+      lines.push(`  Reason: ${reportText(desire.reason)}`)
+    }
+  }
+
+  lines.push(
+    '',
+    `Lifecycle results: ${report.activated.length} activated; ${report.goalsProposed.length} goal proposal(s); ${report.candidatesRejectedAsDuplicates} candidate(s) rejected as duplicates; ${report.candidatesBlockedByCapacity} candidate(s) blocked by capacity.`,
+  )
+  for (const desire of report.activated) {
+    lines.push(`• Activated ${desire.title} [${desire.desireId}]: effective strength ${reportStrength(desire.effectiveStrength)} crossed threshold ${reportStrength(desire.threshold)}.`)
+  }
+  for (const proposal of report.goalsProposed) {
+    lines.push(`• Proposed goal ${proposal.goalId} from ${proposal.title} [${proposal.desireId}].`)
+  }
+  if (report.generationSkippedReason) {
+    lines.push(`New-desire generation skipped: ${report.generationSkippedReason}.`)
+  }
+
+  return lines.join('\n')
 }
 
 // ============================================================================
@@ -901,17 +1275,6 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
   // Load config
   const config = await loadConfig(username);
 
-  // Check limits
-  const activeDesires = await listActiveDesires(username);
-  const pendingDesires = await listPendingDesires(username);
-  const nascentDesires = await listNascentDesires(username);
-  const totalActive = activeDesires.length + pendingDesires.length + nascentDesires.length;
-
-  if (totalActive >= config.limits.maxActiveDesires + config.limits.maxPendingDesires) {
-    console.log(`${LOG_PREFIX} Desire limit reached (${totalActive}), skipping generation`);
-    return 0;
-  }
-
   // Initialize storage if needed
   await initializeAgencyStorage(username);
 
@@ -923,133 +1286,166 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
   }
 
   // Gather inputs
-  const inputs = await gatherInputs(enabledSources);
+  const gatheredInputs = await gatherInputs(enabledSources);
+  const fresh = await filterFreshGeneratorInputs(username, gatheredInputs)
+  const inputs = fresh.inputs
 
-  // Check if we have any inputs
-  const hasInputs =
+  const hasGenerationInputs =
+    inputs.userRequests.length > 0 ||
     inputs.personaGoals.length > 0 ||
     inputs.urgentTasks.length > 0 ||
     inputs.activeTasks.length > 0 ||
     inputs.recentMemories.length > 0 ||
+    inputs.memoryPatterns.length > 0 ||
     inputs.pendingCuriosityQuestions.length > 0 ||
     inputs.recentReflections.length > 0 ||
     inputs.recentDreams.length > 0;
 
   // =========================================================================
-  // PHASE 1: Nurture existing desires (run-based decay/reinforcement)
+  // DECISION PHASE: all model output is obtained and validated before mutation.
   // =========================================================================
-  // Even if no new inputs, we still apply decay to existing desires
-  const nurtureResult = await nurtureExistingDesires(username, inputs, config, signal);
+  const cycleNow = new Date().toISOString()
+  const [nurturableDesires, currentActiveDesires] = await Promise.all([
+    loadNurturableDesires(username),
+    listActiveDesires(username),
+  ])
+  const hasFreshEvidence = inputEvidenceTokens(inputs).length > 0
+  const reinforcementDecision = nurturableDesires.length > 0 && hasFreshEvidence
+    ? await identifyReinforcedDesires(nurturableDesires, inputs, signal)
+    : { reinforcements: new Map<string, DesireReinforcementDecision>(), modelCall: null }
+  const reinforcements = reinforcementDecision.reinforcements
+
+  const currentNascentCount = nurturableDesires.filter(desire => desire.status === 'nascent').length
+  const projectedOpenCount = currentActiveDesires.length
+    + currentNascentCount
+    - projectedArchiveCount(nurturableDesires, reinforcements, config, cycleNow)
+  const maxOpenDesires = config.limits.maxActiveDesires + config.limits.maxPendingDesires
+  const canGenerate = projectedOpenCount < maxOpenDesires
+  const generationDecision = hasGenerationInputs && canGenerate
+    ? await identifyDesires(inputs, signal)
+    : { candidates: [] as DesireCandidate[], modelCall: null }
+  const candidates = generationDecision.candidates
 
   // =========================================================================
-  // PHASE 1.5: Check activations (desires that crossed threshold)
+  // COMMIT PHASE: apply only the complete, validated cycle decision.
   // =========================================================================
-  const activatedCount = await checkActivations(username, config);
+  const nurtureResult = await applyNurtureDecisions(
+    username,
+    nurturableDesires,
+    reinforcements,
+    config,
+    cycleNow,
+  )
 
-  if (!hasInputs) {
+  const activated = await checkActivations(username, config);
+
+  if (!hasGenerationInputs) {
     console.log(`${LOG_PREFIX} No inputs available for new desire generation`);
-    // Still return nurture stats even if no new desires
-    return nurtureResult.reinforced + activatedCount;
+  } else if (!canGenerate) {
+    console.log(`${LOG_PREFIX} Desire limit remains reached after projected decay (${projectedOpenCount}), skipping new generation`)
+  } else if (candidates.length === 0) {
+    console.log(`${LOG_PREFIX} No new desires identified`)
   }
 
-  // =========================================================================
-  // PHASE 2: Generate new desires (only if capacity available)
-  // =========================================================================
-  // Re-check limits after nurturing (some may have been abandoned)
-  const updatedNascent = await listNascentDesires(username);
-  const updatedPending = await listPendingDesires(username);
-  const updatedTotal = activeDesires.length + updatedPending.length + updatedNascent.length;
-
-  if (updatedTotal >= config.limits.maxActiveDesires + config.limits.maxPendingDesires) {
-    console.log(`${LOG_PREFIX} Desire limit still reached (${updatedTotal}), skipping new generation`);
-    return nurtureResult.reinforced;
-  }
-
-  // Identify NEW desires using LLM
-  const candidates = await identifyDesires(inputs, signal);
-  if (candidates.length === 0) {
-    console.log(`${LOG_PREFIX} No new desires identified`);
-    return nurtureResult.reinforced;
-  }
-
-  // Filter duplicates - include currently active desires (post-nurture)
+  const [updatedNascent, updatedPending, updatedActive] = await Promise.all([
+    listNascentDesires(username),
+    listPendingDesires(username),
+    listActiveDesires(username),
+  ])
+  const updatedTotal = updatedActive.length + updatedNascent.length
   const existingSummaries = [
     ...inputs.activeDesires,
     ...inputs.recentlyRejected,
     ...updatedNascent.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength })),
     ...updatedPending.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength })),
   ];
-  const uniqueCandidates = candidates.filter(c => !isDuplicate(c, existingSummaries));
-  console.log(`${LOG_PREFIX} ${uniqueCandidates.length} unique candidates after deduplication`);
+  const uniqueCandidates = candidates.filter(c => !isDuplicate(c, existingSummaries))
+  const availableSlots = Math.max(0, maxOpenDesires - updatedTotal)
+  const candidatesToCreate = uniqueCandidates.slice(0, availableSlots)
+  if (candidates.length > 0) {
+    console.log(`${LOG_PREFIX} ${uniqueCandidates.length} unique candidates after deduplication; ${candidatesToCreate.length} fit current capacity`)
+  }
 
-  // Create and save desires
-  let created = 0;
-  for (const candidate of uniqueCandidates) {
-    const desire = createDesire(candidate, config);
+  const created: AgencyCreatedDesire[] = [];
+  let newlyActive = 0;
+  for (const candidate of candidatesToCreate) {
+    const desire = createDesireFromCandidate(candidate, config, {
+      id: `${candidate.source}:${candidate.sourceId}`,
+      kind: 'origin',
+      source: candidate.source,
+      sourceId: candidate.sourceId,
+      summary: candidate.reason,
+      observedAt: cycleNow,
+    });
+    if (desire.status === 'pending') {
+      if (hasDesireActivationCapacity(updatedActive.length + newlyActive, config)) {
+        newlyActive++;
+      } else {
+        desire.status = 'nascent';
+        desire.currentStage = 'nascent';
+        delete desire.activatedAt;
+      }
+    }
 
     await saveDesire(desire, username);
-    created++;
+    created.push({
+      desireId: desire.id,
+      title: desire.title,
+      source: desire.source,
+      sourceId: desire.sourceId,
+      strength: desire.strength,
+      status: desire.status,
+      reason: desire.reason,
+    });
 
-      console.log(`${LOG_PREFIX} Created desire: ${desire.title} (strength: ${desire.strength.toFixed(2)})`);
+    console.log(`${LOG_PREFIX} Created desire: ${desire.title} (strength: ${desire.strength.toFixed(2)})`);
 
-      // Audit
-      audit({
-        category: 'agent',
-        level: 'info',
-        event: 'desire_generated',
-        actor: 'desire-generator',
-        details: {
-          desireId: desire.id,
-          title: desire.title,
-          source: desire.source,
-          strength: desire.strength,
-          risk: desire.risk,
-          username,
-        },
-      });
+    audit({
+      category: 'agent',
+      level: 'info',
+      event: 'desire_generated',
+      actor: 'desire-agent',
+      details: {
+        desireId: desire.id,
+        title: desire.title,
+        source: desire.source,
+        strength: desire.strength,
+        risk: desire.risk,
+        username,
+      },
+    });
   }
 
   // Update metrics
-  if (created > 0) {
-    await incrementMetric('totalGenerated', created, username);
+  if (created.length > 0) {
+    await incrementMetric('totalGenerated', created.length, username);
   }
+  await markGeneratorInputsAnalyzed(fresh.tokens, username)
 
   // Log to inner dialogue if enabled
-  const anyActivity = created > 0 || nurtureResult.reinforced > 0 || activatedCount > 0 || nurtureResult.goalsProposed > 0 || nurtureResult.decayed > 0 || nurtureResult.abandoned > 0;
-
   if (config.logging.logToInnerDialogue) {
-    const parts: string[] = [];
-
-    // Report on nurtured desires
-    if (nurtureResult.reinforced > 0) {
-      parts.push(`✓ ${nurtureResult.reinforced} desire(s) grew stronger from recent experiences`);
+    const generationSkippedReason = !hasGenerationInputs
+      ? 'there was no fresh eligible evidence'
+      : !canGenerate
+        ? `the open-desire limit was reached (${projectedOpenCount}/${maxOpenDesires})`
+        : null
+    const agencyReview: AgencyReviewReport = {
+      reviewedAt: cycleNow,
+      freshEvidenceCount: fresh.tokens.length,
+      evidenceBySource: countEvidenceBySource(inputs),
+      modelCalls: [reinforcementDecision.modelCall, generationDecision.modelCall]
+        .filter((call): call is AgencyModelCallReport => call !== null),
+      reinforced: nurtureResult.reinforced,
+      decayed: nurtureResult.decayed,
+      archived: nurtureResult.archived,
+      activated,
+      created,
+      goalsProposed: nurtureResult.goalsProposed,
+      candidatesRejectedAsDuplicates: candidates.length - uniqueCandidates.length,
+      candidatesBlockedByCapacity: uniqueCandidates.length - candidatesToCreate.length,
+      generationSkippedReason,
     }
-    if (nurtureResult.decayed > 0) {
-      parts.push(`↓ ${nurtureResult.decayed} desire(s) faded slightly`);
-    }
-    if (nurtureResult.abandoned > 0) {
-      parts.push(`✗ ${nurtureResult.abandoned} desire(s) faded away completely`);
-    }
-    if (activatedCount > 0) {
-      parts.push(`⬆ ${activatedCount} desire(s) reached activation threshold!`);
-    }
-    if (nurtureResult.goalsProposed > 0) {
-      parts.push(`🎯 ${nurtureResult.goalsProposed} desire(s) promoted to proposed goals!`);
-    }
-    if (!anyActivity) {
-      parts.push(`No changes - system is content or waiting for new experiences`);
-    }
-
-    // Report on new desires
-    if (created > 0) {
-      const desireList = uniqueCandidates
-        .slice(0, created)
-        .map(c => `  • ${c.title} (${c.source})`)
-        .join('\n');
-      parts.push(`🌱 ${created} new seed desire(s) planted:\n${desireList}`);
-    }
-
-    const innerDialogue = `💭 Agency Review:\n\n${parts.join('\n')}\n\nDesires grow through repeated reinforcement from experiences and fade without it.`;
+    const innerDialogue = formatAgencyReview(agencyReview)
 
     // The admission graph owns both the rolling buffer entry and its matching
     // long-term memory; the agent only supplies semantic metadata.
@@ -1059,17 +1455,18 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
       type: 'desire_generation',
       tags: ['agency', 'desire-generation', 'inner'],
       agency: true,
-      desiresGenerated: created,
-      desiresReinforced: nurtureResult.reinforced,
-      desiresDecayed: nurtureResult.decayed,
-      desiresAbandoned: nurtureResult.abandoned,
-      desiresActivated: activatedCount,
-      goalsProposed: nurtureResult.goalsProposed,
-      sources: [...new Set(uniqueCandidates.map(c => c.source))],
+      agencyReview,
+      desiresGenerated: created.length,
+      desiresReinforced: nurtureResult.reinforced.length,
+      desiresDecayed: nurtureResult.decayed.length,
+      desiresAbandoned: nurtureResult.archived.length,
+      desiresActivated: activated.length,
+      goalsProposed: nurtureResult.goalsProposed.length,
+      sources: [...new Set(candidatesToCreate.map(c => c.source))],
     });
   }
 
-  return created + nurtureResult.reinforced + activatedCount;
+  return created.length + nurtureResult.reinforced.length + activated.length;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1102,12 +1499,13 @@ export async function runCycle(options: DesireGeneratorOptions = {}): Promise<De
     if (!user) {
       result.success = false;
       result.errors.push('Desire generation requires an active or explicit profile');
+      auditCycleOutcome(result)
       return result;
     }
 
     console.log(`${LOG_PREFIX} Processing user: ${user.username}`);
 
-    const lock = acquireLock(`desire-generator:${user.username}`, { exitOnSignal: false });
+    const lock = acquireLock(`desire-agent:${user.username}`, { exitOnSignal: false });
     try {
       const created = await withUserContext(
         { userId: user.userId, username: user.username, role: user.role },
@@ -1120,29 +1518,62 @@ export async function runCycle(options: DesireGeneratorOptions = {}): Promise<De
       result.stats[user.username] = created;
       result.totalGenerated += created;
       result.usersProcessed++;
+
+      if (await isAgencyEnabled(user.username)) {
+        const [pending, planning, reviewing, approved, awaitingReview, completed, failed] = await Promise.all([
+          listPendingDesires(user.username),
+          listDesiresByStatus('planning', user.username),
+          listDesiresByStatus('reviewing', user.username),
+          listDesiresByStatus('approved', user.username),
+          listDesiresByStatus('awaiting_review', user.username),
+          listDesiresByStatus('completed', user.username),
+          listDesiresByStatus('failed', user.username),
+        ]);
+        if (pending.length + planning.length + reviewing.length > 0) {
+          await submitDesireAgent({
+            operation: 'plan',
+            username: user.username,
+            source: 'autonomy',
+            priority: 'high',
+            metadata: { producer: 'desire-agent-cycle' },
+          });
+        }
+        if (approved.length > 0) {
+          await submitDesireAgent({
+            operation: 'execute',
+            username: user.username,
+            source: 'autonomy',
+            priority: 'normal',
+            metadata: { producer: 'desire-agent-cycle' },
+          });
+        }
+        const reviewable = [...awaitingReview, ...completed, ...failed]
+          .filter(desire => desire.execution && !desire.outcomeReview);
+        if (reviewable.length > 0) {
+          await submitDesireAgent({
+            operation: 'review',
+            username: user.username,
+            source: 'autonomy',
+            priority: 'low',
+            metadata: { producer: 'desire-agent-cycle' },
+          });
+        }
+      }
     } catch (error) {
       result.success = false;
       const errorMsg = `Error processing ${user.username}: ${(error as Error).message}`;
       result.errors.push(errorMsg);
-      console.error(`${LOG_PREFIX} ${errorMsg}`);
     } finally {
       lock.release();
     }
 
-    audit({
-      category: 'agent',
-      level: 'info',
-      event: 'desire_generator_completed',
-      message: 'Desire generator completed',
-      actor: 'desire-generator',
-      details: { totalGenerated: result.totalGenerated, usersProcessed: result.usersProcessed },
-    });
+    auditCycleOutcome(result, user.username)
 
     return result;
   } catch (error) {
     result.success = false;
     result.errors.push((error as Error).message);
-    console.error(`${LOG_PREFIX} Fatal error:`, error);
+    auditCycleOutcome(result, options.username)
     return result;
   }
 }

@@ -46,11 +46,12 @@ The default registrations have specific, distinct triggers:
   autonomous modes.
 
 The sleep workflow runs one bounded sequence: organize memories, curate
-training memories, generate desires, plan desires, execute approved desires,
-review desire outcomes, dream from memories, review persona learnings, and
-refresh the memory index. Organizer, Curator, Dreamer, Psychoanalyzer, and the
-four desire agents are workflow children rather than independent scheduled
-producers.
+training memories, run the Desire Agent, dream from memories, review persona
+learnings, and refresh the memory index. The Desire Agent reads persisted
+history and admits only the internal lifecycle stages required by current
+desire states. It has no conversation-message or independent timer trigger;
+manual control, Sleep Workflow, and Robot Autonomy are its only public entry
+points.
 
 Psychoanalyzer has one enable switch in **System → Agent Catalog**. Disabling
 it blocks manual runs and causes its Sleep stage to be recorded as skipped;
@@ -118,6 +119,9 @@ missing implementations, and persistent services. Use **System → Agent Catalog
 to register or unregister finite agents. Unregistering removes the Trigger
 Manager entry while preserving source code, logs, run history, and queued work.
 Privileged and destructive agents require explicit registration confirmation.
+Finite work leased by the coordinator is also attributed to its public agent in
+Agent Monitor; Desire planning, execution, and outcome review therefore appear
+as Desire Agent activity rather than separate agents.
 
 ## Operational boundary
 

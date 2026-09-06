@@ -27,7 +27,9 @@ function monitorKind(definition: AgentCatalogDefinition): AgentKind {
 }
 
 export const DESCRIPTORS: Record<string, Omit<AgentDescriptor, 'variables'>> = Object.fromEntries(
-  Object.values(AGENT_CATALOG_DEFINITIONS).map(definition => [definition.id, {
+  Object.values(AGENT_CATALOG_DEFINITIONS)
+    .filter(definition => !definition.internalOwner)
+    .map(definition => [definition.id, {
     id: definition.id,
     name: definition.displayName,
     description: definition.description,
@@ -39,7 +41,7 @@ export const DESCRIPTORS: Record<string, Omit<AgentDescriptor, 'variables'>> = O
       : definition.id === 'audio-organizer'
         ? ['Finite audio processing runs through the Work Coordinator only when explicitly requested.']
         : [],
-  }]),
+    }]),
 );
 
 export const SERVICE_LIFECYCLE_FIELDS = new Set([
@@ -421,7 +423,7 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
           : 'robot-autonomy-controller',
         applyMode: 'restart',
         writable: true,
-        description: 'Finite Full-mode LLM decision graph admitted by Robot Operator after the prior autonomy chain settles.',
+        description: 'Finite Full-mode contextual decision graph admitted after a settled chain that does not require Robot Goal Review.',
       },
       {
         key: 'robotGoalReviewGraph',

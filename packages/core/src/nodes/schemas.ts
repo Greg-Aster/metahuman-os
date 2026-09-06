@@ -81,6 +81,58 @@ function defineSchema(
   };
 }
 
+const ROBOT_CONTEXT_OUTPUTS: NodeSlot[] = [
+  { name: 'messages', type: 'array', description: 'Multimodal messages for this workflow LLM' },
+  { name: 'jsonSchema', type: 'object', description: 'Structured output contract for this workflow LLM' },
+  { name: 'context', type: 'object', description: 'Inspectable context summary' },
+  { name: 'stimulusReady', type: 'boolean', description: 'Whether correlated image or action-result evidence is available' },
+  { name: 'valid', type: 'boolean', description: 'Whether context construction succeeded' },
+  { name: 'error', type: 'string', description: 'Visible input error' },
+];
+
+const ROBOT_CONTEXT_INPUTS: Record<string, NodeSlot> = {
+  instruction: { name: 'instruction', type: 'string', description: 'Graph-owned instructions for this one LLM task' },
+  stimulusInstruction: { name: 'stimulusInstruction', type: 'string', optional: true, description: 'High-level intention delegated to Robot Autonomy Executor' },
+  routingAnalysis: { name: 'routingAnalysis', type: 'object', description: 'Intent Orchestrator route switches for the delegated intention' },
+  observation: { name: 'observation', type: 'object', optional: true, description: 'Environment Bridge observation supplied to this workflow' },
+  bridgeSummary: { name: 'bridgeSummary', type: 'object', optional: true, description: 'Current Environment Bridge connection and session summary' },
+  images: { name: 'images', type: 'array', optional: true, description: 'Validated image content parts' },
+  frames: { name: 'frames', type: 'array', optional: true, description: 'Validated visual frame metadata' },
+  conversationHistory: { name: 'conversationHistory', type: 'array', optional: true, description: 'Conversation entries selected by the connected Buffer History node' },
+  innerHistory: { name: 'innerHistory', type: 'array', optional: true, description: 'Private reflection entries selected by the connected Buffer History node' },
+  actionHistory: { name: 'actionHistory', type: 'array', optional: true, description: 'Robot Buffer entries used as verified prior-action evidence' },
+  personaText: { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona' },
+  memoryContext: { name: 'memoryContext', type: 'array', optional: true, description: 'Historical memories supplied as inspiration, never current-world evidence' },
+  robotStatus: { name: 'robotStatus', type: 'object', optional: true, description: 'Canonical Robot Status snapshot' },
+  activeDesires: { name: 'activeDesires', type: 'array', optional: true, description: 'Active Agency Desire summaries selected by the connected node' },
+  availableTasks: { name: 'availableTasks', type: 'array', optional: true, description: 'Catalog-backed finite tasks available to the Full-mode controller' },
+  autonomyActivityHistory: { name: 'autonomyActivityHistory', type: 'array', optional: true, description: 'Terminal receipts selected by Recent Autonomy Activity' },
+  robotObserver: { name: 'robotObserver', type: 'object', optional: true, description: 'Current Robot Operator cycle' },
+  plannerDecision: { name: 'plannerDecision', type: 'object', optional: true, description: 'Planner-authored intention delegated to Robot Autonomy Executor' },
+  delegatedMemories: { name: 'delegatedMemories', type: 'array', optional: true, description: 'Historical memories delegated with a planner intention' },
+  actionContext: { name: 'actionContext', type: 'object', optional: true, description: 'Work Coordinator action record matched to the returned robot report' },
+  sourceObservationAt: { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Timestamp of the bridge observation that started this cycle' },
+  currentVisualEvidence: { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified the attached frame for this decision' },
+};
+
+function robotContextSchema(
+  id: string,
+  name: string,
+  description: string,
+  inputs: string[],
+): NodeSchema {
+  return defineSchema({
+    id,
+    name,
+    category: 'operator',
+    inputs: inputs.map(input => ROBOT_CONTEXT_INPUTS[input]),
+    outputs: ROBOT_CONTEXT_OUTPUTS,
+    properties: {},
+    propertySchemas: {},
+    description,
+  });
+}
+
 // ============================================================================
 // ALL NODE SCHEMAS (no executors, browser-safe)
 // ============================================================================
@@ -407,6 +459,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'frames', label: 'Selected camera frames', type: 'array', description: 'Metadata for the camera frames this node selected.' },
       { name: 'rejectedCount', label: 'Rejected frames', type: 'number', description: 'Number of frames rejected because they were not valid supported JPEG data.' },
       { name: 'current', label: 'Current evidence available', type: 'boolean', description: 'Whether at least one selected frame belongs to this graph run.' },
+      { name: 'verified', label: 'Verified evidence available', type: 'boolean', description: 'Whether a selected frame either belongs to this graph run or matches the current Robot Status action result.' },
     ],
     presentation: {
       badges: [
@@ -419,7 +472,7 @@ export const nodeSchemas: NodeSchema[] = [
         { output: 'rejectedCount', label: 'Rejected' },
       ],
     },
-    description: 'Checks camera frames received from the robot. For a new observation, it returns the current valid frame. After an action finishes, it can return the saved before-action frame and the current frame tagged with the same action or cycle ID. It sends no command, changes no status, and calls no model.',
+    description: 'Checks camera frames received from the robot. It returns a triggering frame or a saved frame that matches the current Robot Status action result, plus an optional saved before-action frame. It sends no command, changes no status, and calls no model.',
   }),
   defineSchema({
     id: 'environment_context_builder',
@@ -481,6 +534,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands and capabilities' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
       { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
+      { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
     ],
     outputs: [
       { name: 'actions', type: 'array', description: 'Parsed environment actions' },
@@ -509,9 +563,9 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
     ],
     outputs: [
-      { name: 'action', type: 'object', description: 'One standing preparation or validated robotMotionPlan action, or null' },
+      { name: 'action', type: 'object', description: 'One validated robotMotionPlan action, or null' },
       { name: 'actions', type: 'array', description: 'Validated action list for Environment Bridge Out' },
-      { name: 'valid', type: 'boolean', description: 'Whether standing preparation or a validated plan was produced' },
+      { name: 'valid', type: 'boolean', description: 'Whether a validated plan was produced' },
       { name: 'rejected', type: 'boolean', description: 'Whether a requested plan was rejected' },
       { name: 'error', type: 'string', description: 'Validation or generation error' },
       { name: 'response', type: 'string', description: 'Visible generation result or rejection' },
@@ -710,6 +764,29 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Loads recent entries from the selected canonical conversation, inner, or robot buffer.',
   }),
   defineSchema({
+    id: 'robot_autonomy_activity_history',
+    name: 'Recent Autonomy Activity',
+    category: 'operator',
+    inputs: [],
+    outputs: [
+      { name: 'history', type: 'array', description: 'Recent terminal tasks selected by the Full-autonomy Controller' },
+      { name: 'count', type: 'number', description: 'Number of task receipts supplied' },
+    ],
+    properties: { limit: 10 },
+    propertySchemas: {
+      limit: {
+        type: 'slider',
+        default: 10,
+        label: 'Task Receipt Limit',
+        description: 'Maximum prior Controller-selected task receipts supplied to this decision',
+        min: 1,
+        max: 20,
+        step: 1,
+      },
+    },
+    description: 'Reads bounded Work Coordinator receipts for prior Controller-selected agent and Executor tasks.',
+  }),
+  defineSchema({
     id: 'robot_operator_input',
     name: 'Robot Operator Input',
     category: 'operator',
@@ -731,52 +808,58 @@ export const nodeSchemas: NodeSchema[] = [
     ],
     description: 'Reads only the Robot Operator handoff supplied with the current Work Coordinator execution.',
   }),
-  defineSchema({
-    id: 'robot_operator_context_builder',
-    name: 'Robot Operator Context',
-    category: 'operator',
-    inputs: [
-      { name: 'instruction', type: 'string', description: 'Graph-owned autonomy policy' },
-      { name: 'stimulusInstruction', type: 'string', optional: true, description: 'Trigger-specific intention' },
-      { name: 'observation', type: 'object', optional: true, description: 'Current correlated robot observation when selected by the workflow' },
-      { name: 'bridgeSummary', type: 'object', optional: true, description: 'Current Environment Bridge connection and session summary' },
-      { name: 'images', type: 'array', optional: true, description: 'Fresh correlated image content' },
-      { name: 'frames', type: 'array', optional: true, description: 'Fresh correlated frame metadata' },
-      { name: 'conversationHistory', type: 'array', optional: true, description: 'Narrative conversation context' },
-      { name: 'innerHistory', type: 'array', optional: true, description: 'Narrative private reflection context' },
-      { name: 'actionHistory', type: 'array', optional: true, description: 'Verified canonical Robot Buffer history' },
-      { name: 'personaText', type: 'string', optional: true, description: 'Active persona' },
-      { name: 'memoryContext', type: 'array', optional: true, description: 'Historical inspiration' },
-      { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
-      { name: 'activeDesires', type: 'array', optional: true, description: 'Bounded active Agency Desire summaries' },
-      { name: 'availableTasks', type: 'array', optional: true, description: 'Catalog-backed tasks available to the Full-mode controller' },
-      { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from Robot Operator Input' },
-      { name: 'plannerDecision', type: 'object', optional: true, description: 'Planner decision from Robot Operator Input' },
-      { name: 'delegatedMemories', type: 'array', optional: true, description: 'Planner-delegated memories from Robot Operator Input' },
-      { name: 'actionContext', type: 'object', optional: true, description: 'Work Coordinator record matched to the robot-reported action ID' },
-      { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Bridge observation timestamp from Robot Operator Input' },
-      { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Robot Operator acquired the current frame in this cycle' },
-      { name: 'routingAnalysis', type: 'object', optional: true, description: 'Intent Orchestrator route switches for an autonomous instruction' },
+  robotContextSchema(
+    'robot_autonomy_executor_context',
+    'Robot Autonomy Executor Context',
+    'Builds the routed context and capability-bounded action contract for one delegated physical or sensing intention.',
+    [
+      'instruction', 'stimulusInstruction', 'routingAnalysis', 'observation', 'images', 'frames',
+      'conversationHistory', 'innerHistory', 'actionHistory', 'personaText', 'memoryContext',
+      'robotStatus', 'robotObserver', 'plannerDecision', 'delegatedMemories', 'actionContext',
+      'sourceObservationAt', 'currentVisualEvidence',
     ],
-    outputs: [
-      { name: 'messages', type: 'array', description: 'Bounded multimodal model messages' },
-      { name: 'jsonSchema', type: 'object', description: 'Capability-bounded output schema' },
-      { name: 'context', type: 'object', description: 'Inspectable deliberation context' },
-      { name: 'stimulusReady', type: 'boolean', description: 'Whether correlated image or result evidence is available' },
-      { name: 'valid', type: 'boolean', description: 'Whether context construction succeeded' },
-      { name: 'error', type: 'string', description: 'Visible input error' },
+  ),
+  robotContextSchema(
+    'robot_autonomy_planner_context',
+    'Robot Autonomy Planner Context',
+    'Builds correlated perception and narrative context for one planner that may delegate a high-level intention.',
+    [
+      'instruction', 'observation', 'images', 'frames', 'conversationHistory', 'innerHistory',
+      'actionHistory', 'personaText', 'memoryContext', 'robotStatus', 'robotObserver',
+      'plannerDecision', 'delegatedMemories', 'actionContext', 'sourceObservationAt',
+      'currentVisualEvidence',
     ],
-    properties: { outputContract: 'environment' },
-    propertySchemas: {
-      outputContract: {
-        type: 'select',
-        default: 'environment',
-        label: 'Output Contract',
-        options: ['environment', 'delegation', 'action_result', 'goal_review', 'autonomy_controller'],
-      },
-    },
-    description: 'Builds one bounded Robot Operator context from the routes selected for the current workflow.',
-  }),
+  ),
+  robotContextSchema(
+    'robot_action_result_context',
+    'Robot Action Result Context',
+    'Builds the evidence package for interpreting one correlated terminal robot action report.',
+    [
+      'instruction', 'observation', 'images', 'frames', 'robotStatus', 'robotObserver',
+      'actionContext', 'sourceObservationAt', 'currentVisualEvidence',
+    ],
+  ),
+  robotContextSchema(
+    'robot_goal_review_context',
+    'Robot Goal Review Context',
+    'Builds current objective, outcome, narrative, persona, desire, and evidence context for one goal review.',
+    [
+      'instruction', 'observation', 'images', 'frames', 'conversationHistory', 'innerHistory',
+      'actionHistory', 'personaText', 'robotStatus', 'activeDesires', 'robotObserver',
+      'sourceObservationAt', 'currentVisualEvidence',
+    ],
+  ),
+  robotContextSchema(
+    'robot_autonomy_controller_context',
+    'Robot Autonomy Controller Context',
+    'Builds one Full-mode decision package from current status, bridge facts, selected histories, persona, desires, task meanings, and prior task receipts.',
+    [
+      'instruction', 'observation', 'bridgeSummary', 'images', 'frames', 'conversationHistory',
+      'innerHistory', 'actionHistory', 'personaText', 'robotStatus', 'activeDesires',
+      'availableTasks', 'autonomyActivityHistory', 'robotObserver', 'sourceObservationAt',
+      'currentVisualEvidence',
+    ],
+  ),
   defineSchema({
     id: 'robot_operator_decision_parser',
     name: 'Robot Operator Decision Parser',
@@ -800,6 +883,7 @@ export const nodeSchemas: NodeSchema[] = [
     category: 'operator',
     inputs: [
       { name: 'response', type: 'any', description: 'Strict JSON from the Robot Action Result LLM' },
+      { name: 'robotStatus', type: 'object', description: 'Canonical Robot Status whose current objective may be affected by this result' },
     ],
     outputs: [
       { name: 'taskDecision', type: 'object', description: 'Validated task effect, or null when the returned action was standalone' },
@@ -813,6 +897,7 @@ export const nodeSchemas: NodeSchema[] = [
     category: 'operator',
     inputs: [
       { name: 'response', type: 'any', description: 'Strict JSON from the Robot Goal Review LLM' },
+      { name: 'robotStatus', type: 'object', description: 'Canonical Robot Status whose current objective is being reviewed' },
     ],
     outputs: [
       { name: 'executorDecision', type: 'object', description: 'High-level next instruction only when the LLM chose to continue through Robot Autonomy Executor' },
@@ -853,6 +938,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'availableTasks', type: 'array', description: 'Exact task catalog supplied to the controller LLM' },
     ],
     outputs: [
+      { name: 'decisionReceipt', type: 'object', description: 'Validated record of the LLM selection and its supplied rationale' },
       { name: 'taskDecision', type: 'object', description: 'Catalog-backed finite agent selection' },
       { name: 'executorDecision', type: 'object', description: 'High-level intention for Robot Autonomy Executor' },
       { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },

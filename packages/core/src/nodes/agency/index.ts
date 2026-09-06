@@ -31,6 +31,7 @@ export {
   parseReinforcementResponse,
   validateCandidateSources,
 } from './desire-generation.node.js';
+export type { DesireReinforcementDecision } from './desire-generation.node.js';
 
 // Re-export all nodes as an array for registration
 import { DesireLoaderNode } from './desire-loader.node.js';

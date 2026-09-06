@@ -23,10 +23,7 @@ Agent Monitor and Boot Manager own persistent services configured in
 | `boredom-movement` | Authors one embodied intention from current state and advertised capabilities |
 | `boredom-reflection` | Authors one memory-inspired intention from bounded historical context |
 | `ingestor` | Finite generic inbox worker for validated TXT, Markdown, and JSON imports; manually runnable or registerable with Trigger Manager |
-| `desire-generator` | Runs the editable Desire Generator graph to synthesize and nurture desires from canonical profile inputs |
-| `desire-planner` | Runs the editable Desire Planner graph to check capabilities and policies, gather clarification, validate and persist one plan, and apply one manifest-owned approval transition |
-| `desire-executor` | Admits approved plans to the Work Coordinator; Core Agency executes and durably records them via the editable graph |
-| `desire-outcome-reviewer` | Admits review to the Work Coordinator; Core Agency owns the review graph and durable state transition |
+| `desire-agent` | Sole public controller for reviewing persisted inputs, nurturing desires, planning, approved execution, and outcome review through the editable Desire graphs |
 | `curator` | Curates memories for training dataset preparation |
 | `psychoanalyzer` | Runs the editable Psychoanalyzer graph over deterministic evidence, then applies validated, provenance-tracked persona learning |
 | `audio-organizer` | Runs the editable Audio Organizer graph to convert completed audio transcripts into structured memories |
@@ -40,7 +37,7 @@ Agent Monitor and Boot Manager own persistent services configured in
 | Service | Purpose |
 |---------|---------|
 | `environment-bridge` | Transfers semantic actions, observations, speech, and correlated feedback through the configured environment adapter |
-| `robot-operator` | Owns robot-autonomy timing, mutual exclusion, and admission; Full runs the autonomy controller after each completed chain |
+| `robot-operator` | Owns robot-autonomy timing, mutual exclusion, and admission; Full reviews unresolved action results, then returns other settled chains to the contextual autonomy controller |
 | `maintenance-service` | Performs stale-lock health checks, audit-log cleanup, and embedding preload |
 
 Environment Bridge is the only persistent service whose source remains under
@@ -60,8 +57,11 @@ profile; the editable
 graph loads persona and bounded validated memories, generates one grounded
 reflection, persists it, and only then emits audit and optional TTS output.
 
-**desire-generator** — Synthesizes desires from goals, tasks, curiosity, and
-other canonical profile inputs.
+**desire-agent** — Runs only when explicitly selected manually, by Sleep
+Workflow, or by Robot Autonomy. It reads bounded persisted conversation history,
+goals, tasks, memories, curiosity, reflections, and dreams, then admits the
+needed internal planner, executor, and outcome-review stages through the Work
+Coordinator. Those stages are not independently runnable agents.
 
 **curator** — Prepares training data from memories.
 

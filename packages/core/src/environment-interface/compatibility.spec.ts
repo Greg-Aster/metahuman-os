@@ -228,6 +228,7 @@ try {
     capabilities: { actions: ['robotCommand'] },
   }, { username: 'bridge-spec' });
   assert.equal(manager.getNextExecutable()?.id, prioritizedObservation.workId, 'environment observations must preempt autonomy');
+  assert.equal(manager.getTask(prioritizedObservation.workId)?.input.observationCurrent, true);
   assert.notEqual(prioritizedObservation.workId, autonomyWork.id);
 
   resetState();

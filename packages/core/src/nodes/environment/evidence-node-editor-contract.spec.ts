@@ -43,8 +43,8 @@ test('Environment evidence nodes explain their jobs while keeping stable graph h
     [
       'environment_image_input',
       'Select Camera Frames for Current Action',
-      ['visual', 'visuals', 'robotStatus', 'terminalFeedback', 'actionId', 'correlationId'],
-      ['images', 'frames', 'rejectedCount'],
+      ['visual', 'visuals', 'observationCurrent', 'robotStatus', 'terminalFeedback', 'actionId', 'correlationId'],
+      ['images', 'frames', 'rejectedCount', 'current', 'verified'],
     ],
   );
 

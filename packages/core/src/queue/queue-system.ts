@@ -4,8 +4,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { UnifiedQueueManager, getQueueManager } from './unified-queue-manager.js';
+import { UnifiedQueueManager, getQueueManager, isDesireAgentAdmission } from './unified-queue-manager.js';
 import { ExecutionEngine } from './execution-engine.js';
 import { TriggerManager } from './trigger-manager.js';
 import { getTriggerConfigService, type TriggerConfigRead } from './trigger-config-service.js';
@@ -91,15 +92,17 @@ export function buildRobotOperatorManualTaskInput(
   if (config.lifecycle !== 'workflow' || !config.handler.startsWith('workflow.')) {
     throw new Error(`Agent '${agentId}' does not have a maintained Robot Operator workflow`);
   }
+  const cycleId = randomUUID();
   return {
     type: agentTaskType(agentId),
     handler: config.handler,
-    resource: config.resource ?? 'system',
+    resource: config.resource ?? 'local-llm',
     source: 'user',
     username,
     priority: config.priority,
     cognitiveMode: 'environment',
-    input: { agentId, args, triggeredBy: 'manual' },
+    input: { agentId, args, triggeredBy: 'manual', cycleId },
+    correlationId: cycleId,
     maxAttempts: Math.max(1, (config.maxRetries ?? 0) + 1),
     metadata: { producer: 'robot-operator', childAgent: agentId, admission: 'manual' },
   };
@@ -149,6 +152,7 @@ export class QueueSystem extends EventEmitter {
     }
     this.triggerManager.applyConfig(read);
     this.cancelLegacySleepAdmissions();
+    this.cancelLegacyDesireAdmissions();
   }
 
   private cancelLegacySleepAdmissions(): void {
@@ -160,6 +164,14 @@ export class QueueSystem extends EventEmitter {
         && !task.input?.sleepWorkflow
       ) {
         this.queueManager.cancel(task.id, 'Automatic ownership moved to Sleep Workflow');
+      }
+    }
+  }
+
+  private cancelLegacyDesireAdmissions(): void {
+    for (const task of this.queueManager.getAllTasks()) {
+      if (!isDesireAgentAdmission(task)) {
+        this.queueManager.cancel(task.id, 'Desire System admission moved to Desire Agent');
       }
     }
   }
@@ -216,7 +228,6 @@ export class QueueSystem extends EventEmitter {
         const state = loadQueueState();
         if (state) {
           this.queueManager.importState(state);
-          persistQueueState(this.queueManager.exportState());
           auditRecovery(
             this.queueManager.getAllTasks().length,
             state.inFlightRemote?.length || 0,
@@ -225,6 +236,8 @@ export class QueueSystem extends EventEmitter {
         }
       }
       this.cancelLegacySleepAdmissions();
+      this.cancelLegacyDesireAdmissions();
+      if (shouldRestoreState()) persistQueueState(this.queueManager.exportState());
       reconcileSleepRuntime(this.queueManager.getAllTasks());
 
       const onPersistenceError = (error: Error) => {

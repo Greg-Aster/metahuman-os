@@ -369,7 +369,7 @@ test('Robot Status Out persists the Environment LLM task and correlated action r
   assert.equal(loadRobotStatus(username)?.task?.decision.outcome, 'complete')
 })
 
-test('Robot Status Out persists the durable objective explicitly selected for an autonomous next step', async () => {
+test('Robot Status Out preserves the originating task instruction while recording an autonomous next step', async () => {
   const username = 'robot-status-goal-continuation-owner'
   await robotStatusOutNode.execute!({
     taskDecision: {
@@ -402,9 +402,42 @@ test('Robot Status Out persists the durable objective explicitly selected for an
   }, { username })
 
   assert.equal(delegatedStep.task.objective, 'Find the cat.')
-  assert.equal(delegatedStep.task.instruction, 'Move to a better-lit area and continue looking for the cat.')
+  assert.equal(delegatedStep.task.instruction, 'Find the cat.')
+  assert.equal(delegatedStep.task.decision.reason, 'Changing viewpoint may improve the available visual evidence.')
   assert.equal(delegatedStep.task.source, 'user')
   assert.equal(delegatedStep.task.selectedAction.command, 'walk_forward')
+})
+
+test('Robot Status Out records a current user restatement as user-owned without changing the objective', async () => {
+  const username = 'robot-status-user-restatement-owner'
+  await robotStatusOutNode.execute!({
+    instruction: 'Inspect the keys when useful.',
+    inputSource: 'autonomy',
+    taskDecision: {
+      objective: 'Find the missing keys.',
+      outcome: 'wait',
+      reason: 'No current image is available.',
+      objectiveComplete: false,
+      requiredCompletionBasis: 'visual_observation',
+    },
+  }, { username })
+
+  const restated = await robotStatusOutNode.execute!({
+    instruction: 'Please continue helping me find my missing keys.',
+    userInstruction: 'Please continue helping me find my missing keys.',
+    inputSource: 'user',
+    taskDecision: {
+      objective: 'Find the missing keys.',
+      outcome: 'act',
+      reason: 'The user renewed the existing search request.',
+      objectiveComplete: false,
+      requiredCompletionBasis: 'visual_observation',
+    },
+  }, { username })
+
+  assert.equal(restated.task.objective, 'Find the missing keys.')
+  assert.equal(restated.task.instruction, 'Please continue helping me find my missing keys.')
+  assert.equal(restated.task.source, 'user')
 })
 
 test('Robot Status Out does not replace an unfinished task for a standalone action', async () => {
@@ -633,6 +666,7 @@ test('Robot task lifecycle persists one result and delegates at most one later i
   const reviewTypes = reviewGraph.nodes.map((node: any) => node.data?.nodeType)
   assert.equal(reviewTypes.filter((type: string) => type === 'model_router').length, 1)
   assert.equal(reviewTypes.filter((type: string) => type === 'robot_status_out').length, 1)
+  assert.equal(reviewTypes.filter((type: string) => type === 'active_desires').length, 1)
   assert.equal(reviewTypes.filter((type: string) => type === 'robot_operator_environment_dispatch').length, 1)
   assert.equal(reviewTypes.filter((type: string) => type === 'environment_image_input').length, 1)
   assert.equal(reviewTypes.includes('environment_send_action'), false)
@@ -649,6 +683,12 @@ test('Robot task lifecycle persists one result and delegates at most one later i
     'persona',
   )
   assert.equal(reviewGraph.edges.some((edge: any) => (
+    edge.source === 'active-desires'
+    && edge.sourceHandle === 'desires'
+    && edge.target === 'context'
+    && edge.targetHandle === 'activeDesires'
+  )), true)
+  assert.equal(reviewGraph.edges.some((edge: any) => (
     edge.source === 'parser'
     && edge.sourceHandle === 'executorDecision'
     && edge.target === 'prompt-out'
@@ -661,12 +701,12 @@ test('Robot task lifecycle persists one result and delegates at most one later i
       taskDecision: {
         overallObjectiveState: 'not_achieved',
         reason: 'The requested turn completed, but the target is not visible.',
-        objective: 'Find the cat.',
         requiredCompletionBasis: 'visual_observation',
         observationSummary: 'The new view contains no visible cat.',
         completionEvidence: '',
       },
     }),
+    robotStatus: { task: { objective: 'Find the cat.' } },
   }, {})
   assert.equal(interpreted.taskDecision.objectiveComplete, false)
   assert.equal('decision' in interpreted, false)
@@ -676,12 +716,12 @@ test('Robot task lifecycle persists one result and delegates at most one later i
       response: '',
       outcome: 'continue',
       reason: 'Another viewpoint may reveal the target.',
-      objective: 'Find the cat.',
       requiredCompletionBasis: 'visual_observation',
       observationSummary: 'The last view did not contain the cat.',
       completionEvidence: '',
       nextInstruction: 'Inspect a different open area for the cat.',
     }),
+    robotStatus: { task: { objective: 'Find the cat.' } },
   }, {}, {})
   assert.deepEqual(reviewed.executorDecision, {
     observed: 'The last view did not contain the cat.',

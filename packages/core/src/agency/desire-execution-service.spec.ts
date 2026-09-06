@@ -3,12 +3,12 @@ import fs from 'node:fs'
 import test from 'node:test'
 import { ROOT } from '../path-builder.js'
 import { withUserContext } from '../context.js'
-import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js'
 import { getNode } from '../nodes/index.js'
 import { ExecutionEngine } from '../queue/execution-engine.js'
 import { UnifiedQueueManager } from '../queue/unified-queue-manager.js'
 import { DEFAULT_HANDLERS } from '../queue/types.js'
 import { SLEEP_WORKFLOW_STAGES } from '../queue/sleep-workflow.js'
+import { buildDesireAgentTaskInput } from '../queue/work-submission.js'
 import {
   createApprovedDesireExecutor,
   type DesireExecutionDependencies,
@@ -198,6 +198,7 @@ test('approved desire execution claims once and reports the durable graph result
     failed: 0,
     skipped: 0,
     desireIds: ['desire-1'],
+    skippedReasons: {},
   })
   assert.deepEqual(savedStatuses, ['executing'])
   assert.equal(stored.status, 'awaiting_review')
@@ -322,6 +323,48 @@ test('execution rejects auto-approval when any step requires explicit user appro
   assert.equal(graphCalls, 0)
 })
 
+test('an explicit Agency YOLO policy can execute an auto-approved manual step after review', async () => {
+  const stored = approvedDesire('desire-yolo-step')
+  stored.plan!.steps[0].requiresApproval = true
+  stored.review!.autoApprove = true
+  let graphCalls = 0
+  const execute = createApprovedDesireExecutor({
+    loadDesire: async () => structuredClone(stored),
+    listApproved: async () => [structuredClone(stored)],
+    saveManifest: async () => undefined,
+    addScratchpadEntry: async () => initializeScratchpadSummary(),
+    allowAutoApprovedManualSteps: async () => true,
+    executeGraph: async () => {
+      graphCalls += 1
+      return { success: true, graphCompleted: true, execution: completedExecution() }
+    },
+  })
+  const result = await execute({ username: 'profile-a', desireId: stored.id })
+  assert.equal(result.executed, 1)
+  assert.equal(graphCalls, 1)
+})
+
+test('configured daily execution capacity reports a skipped desire without claiming it', async () => {
+  const stored = approvedDesire('desire-daily-limit')
+  let graphCalls = 0
+  const execute = createApprovedDesireExecutor({
+    loadDesire: async () => structuredClone(stored),
+    listApproved: async () => [structuredClone(stored)],
+    saveManifest: async () => undefined,
+    addScratchpadEntry: async () => initializeScratchpadSummary(),
+    remainingDailyExecutions: async () => 0,
+    executeGraph: async () => {
+      graphCalls += 1
+      return { success: true, graphCompleted: true, execution: completedExecution() }
+    },
+  })
+  const result = await execute({ username: 'profile-a', desireId: stored.id })
+  assert.equal(result.executed, 0)
+  assert.equal(result.skipped, 1)
+  assert.match(result.skippedReasons[stored.id], /maximum daily/)
+  assert.equal(graphCalls, 0)
+})
+
 test('desire executor graph and coordinator configuration have one valid finalization path', () => {
   const graph = JSON.parse(fs.readFileSync(`${ROOT}/etc/cognitive-graphs/desire-executor.json`, 'utf8'))
   const executorNodeSource = fs.readFileSync(`${ROOT}/packages/core/src/nodes/agency/desire-executor.node.ts`, 'utf8')
@@ -369,25 +412,22 @@ test('desire executor graph and coordinator configuration have one valid finaliz
   }
 
   assert.equal(DEFAULT_HANDLERS.desire_execute, 'agency.desire-execute')
-  assert.equal(AGENT_CATALOG_DEFINITIONS['desire-executor'].handler, 'agency.desire-execute')
-  const sleepStage = SLEEP_WORKFLOW_STAGES.find(stage => stage.type === 'desire_execute')
-  assert.equal(sleepStage?.handler, 'agency.desire-execute')
-  assert.equal(sleepStage?.maxAttempts, 1)
+  assert.equal(SLEEP_WORKFLOW_STAGES.some(stage => stage.type === 'desire_execute'), false)
+  const admitted = buildDesireAgentTaskInput({
+    operation: 'execute', username: 'profile-a', desireId: 'desire-1', source: 'user',
+  })
+  assert.equal(admitted.handler, 'agency.desire-execute')
+  assert.equal(admitted.maxAttempts, 1)
 
   const agents = JSON.parse(fs.readFileSync(`${ROOT}/etc/agents.json`, 'utf8'))
-  assert.equal(agents.agents['desire-executor'].handler, 'agency.desire-execute')
-  assert.equal(agents.agents['desire-executor'].maxRetries, 0)
+  assert.equal(agents.agents['desire-agent'].handler, 'agent.desire-generator')
+  assert.equal(agents.agents['desire-executor'], undefined)
 
   const engine = new ExecutionEngine()
   assert.equal(engine.hasHandler('agency.desire-execute'), true)
   assert.equal(engine.hasHandler('agent.desire-executor'), false)
 
   const queue = new UnifiedQueueManager()
-  const queued = queue.enqueue({
-    type: 'desire_execute',
-    username: 'profile-a',
-    input: {},
-    maxAttempts: 9,
-  })
+  const queued = queue.enqueue({ ...admitted, maxAttempts: 9 })
   assert.equal(queued.maxAttempts, 1)
 })

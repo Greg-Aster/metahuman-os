@@ -201,6 +201,18 @@ function determineRequiredTrust(risk: string): TrustLevel {
   }
 }
 
+export function latestDesirePlan(desire: Desire): DesirePlan | undefined {
+  return desire.plan || desire.planHistory?.at(-1)
+}
+
+export function nextDesirePlanVersion(desire: Desire): number {
+  return Math.max(
+    0,
+    desire.plan?.version || 0,
+    ...(desire.planHistory || []).map(plan => plan.version || 0),
+  ) + 1
+}
+
 const execute: NodeExecutor = async (inputs, context, properties) => {
   const desire = inputs.desire as Desire | undefined;
   const toolCatalog = typeof inputs.toolCatalog === 'string' ? inputs.toolCatalog.trim() : '';
@@ -249,11 +261,11 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     : '';
 
   // Check if this is a revision (has critique and/or previous plan)
-  const isRevision = !!(desire.userCritique || desire.plan);
-  const previousPlan = desire.plan;
+  const previousPlan = latestDesirePlan(desire);
+  const isRevision = !!(desire.userCritique || previousPlan);
   const userCritique = desire.userCritique;
-  const outcomeReview = desire.outcomeReview;
-  const planVersion = (desire.planHistory?.length || 0) + 1;
+  const outcomeReview = desire.outcomeReview || desire.outcomeReviewHistory?.at(-1);
+  const planVersion = nextDesirePlanVersion(desire);
   const failCount = desire.metrics?.executionFailCount || 0;
 
   // Build the revision context if applicable

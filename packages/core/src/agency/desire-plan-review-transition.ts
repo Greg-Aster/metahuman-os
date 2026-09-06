@@ -13,10 +13,12 @@ import {
   saveDesireManifest,
   saveDesireReviewToFolder,
 } from './storage.js'
+import { archiveCurrentDesireCycle } from './desire-outcome-transition.js'
 
 export type DesirePlanReviewAction =
   | 'rejected'
   | 'auto_approved'
+  | 'revision_required'
   | 'awaiting_approval'
 
 export interface RecordedDesirePlanReview {
@@ -145,7 +147,7 @@ export async function applyDesirePlanReview(
   const now = deps.now()
   const metrics = desire.metrics || initializeDesireMetrics()
   const stageIterations = desire.stageIterations || initializeStageIterations()
-  const updated: Desire = {
+  let updated: Desire = {
     ...desire,
     review,
     updatedAt: now,
@@ -177,6 +179,18 @@ export async function applyDesirePlanReview(
       },
     ]
     summary = `Plan for "${desire.title}" was rejected by alignment and safety review.`
+  } else if (review.verdict === 'revise') {
+    action = 'revision_required'
+    updated = archiveCurrentDesireCycle(updated)
+    updated.status = 'planning'
+    updated.currentStage = 'planning'
+    updated.userCritique = [
+      review.reasoning,
+      ...(review.concerns || []).map(concern => `Concern: ${concern}`),
+      ...(review.suggestions || []).map(suggestion => `Suggestion: ${suggestion}`),
+    ].join('\n')
+    updated.critiqueAt = now
+    summary = `Plan for "${desire.title}" requires revision before it can be approved.`
   } else if (review.verdict === 'approve' && autoApprove) {
     action = 'auto_approved'
     updated.status = 'approved'
@@ -186,9 +200,7 @@ export async function applyDesirePlanReview(
     action = 'awaiting_approval'
     updated.status = 'awaiting_approval'
     updated.currentStage = 'user_approval'
-    summary = review.verdict === 'revise'
-      ? `Plan for "${desire.title}" has review concerns and requires user review.`
-      : `Plan for "${desire.title}" passed review and requires user approval.`
+    summary = `Plan for "${desire.title}" passed review and requires user approval.`
   }
 
   const entry = createScratchpadEntry(

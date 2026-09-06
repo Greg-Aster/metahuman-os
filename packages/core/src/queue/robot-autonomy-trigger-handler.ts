@@ -21,6 +21,10 @@ import type { QueuedTask } from './types.js'
 import type { WorkHandlerContext } from './execution-engine.js'
 import { getUserByUsername } from '../users.js'
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
 function requestedSessionId(task: QueuedTask, configuredSessionId?: string): string | undefined {
   if (typeof task.input.sessionId === 'string' && task.input.sessionId.trim()) return task.input.sessionId.trim()
   const args = Array.isArray(task.input.args) ? task.input.args : []
@@ -96,7 +100,7 @@ async function executeRobotAutonomyControllerGraph(
   sessionId: string | undefined,
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const [{ loadGraphForMode }, { listFailedNodes, runGraph }] = await Promise.all([
+  const [{ loadGraphForMode }, { listFailedNodes, requireGraphNodeOutput, runGraph }] = await Promise.all([
     import('../graph-streaming.js'),
     import('../graph-runtime.js'),
   ])
@@ -106,7 +110,9 @@ async function executeRobotAutonomyControllerGraph(
   if (!loaded) throw new Error(`Robot Autonomy Controller graph not found: ${graphName}`)
   const cycleId = typeof task.input.cycleId === 'string' && task.input.cycleId.trim()
     ? task.input.cycleId.trim()
-    : randomUUID()
+    : task.correlationId?.trim()
+      ? task.correlationId.trim()
+      : randomUUID()
   const robotObserver: RobotObserverCycleMetadata = {
     cycleId,
     step: 1,
@@ -142,16 +148,34 @@ async function executeRobotAutonomyControllerGraph(
   if (graphState.status !== 'completed' || failures.length > 0) {
     throw new Error(`Robot Autonomy Controller graph failed: ${failures[0]?.error ?? graphState.status}`)
   }
+  const parsed = requireGraphNodeOutput(graphState, 'robot_autonomy_controller_parser')
+  const decision = isRecord(parsed.decisionReceipt) ? parsed.decisionReceipt : null
+  if (!decision) throw new Error('Robot Autonomy Controller completed without a validated decision receipt')
+  const selectedTaskId = typeof decision.taskId === 'string' ? decision.taskId : ''
+  const dispatch = selectedTaskId === 'robot-autonomy-executor'
+    ? requireGraphNodeOutput(graphState, 'robot_operator_environment_dispatch')
+    : selectedTaskId === 'none'
+      ? { queued: false, taskId: '', status: 'none_selected' }
+      : requireGraphNodeOutput(graphState, 'robot_autonomy_task_dispatch')
   return {
     graphExecuted: true,
     graph: graphName,
     agentId: 'robot-autonomy-controller',
     cycle: robotObserver,
+    decision,
+    dispatch: {
+      queued: dispatch.queued === true,
+      taskId: typeof dispatch.taskId === 'string' ? dispatch.taskId : '',
+      status: typeof dispatch.status === 'string' ? dispatch.status : 'unknown',
+    },
   }
 }
 
-function anotherRobotAutonomyCycleIsActive(currentTaskId: string): boolean {
-  return hasActiveRobotAutonomyCycle(getQueueManager().getAllTasks(), currentTaskId)
+function anotherRobotAutonomyCycleIsActive(task: QueuedTask): boolean {
+  const cycleId = typeof task.input.cycleId === 'string' && task.input.cycleId.trim()
+    ? task.input.cycleId.trim()
+    : task.correlationId?.trim() ?? ''
+  return hasActiveRobotAutonomyCycle(getQueueManager().getAllTasks(), task.id, cycleId)
 }
 
 export async function executeRobotAutonomyTriggerWork(
@@ -167,7 +191,7 @@ export async function executeRobotAutonomyTriggerWork(
   if (!isRobotOperatorChildEnabled(agentId)) {
     return { skipped: true, reason: `${agentId.replace(/-/g, '_')}_disabled`, agentId }
   }
-  if (anotherRobotAutonomyCycleIsActive(task.id)) {
+  if (anotherRobotAutonomyCycleIsActive(task)) {
     return { skipped: true, reason: 'robot_autonomy_cycle_active', agentId }
   }
 
@@ -231,7 +255,9 @@ export async function executeRobotAutonomyTriggerWork(
 
   const cycleId = typeof task.input.cycleId === 'string' && task.input.cycleId.trim()
     ? task.input.cycleId.trim()
-    : randomUUID()
+    : task.correlationId?.trim()
+      ? task.correlationId.trim()
+      : randomUUID()
   const cycle: RobotObserverCycleMetadata = {
     cycleId,
     step: 1,
@@ -253,6 +279,7 @@ export async function executeRobotAutonomyTriggerWork(
     priority: manual ? 'high' : 'background',
     input: {
       observation,
+      observationCurrent: false,
       graph: cycle.graph,
       robotOperatorContext: {
         robotObserver: cycle,

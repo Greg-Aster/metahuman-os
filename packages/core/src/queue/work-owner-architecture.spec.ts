@@ -135,10 +135,10 @@ assert.ok(
 
 const agencyHandler = source('packages/core/src/api/handlers/agency.ts');
 assert.ok(
-  agencyHandler.includes('submitCoordinatorWork')
-    && agencyHandler.includes("handler: 'agency.desire-checkin'")
+  agencyHandler.includes('submitDesireAgent')
+    && !agencyHandler.includes("handler: 'agency.desire-checkin'")
     && !agencyHandler.includes('/api/active-operator/queue'),
-  'desire check-ins must use a registered durable coordinator handler',
+  'desire owner actions must use the sole Desire Agent admission contract',
 );
 assert.ok(
   source('packages/core/src/queue/execution-engine.ts').includes("registerHandler('agency.desire-checkin'"),

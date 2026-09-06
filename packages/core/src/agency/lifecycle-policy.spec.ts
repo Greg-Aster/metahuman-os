@@ -4,7 +4,12 @@ import test from 'node:test'
 import {
   canOwnerAdvanceDesire,
   canOwnerResetDesireTo,
+  IN_PROGRESS_DESIRE_STATUSES,
+  NEEDS_ACTION_DESIRE_STATUSES,
+  TERMINAL_DESIRE_STATUSES,
   validateDesireForUserApproval,
+  statusesForDesireGroup,
+  WAITING_DESIRE_STATUSES,
 } from './lifecycle-policy.js'
 import { initializeDesireMetrics, type Desire } from './types.js'
 
@@ -63,11 +68,29 @@ test('generic owner advancement cannot bypass planning, review, approval, or exe
   assert.equal(canOwnerAdvanceDesire('planning', 'reviewing'), false)
   assert.equal(canOwnerAdvanceDesire('reviewing', 'approved'), false)
   assert.equal(canOwnerAdvanceDesire('approved', 'executing'), false)
+  assert.equal(canOwnerAdvanceDesire('executing', 'needs_attention'), false)
+  assert.equal(canOwnerAdvanceDesire('executing', 'archived'), false)
   assert.equal(canOwnerAdvanceDesire('nascent', 'planning'), true)
   assert.equal(canOwnerAdvanceDesire('awaiting_approval', 'planning'), true)
   assert.equal(canOwnerResetDesireTo('planning'), true)
   assert.equal(canOwnerResetDesireTo('reviewing'), false)
   assert.equal(canOwnerResetDesireTo('approved'), false)
+})
+
+test('status groups keep Robot Status and owner-action queues semantically distinct', () => {
+  assert.deepEqual(statusesForDesireGroup('needs_action'), [
+    'questioning', 'awaiting_approval', 'needs_attention',
+  ])
+  assert.equal(statusesForDesireGroup('active').includes('nascent'), false)
+  assert.equal(statusesForDesireGroup('active').includes('questioning'), true)
+  assert.equal(statusesForDesireGroup('open').includes('paused'), true)
+  const dashboardStatuses = [
+    ...IN_PROGRESS_DESIRE_STATUSES,
+    ...WAITING_DESIRE_STATUSES,
+    ...NEEDS_ACTION_DESIRE_STATUSES,
+    ...TERMINAL_DESIRE_STATUSES,
+  ]
+  assert.equal(new Set(dashboardStatuses).size, dashboardStatuses.length)
 })
 
 test('user approval requires the canonical awaiting state and exact plan-version review', () => {

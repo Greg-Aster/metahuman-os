@@ -44,7 +44,7 @@
       "boredomReflectionGraph": "boredom-reflection",
       "autonomyGraph": "boredom-autonomy",
       "environmentGraph": "environment",
-      "comment": "Robot-autonomy scheduler and admission owner. Semi mode keeps the configured independent workflow timers. Full mode admits the Robot Autonomy Controller after each correlated workflow chain finishes; its LLM selects one contextually relevant catalog-backed finite task, delegates one embodied intention, or optionally speaks. Full mode does not rotate workflows. Every admitted workflow is finite."
+      "comment": "Robot-autonomy scheduler and admission owner. Semi mode keeps the configured independent workflow timers. In Full mode, unresolved correlated action results go once to Robot Goal Review; every other settled chain returns to the Robot Autonomy Controller, whose LLM selects one contextually relevant catalog-backed finite task, delegates one embodied intention, or optionally speaks. Full mode does not rotate workflows. Every admitted workflow is finite."
     },
     "maintenance-service": {
       "id": "maintenance-service",

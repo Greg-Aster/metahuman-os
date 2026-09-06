@@ -9,14 +9,11 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import {
   listDesiresByStatus,
-  listActiveDesires,
-  listPendingDesires,
   listAllDesires,
   loadDesire,
   saveDesire,
   deleteDesire,
   moveDesire,
-  createDesireFolder,
   saveDesireManifest,
   addScratchpadEntryToFolder,
   loadExecutionAttempts,
@@ -25,20 +22,29 @@ import {
   initializeDesireMetrics,
   initializeScratchpadSummary,
   initializeStageIterations,
-  getSourceWeight,
+  loadConfig,
   statusToStage,
   allowedOwnerAdvanceTargets,
   canOwnerAdvanceDesire,
   allowedOwnerResetTargets,
   canOwnerResetDesireTo,
   validateDesireForUserApproval,
+  statusesForDesireGroup,
+  isDesireStatus,
+  isActiveDesire,
+  isOpenDesire,
   approveDesireForExecution,
+  archiveCurrentDesireCycle,
+  applyDesireOutcomeReview,
+  generateOutcomeReviewId,
   type Desire,
   type DesireExecution,
+  type DesireOutcomeReview,
   type DesireStatus,
   type DesireGoalType,
   type DesireStage,
   type ClarifyingAnswer,
+  type DesireStatusGroup,
 } from '../../agency/index.js';
 import { proposalEvents } from '../../active-operator/index.js';
 import { audit } from '../../audit.js';
@@ -47,14 +53,8 @@ import {
   submitInnerReflection,
   submitSystemEvent,
 } from '../../buffer-admission.js';
-import { submitCoordinatorWork, submitDesireExecution } from '../../queue/index.js';
+import { submitDesireAgent } from '../../queue/index.js';
 import { assertDesireExecutable } from '../../agency/desire-execution-service.js';
-
-// Valid DesireStatus values from types.ts
-const ALL_STATUSES: DesireStatus[] = [
-  'nascent', 'pending', 'evaluating', 'planning', 'questioning', 'reviewing', 'awaiting_approval',
-  'approved', 'executing', 'awaiting_review', 'completed', 'rejected', 'abandoned', 'failed'
-];
 
 // Legacy/invalid statuses that might exist in old data - map them to valid statuses
 const LEGACY_STATUS_MAP: Record<string, DesireStatus> = {
@@ -62,44 +62,17 @@ const LEGACY_STATUS_MAP: Record<string, DesireStatus> = {
   'active': 'executing',    // "active" was used before, should be "executing"
 };
 
-function stageForResetTarget(status: DesireStatus): DesireStage {
-  switch (status) {
-    case 'nascent':
-      return 'nascent';
-    case 'pending':
-      return 'strengthening';
-    case 'planning':
-      return 'planning';
-    case 'reviewing':
-      return 'plan_review';
-    case 'approved':
-      return 'user_approval';
-    default:
-      return 'planning';
-  }
-}
-
 /**
- * Normalize a desire's status if it has a legacy/invalid value.
- * Also auto-saves the fix to prevent future issues.
+ * Normalize legacy status values in the response without turning a GET into a
+ * hidden migration write. The explicit Agency migration owns persistence.
  */
-async function normalizeDesireStatus(desire: Desire, username?: string): Promise<Desire> {
+function normalizeDesireStatus(desire: Desire): Desire {
   const currentStatus = desire.status as string;
 
   // Check if this is a legacy status that needs fixing
   if (LEGACY_STATUS_MAP[currentStatus]) {
     const newStatus = LEGACY_STATUS_MAP[currentStatus];
-    console.log(`[agency-handler] Fixing legacy status: ${desire.id} "${currentStatus}" → "${newStatus}"`);
-
-    desire.status = newStatus;
-    desire.updatedAt = new Date().toISOString();
-
-    // Save the fixed desire
-    try {
-      await saveDesire(desire, username);
-    } catch (err) {
-      console.warn(`[agency-handler] Could not auto-save fixed status for ${desire.id}:`, err);
-    }
+    return { ...desire, status: newStatus, currentStage: statusToStage(newStatus) };
   }
 
   return desire;
@@ -125,32 +98,35 @@ export async function handleListDesires(req: UnifiedRequest): Promise<UnifiedRes
     const statusParam = query?.status || 'all';
     let desires: Desire[];
 
-    if (statusParam === 'all') {
+    const semanticGroups = new Set<DesireStatusGroup>([
+      'all', 'open', 'active', 'waiting', 'needs_action', 'completed', 'archived',
+    ]);
+    if (semanticGroups.has(statusParam as DesireStatusGroup)) {
       // Use listAllDesires which includes desires from both folder-based storage
       // AND legacy status directories (handles desires with invalid/old statuses)
       desires = await listAllDesires(user.username);
+      if (statusParam !== 'all') {
+        const accepted = statusesForDesireGroup(statusParam as DesireStatusGroup);
+        desires = desires.filter(desire => accepted.includes(desire.status));
+      }
     } else if (statusParam.includes(',')) {
       // Comma-separated list of statuses
       const statuses = statusParam.split(',').map(s => s.trim()) as DesireStatus[];
       desires = [];
       for (const s of statuses) {
-        if (ALL_STATUSES.includes(s)) {
+        if (isDesireStatus(s)) {
           const d = await listDesiresByStatus(s, user.username);
           desires.push(...d);
         }
       }
-    } else if (statusParam === 'active') {
-      desires = await listActiveDesires(user.username);
-    } else if (statusParam === 'pending') {
-      desires = await listPendingDesires(user.username);
+    } else if (isDesireStatus(statusParam)) {
+      desires = await listDesiresByStatus(statusParam, user.username);
     } else {
-      desires = await listDesiresByStatus(statusParam as DesireStatus, user.username);
+      return { status: 400, error: `Unknown desire status filter: ${statusParam}` };
     }
 
     // Normalize any desires with legacy statuses
-    desires = await Promise.all(
-      desires.map(d => normalizeDesireStatus(d, user.username))
-    );
+    desires = desires.map(normalizeDesireStatus);
 
     // Sort by createdAt descending
     desires.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -226,12 +202,12 @@ export async function handleCreateDesire(req: UnifiedRequest): Promise<UnifiedRe
     description,
     reason,
     risk = 'low',
-    source = 'persona_goal',
+    source = 'user_request',
     // Advanced options
     goalType = 'one_time',
     strength: initialStrength = 0.8,
     status: initialStatus = 'pending',
-    decayRate: customDecayRate = 0.03,
+    decayRate: customDecayRate,
     completionCriteria,
     tags = [],
   } = (body || {}) as {
@@ -249,11 +225,41 @@ export async function handleCreateDesire(req: UnifiedRequest): Promise<UnifiedRe
     tags?: string[];
   };
 
-  if (!title || !description) {
+  if (typeof title !== 'string' || !title.trim()
+    || typeof description !== 'string' || !description.trim()) {
     return {
       status: 400,
       error: 'Missing required fields: title, description',
     };
+  }
+  if (reason !== undefined && typeof reason !== 'string') {
+    return { status: 400, error: 'reason must be a string.' };
+  }
+  if (!['none', 'low', 'medium', 'high', 'critical'].includes(risk)) {
+    return { status: 400, error: 'risk is invalid.' };
+  }
+  if (typeof source !== 'string') {
+    return { status: 400, error: 'source must be a string.' };
+  }
+  if (!['one_time', 'recurring', 'long_running'].includes(goalType)) {
+    return { status: 400, error: 'goalType must be one_time, recurring, or long_running.' };
+  }
+  if (typeof initialStrength !== 'number' || !Number.isFinite(initialStrength)) {
+    return { status: 400, error: 'strength must be a finite number.' };
+  }
+  if (!['nascent', 'pending'].includes(initialStatus)) {
+    return { status: 400, error: 'status must be nascent or pending.' };
+  }
+  if (customDecayRate !== undefined
+    && (typeof customDecayRate !== 'number' || !Number.isFinite(customDecayRate)
+      || customDecayRate < 0 || customDecayRate > 1)) {
+    return { status: 400, error: 'decayRate must be between 0 and 1.' };
+  }
+  if (completionCriteria !== undefined && typeof completionCriteria !== 'string') {
+    return { status: 400, error: 'completionCriteria must be a string.' };
+  }
+  if (!Array.isArray(tags) || tags.some(tag => typeof tag !== 'string')) {
+    return { status: 400, error: 'tags must be an array of strings.' };
   }
 
   // Validate and clamp strength to valid range
@@ -267,25 +273,58 @@ export async function handleCreateDesire(req: UnifiedRequest): Promise<UnifiedRe
 
   try {
     const now = new Date().toISOString();
+    const config = await loadConfig(user.username);
+    const sourceConfig = config.sources[source];
+    if (!sourceConfig?.enabled) {
+      return { status: 400, error: `Desire source '${source}' is not enabled.` };
+    }
+    if (status === 'pending' && strength < config.thresholds.activation) {
+      return {
+        status: 400,
+        error: `A pending desire must meet the configured activation strength (${config.thresholds.activation}). Create it as nascent or increase its strength.`,
+      };
+    }
+    const existingDesires = await listAllDesires(user.username);
+    const openCount = existingDesires.filter(desire =>
+      isOpenDesire(desire) && desire.status !== 'paused').length;
+    if (openCount >= config.limits.maxActiveDesires + config.limits.maxPendingDesires) {
+      return { status: 409, error: 'Agency desire capacity is full. Archive an open desire or increase the configured limits.' };
+    }
+    if (status === 'pending'
+      && existingDesires.filter(isActiveDesire).length >= config.limits.maxActiveDesires) {
+      return { status: 409, error: 'Agency operational capacity is full. Create this desire as nascent or increase Maximum operational desires.' };
+    }
+    const desireId = generateDesireId();
     const desire: Desire = {
-      id: generateDesireId(),
-      title,
-      description,
-      reason: reason || 'User-created desire',
+      id: desireId,
+      title: title.trim(),
+      description: description.trim(),
+      reason: reason?.trim() || 'User-created desire',
       source,
-      sourceId: `manual-${Date.now()}`,
+      sourceId: `manual-${desireId}`,
+      evidence: [{
+        id: `manual:${desireId}`,
+        kind: 'origin',
+        source,
+        sourceId: `manual-${desireId}`,
+        summary: reason?.trim() || 'User-created desire',
+        observedAt: now,
+      }],
       status,
       currentStage,
       stageIterations: initializeStageIterations(),
       strength,
-      baseWeight: await getSourceWeight(source),
-      threshold: 0.7,
-      decayRate: Math.max(0.001, Math.min(0.1, customDecayRate)), // Clamp decay rate
+      baseWeight: sourceConfig.weight,
+      threshold: config.thresholds.activation,
+      decayRate: customDecayRate ?? config.thresholds.decay.ratePerDay,
       lastReviewedAt: now,
+      lastDecayAt: now,
       reinforcements: 0,
       runCount: status === 'nascent' ? 0 : 1,
       risk,
-      requiredTrustLevel: risk === 'high' || risk === 'critical' ? 'bounded_auto' : 'supervised_auto',
+      requiredTrustLevel: risk === 'none' || risk === 'low'
+        ? 'suggest'
+        : risk === 'medium' ? 'supervised_auto' : 'bounded_auto',
       metrics: {
         ...initializeDesireMetrics(),
         peakStrength: strength,
@@ -299,16 +338,12 @@ export async function handleCreateDesire(req: UnifiedRequest): Promise<UnifiedRe
       completionCriteria: completionCriteria || (goalType === 'recurring'
         ? 'This is a recurring desire - it cycles continuously and is never fully complete.'
         : undefined),
-      tags: tags.length > 0 ? tags : undefined,
+      tags: tags.length > 0 ? [...new Set(tags.map(tag => tag.trim()).filter(Boolean))].slice(0, 20) : undefined,
       userId: user.username,
     };
 
-    // Save to flat-file storage
+    // The folder manifest is the one canonical desire record.
     await saveDesire(desire, user.username);
-
-    // Create folder-based storage structure
-    await createDesireFolder(desire.id, user.username);
-    await saveDesireManifest(desire, user.username);
 
     // Add initial scratchpad entry
     await addScratchpadEntryToFolder(desire.id, {
@@ -340,9 +375,20 @@ export async function handleCreateDesire(req: UnifiedRequest): Promise<UnifiedRe
 
     console.log(`[agency-handler] Desire created: "${desire.title}" (${desire.id})`);
 
+    const planningTask = desire.status === 'pending'
+      ? await submitDesireAgent({
+          operation: 'plan',
+          username: user.username,
+          desireId: desire.id,
+          source: 'user',
+          idempotencyKey: `desire-plan:${desire.id}:manual-create`,
+          metadata: { producer: 'desire-manual-create' },
+        })
+      : undefined;
+
     return {
       status: 201,
-      data: { desire, success: true },
+      data: { desire, taskId: planningTask?.id, success: true },
     };
   } catch (error) {
     console.error('[agency-handler] Error creating desire:', error);
@@ -367,6 +413,9 @@ export async function handleUpdateDesire(req: UnifiedRequest): Promise<UnifiedRe
       error: 'Authentication required to update desire',
     };
   }
+  if (user.role !== 'owner') {
+    return { status: 403, error: 'Owner role required to update desires.' };
+  }
 
   const id = params?.id;
   if (!id) {
@@ -385,23 +434,58 @@ export async function handleUpdateDesire(req: UnifiedRequest): Promise<UnifiedRe
       };
     }
 
-    const updates = (body || {}) as Partial<Desire>;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return { status: 400, error: 'A desire update object is required.' };
+    }
+    const editableFields = new Set([
+      'title', 'description', 'reason', 'goalType', 'completionCriteria', 'tags', 'decayRate',
+    ]);
+    const unsupported = Object.keys(body).filter(key => !editableFields.has(key));
+    if (unsupported.length > 0) {
+      return { status: 400, error: `Lifecycle and execution fields cannot be edited here: ${unsupported.join(', ')}` };
+    }
+    const updates = body as Partial<Pick<Desire,
+      'title' | 'description' | 'reason' | 'goalType' | 'completionCriteria' | 'tags' | 'decayRate'>>;
+    if (updates.title !== undefined && (typeof updates.title !== 'string' || !updates.title.trim())) {
+      return { status: 400, error: 'title must be a non-empty string.' };
+    }
+    if (updates.description !== undefined && (typeof updates.description !== 'string' || !updates.description.trim())) {
+      return { status: 400, error: 'description must be a non-empty string.' };
+    }
+    if (updates.reason !== undefined && (typeof updates.reason !== 'string' || !updates.reason.trim())) {
+      return { status: 400, error: 'reason must be a non-empty string.' };
+    }
+    if (updates.goalType !== undefined && !['one_time', 'recurring', 'long_running'].includes(updates.goalType)) {
+      return { status: 400, error: 'goalType must be one_time, recurring, or long_running.' };
+    }
+    if (updates.completionCriteria !== undefined && typeof updates.completionCriteria !== 'string') {
+      return { status: 400, error: 'completionCriteria must be a string.' };
+    }
+    if (updates.tags !== undefined
+      && (!Array.isArray(updates.tags) || updates.tags.some(tag => typeof tag !== 'string'))) {
+      return { status: 400, error: 'tags must be an array of strings.' };
+    }
+    if (updates.decayRate !== undefined
+      && (typeof updates.decayRate !== 'number' || !Number.isFinite(updates.decayRate)
+        || updates.decayRate < 0 || updates.decayRate > 1)) {
+      return { status: 400, error: 'decayRate must be between 0 and 1.' };
+    }
     const now = new Date().toISOString();
-    const oldStatus = desire.status;
 
     const updatedDesire: Desire = {
       ...desire,
       ...updates,
-      id: desire.id, // Don't allow changing ID
+      title: updates.title?.trim() || desire.title,
+      description: updates.description?.trim() || desire.description,
+      reason: updates.reason?.trim() || desire.reason,
       updatedAt: now,
+      metrics: {
+        ...(desire.metrics || initializeDesireMetrics()),
+        lastActivityAt: now,
+      },
     };
 
-    // If status changed, use moveDesire
-    if (updates.status && updates.status !== oldStatus) {
-      await moveDesire(updatedDesire, oldStatus, updates.status as DesireStatus, user.username);
-    } else {
-      await saveDesire(updatedDesire, user.username);
-    }
+    await saveDesire(updatedDesire, user.username);
 
     audit({
       category: 'agent',
@@ -552,7 +636,8 @@ export async function handleApproveDesire(req: UnifiedRequest): Promise<UnifiedR
 
     let executionTaskId: string | undefined;
     if (desire.plan?.steps?.length) {
-      const task = await submitDesireExecution({
+      const task = await submitDesireAgent({
+        operation: 'execute',
         username: user.username,
         desireId: id,
         source: 'user',
@@ -638,6 +723,9 @@ export async function handleRejectDesire(req: UnifiedRequest): Promise<UnifiedRe
       'evaluating',
       'planning',
       'nascent',
+      'questioning',
+      'needs_attention',
+      'paused',
     ];
     if (!rejectableStatuses.includes(desire.status)) {
       return {
@@ -649,8 +737,10 @@ export async function handleRejectDesire(req: UnifiedRequest): Promise<UnifiedRe
     const now = new Date().toISOString();
     const oldStatus = desire.status;
     const updatedDesire: Desire = {
-      ...desire,
-      status: 'rejected',
+      ...archiveCurrentDesireCycle(desire),
+      status: 'archived',
+      currentStage: 'archived',
+      dispositionReason: reason,
       completedAt: now,
       updatedAt: now,
       rejectionHistory: [
@@ -664,12 +754,12 @@ export async function handleRejectDesire(req: UnifiedRequest): Promise<UnifiedRe
       ],
     };
 
-    await moveDesire(updatedDesire, oldStatus, 'rejected', user.username);
+    await moveDesire(updatedDesire, oldStatus, 'archived', user.username);
 
     audit({
       category: 'agent',
       level: 'info',
-      event: 'desire_rejected',
+      event: 'desire_archived_after_owner_denial',
       actor: user.username,
       details: {
         desireId: id,
@@ -734,31 +824,36 @@ export async function handleResetDesire(req: UnifiedRequest): Promise<UnifiedRes
       };
     }
 
-    const now = new Date().toISOString();
-    const oldStatus = desire.status;
-    const isStuck = desire.status === 'executing' && !!desire.execution?.startedAt;
-    let stuckDuration = 0;
-    if (isStuck) {
-      const startedAt = new Date(desire.execution!.startedAt).getTime();
-      stuckDuration = Math.floor((Date.now() - startedAt) / 1000 / 60);
+    if (desire.status === 'executing') {
+      return {
+        status: 409,
+        error: 'Cannot reset a desire while its Work Coordinator execution is active. Cancel that task first, then reset after the desire reaches outcome review.',
+      };
     }
 
+    const now = new Date().toISOString();
+    const oldStatus = desire.status;
     const updatedDesire: Desire = {
-      ...desire,
+      ...(targetStatus === 'planning' || targetStatus === 'pending'
+        ? archiveCurrentDesireCycle(desire)
+        : desire),
       status: targetStatus,
-      currentStage: stageForResetTarget(targetStatus),
+      currentStage: statusToStage(targetStatus),
       updatedAt: now,
-      execution: isStuck && desire.execution ? {
-        ...desire.execution,
-        // Preserve the legacy reset route payload until the execution status union is reconciled.
-        status: 'aborted' as DesireExecution['status'],
-        error: `Reset by user after ${stuckDuration} minutes`,
-        completedAt: now,
-      } : desire.execution,
       clarifyingQuestions: targetStatus === 'planning' ? undefined : desire.clarifyingQuestions,
     };
 
     await moveDesire(updatedDesire, oldStatus, targetStatus, user.username);
+    const planningTask = targetStatus === 'planning' || targetStatus === 'pending'
+      ? await submitDesireAgent({
+          operation: 'plan',
+          username: user.username,
+          desireId: id,
+          source: 'user',
+          idempotencyKey: `desire-plan:${id}:owner-reset:${now}`,
+          metadata: { producer: 'desire-owner-reset' },
+        })
+      : undefined;
 
     audit({
       category: 'agent',
@@ -770,22 +865,17 @@ export async function handleResetDesire(req: UnifiedRequest): Promise<UnifiedRes
         title: desire.title,
         oldStatus,
         newStatus: targetStatus,
-        wasStuck: isStuck,
-        stuckDuration: isStuck ? stuckDuration : undefined,
         reason: 'manual_reset',
       },
     });
 
-    const message = isStuck
-      ? `Unstuck "${desire.title}" from executing (was stuck for ${stuckDuration}m). Moved to ${targetStatus}.`
-      : `Reset "${desire.title}" from ${oldStatus} to ${targetStatus}.`;
+    const message = `Reset "${desire.title}" from ${oldStatus} to ${targetStatus}.`;
 
     return successResponse({
       success: true,
       desire: updatedDesire,
       message,
-      wasStuck: isStuck,
-      stuckDuration,
+      taskId: planningTask?.id,
     });
   } catch (error) {
     return {
@@ -912,7 +1002,9 @@ export async function handleRetryDesire(req: UnifiedRequest): Promise<UnifiedRes
     const now = new Date().toISOString();
     const oldStatus = desire.status;
 
-    const retryableStatuses: DesireStatus[] = ['failed', 'completed', 'rejected', 'abandoned', 'executing'];
+    const retryableStatuses: DesireStatus[] = [
+      'awaiting_review', 'needs_attention', 'failed', 'completed', 'rejected', 'abandoned',
+    ];
     if (!retryableStatuses.includes(oldStatus)) {
       return {
         status: 400,
@@ -953,23 +1045,29 @@ export async function handleRetryDesire(req: UnifiedRequest): Promise<UnifiedRes
       critique = critiqueParts.join('\n');
     }
 
-    const failCount = (desire.metrics?.executionFailCount || 0) + 1;
+    const failCount = desire.metrics?.executionFailCount || 0;
     const updatedDesire: Desire = {
-      ...desire,
+      ...archiveCurrentDesireCycle(desire),
       status: 'planning',
       userCritique: critique,
-      execution: undefined,
-      outcomeReview: review,
       updatedAt: now,
       currentStage: 'planning',
       metrics: {
         ...desire.metrics,
-        executionFailCount: failCount,
+        userCritiqueCount: (desire.metrics?.userCritiqueCount || 0) + 1,
         lastActivityAt: now,
       },
     };
 
     await moveDesire(updatedDesire, oldStatus, 'planning', user.username);
+    const planningTask = await submitDesireAgent({
+      operation: 'plan',
+      username: user.username,
+      desireId: id,
+      source: 'user',
+      idempotencyKey: `desire-plan:${id}:owner-retry:${now}`,
+      metadata: { producer: 'desire-owner-retry' },
+    });
 
     audit({
       category: 'agent',
@@ -994,6 +1092,7 @@ export async function handleRetryDesire(req: UnifiedRequest): Promise<UnifiedRes
       message: `Retrying "${desire.title}" (attempt #${failCount + 1}). Moved to planning with failure context.`,
       attemptNumber: failCount + 1,
       failureCategory: review?.failureCategory,
+      taskId: planningTask.id,
     });
   } catch (error) {
     return {
@@ -1022,7 +1121,7 @@ export async function handleAdvanceDesire(req: UnifiedRequest): Promise<UnifiedR
     return { status: 400, error: 'Desire ID is required' };
   }
 
-  const { newStatus } = body || {};
+  const { newStatus, reason } = body || {};
   if (!newStatus) {
     return { status: 400, error: 'newStatus is required' };
   }
@@ -1033,11 +1132,11 @@ export async function handleAdvanceDesire(req: UnifiedRequest): Promise<UnifiedR
       return { status: 404, error: 'Desire not found' };
     }
 
-    if (!ALL_STATUSES.includes(newStatus as DesireStatus)) {
+    if (typeof newStatus !== 'string' || !isDesireStatus(newStatus)) {
       return { status: 400, error: `Unknown desire status '${String(newStatus)}'.` };
     }
     const allowedTransitions = allowedOwnerAdvanceTargets(desire.status);
-    if (!canOwnerAdvanceDesire(desire.status, newStatus as DesireStatus)) {
+    if (!canOwnerAdvanceDesire(desire.status, newStatus)) {
       return {
         status: 400,
         error: `Cannot transition from '${desire.status}' to '${newStatus}'. Allowed: ${allowedTransitions.join(', ') || 'none'}`,
@@ -1047,14 +1146,29 @@ export async function handleAdvanceDesire(req: UnifiedRequest): Promise<UnifiedR
     const now = new Date().toISOString();
     const oldStatus = desire.status;
     const updatedDesire: Desire = {
-      ...desire,
-      status: newStatus as DesireStatus,
-      currentStage: statusToStage(newStatus as DesireStatus),
+      ...(newStatus === 'planning' || newStatus === 'pending' || newStatus === 'nascent'
+        ? archiveCurrentDesireCycle(desire)
+        : desire),
+      status: newStatus,
+      currentStage: statusToStage(newStatus),
       updatedAt: now,
       activatedAt: desire.activatedAt || now,
+      dispositionReason: newStatus === 'archived' || newStatus === 'paused'
+        ? (typeof reason === 'string' && reason.trim() ? reason.trim() : desire.dispositionReason)
+        : undefined,
     };
 
     await moveDesire(updatedDesire, oldStatus, newStatus, user.username);
+    const planningTask = newStatus === 'planning' || newStatus === 'pending'
+      ? await submitDesireAgent({
+          operation: 'plan',
+          username: user.username,
+          desireId: id,
+          source: 'user',
+          idempotencyKey: `desire-plan:${id}:owner-advance:${now}`,
+          metadata: { producer: 'desire-owner-advance' },
+        })
+      : undefined;
 
     audit({
       category: 'agent',
@@ -1070,7 +1184,7 @@ export async function handleAdvanceDesire(req: UnifiedRequest): Promise<UnifiedR
       },
     });
 
-    return successResponse({ desire: updatedDesire, success: true });
+    return successResponse({ desire: updatedDesire, taskId: planningTask?.id, success: true });
   } catch (error) {
     return { status: 500, error: (error as Error).message };
   }
@@ -1118,23 +1232,48 @@ export async function handleAnswerDesireQuestions(req: UnifiedRequest): Promise<
     }
 
     const now = new Date().toISOString();
-    const formattedAnswers: ClarifyingAnswer[] = answers.map((answer) => ({
-      questionId: answer.questionId,
-      answer: answer.answer,
-      answeredAt: now,
-    }));
+    const declaredQuestionIds = new Set(desire.clarifyingQuestions.questions.map(question => question.id));
+    const incomingIds = new Set<string>();
+    for (const answer of answers) {
+      if (!answer || typeof answer.questionId !== 'string' || typeof answer.answer !== 'string') {
+        return { status: 400, error: 'Each answer requires a questionId and answer string.' };
+      }
+      if (!declaredQuestionIds.has(answer.questionId)) {
+        return { status: 400, error: `Unknown clarifying question '${answer.questionId}'.` };
+      }
+      if (incomingIds.has(answer.questionId)) {
+        return { status: 400, error: `Duplicate answer for clarifying question '${answer.questionId}'.` };
+      }
+      incomingIds.add(answer.questionId);
+    }
+    const answerMap = new Map(
+      (desire.clarifyingQuestions.answers || [])
+        .filter(answer => declaredQuestionIds.has(answer.questionId))
+        .map(answer => [answer.questionId, answer] as const),
+    );
+    for (const answer of answers) {
+      const value = answer.answer.trim();
+      if (value) {
+        answerMap.set(answer.questionId, { questionId: answer.questionId, answer: value, answeredAt: now });
+      } else {
+        answerMap.delete(answer.questionId);
+      }
+    }
+    const formattedAnswers: ClarifyingAnswer[] = [...answerMap.values()];
 
     const requiredQuestionIds = desire.clarifyingQuestions.questions
       .filter((question) => question.required)
       .map((question) => question.id);
-    const answeredQuestionIds = new Set(formattedAnswers.map((answer) => answer.questionId));
+    const answeredQuestionIds = new Set(
+      formattedAnswers.filter(answer => answer.answer.trim()).map((answer) => answer.questionId),
+    );
     const missingRequired = requiredQuestionIds.filter((questionId) => !answeredQuestionIds.has(questionId));
 
     if (missingRequired.length > 0) {
       return {
         status: 400,
+        error: 'Missing required answers',
         data: {
-          error: 'Missing required answers',
           missingQuestionIds: missingRequired,
         },
       };
@@ -1150,9 +1289,32 @@ export async function handleAnswerDesireQuestions(req: UnifiedRequest): Promise<
       status: 'planning',
       currentStage: 'planning',
       updatedAt: now,
+      metrics: {
+        ...(desire.metrics || initializeDesireMetrics()),
+        userInputCount: (desire.metrics?.userInputCount || 0) + 1,
+        lastActivityAt: now,
+      },
     };
 
     await saveDesireManifest(updatedDesire, user.username);
+    await addScratchpadEntryToFolder(id, {
+      timestamp: now,
+      type: 'questions_answered',
+      description: `Owner answered ${formattedAnswers.length} clarifying question(s).`,
+      actor: 'user',
+      data: {
+        questionIds: formattedAnswers.map(answer => answer.questionId),
+        idempotencyKey: `desire-questions:${id}:${desire.clarifyingQuestions.askedAt || 'unknown'}`,
+      },
+    }, user.username);
+    const planningTask = await submitDesireAgent({
+      operation: 'plan',
+      username: user.username,
+      desireId: id,
+      source: 'user',
+      idempotencyKey: `desire-plan:${id}:${now}`,
+      metadata: { producer: 'desire-questions-answered' },
+    });
 
     audit({
       category: 'agent',
@@ -1177,6 +1339,7 @@ export async function handleAnswerDesireQuestions(req: UnifiedRequest): Promise<
     return successResponse({
       success: true,
       desire: updatedDesire,
+      taskId: planningTask.id,
       message: `Answers submitted. Generating plan for "${desire.title}"...`,
     });
   } catch (error) {
@@ -1211,20 +1374,14 @@ export async function handleCheckinDesire(req: UnifiedRequest): Promise<UnifiedR
       return { status: 400, error: 'Check-ins are only available for long-running goals.' };
     }
 
-    const task = await submitCoordinatorWork({
-      type: 'desire_checkin',
-      handler: 'agency.desire-checkin',
-      resource: 'local-llm',
+    const task = await submitDesireAgent({
+      operation: 'checkin',
       source: 'user',
       priority: 'high',
-      input: {
-        desireId: id,
-        checkProgress: true,
-        force,
-      },
+      desireId: id,
+      force,
       username: user.username,
-      maxAttempts: 2,
-      idempotencyKey: `desire-checkin:${id}`,
+      idempotencyKey: `desire-checkin:${id}:${force ? 'force' : 'manual'}:${desire.goalProgress?.lastCheckinAt || 'initial'}`,
       metadata: { producer: 'agency-api', desireId: id },
     });
 
@@ -1287,7 +1444,7 @@ export async function handleConfirmCompleteDesire(req: UnifiedRequest): Promise<
       return { status: 404, error: 'Desire not found' };
     }
 
-    const confirmableStatuses = ['executing', 'awaiting_review', 'outcome_review'];
+    const confirmableStatuses: DesireStatus[] = ['awaiting_review'];
     if (!confirmableStatuses.includes(desire.status)) {
       return {
         status: 400,
@@ -1296,44 +1453,23 @@ export async function handleConfirmCompleteDesire(req: UnifiedRequest): Promise<
     }
 
     const now = new Date().toISOString();
-    const oldStatus = desire.status;
-    const updatedDesire = {
-      ...desire,
-      status: 'completed' as const,
-      updatedAt: now,
-      completedAt: now,
-      metrics: desire.metrics ? {
-        ...desire.metrics,
-        userApprovalCount: desire.metrics.userApprovalCount + 1,
-        completionCount: desire.metrics.completionCount + 1,
-      } : undefined,
-      outcomeReview: desire.outcomeReview ? {
-        ...desire.outcomeReview,
-        userConfirmed: true,
-        userConfirmedAt: now,
-        verdict: 'completed' as const,
-      } : {
-        id: `outcome-${desire.id}-${Date.now()}`,
-        verdict: 'completed' as const,
-        reasoning: 'User confirmed outcome is satisfactory',
-        successScore: 1.0,
-        lessonsLearned: [],
-        reviewedAt: now,
-        notifyUser: false,
-        userConfirmed: true,
-        userConfirmedAt: now,
-      },
-    } as Desire;
-
-    await moveDesire(updatedDesire, oldStatus, 'completed', user.username);
-
-    await addScratchpadEntryToFolder(id, {
-      timestamp: now,
-      type: 'completed',
-      description: 'User confirmed the outcome is satisfactory',
-      actor: 'user',
-      data: { fromStatus: oldStatus },
-    }, user.username);
+    const review: DesireOutcomeReview = {
+      ...(desire.outcomeReview || {} as DesireOutcomeReview),
+      id: desire.outcomeReview?.id || generateOutcomeReviewId(desire.id),
+      verdict: 'completed',
+      reasoning: 'Installation owner explicitly confirmed that the outcome is satisfactory.',
+      successScore: 1,
+      failureCategory: 'none',
+      isFixableBug: false,
+      lessonsLearned: desire.outcomeReview?.lessonsLearned || [],
+      reviewedAt: now,
+      notifyUser: false,
+      completionCriteriaMet: true,
+      userConfirmed: true,
+      userConfirmedAt: now,
+    };
+    const applied = await applyDesireOutcomeReview(desire, review, user.username);
+    const updatedDesire = applied.desire;
 
     audit({
       category: 'agent',
@@ -1343,7 +1479,8 @@ export async function handleConfirmCompleteDesire(req: UnifiedRequest): Promise<
       details: {
         desireId: id,
         title: desire.title,
-        fromStatus: oldStatus,
+        fromStatus: desire.status,
+        action: applied.action,
       },
     });
 
@@ -1357,7 +1494,7 @@ export async function handleConfirmCompleteDesire(req: UnifiedRequest): Promise<
     return successResponse({
       success: true,
       desire: updatedDesire,
-      message: `"${desire.title}" marked as complete. Great work!`,
+      message: applied.summary,
     });
   } catch (error) {
     return { status: 500, error: (error as Error).message };
@@ -1398,7 +1535,8 @@ export async function handleExecuteDesire(req: UnifiedRequest): Promise<UnifiedR
       };
     }
 
-    const task = await submitDesireExecution({
+    const task = await submitDesireAgent({
+      operation: 'execute',
       username: user.username,
       desireId: id,
       source: 'user',
@@ -1458,11 +1596,20 @@ export async function handleDesireFeedback(req: UnifiedRequest): Promise<Unified
   if (!message || typeof message !== 'string' || message.trim().length === 0) {
     return { status: 400, error: 'Message is required' };
   }
+  if (!['revise', 'continue', 'question'].includes(action)) {
+    return { status: 400, error: 'action must be revise, continue, or question.' };
+  }
 
   try {
     const desire = await loadDesire(id, user.username);
     if (!desire) {
       return { status: 404, error: 'Desire not found' };
+    }
+    if (desire.status === 'executing') {
+      return {
+        status: 409,
+        error: 'Cannot revise feedback while the Work Coordinator execution is active. Cancel that task first and wait for outcome review.',
+      };
     }
 
     const now = new Date().toISOString();
@@ -1489,7 +1636,6 @@ export async function handleDesireFeedback(req: UnifiedRequest): Promise<Unified
         shouldTriggerPipeline = true;
         break;
       case 'approved':
-      case 'executing':
       case 'awaiting_review':
         nextStatus = 'planning';
         responseMessage = 'Feedback received. Revising the plan based on your input.';
@@ -1512,9 +1658,9 @@ export async function handleDesireFeedback(req: UnifiedRequest): Promise<Unified
     }
 
     const updatedDesire = {
-      ...desire,
+      ...(nextStatus === 'planning' ? archiveCurrentDesireCycle(desire) : desire),
       status: nextStatus,
-      currentStage: nextStatus as DesireStage,
+      currentStage: statusToStage(nextStatus),
       userCritique: newCritique,
       critiqueAt: now,
       updatedAt: now,
@@ -1588,6 +1734,17 @@ export async function handleDesireFeedback(req: UnifiedRequest): Promise<Unified
       }
     );
 
+    const planningTask = shouldTriggerPipeline
+      ? await submitDesireAgent({
+          operation: 'plan',
+          username: user.username,
+          desireId: id,
+          source: 'user',
+          idempotencyKey: `desire-plan:${id}:feedback:${now}`,
+          metadata: { producer: 'desire-feedback' },
+        })
+      : undefined;
+
     if (shouldTriggerPipeline) {
       proposalEvents.emit('proposal-resolved', {
         username: user.username,
@@ -1604,6 +1761,7 @@ export async function handleDesireFeedback(req: UnifiedRequest): Promise<Unified
       previousStatus: desire.status,
       newStatus: nextStatus,
       pipelineTriggered: shouldTriggerPipeline,
+      taskId: planningTask?.id,
     });
   } catch (error) {
     return { status: 500, error: (error as Error).message };
@@ -1638,6 +1796,24 @@ export async function handleReadyToPlanDesire(req: UnifiedRequest): Promise<Unif
       };
     }
 
+    const requiredQuestions = desire.clarifyingQuestions?.questions
+      .filter(question => question.required) || [];
+    const answeredQuestionIds = new Set(
+      (desire.clarifyingQuestions?.answers || [])
+        .filter(answer => answer.answer.trim())
+        .map(answer => answer.questionId),
+    );
+    const missingRequired = requiredQuestions
+      .map(question => question.id)
+      .filter(questionId => !answeredQuestionIds.has(questionId));
+    if (missingRequired.length > 0) {
+      return {
+        status: 400,
+        error: 'Required clarifying questions must be answered first',
+        data: { missingQuestionIds: missingRequired },
+      };
+    }
+
     const now = new Date().toISOString();
     const updatedDesire: Desire = {
       ...desire,
@@ -1651,6 +1827,14 @@ export async function handleReadyToPlanDesire(req: UnifiedRequest): Promise<Unif
     };
 
     await saveDesireManifest(updatedDesire, user.username);
+    const planningTask = await submitDesireAgent({
+      operation: 'plan',
+      username: user.username,
+      desireId: id,
+      source: 'user',
+      idempotencyKey: `desire-plan:${id}:${now}`,
+      metadata: { producer: 'desire-ready-to-plan' },
+    });
 
     audit({
       category: 'agent',
@@ -1674,6 +1858,7 @@ export async function handleReadyToPlanDesire(req: UnifiedRequest): Promise<Unif
     return successResponse({
       success: true,
       desire: updatedDesire,
+      taskId: planningTask.id,
       message: `Ready for planning. Generating plan for "${desire.title}"...`,
     });
   } catch (error) {
@@ -1711,7 +1896,7 @@ export async function handleRequestDesireRevision(req: UnifiedRequest): Promise<
       return { status: 404, error: 'Desire not found' };
     }
 
-    const revisableStatuses = ['executing', 'awaiting_review', 'outcome_review', 'completed'];
+    const revisableStatuses: DesireStatus[] = ['awaiting_review', 'needs_attention', 'completed'];
     if (!revisableStatuses.includes(desire.status)) {
       return {
         status: 400,
@@ -1722,63 +1907,31 @@ export async function handleRequestDesireRevision(req: UnifiedRequest): Promise<
     const now = new Date().toISOString();
     const oldStatus = desire.status;
     const trimmedFeedback = feedback.trim();
-    const planHistory = [...(desire.planHistory || [])] as Array<NonNullable<Desire['plan']> & Record<string, unknown>>;
-    if (desire.plan) {
-      planHistory.push({
-        ...desire.plan,
-        archivedAt: now,
-        archiveReason: 'user_revision_request',
-      });
-    }
-
-    const desireWithExecutionHistory = desire as Desire & {
-      executionHistory?: Array<DesireExecution & Record<string, unknown>>;
-    };
-    const executionHistory = [...(desireWithExecutionHistory.executionHistory || [])];
-    if (desire.execution) {
-      executionHistory.push({
-        ...desire.execution,
-        archivedAt: now,
-        archiveReason: 'user_revision_request',
-        userFeedback: trimmedFeedback,
-      });
-    }
+    const archivedDesire = archiveCurrentDesireCycle(desire);
 
     const updatedDesire = {
-      ...desire,
+      ...archivedDesire,
       status: 'planning' as DesireStatus,
+      currentStage: 'planning',
       updatedAt: now,
       userCritique: trimmedFeedback,
       critiqueAt: now,
-      planHistory,
-      executionHistory,
-      execution: undefined,
       metrics: desire.metrics ? {
         ...desire.metrics,
         userCritiqueCount: desire.metrics.userCritiqueCount + 1,
-        cycleCount: desire.metrics.cycleCount + 1,
+        lastActivityAt: now,
       } : undefined,
-      outcomeReview: desire.outcomeReview ? {
-        ...desire.outcomeReview,
-        verdict: 'retry' as const,
-        userRequestedRevision: true,
-        userRevisionFeedback: trimmedFeedback,
-        userRevisionAt: now,
-      } : {
-        id: `outcome-${desire.id}-${Date.now()}`,
-        verdict: 'retry' as const,
-        reasoning: 'User requested revision',
-        successScore: 0.5,
-        lessonsLearned: [trimmedFeedback],
-        reviewedAt: now,
-        notifyUser: false,
-        userRequestedRevision: true,
-        userRevisionFeedback: trimmedFeedback,
-        userRevisionAt: now,
-      },
-    } as Desire & { executionHistory?: Array<DesireExecution & Record<string, unknown>> };
+    } as Desire;
 
     await moveDesire(updatedDesire, oldStatus, 'planning', user.username);
+    const planningTask = await submitDesireAgent({
+      operation: 'plan',
+      username: user.username,
+      desireId: id,
+      source: 'user',
+      idempotencyKey: `desire-plan:${id}:owner-outcome-revision:${now}`,
+      metadata: { producer: 'desire-owner-outcome-revision' },
+    });
 
     await addScratchpadEntryToFolder(id, {
       timestamp: now,
@@ -1789,7 +1942,7 @@ export async function handleRequestDesireRevision(req: UnifiedRequest): Promise<
         fromStatus: oldStatus,
         feedback: trimmedFeedback,
         planVersion: desire.plan?.version || 1,
-        executionAttempt: executionHistory.length,
+        executionAttempt: archivedDesire.executionHistory?.length || 0,
       },
     }, user.username);
 
@@ -1804,7 +1957,7 @@ export async function handleRequestDesireRevision(req: UnifiedRequest): Promise<
         fromStatus: oldStatus,
         feedback: feedback.substring(0, 200),
         planVersion: desire.plan?.version || 1,
-        executionAttemptCount: executionHistory.length,
+        executionAttemptCount: archivedDesire.executionHistory?.length || 0,
       },
     });
 
@@ -1821,6 +1974,7 @@ export async function handleRequestDesireRevision(req: UnifiedRequest): Promise<
       desire: updatedDesire,
       message: `Revision requested for "${desire.title}". A new plan will be generated incorporating your feedback.`,
       nextStep: 'The planner will automatically create a new plan. You can also manually trigger plan generation.',
+      taskId: planningTask.id,
     });
   } catch (error) {
     return { status: 500, error: (error as Error).message };
@@ -1868,23 +2022,23 @@ export async function handleReviseDesire(req: UnifiedRequest): Promise<UnifiedRe
     const now = new Date().toISOString();
     const oldStatus = desire.status;
     const hasPlan = !!desire.plan;
-    const planHistory = [...(desire.planHistory || [])];
-    if (hasPlan && desire.plan) {
-      planHistory.push(desire.plan);
-    }
 
     const targetStatus: DesireStatus = hasPlan
       ? 'planning'
       : (desire.status === 'nascent' ? 'pending' : desire.status);
 
     const updatedDesire: Desire = {
-      ...desire,
+      ...(hasPlan ? archiveCurrentDesireCycle(desire) : desire),
       status: targetStatus,
+      currentStage: statusToStage(targetStatus),
       updatedAt: now,
-      planHistory,
       userCritique: critique.trim(),
       critiqueAt: now,
-      review: hasPlan ? undefined : desire.review,
+      metrics: {
+        ...(desire.metrics || initializeDesireMetrics()),
+        userCritiqueCount: (desire.metrics?.userCritiqueCount || 0) + 1,
+        lastActivityAt: now,
+      },
     };
 
     if (oldStatus !== targetStatus) {
@@ -1892,6 +2046,16 @@ export async function handleReviseDesire(req: UnifiedRequest): Promise<UnifiedRe
     } else {
       await saveDesire(updatedDesire, user.username);
     }
+    const planningTask = targetStatus === 'planning' || targetStatus === 'pending'
+      ? await submitDesireAgent({
+          operation: 'plan',
+          username: user.username,
+          desireId: id,
+          source: 'user',
+          idempotencyKey: `desire-plan:${id}:owner-critique:${now}`,
+          metadata: { producer: 'desire-owner-critique' },
+        })
+      : undefined;
 
     audit({
       category: 'agent',
@@ -1906,19 +2070,22 @@ export async function handleReviseDesire(req: UnifiedRequest): Promise<UnifiedRe
         critique: critique.substring(0, 200),
         hadPlan: hasPlan,
         planVersion: hasPlan ? (desire.plan?.version || 1) : 0,
-        historyCount: planHistory.length,
+        historyCount: updatedDesire.planHistory?.length || 0,
       },
     });
 
     const message = hasPlan
       ? 'Plan revision requested. The planner will generate a new plan based on your critique.'
-      : 'Instructions saved. Click "Generate Plan" to create a plan using your feedback.';
+      : planningTask
+        ? 'Instructions saved and planning queued.'
+        : 'Instructions saved.';
 
     return successResponse({
       success: true,
       desire: updatedDesire,
       message,
       planVersion: hasPlan ? ((desire.plan?.version || 1) + 1) : 1,
+      taskId: planningTask?.id,
     });
   } catch (error) {
     return { status: 500, error: (error as Error).message };

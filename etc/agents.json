@@ -1,6 +1,6 @@
 {
   "version": "1.1.0",
-  "revision": 8,
+  "revision": 9,
   "_TEMPLATE_WARNING": "══════════════════════════════════════════════════════════════════════════",
   "_TEMPLATE_WARNING2": "██ THIS IS A SYSTEM TEMPLATE - DO NOT USE DIRECTLY FOR INDIVIDUAL USERS ██",
   "_TEMPLATE_WARNING3": "██ This file is COPIED to user profiles, then the user's copy is used   ██",
@@ -308,71 +308,19 @@
       ],
       "startupPolicy": "skip"
     },
-    "desire-generator": {
-      "id": "desire-generator",
+    "desire-agent": {
+      "id": "desire-agent",
+      "displayName": "Desire Agent",
+      "description": "Sole controller for reviewing persisted history, nurturing desires, planning approved work, executing it, and reviewing outcomes.",
       "enabled": true,
       "type": "manual",
       "priority": "normal",
       "agentPath": "desire-generator/cli.ts",
       "usesLLM": true,
       "maxRetries": 2,
-      "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
+      "comment": "The only public Desire System trigger. Run it manually, from Sleep Workflow, or from Robot Autonomy; its internal stages are not independently registered.",
       "lifecycle": "scheduled-work",
       "handler": "agent.desire-generator",
-      "allowedModes": [
-        "reactive",
-        "semi",
-        "full"
-      ],
-      "startupPolicy": "skip"
-    },
-    "desire-executor": {
-      "id": "desire-executor",
-      "enabled": true,
-      "type": "manual",
-      "priority": "normal",
-      "agentPath": "desire-executor/cli.ts",
-      "usesLLM": true,
-      "maxRetries": 0,
-      "comment": "Sleep Workflow child. Work Coordinator admits one Core Agency execution path; external effects are never retried automatically.",
-      "lifecycle": "scheduled-work",
-      "handler": "agency.desire-execute",
-      "allowedModes": [
-        "reactive",
-        "semi",
-        "full"
-      ],
-      "startupPolicy": "skip"
-    },
-    "desire-planner": {
-      "id": "desire-planner",
-      "enabled": true,
-      "type": "manual",
-      "priority": "normal",
-      "agentPath": "desire-planner/cli.ts",
-      "usesLLM": true,
-      "maxRetries": 2,
-      "comment": "Sleep Workflow child. It can still be run manually, but has no independent Semi or Full autonomy timer.",
-      "lifecycle": "scheduled-work",
-      "handler": "agent.desire-planner",
-      "allowedModes": [
-        "reactive",
-        "semi",
-        "full"
-      ],
-      "startupPolicy": "skip"
-    },
-    "desire-outcome-reviewer": {
-      "id": "desire-outcome-reviewer",
-      "enabled": true,
-      "type": "manual",
-      "priority": "normal",
-      "agentPath": "desire-outcome-reviewer/cli.ts",
-      "usesLLM": true,
-      "maxRetries": 0,
-      "comment": "Sleep Workflow child. Work Coordinator admits one Core Agency review and transition path; remote review work is never retried automatically.",
-      "lifecycle": "scheduled-work",
-      "handler": "agency.desire-outcome-review",
       "allowedModes": [
         "reactive",
         "semi",

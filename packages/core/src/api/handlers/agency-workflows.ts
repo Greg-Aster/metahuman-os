@@ -17,9 +17,7 @@ import {
 } from '../../agency/desire-execution-service.js';
 import {
   getQueueManager,
-  submitDesirePlanning,
-  submitDesireExecution,
-  submitDesireOutcomeReview,
+  submitDesireAgent,
   type QueueEvent,
 } from '../../queue/index.js';
 
@@ -101,7 +99,8 @@ export async function handleGenerateDesirePlan(req: UnifiedRequest): Promise<Uni
   try {
     rejectInlineCritique(req);
     const desire = await loadPlannableDesire(req.user.username, id);
-    const task = await submitDesirePlanning({
+    const task = await submitDesireAgent({
+      operation: 'plan',
       username: req.user.username,
       desireId: id,
       source: 'user',
@@ -156,7 +155,8 @@ async function* generatePlanStream(req: UnifiedRequest): AsyncIterable<string> {
       hasPlan: Boolean(desire.plan),
     });
 
-    const task = await submitDesirePlanning({
+    const task = await submitDesireAgent({
+      operation: 'plan',
       username: req.user.username,
       desireId: id,
       source: 'user',
@@ -256,7 +256,8 @@ export async function handleRunDesire(req: UnifiedRequest): Promise<UnifiedRespo
   try {
     console.log(`${RUN_LOG_PREFIX} 🚀 Run requested for: ${id}`);
     const desire = await loadExecutableDesire(req.user.username, id);
-    const task = await submitDesireExecution({
+    const task = await submitDesireAgent({
+      operation: 'execute',
       username: req.user.username,
       desireId: id,
       source: 'user',
@@ -310,7 +311,8 @@ async function* runDesireStream(req: UnifiedRequest): AsyncIterable<string> {
       goal: desire.plan.operatorGoal,
     });
 
-    const task = await submitDesireExecution({
+    const task = await submitDesireAgent({
+      operation: 'execute',
       username: req.user.username,
       desireId: id,
       source: 'user',
@@ -406,7 +408,8 @@ export async function handleOutcomeReview(req: UnifiedRequest): Promise<UnifiedR
 
   try {
     const desire = await loadReviewableDesire(req.user.username, id);
-    const task = await submitDesireOutcomeReview({
+    const task = await submitDesireAgent({
+      operation: 'review',
       username: req.user.username,
       desireId: id,
       source: 'user',
@@ -445,7 +448,8 @@ async function* outcomeReviewStream(req: UnifiedRequest): AsyncIterable<string> 
     yield dataSse({ type: 'phase', phase: 'Loading desire...' });
     const desire = await loadReviewableDesire(req.user.username, id);
     yield dataSse({ type: 'log', message: `Found: "${desire.title}" (status: ${desire.status})` });
-    const task = await submitDesireOutcomeReview({
+    const task = await submitDesireAgent({
+      operation: 'review',
       username: req.user.username,
       desireId: id,
       source: 'user',

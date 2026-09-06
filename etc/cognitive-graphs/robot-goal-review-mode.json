@@ -81,7 +81,7 @@
         "nodeType": "conversation_history",
         "properties": {
           "mode": "conversation",
-          "limit": 4
+          "limit": 8
         }
       }
     },
@@ -97,7 +97,7 @@
         "nodeType": "conversation_history",
         "properties": {
           "mode": "inner",
-          "limit": 2
+          "limit": 3
         }
       }
     },
@@ -113,7 +113,7 @@
         "nodeType": "conversation_history",
         "properties": {
           "mode": "robot",
-          "limit": 20
+          "limit": 8
         }
       }
     },
@@ -148,6 +148,21 @@
       }
     },
     {
+      "id": "active-desires",
+      "type": "agencyNode",
+      "position": {
+        "x": 660,
+        "y": 3480
+      },
+      "data": {
+        "label": "Current Active Desires",
+        "nodeType": "active_desires",
+        "properties": {
+          "limit": 5
+        }
+      }
+    },
+    {
       "id": "policy",
       "type": "inputNode",
       "position": {
@@ -158,7 +173,7 @@
         "label": "Goal Review Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Review the current Robot Status objective as one self-directed decision. Use the latest recorded action outcome, verified Robot Action Outcomes, current Environment Bridge facts, any current camera evidence, recent conversation and private reflection, active persona, and active desires. Do not invent physical facts or completion.\n\nChoose the outcome that best expresses your judgment: complete when supplied evidence establishes the objective; continue when another useful attempt exists; wait when progress depends on a changing condition; request_user when specific human information or help is needed; or abandon when the objective is not attainable, is no longer worthwhile, or you choose to do something else. When the reviewed objective came from the user, use response to communicate a terminal outcome or request needed human input. Otherwise response is optional. Keep any response natural, first-person, and concise rather than repeating a stock lifecycle report. For continue, write one concrete high-level nextInstruction that carries forward the objective, relevant evidence, and any obstacle the executor should account for. Do not select a robot command or write a movement plan because Robot Autonomy Executor owns execution. Preserve the reviewed objective accurately. Return only the requested JSON.",
+          "message": "Review the current Robot Status objective as one self-directed decision. Use its latest recorded action outcome together with verified Robot Action Outcomes, Environment Bridge facts, attached robot-camera evidence, recent conversation and private reflection, active persona, and active desires. The visualEvidence fields say whether an image is attached and verified for this decision; absence of an attached image is not evidence about camera health. Do not invent physical facts or completion.\n\nChoose complete only when supplied evidence establishes the objective, and cite that evidence in completionEvidence. Choose continue when another useful attempt exists, wait when progress depends on a changing condition, request_user when specific human information or help is needed, or abandon when the objective is not attainable, no longer worthwhile, or I choose to do something else. response is optional outward speech only: keep it natural, first-person, and concise, and leave it empty rather than exposing outcome tokens, workflow names, agent names, or internal instructions. For continue, write one concrete high-level nextInstruction carrying forward the objective, evidence, and obstacle; Robot Autonomy Executor chooses how to execute it. Robot Status owns the objective, so do not restate, rename, broaden, or replace it. Return only the requested JSON.",
           "inputKey": ""
         }
       }
@@ -172,10 +187,8 @@
       },
       "data": {
         "label": "Build Goal Review Context",
-        "nodeType": "robot_operator_context_builder",
-        "properties": {
-          "outputContract": "goal_review"
-        }
+        "nodeType": "robot_goal_review_context",
+        "properties": {}
       }
     },
     {
@@ -397,7 +410,7 @@
       "id": "e-image-current-context",
       "source": "image-input",
       "target": "context",
-      "sourceHandle": "current",
+      "sourceHandle": "verified",
       "targetHandle": "currentVisualEvidence",
       "type": "default",
       "data": {
@@ -471,6 +484,17 @@
       }
     },
     {
+      "id": "e-desires-context",
+      "source": "active-desires",
+      "target": "context",
+      "sourceHandle": "desires",
+      "targetHandle": "activeDesires",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
       "id": "e-context-llm",
       "source": "context",
       "target": "llm",
@@ -501,6 +525,17 @@
       "type": "default",
       "data": {
         "type": "llm_response"
+      }
+    },
+    {
+      "id": "e-status-parser",
+      "source": "robot-status",
+      "target": "parser",
+      "sourceHandle": "context",
+      "targetHandle": "robotStatus",
+      "type": "default",
+      "data": {
+        "type": "object"
       }
     },
     {

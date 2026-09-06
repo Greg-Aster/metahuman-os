@@ -140,29 +140,33 @@ function statusTask(
   if (!decision) return undefined
   const previousTask = previous?.task
   const userInstruction = cleanText(inputs.userInstruction, 4_000)
-  const instruction = cleanText(inputs.instruction, 4_000)
-    || (!userInstruction ? previousTask?.instruction ?? '' : '')
   const objective = cleanText(decision.objective, 1_000)
   if (!objective) return undefined
+  const sameObjective = previousTask?.objective === objective
+  const suppliedInstruction = cleanText(inputs.instruction, 4_000) || userInstruction
+  const newUserTurn = Boolean(userInstruction)
+  const instruction = newUserTurn
+    ? suppliedInstruction || objective
+    : sameObjective
+      ? previousTask?.instruction || suppliedInstruction || objective
+      : suppliedInstruction || objective
   const selected = taskAction(currentAction(inputs))
   const id = actionId(inputs)
   const terminal = isRecord(inputs.terminalFeedback)
     ? inputs.terminalFeedback as unknown as EnvironmentFeedback
     : null
   const bridgeRecord = isRecord(inputs.bridgeRecord) ? inputs.bridgeRecord : null
-  const newUserTurn = Boolean(userInstruction)
   const frame = selectedFrame(inputs.frames)
   const previousBaseline = !newUserTurn ? previousTask?.baselineFrame ?? null : null
-  const sameObjective = previousTask?.objective === objective
   return {
     objective,
     instruction: instruction || objective,
-    source: sameObjective
-      ? previousTask.source
-      : inputs.inputSource === 'autonomy'
-        ? 'autonomy'
-        : newUserTurn
-          ? 'user'
+    source: newUserTurn
+      ? 'user'
+      : sameObjective
+        ? previousTask.source
+        : inputs.inputSource === 'autonomy'
+          ? 'autonomy'
           : previousTask?.source || 'user',
     decision: {
       outcome: cleanText(decision.outcome, 80),

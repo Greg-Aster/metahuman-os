@@ -67,6 +67,7 @@ export const environmentImageInputNode = defineNode({
     { name: 'frames', label: 'Selected camera frames', type: 'array', description: 'Metadata for the camera frames this node selected.' },
     { name: 'rejectedCount', label: 'Rejected frames', type: 'number', description: 'Number of frames rejected because they were not valid supported JPEG data.' },
     { name: 'current', label: 'Current evidence available', type: 'boolean', description: 'Whether at least one selected frame belongs to this graph run.' },
+    { name: 'verified', label: 'Verified evidence available', type: 'boolean', description: 'Whether a selected frame either belongs to this graph run or matches the current Robot Status action result.' },
   ],
   presentation: {
     badges: [
@@ -79,7 +80,7 @@ export const environmentImageInputNode = defineNode({
       { output: 'rejectedCount', label: 'Rejected' },
     ],
   },
-  description: 'Checks camera frames received from the robot. For a new observation, it returns the current valid frame. After an action finishes, it can return the saved before-action frame and the current frame tagged with the same action or cycle ID. It sends no command, changes no status, and calls no model.',
+  description: 'Checks camera frames received from the robot. It returns a triggering frame or a saved frame that matches the current Robot Status action result, plus an optional saved before-action frame. It sends no command, changes no status, and calls no model.',
   async execute(inputs) {
     const candidates = framesFromInputs(inputs.visual, inputs.visuals);
     const valid = candidates.filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl));
@@ -94,6 +95,8 @@ export const environmentImageInputNode = defineNode({
       : null;
     const actionId = cleanText(inputs.actionId);
     const correlationId = cleanText(inputs.correlationId);
+    const taskActionId = cleanText(task?.feedback?.actionId) || cleanText(task?.actionId);
+    const taskHasTerminalResult = Boolean(task?.feedback && taskActionId);
     const baseline = terminalFeedback && task?.baselineFrame
       ? frameCache.get(task.baselineFrame.id)
       : undefined;
@@ -107,7 +110,12 @@ export const environmentImageInputNode = defineNode({
           );
         })
       : observationCurrent ? valid[0] : undefined;
-    const accepted = [baseline, current]
+    const correlatedActionResult = !observationCurrent && taskHasTerminalResult
+      ? [...valid].reverse().find(frame => (
+          cleanText(frame.metadata?.actionId) === taskActionId
+        ))
+      : undefined;
+    const accepted = [baseline, current, correlatedActionResult]
       .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
       .filter((frame, index, frames) => frames.findIndex(candidate => candidate.id === frame.id) === index);
     return {
@@ -118,6 +126,7 @@ export const environmentImageInputNode = defineNode({
       frames: accepted,
       rejectedCount: candidates.length - valid.length,
       current: Boolean(current),
+      verified: Boolean(current || correlatedActionResult),
     };
   },
 });

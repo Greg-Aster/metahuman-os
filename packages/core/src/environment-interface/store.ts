@@ -454,6 +454,7 @@ export function publishEnvironmentObservation(
     priority: 'high',
     input: {
       observation: bridgeObservation,
+      observationCurrent: true,
       actionContext,
       graph: options.graph,
       ttsGeneration: options.ttsGeneration,

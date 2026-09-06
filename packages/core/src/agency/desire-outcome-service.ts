@@ -17,6 +17,7 @@ export interface DesireOutcomeReviewResult {
   skipped: number
   desireIds: string[]
   actions: Record<string, number>
+  transitions: Array<{ desireId: string; action: string; status: Desire['status'] }>
 }
 
 export interface DesireOutcomeReviewDependencies {
@@ -80,6 +81,7 @@ export function createDesireOutcomeReviewer(
       skipped: 0,
       desireIds: [],
       actions: {},
+      transitions: [],
     }
 
     for (const candidate of desires) {
@@ -108,6 +110,11 @@ export function createDesireOutcomeReviewer(
         result.reviewed += 1
         result.desireIds.push(desire.id)
         result.actions[action] = (result.actions[action] || 0) + 1
+        result.transitions.push({
+          desireId: desire.id,
+          action,
+          status: reviewed.desire.status,
+        })
       } finally {
         activeReviews.delete(key)
       }

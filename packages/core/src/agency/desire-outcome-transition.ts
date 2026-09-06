@@ -1,24 +1,19 @@
 import {
   createScratchpadEntry,
   initializeDesireMetrics,
-  initializeScratchpadSummary,
-  updateScratchpadSummary,
   type Desire,
-  type DesireMetrics,
   type DesireOutcomeReview,
   type DesireScratchpadEntry,
 } from './types.js'
 import { loadConfig } from './config.js'
 import {
+  addScratchpadEntryToFolder,
   saveDesireManifest,
   saveDesireReviewToFolder,
 } from './storage.js'
 
 const CYCLE_RESET_STRENGTH = 0.3
-const CONTINUE_STRENGTH = 0.5
 const RETRY_STRENGTH_PENALTY = 0.1
-const RECURRING_CYCLE_THRESHOLD = 2
-const RECURRING_COMPLETION_THRESHOLD = 2
 
 export type DesireOutcomeAction =
   | 'completed'
@@ -26,7 +21,7 @@ export type DesireOutcomeAction =
   | 'continued'
   | 'milestone_advanced'
   | 'retry'
-  | 'abandoned'
+  | 'archived'
   | 'escalated'
 
 export interface AppliedDesireOutcome {
@@ -38,32 +33,9 @@ export interface AppliedDesireOutcome {
 
 export interface DesireOutcomeTransitionDependencies {
   loadConfig: typeof loadConfig
+  addScratchpadEntry: typeof addScratchpadEntryToFolder
   saveManifest: typeof saveDesireManifest
   saveReview: typeof saveDesireReviewToFolder
-}
-
-function inferDesireNature(metrics: DesireMetrics): 'recurring' | 'achievable' | 'aspirational' {
-  if (metrics.cycleCount > RECURRING_CYCLE_THRESHOLD
-    || metrics.completionCount > RECURRING_COMPLETION_THRESHOLD) {
-    return 'recurring'
-  }
-  if (metrics.completionCount <= 1 && metrics.executionAttemptCount <= 3) {
-    return 'achievable'
-  }
-  if (metrics.executionAttemptCount > 3 && metrics.completionCount === 0) {
-    return 'aspirational'
-  }
-  return 'achievable'
-}
-
-function withScratchpadEntry(desire: Desire, entry: DesireScratchpadEntry): Desire {
-  return {
-    ...desire,
-    scratchpad: updateScratchpadSummary(
-      desire.scratchpad || initializeScratchpadSummary(),
-      entry,
-    ),
-  }
 }
 
 function reviewEntry(review: DesireOutcomeReview, action: DesireOutcomeAction): DesireScratchpadEntry {
@@ -76,12 +48,36 @@ function reviewEntry(review: DesireOutcomeReview, action: DesireOutcomeAction): 
   )
 }
 
-function clearExecutionState(desire: Desire): Desire {
+/** Archive the current plan/execution/review receipts before another planning cycle. */
+export function archiveCurrentDesireCycle(desire: Desire): Desire {
+  const planHistory = [...(desire.planHistory || [])]
+  if (desire.plan && !planHistory.some(plan =>
+    plan.id === desire.plan!.id && plan.version === desire.plan!.version)) {
+    planHistory.push(desire.plan)
+  }
+  const reviewHistory = [...(desire.reviewHistory || [])]
+  if (desire.review && !reviewHistory.some(review => review.id === desire.review!.id)) {
+    reviewHistory.push(desire.review)
+  }
+  const executionHistory = [...(desire.executionHistory || [])]
+  if (desire.execution && !executionHistory.some(execution =>
+    execution.startedAt === desire.execution!.startedAt)) {
+    executionHistory.push(desire.execution)
+  }
+  const outcomeReviewHistory = [...(desire.outcomeReviewHistory || [])]
+  if (desire.outcomeReview && !outcomeReviewHistory.some(review => review.id === desire.outcomeReview!.id)) {
+    outcomeReviewHistory.push(desire.outcomeReview)
+  }
   return {
     ...desire,
+    planHistory,
+    reviewHistory,
+    executionHistory,
+    outcomeReviewHistory,
     execution: undefined,
     plan: undefined,
     review: undefined,
+    outcomeReview: undefined,
   }
 }
 
@@ -132,6 +128,8 @@ function baseReviewedDesire(
     ...desire,
     outcomeReview: review,
     updatedAt: now,
+    lastReviewedAt: now,
+    lastDecayAt: now,
     metrics: {
       ...metrics,
       lastActivityAt: now,
@@ -163,6 +161,7 @@ export async function applyDesireOutcomeReview(
 ): Promise<AppliedDesireOutcome> {
   const deps: DesireOutcomeTransitionDependencies = {
     loadConfig,
+    addScratchpadEntry: addScratchpadEntryToFolder,
     saveManifest: saveDesireManifest,
     saveReview: saveDesireReviewToFolder,
     ...dependencies,
@@ -181,21 +180,21 @@ export async function applyDesireOutcomeReview(
 
   if (review.isFixableBug) {
     action = 'escalated'
-    updated.status = 'awaiting_approval'
-    updated.currentStage = 'user_approval'
+    updated.status = 'needs_attention'
+    updated.currentStage = 'user_attention'
+    updated.dispositionReason = review.userMessage?.trim() || review.reasoning
     summary = `Review of "${desire.title}" found a possible system defect. User review is required; no repair task was created.`
   } else if (review.verdict === 'completed') {
     const metrics = updated.metrics || initializeDesireMetrics()
-    const nature = inferDesireNature(metrics)
     const completionCount = metrics.completionCount + 1
     updated.metrics = {
       ...metrics,
       completionCount,
     }
 
-    if (nature === 'recurring') {
+    if (desire.goalType === 'recurring') {
       action = 'recurring_reset'
-      updated = clearExecutionState(updated)
+      updated = archiveCurrentDesireCycle(updated)
       updated.status = 'nascent'
       updated.currentStage = 'nascent'
       updated.strength = CYCLE_RESET_STRENGTH
@@ -206,13 +205,17 @@ export async function applyDesireOutcomeReview(
         currentCycle: updated.metrics!.currentCycle + 1,
       }
       summary = `Completed a cycle of "${desire.title}" and reset the existing desire for its next cycle.`
-    } else if (nature === 'aspirational') {
-      action = 'continued'
-      updated = clearExecutionState(updated)
-      updated.status = 'pending'
-      updated.currentStage = 'strengthening'
-      updated.strength = review.adjustedStrength ?? CONTINUE_STRENGTH
-      summary = `Reviewed "${desire.title}" as an ongoing aspiration and returned it to the existing desire queue.`
+    } else if (desire.goalType === 'long_running' && !review.completionCriteriaMet) {
+      action = review.milestoneAdvance ? 'milestone_advanced' : 'continued'
+      updated = review.milestoneAdvance
+        ? advanceMilestone(archiveCurrentDesireCycle(updated), now)
+        : archiveCurrentDesireCycle(updated)
+      updated.status = 'planning'
+      updated.currentStage = 'planning'
+      updated.strength = review.adjustedStrength ?? desire.strength
+      summary = review.milestoneAdvance
+        ? `Reviewed "${desire.title}", advanced its milestone, and returned it to planning.`
+        : `Reviewed "${desire.title}" as incomplete against its completion criteria and returned it to planning.`
     } else {
       action = 'completed'
       updated.status = 'completed'
@@ -228,17 +231,15 @@ export async function applyDesireOutcomeReview(
     }
 
     const metrics = updated.metrics || initializeDesireMetrics()
-    if (metrics.planRevisionCount >= Number(maxRetries)) {
+    if (metrics.outcomeRetryCount >= Number(maxRetries)) {
       action = 'escalated'
-      updated.status = 'awaiting_approval'
-      updated.currentStage = 'user_approval'
+      updated.status = 'needs_attention'
+      updated.currentStage = 'user_attention'
+      updated.dispositionReason = `Execution retry limit reached: ${review.reasoning}`
       summary = `Review of "${desire.title}" reached the configured retry limit and now requires user review.`
     } else {
       action = 'retry'
-      if (updated.plan) {
-        updated.planHistory = [...(updated.planHistory || []), updated.plan]
-      }
-      updated = clearExecutionState(updated)
+      updated = archiveCurrentDesireCycle(updated)
       updated.status = 'planning'
       updated.currentStage = 'planning'
       updated.strength = Math.max(0.3, desire.strength - RETRY_STRENGTH_PENALTY)
@@ -250,7 +251,7 @@ export async function applyDesireOutcomeReview(
       updated.critiqueAt = now
       updated.metrics = {
         ...metrics,
-        planRevisionCount: metrics.planRevisionCount + 1,
+        outcomeRetryCount: metrics.outcomeRetryCount + 1,
         lastActivityAt: now,
       }
       summary = `Review of "${desire.title}" requested a new plan using the recorded lessons.`
@@ -260,33 +261,39 @@ export async function applyDesireOutcomeReview(
       && review.milestoneAdvance
       && !review.completionCriteriaMet) {
       action = 'milestone_advanced'
-      updated = advanceMilestone(clearExecutionState(updated), now)
+      updated = advanceMilestone(archiveCurrentDesireCycle(updated), now)
       updated.status = 'planning'
       updated.currentStage = 'planning'
       summary = `Reviewed "${desire.title}", advanced its existing milestone progress, and returned it to planning.`
     } else {
       action = 'continued'
-      updated = clearExecutionState(updated)
-      updated.status = 'pending'
-      updated.currentStage = 'strengthening'
+      updated = archiveCurrentDesireCycle(updated)
+      updated.status = 'planning'
+      updated.currentStage = 'planning'
       updated.strength = review.adjustedStrength ?? desire.strength
-      summary = `Review of "${desire.title}" returned the existing desire to the queue for continued pursuit.`
+      summary = `Review of "${desire.title}" returned the existing desire to planning for continued pursuit.`
     }
   } else if (review.verdict === 'abandon') {
-    action = 'abandoned'
-    updated.status = 'abandoned'
-    updated.currentStage = 'abandoned'
+    action = 'archived'
+    updated.status = 'archived'
+    updated.currentStage = 'archived'
+    updated.dispositionReason = review.reasoning
     updated.completedAt = now
-    summary = `Review of "${desire.title}" abandoned the desire: ${review.reasoning}`
+    summary = `Review of "${desire.title}" archived the desire: ${review.reasoning}`
   } else {
     action = 'escalated'
-    updated.status = 'awaiting_approval'
-    updated.currentStage = 'user_approval'
+    updated.status = 'needs_attention'
+    updated.currentStage = 'user_attention'
+    updated.dispositionReason = review.userMessage?.trim() || review.reasoning
     summary = review.userMessage?.trim()
       || `Review of "${desire.title}" requires user attention: ${review.reasoning}`
   }
 
-  updated = withScratchpadEntry(updated, reviewEntry(review, action))
+  updated.scratchpad = await deps.addScratchpadEntry(
+    updated.id,
+    reviewEntry(review, action),
+    username,
+  )
   await deps.saveReview(updated.id, review, username)
   await deps.saveManifest(updated, username)
 

@@ -23,6 +23,7 @@ import {
   auditDataChange,
   auditSecurity,
   ollama,
+  getAgentCatalogSnapshot,
   listAvailableAgents,
   getAgentMonitorSnapshot,
   getAgentLogs,
@@ -59,7 +60,6 @@ import {
   agentTaskType,
   isPersistentService,
   submitCoordinatorWork,
-  submitDesireExecution,
   submitMemoryIndexRefresh,
 } from '@metahuman/core/queue';
 import { personaCommand } from './commands/persona.js';
@@ -656,6 +656,11 @@ async function chat(): Promise<void> {
         process.exit(1);
       }
 
+      const catalogAgent = getAgentCatalogSnapshot().agents.find(agent => agent.id === agentName);
+      if (!catalogAgent?.canRun) {
+        throw new Error(`Agent '${agentName}' is not a runnable public agent`);
+      }
+
       if (isPersistentService(agentName)) {
         if (isAgentRunning(agentName)) {
           console.error(`Service '${agentName}' is already running. Use: mh agent stop ${agentName}`);
@@ -683,31 +688,6 @@ async function chat(): Promise<void> {
       const username = getUserContext()?.username
         || listUsers().find(user => user.role === 'owner')?.username
         || 'system';
-      if (agentName === 'desire-executor') {
-        const executorArgs = args.slice(2).filter(argument => argument !== '--');
-        let desireId: string | undefined;
-        let targetUsername = username;
-        for (let index = 0; index < executorArgs.length; index += 1) {
-          const argument = executorArgs[index];
-          if (argument !== '--desire-id' && argument !== '--username') {
-            throw new Error(`Unknown desire-executor argument: ${argument}`);
-          }
-          const value = executorArgs[index + 1]?.trim();
-          if (!value || value.startsWith('--')) throw new Error(`${argument} requires a value`);
-          if (argument === '--desire-id') desireId = value;
-          else targetUsername = value;
-          index += 1;
-        }
-        if (!getUserByUsername(targetUsername)) throw new Error(`Unknown profile: ${targetUsername}`);
-        const work = await submitDesireExecution({
-          username: targetUsername,
-          desireId,
-          source: 'user',
-          metadata: { producer: 'cli-agent-run' },
-        });
-        console.log(`Agent '${agentName}' queued as work ${work.id}`);
-        break;
-      }
       const work = await submitCoordinatorWork({
         type: agentTaskType(agentName),
         handler: agentHandlerId(agentName),

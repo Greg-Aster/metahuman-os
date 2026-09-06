@@ -70,6 +70,7 @@ function activeViewTargetIsCurrent(
   action: Partial<EnvironmentAction>,
   observation: EnvironmentObservation | undefined,
   robotObserver: RobotObserverCycleMetadata | null,
+  currentVisualEvidence: boolean | null,
 ): boolean {
   if (action.type !== 'inspect' && action.type !== 'visualApproach') return true;
   const target = action.type === 'inspect' ? action.inspectionTarget : action.visualTarget;
@@ -92,10 +93,16 @@ function activeViewTargetIsCurrent(
       const frameAgeMs = observationTimestamp - frameTimestamp;
       if (frameAgeMs < -5_000 || frameAgeMs > maxFrameAgeMs) return false;
     }
-    return !robotObserver || (
-      observation.metadata?.correlationId === robotObserver.cycleId
-      && frame.metadata?.correlationId === robotObserver.cycleId
-    );
+    if (currentVisualEvidence === false) return false;
+    const correlationId = robotObserver?.cycleId
+      || (typeof observation.metadata?.correlationId === 'string'
+        ? observation.metadata.correlationId.trim()
+        : '');
+    if (correlationId) {
+      return observation.metadata?.correlationId === correlationId
+        && frame.metadata?.correlationId === correlationId;
+    }
+    return currentVisualEvidence === true;
   });
 }
 
@@ -127,6 +134,7 @@ export const environmentActionParserNode = defineNode({
     { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
     { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
+    { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
   ],
   outputs: [
     { name: 'actions', type: 'array', description: 'Parsed environment actions' },
@@ -150,6 +158,9 @@ export const environmentActionParserNode = defineNode({
         ? inputs.observation as EnvironmentObservation
         : undefined;
       const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
+      const currentVisualEvidence = typeof inputs.currentVisualEvidence === 'boolean'
+        ? inputs.currentVisualEvidence
+        : null;
       const validation = validateEnvironmentSelectorOutput(
         inputs.response,
         sessionId,
@@ -197,7 +208,7 @@ export const environmentActionParserNode = defineNode({
       ));
       const targetFrameAvailable = supportedParsedActions.some(action => (
         (action.type === 'inspect' || action.type === 'visualApproach')
-          && activeViewTargetIsCurrent(action, observation, robotObserver)
+          && activeViewTargetIsCurrent(action, observation, robotObserver, currentVisualEvidence)
       ));
       let admissionBlockedReason = '';
       if (targetFeedbackActionSelected && !hasNonMotionAlternative) {
@@ -240,7 +251,11 @@ export const environmentActionParserNode = defineNode({
           : requiresGeneratedMovement && !movementSupported
             ? 'Off-script movement is unavailable because this robot does not advertise robotMotionPlan.'
             : '');
-      const response = parsed.response || '';
+      // A response coupled to a rejected action cannot be presented as a
+      // truthful result. The transport error remains available through error
+      // and actionAdmission; this node does not replace model speech with a
+      // hard-coded conversational message.
+      const response = admissionBlocked ? '' : parsed.response || '';
       const valid = actions.length > 0 || movementRequest !== null;
       const actionAdmission = supportedParsedActions.some(isPhysicalMotionAction) || admissionBlocked
         ? {

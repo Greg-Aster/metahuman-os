@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import test from 'node:test'
-import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js'
 import type { GraphExecutionState } from '../graph-executor.js'
 import { ROOT } from '../path-builder.js'
 import { ExecutionEngine } from '../queue/execution-engine.js'
 import { UnifiedQueueManager } from '../queue/unified-queue-manager.js'
-import { SLEEP_WORKFLOW_STAGES } from '../queue/sleep-workflow.js'
 import { DEFAULT_HANDLERS } from '../queue/types.js'
+import { buildDesireAgentTaskInput } from '../queue/work-submission.js'
 import { createDesireOutcomeReviewer } from './desire-outcome-service.js'
 import { evaluateDesireOutcomeReviewGraph } from './executor.js'
 import type { Desire } from './types.js'
@@ -78,6 +77,7 @@ test('outcome service delegates one review and requires its durable transition',
     skipped: 0,
     desireIds: ['desire-1'],
     actions: { completed: 1 },
+    transitions: [{ desireId: 'desire-1', action: 'completed', status: 'completed' }],
   })
   assert.equal(calls, 1)
 })
@@ -90,6 +90,24 @@ test('outcome service rejects graph results without a durable transition', async
     reviewGraph: async () => ({ success: false, error: 'transition failed' }),
   })
   await assert.rejects(review({ username: 'profile-a' }), /transition failed/)
+})
+
+test('a retried execution can be reviewed again after its prior review was archived', async () => {
+  const stored = desire()
+  stored.outcomeReview = undefined
+  const reviewer = createDesireOutcomeReviewer({
+    loadDesire: async () => structuredClone(stored),
+    listReviewable: async () => [structuredClone(stored)],
+    reviewGraph: async candidate => ({
+      success: true,
+      desire: { ...candidate, status: 'completed' },
+      outcomeReview: { verdict: 'completed' } as any,
+      verdict: 'completed',
+      action: 'completed',
+    }),
+  })
+  const result = await reviewer({ username: 'profile-a', desireId: stored.id })
+  assert.equal(result.reviewed, 1)
 })
 
 test('desire outcome graph requires confirmed buffer and Persona Memory persistence', () => {
@@ -113,20 +131,16 @@ test('desire outcome graph requires confirmed buffer and Persona Memory persiste
 
 test('outcome review has one Core handler and one canonical graph transition', () => {
   assert.equal(DEFAULT_HANDLERS.desire_review, 'agency.desire-outcome-review')
-  assert.equal(
-    AGENT_CATALOG_DEFINITIONS['desire-outcome-reviewer'].handler,
-    'agency.desire-outcome-review',
-  )
-  const stage = SLEEP_WORKFLOW_STAGES.find(item => item.id === 'review-outcomes')
-  assert.equal(stage?.handler, 'agency.desire-outcome-review')
-  assert.equal(stage?.maxAttempts, 1)
+  const admitted = buildDesireAgentTaskInput({
+    operation: 'review', username: 'profile-a', desireId: 'desire-1', source: 'user',
+  })
+  assert.equal(admitted.handler, 'agency.desire-outcome-review')
+  assert.equal(admitted.maxAttempts, 1)
   const engine = new ExecutionEngine()
   assert.equal(engine.hasHandler('agency.desire-outcome-review'), true)
   assert.equal(engine.hasHandler('agent.desire-outcome-reviewer'), false)
   const queue = new UnifiedQueueManager()
-  assert.equal(queue.enqueue({
-    type: 'desire_review', username: 'profile-a', input: {}, maxAttempts: 9,
-  }).maxAttempts, 1)
+  assert.equal(queue.enqueue({ ...admitted, maxAttempts: 9 }).maxAttempts, 1)
 
   const graph = JSON.parse(fs.readFileSync(
     `${ROOT}/etc/cognitive-graphs/desire-outcome-reviewer.json`,
@@ -145,14 +159,14 @@ test('outcome review has one Core handler and one canonical graph transition', (
     .data.properties.applyOutcomePolicy, true)
 
   const agents = JSON.parse(fs.readFileSync(`${ROOT}/etc/agents.json`, 'utf8'))
-  assert.equal(agents.agents['desire-outcome-reviewer'].handler, 'agency.desire-outcome-review')
-  assert.equal(agents.agents['desire-outcome-reviewer'].maxRetries, 0)
+  assert.equal(agents.agents['desire-agent'].handler, 'agent.desire-generator')
+  assert.equal(agents.agents['desire-outcome-reviewer'], undefined)
 
   const apiSource = fs.readFileSync(
     `${ROOT}/packages/core/src/api/handlers/agency-workflows.ts`,
     'utf8',
   )
-  assert.match(apiSource, /submitDesireOutcomeReview\(/)
+  assert.match(apiSource, /submitDesireAgent\(/)
   assert.doesNotMatch(apiSource, /runOutcomeReviewLlm/)
   assert.doesNotMatch(apiSource, /applyOutcomeReview\(/)
   assert.doesNotMatch(apiSource, /verifyOutcomeWithOperator/)

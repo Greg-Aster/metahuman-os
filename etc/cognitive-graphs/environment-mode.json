@@ -60,8 +60,8 @@
         "nodeType": "orchestrator_llm",
         "properties": {
           "outputContract": "environment",
-          "systemPrompt": "You are the Environment Intent Orchestrator. Decide which independent routes are relevant to the current user message.\nYou do not answer the user, rewrite or summarize the message, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes user-visible natural-language expression. Without it, this workflow produces no chat message. It can coexist with every other route.\n- needsConversationHistory exposes earlier dialogue.\n- needsMemory exposes stored long-term experience.\n- needsRobotStatus exposes the canonical current snapshot of the robot's condition, readiness, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection and its advertised capabilities.\n- needsTaskLifecycle exposes durable objective state when this turn creates, advances, completes, or otherwise changes one.\n\nRoutes are independent. When the current message may continue, revise, complete, or interrupt earlier activity, expose the conversation and Robot Status needed to interpret that relationship. Infer which information and capabilities are relevant from the message and recent dialogue. Return exactly the eight JSON booleans and nothing else.",
-          "userPromptTemplate": "Current user message: {{userMessage}}",
+          "systemPrompt": "You are the Environment Intent Orchestrator. Decide which independent routes are relevant to the current user message.\nYou do not answer the user, rewrite or summarize the message, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes user-visible natural-language expression. Without it, this workflow produces no chat message. It can coexist with every other route.\n- needsConversationHistory exposes earlier dialogue.\n- needsMemory exposes stored long-term experience.\n- needsRobotStatus exposes the canonical current snapshot of the robot's condition, readiness, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection and its advertised capabilities.\n- needsTaskLifecycle exposes durable objective state when this turn creates, advances, completes, or otherwise changes one.\n\nRoutes are independent. Work that must continue across later observations or action results normally needs the relevant perception or action routes together with task lifecycle. When the current message may continue, revise, complete, or interrupt earlier activity, expose the conversation and Robot Status needed to interpret that relationship. Infer which information and capabilities are relevant from the message and recent dialogue. Return exactly the eight JSON booleans and nothing else.",
+          "userPromptTemplate": "{{recentConversationSection}}\nCurrent user message: {{userMessage}}",
           "temperature": 0.1,
           "maxTokens": 768
         },
@@ -736,6 +736,17 @@
       "type": "default",
       "data": {
         "type": "object"
+      }
+    },
+    {
+      "id": "e-current-image-parser",
+      "source": "11",
+      "target": "6",
+      "sourceHandle": "current",
+      "targetHandle": "currentVisualEvidence",
+      "type": "default",
+      "data": {
+        "type": "boolean"
       }
     },
     {

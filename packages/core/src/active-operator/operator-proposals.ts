@@ -63,9 +63,6 @@ export type ProposalTaskType =
   | 'memory_curate'
   | 'training_curate'
   | 'index_build'
-  | 'desire_generate'
-  | 'desire_advance'
-  | 'desire_execute'
   | 'psychoanalyze'
   | 'help_ticket_review'
   | 'custom';
@@ -82,9 +79,6 @@ export const TASK_RISK_LEVELS: Record<ProposalTaskType, TaskRisk> = {
   memory_curate: 'medium',  // Modifies memory organization
   training_curate: 'medium', // Prepares training data
   index_build: 'low',       // Build vector index
-  desire_generate: 'low',   // Creates desires, doesn't execute
-  desire_advance: 'medium', // Advances desires through pipeline
-  desire_execute: 'high',   // External actions, high impact
   psychoanalyze: 'medium',  // Modifies persona understanding
   help_ticket_review: 'low', // Reviews user feedback
   custom: 'high',           // Unknown, assume high risk

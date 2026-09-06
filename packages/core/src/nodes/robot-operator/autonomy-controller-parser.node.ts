@@ -52,18 +52,49 @@ function availableTasks(value: unknown): RobotAutonomyTaskDescriptor[] {
   ))
 }
 
+function taskChoiceDescription(tasks: RobotAutonomyTaskDescriptor[]): string {
+  const choices = tasks.map(task => (
+    `${task.id}: ${cleanText(task.description, 280)}`
+  ))
+  choices.push(`${ROBOT_AUTONOMY_NO_TASK_ID}: start no downstream task; outward speech remains optional`)
+  return `Choose the single capability that best fits the supplied context. Meanings:\n${choices.join('\n')}`
+}
+
 export function buildRobotAutonomyControllerJsonSchema(tasks: unknown) {
-  const taskIds = availableTasks(tasks).map(task => task.id)
+  const catalog = availableTasks(tasks)
+  const taskIds = catalog.map(task => task.id)
   return {
     type: 'object',
     additionalProperties: false,
     required: [...REQUIRED_FIELDS],
     properties: {
-      response: { type: 'string', maxLength: 500 },
-      taskId: { type: 'string', enum: [...taskIds, ROBOT_AUTONOMY_NO_TASK_ID] },
-      reason: { type: 'string', minLength: 1, maxLength: 500 },
-      observationSummary: { type: 'string', minLength: 1, maxLength: 500 },
-      instruction: { type: 'string', maxLength: 1_000 },
+      response: {
+        type: 'string',
+        maxLength: 500,
+        description: 'Optional concise first-person outward expression. Speech may accompany any task choice but does not prove that a task or physical action occurred.',
+      },
+      taskId: {
+        type: 'string',
+        enum: [...taskIds, ROBOT_AUTONOMY_NO_TASK_ID],
+        description: taskChoiceDescription(catalog),
+      },
+      reason: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 500,
+        description: 'Why this capability is relevant now, based on supplied status and context rather than list order.',
+      },
+      observationSummary: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 500,
+        description: 'A concise summary of supplied evidence. Narrative history is not current physical proof.',
+      },
+      instruction: {
+        type: 'string',
+        maxLength: 1_000,
+        description: 'For robot-autonomy-executor, one plain-language physical or sensing intention is required. For a catalog agent this may carry useful task context. For none it may be empty. This field is never spoken.',
+      },
     },
   } as const
 }
@@ -77,6 +108,7 @@ export const robotAutonomyControllerParserNode = defineNode({
     { name: 'availableTasks', type: 'array', description: 'Exact task catalog supplied to the controller LLM' },
   ],
   outputs: [
+    { name: 'decisionReceipt', type: 'object', description: 'Validated record of the LLM selection and its supplied rationale' },
     { name: 'taskDecision', type: 'object', description: 'Catalog-backed finite agent selection, or null when no agent task was selected' },
     { name: 'executorDecision', type: 'object', description: 'High-level embodied intention only when Robot Autonomy Executor was selected' },
     { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
@@ -105,9 +137,6 @@ export const robotAutonomyControllerParserNode = defineNode({
     if (!reason || !observationSummary) {
       return invalid('Robot autonomy controller requires a reason and observation summary.')
     }
-    if (taskId === ROBOT_AUTONOMY_NO_TASK_ID && !response) {
-      return invalid('Robot autonomy controller must select a task or author a response.')
-    }
     if (taskId === ROBOT_AUTONOMY_EXECUTOR_TASK_ID && !instruction) {
       return invalid('Robot Autonomy Executor selection requires one high-level instruction.')
     }
@@ -116,8 +145,19 @@ export const robotAutonomyControllerParserNode = defineNode({
       ? { observed: observationSummary, instruction, reason }
       : null
     const taskDecision = task?.kind === 'agent'
-      ? { task, reason, observationSummary }
+      ? { task, reason, observationSummary, ...(instruction ? { instruction } : {}) }
       : null
-    return { taskDecision, executorDecision, response }
+    return {
+      decisionReceipt: {
+        taskId,
+        reason,
+        observationSummary,
+        ...(instruction ? { instruction } : {}),
+        responseAuthored: Boolean(response),
+      },
+      taskDecision,
+      executorDecision,
+      response,
+    }
   },
 })

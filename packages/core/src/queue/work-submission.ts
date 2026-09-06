@@ -47,32 +47,19 @@ export interface MemoryIndexRefreshSubmission {
   metadata?: Record<string, any>;
 }
 
-export interface DesireExecutionSubmission {
+export type DesireAgentOperation = 'plan' | 'execute' | 'review' | 'checkin';
+
+/**
+ * The only public admission contract for Desire work after generation.
+ * Callers request an operation from the Desire Agent; the agent contract owns
+ * the internal planner, executor, outcome-review, and check-in handlers.
+ */
+export interface DesireAgentSubmission {
+  operation: DesireAgentOperation;
   username: string;
   source: WorkSource;
   desireId?: string;
-  priority?: Priority;
-  parentTaskId?: string;
-  correlationId?: string;
-  idempotencyKey?: string;
-  metadata?: Record<string, any>;
-}
-
-export interface DesirePlanningSubmission {
-  username: string;
-  source: WorkSource;
-  desireId: string;
-  priority?: Priority;
-  parentTaskId?: string;
-  correlationId?: string;
-  idempotencyKey?: string;
-  metadata?: Record<string, any>;
-}
-
-export interface DesireOutcomeReviewSubmission {
-  username: string;
-  source: WorkSource;
-  desireId?: string;
+  force?: boolean;
   priority?: Priority;
   parentTaskId?: string;
   correlationId?: string;
@@ -152,80 +139,121 @@ export function submitAgentFollowOn(input: AgentFollowOnSubmission): Promise<Que
   return submitCoordinatorWork(buildAgentFollowOnTaskInput(input));
 }
 
-/** Admit one targeted Desire planning run through the coordinator-owned agent lane. */
-export function buildDesirePlanningTaskInput(input: DesirePlanningSubmission): TaskInput {
+function desireAgentMetadata(input: DesireAgentSubmission): Record<string, any> {
+  const requestedBy = typeof input.metadata?.producer === 'string'
+    ? input.metadata.producer
+    : input.source;
+  return {
+    ...input.metadata,
+    producer: 'desire-agent',
+    monitorAgentId: 'desire-agent',
+    desireAgentOperation: input.operation,
+    requestedBy,
+  };
+}
+
+function validateDesireAgentIdentity(input: DesireAgentSubmission): {
+  username: string;
+  desireId?: string;
+} {
   const username = input.username.trim();
-  const desireId = input.desireId.trim();
+  const desireId = input.desireId?.trim();
   if (!PROFILE_USERNAME_PATTERN.test(username)) {
-    throw new Error('Desire planning requires a valid profile username');
+    throw new Error('Desire Agent requires a valid profile username');
   }
-  if (!/^desire-[a-zA-Z0-9_-]+$/.test(desireId)) {
-    throw new Error('Desire planning requires a valid desire ID');
+  if (desireId && !/^desire-[a-zA-Z0-9_-]+$/.test(desireId)) {
+    throw new Error('Desire Agent requires a valid desire ID');
+  }
+  if (input.operation === 'checkin' && !desireId) {
+    throw new Error('Desire Agent check-in requires a desire ID');
+  }
+  return { username, desireId };
+}
+
+/** Build one coordinator task owned and attributed to the Desire Agent. */
+export function buildDesireAgentTaskInput(input: DesireAgentSubmission): TaskInput {
+  const { username, desireId } = validateDesireAgentIdentity(input);
+  const metadata = desireAgentMetadata(input);
+
+  if (input.operation === 'plan') {
+    const args = desireId ? ['--desire-id', desireId] : [];
+    return {
+      type: 'generic',
+      handler: 'agent.desire-planner',
+      resource: 'remote-llm',
+      source: input.source,
+      username,
+      priority: input.priority ?? 'high',
+      input: {
+        agentId: 'desire-planner',
+        args,
+        triggeredBy: 'desire-agent',
+      },
+      parentTaskId: input.parentTaskId,
+      correlationId: input.correlationId,
+      idempotencyKey: input.idempotencyKey || `desire-agent:plan:${desireId || 'pending-batch'}`,
+      maxAttempts: 2,
+      metadata,
+    };
+  }
+
+  if (input.operation === 'execute') {
+    return {
+      type: 'desire_execute',
+      handler: 'agency.desire-execute',
+      resource: 'remote-llm',
+      source: input.source,
+      username,
+      priority: input.priority ?? 'high',
+      input: { desireId, triggeredBy: 'desire-agent' },
+      parentTaskId: input.parentTaskId,
+      correlationId: input.correlationId,
+      idempotencyKey: input.idempotencyKey || `desire-agent:execute:${desireId || 'approved-batch'}`,
+      maxAttempts: 1,
+      metadata,
+    };
+  }
+
+  if (input.operation === 'review') {
+    return {
+      type: 'desire_review',
+      handler: 'agency.desire-outcome-review',
+      resource: 'remote-llm',
+      source: input.source,
+      username,
+      priority: input.priority ?? 'normal',
+      input: { desireId, triggeredBy: 'desire-agent' },
+      parentTaskId: input.parentTaskId,
+      correlationId: input.correlationId,
+      idempotencyKey: input.idempotencyKey || `desire-agent:review:${desireId || 'pending-batch'}`,
+      maxAttempts: 1,
+      metadata,
+    };
   }
 
   return {
-    type: 'generic',
-    handler: 'agent.desire-planner',
-    resource: 'remote-llm',
+    type: 'desire_checkin',
+    handler: 'agency.desire-checkin',
+    resource: 'local-llm',
     source: input.source,
     username,
     priority: input.priority ?? 'high',
     input: {
-      agentId: 'desire-planner',
-      args: ['--desire-id', desireId],
-      triggeredBy: input.metadata?.producer || input.source,
+      desireId,
+      checkProgress: true,
+      force: input.force === true,
+      triggeredBy: 'desire-agent',
     },
     parentTaskId: input.parentTaskId,
     correlationId: input.correlationId,
-    idempotencyKey: input.idempotencyKey || `desire-plan:${desireId}`,
+    idempotencyKey: input.idempotencyKey || `desire-agent:checkin:${desireId}:${input.force ? 'force' : 'normal'}`,
     maxAttempts: 2,
-    metadata: { producer: 'desire-planner', ...input.metadata },
+    metadata,
   };
 }
 
-export function submitDesirePlanning(input: DesirePlanningSubmission): Promise<QueuedTask> {
-  return submitCoordinatorWork(buildDesirePlanningTaskInput(input));
-}
-
-/** Admit outcome review to the coordinator; the Core Agency graph owns all transitions. */
-export function submitDesireOutcomeReview(input: DesireOutcomeReviewSubmission): Promise<QueuedTask> {
-  const desireId = input.desireId?.trim();
-  return submitCoordinatorWork({
-    type: 'desire_review',
-    handler: 'agency.desire-outcome-review',
-    resource: 'remote-llm',
-    source: input.source,
-    username: input.username,
-    priority: input.priority ?? 'normal',
-    input: { desireId, triggeredBy: input.metadata?.producer || input.source },
-    parentTaskId: input.parentTaskId,
-    correlationId: input.correlationId,
-    idempotencyKey: input.idempotencyKey || `desire-outcome-review:${desireId || 'pending-batch'}`,
-    maxAttempts: 1,
-    metadata: { producer: 'desire-outcome-reviewer', ...input.metadata },
-  });
-}
-
-/** Admit desire execution to its one remote-effect lane without executing it in the caller. */
-export function submitDesireExecution(input: DesireExecutionSubmission): Promise<QueuedTask> {
-  const desireId = input.desireId?.trim();
-  return submitCoordinatorWork({
-    type: 'desire_execute',
-    handler: 'agency.desire-execute',
-    resource: 'remote-llm',
-    source: input.source,
-    username: input.username,
-    priority: input.priority ?? 'high',
-    input: {
-      desireId,
-      triggeredBy: input.metadata?.producer || input.source,
-    },
-    parentTaskId: input.parentTaskId,
-    correlationId: input.correlationId,
-    idempotencyKey: input.idempotencyKey || `desire-execute:${desireId || 'approved-batch'}`,
-    maxAttempts: 1,
-    metadata: { producer: 'desire-executor', ...input.metadata },
-  });
+export function submitDesireAgent(input: DesireAgentSubmission): Promise<QueuedTask> {
+  return submitCoordinatorWork(buildDesireAgentTaskInput(input));
 }
 
 /** Admit a full index reconciliation to its one durable execution lane. */

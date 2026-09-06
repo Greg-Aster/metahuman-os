@@ -33,7 +33,7 @@ observation, and physical result.
 ```text
 Active Operator mode
   -> Robot Operator service timing and admission
-  -> Robot Autonomy Controller in Full mode
+  -> Robot Goal Review for one unresolved correlated result, otherwise Robot Autonomy Controller
   -> one catalog-backed finite agent or one-pass Robot Autonomy Executor
   -> Environment selector and specialized evidence inputs
   -> Environment Bridge transport
@@ -51,7 +51,7 @@ The maintained owners are:
 | Reactive, Semi, and Full mode transitions | `packages/core/src/active-operator/mode-controller.ts` |
 | Full-mode completion-driven admission | `brain/services/robot-operator.ts` |
 | Finite-work ordering and execution admission | `packages/core/src/queue/queue-system.ts` |
-| Semi Robot Status, Goal Review, and boredom timing; Full controller admission | `brain/services/robot-operator.ts` |
+| Semi Robot Status, Goal Review, and boredom timing; Full result-review/controller admission | `brain/services/robot-operator.ts` |
 | Full contextual task selection | `etc/cognitive-graphs/robot-autonomy-controller-mode.json` |
 | Reusable profile-resolved situational snapshot | `packages/core/src/robot-status.ts` and `etc/cognitive-graphs/robot-status-mode.json` |
 | Contextual autonomous intentions | `boredom-observer-mode.json`, `boredom-movement-mode.json`, and `boredom-reflection-mode.json` |
@@ -74,11 +74,11 @@ bridge, or retry loop around these owners.
 | Area | Current source state | Evidence still required |
 | --- | --- | --- |
 | Active Operator modes | Implemented in the mode controller and coordinator contracts | Current-build runtime transition and suppression evidence |
-| Robot Operator admission | Registered as a persistent service; Semi owns five workflow timers and Full admits only the finite autonomy controller | Current-build Agent Monitor and queue admission evidence |
+| Robot Operator admission | Registered as a persistent service; Semi owns five workflow timers; Full admits one Goal Review for an unresolved correlated result and otherwise the finite autonomy controller | Current-build Agent Monitor and queue admission evidence |
 | Robot Status | Implemented as one bounded graph and profile-resolved snapshot owner | Current profile read/write and downstream-consumption evidence |
 | Boredom planning | Three separate planner graphs feed one-pass Robot Autonomy Executor runs | Repeated runtime cycles proving no competing execution path |
 | Environment execution | Environment Mode and Robot Autonomy Executor choose one action; Robot Action Result evaluates returned evidence once | Success, explicit failure, cancellation, and repeated-invocation evidence |
-| Goal continuation | Robot Goal Review reads bounded status, dialogue, reflection, verified action outcomes, bridge facts, persona, and current camera evidence; in Full mode the contextual controller decides when that review is relevant | Semi timer and Full controller-selection evidence |
+| Goal continuation | Robot Goal Review reads bounded status, dialogue, reflection, verified action outcomes, bridge facts, active desires, persona, and current camera evidence; in Full mode the admission owner invokes it once for an unresolved correlated result | Semi timer and Full lifecycle-routing evidence |
 | Environment transport | One Environment Bridge service owns the external connection | Authenticated adapter connection and correlated round-trip evidence |
 | Physical behavior | Body runtime owns device-specific execution and safety | Fresh, correlated physical observation for each claimed behavior |
 

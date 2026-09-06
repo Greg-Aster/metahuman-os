@@ -1,5 +1,6 @@
 import {
   addScratchpadEntryToFolder,
+  listAllDesires,
   listDesiresByStatus,
   loadDesire,
   saveDesireManifest,
@@ -11,6 +12,7 @@ import {
 } from './executor.js'
 import type { Desire, DesireExecution, DesirePlan, DesireReview } from './types.js'
 import { planRequiresManualApproval, planRiskCoversEveryStep } from './plan-risk.js'
+import { loadConfig } from './config.js'
 
 export interface ApprovedDesireExecutionOptions {
   username: string
@@ -26,6 +28,7 @@ export interface ApprovedDesireExecutionResult {
   failed: number
   skipped: number
   desireIds: string[]
+  skippedReasons: Record<string, string>
 }
 
 export interface DesireExecutionDependencies {
@@ -34,6 +37,8 @@ export interface DesireExecutionDependencies {
   saveManifest: typeof saveDesireManifest
   addScratchpadEntry: typeof addScratchpadEntryToFolder
   executeGraph: typeof executeDesireViaGraph
+  allowAutoApprovedManualSteps: (username: string) => Promise<boolean>
+  remainingDailyExecutions: (username: string) => Promise<number>
 }
 
 const activeExecutions = new Set<string>()
@@ -53,9 +58,31 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw cancellationError(signal)
 }
 
+export async function calculateRemainingDailyExecutions(username: string): Promise<number> {
+  const config = await loadConfig(username)
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+  const desires = await listAllDesires(username)
+  let attemptsToday = 0
+  for (const desire of desires) {
+    const starts = new Set([
+      ...(desire.execution?.startedAt ? [desire.execution.startedAt] : []),
+      ...(desire.executionHistory || []).map(execution => execution.startedAt),
+    ])
+    attemptsToday += [...starts].filter(startedAt => {
+      const timestamp = Date.parse(startedAt)
+      return Number.isFinite(timestamp) && timestamp >= start.getTime()
+    }).length
+  }
+  return Math.max(0, config.limits.maxDailyExecutions - attemptsToday)
+}
+
 export type ExecutableDesire = Desire & { plan: DesirePlan; review: DesireReview }
 
-export function assertDesireExecutable(desire: Desire): asserts desire is ExecutableDesire {
+export function assertDesireExecutable(
+  desire: Desire,
+  allowAutoApprovedManualSteps = false,
+): asserts desire is ExecutableDesire {
   if (desire.status !== 'approved') {
     throw new Error(`Cannot execute desire ${desire.id} in '${desire.status}' status; expected 'approved'`)
   }
@@ -71,7 +98,9 @@ export function assertDesireExecutable(desire: Desire): asserts desire is Execut
   if (!planRiskCoversEveryStep(desire.plan)) {
     throw new Error(`Cannot execute desire ${desire.id} because its aggregate risk understates a plan step`)
   }
-  if (planRequiresManualApproval(desire.plan) && desire.review.autoApprove === true) {
+  if (planRequiresManualApproval(desire.plan)
+    && desire.review.autoApprove === true
+    && !allowAutoApprovedManualSteps) {
     throw new Error(`Cannot execute desire ${desire.id} because a step requiring user approval was auto-approved`)
   }
 }
@@ -150,7 +179,8 @@ async function executeOne(
     throwIfAborted(options.signal)
     const current = await deps.loadDesire(desire.id, options.username)
     if (!current || current.status !== 'approved') return null
-    assertDesireExecutable(current)
+    const allowAutoApprovedManualSteps = await deps.allowAutoApprovedManualSteps(options.username)
+    assertDesireExecutable(current, allowAutoApprovedManualSteps)
 
     const now = new Date().toISOString()
     const claimed: Desire = {
@@ -206,6 +236,8 @@ export function createApprovedDesireExecutor(dependencies: Partial<DesireExecuti
     saveManifest: saveDesireManifest,
     addScratchpadEntry: addScratchpadEntryToFolder,
     executeGraph: executeDesireViaGraph,
+    allowAutoApprovedManualSteps: async username => (await loadConfig(username)).mode === 'yolo',
+    remainingDailyExecutions: calculateRemainingDailyExecutions,
     ...dependencies,
   }
 
@@ -229,16 +261,25 @@ export function createApprovedDesireExecutor(dependencies: Partial<DesireExecuti
       failed: 0,
       skipped: 0,
       desireIds: [],
+      skippedReasons: {},
     }
+
+    let remainingDailyExecutions = await deps.remainingDailyExecutions(options.username)
 
     for (const desire of desires) {
       throwIfAborted(options.signal)
+      if (remainingDailyExecutions <= 0) {
+        summary.skipped += 1
+        summary.skippedReasons[desire.id] = 'Configured maximum daily Desire executions reached'
+        continue
+      }
       const result = await executeOne(deps, desire, options)
       if (!result) {
         summary.skipped += 1
         continue
       }
       summary.executed += 1
+      remainingDailyExecutions -= 1
       summary.desireIds.push(desire.id)
       if (result.success) summary.succeeded += 1
       else summary.failed += 1

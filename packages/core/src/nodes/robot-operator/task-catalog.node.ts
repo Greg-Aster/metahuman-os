@@ -4,6 +4,7 @@ import { defineNode } from '../types.js'
 import {
   DEFAULT_ROBOT_AUTONOMY_TASK_IDS,
   ROBOT_AUTONOMY_EXECUTOR_TASK_ID,
+  ROBOT_AUTONOMY_LIFECYCLE_TASK_IDS,
   ROBOT_AUTONOMY_TASK_OPTIONS,
   type RobotAutonomyTaskDescriptor,
 } from './autonomy-task-options.js'
@@ -52,7 +53,7 @@ export const robotAutonomyTaskCatalogNode = defineNode({
         tasks.push({
           id,
           name: 'Robot Autonomy Executor',
-          description: 'Carries one high-level self-directed embodied intention into the robot action workflow, which may converse, use an advertised motion, or generate an off-script movement.',
+          description: 'Executes one already-chosen physical or sensing effect. It may use an advertised action or generate an off-script movement, but it does not review an action outcome or decide which autonomy agent is needed.',
           kind: 'environment-executor',
           handler: 'environment.observation',
           taskType: 'environment_observation',
@@ -63,7 +64,7 @@ export const robotAutonomyTaskCatalogNode = defineNode({
       }
 
       const agent = catalogById.get(id)
-      if (!agent || agent.lifecycle === 'service' || !agent.canRun || id === 'robot-autonomy-controller') {
+      if (!agent || agent.lifecycle === 'service' || !agent.canRun || ROBOT_AUTONOMY_LIFECYCLE_TASK_IDS.has(id)) {
         unavailableTaskIds.push(id)
         continue
       }

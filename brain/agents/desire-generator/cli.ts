@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Desire Generator Agent — CLI Entry Point
+ * Desire Agent — CLI Entry Point
  *
  * Generates desires from persona goals, tasks, memories, and other sources.
  *
@@ -16,26 +16,26 @@ import { initGlobalLogger, audit } from '@metahuman/core';
 import { parseDesireGeneratorArgs, runCycle } from './core.js';
 
 async function main() {
-  initGlobalLogger('desire-generator');
+  initGlobalLogger('desire-agent');
 
   try {
     const result = await runCycle(parseDesireGeneratorArgs(process.argv.slice(2)));
 
-    console.log(`[desire-generator] Completed: ${result.totalGenerated} desires generated for ${result.usersProcessed} users`);
-
-    if (result.errors.length > 0) {
-      console.error('[desire-generator] Errors:', result.errors);
+    if (result.success) {
+      console.log(`[desire-agent] Completed: ${result.totalGenerated} desire changes for ${result.usersProcessed} users`);
+    } else {
+      console.error(`[desire-agent] Failed: ${result.errors.at(-1) || 'Unknown failure'}`);
     }
 
     process.exit(result.success ? 0 : 1);
   } catch (error) {
-    console.error('[desire-generator] Fatal error:', error);
+    console.error('[desire-agent] Fatal error:', error);
 
     audit({
       category: 'system',
       level: 'error',
       event: `Desire generator CLI error: ${(error as Error).message}`,
-      actor: 'desire-generator',
+      actor: 'desire-agent',
       details: { error: (error as Error).stack },
     });
 

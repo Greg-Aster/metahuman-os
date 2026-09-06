@@ -7,7 +7,7 @@
     "autoApprove": 0.85,
     "decay": {
       "enabled": true,
-      "ratePerRun": 0.03,
+      "ratePerDay": 0.03,
       "minStrength": 0.05,
       "reinforcementBoost": 0.08,
       "initialStrength": 0.15
@@ -15,9 +15,11 @@
   },
 
   "sources": {
+    "user_request": { "enabled": true, "weight": 1.0 },
     "persona_goal": { "enabled": true, "weight": 1.0 },
     "urgent_task": { "enabled": true, "weight": 0.85 },
     "task": { "enabled": true, "weight": 0.7 },
+    "help_ticket": { "enabled": true, "weight": 0.65 },
     "memory_pattern": { "enabled": true, "weight": 0.5 },
     "curiosity": { "enabled": true, "weight": 0.4 },
     "reflection": { "enabled": true, "weight": 0.35 },
@@ -37,9 +39,11 @@
   },
 
   "riskPolicy": {
+    "reviewBypass": "trust_based",
     "autoApproveRisk": ["none", "low"],
     "requireApprovalRisk": ["medium", "high", "critical"],
-    "blockRisk": ["critical"]
+    "blockRisk": ["critical"],
+    "autoApproveTrustLevel": "bounded_auto"
   },
 
   "execution": {

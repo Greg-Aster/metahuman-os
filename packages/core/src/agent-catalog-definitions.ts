@@ -42,6 +42,8 @@ export interface AgentCatalogDefinition {
   defaultTrigger?: AgentCatalogDefaultTrigger;
   parentIds?: string[];
   tags?: string[];
+  /** Internal worker hidden from public registration and manual-run surfaces. */
+  internalOwner?: string;
 }
 
 /**
@@ -133,46 +135,20 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
     parentIds: ['sleep-workflow'],
     tags: ['dream', 'sleep', 'workflow-child'],
   },
-  'desire-executor': {
-    id: 'desire-executor',
-    displayName: 'Desire Executor',
-    description: 'Executes approved desire plans through the operator system.',
+  'desire-agent': {
+    id: 'desire-agent',
+    sourceId: 'desire-generator',
+    displayName: 'Desire Agent',
+    description: 'Sole controller for reviewing persisted history, nurturing desires, planning approved work, executing it, and reviewing outcomes.',
     lifecycle: 'scheduled-work',
-    handler: 'agency.desire-execute',
-    taskType: 'desire_execute',
-    usesLLM: true,
-    priority: 'normal',
-    risk: 'standard',
-    defaultTrigger: { type: 'manual' },
-    parentIds: ['sleep-workflow'],
-    tags: ['agency', 'sleep', 'workflow-child'],
-  },
-  'desire-generator': {
-    id: 'desire-generator',
-    displayName: 'Desire Generator',
-    description: 'Synthesizes desires from goals, tasks, memories, and conversation patterns.',
-    lifecycle: 'scheduled-work',
+    handler: 'agent.desire-generator',
     taskType: 'desire_generate',
     usesLLM: true,
     priority: 'normal',
     risk: 'standard',
     defaultTrigger: { type: 'manual' },
     parentIds: ['sleep-workflow'],
-    tags: ['agency', 'sleep', 'workflow-child'],
-  },
-  'desire-outcome-reviewer': {
-    id: 'desire-outcome-reviewer',
-    displayName: 'Desire Outcome Reviewer',
-    description: 'Reviews completed and failed desire work to choose the next action.',
-    lifecycle: 'scheduled-work',
-    handler: 'agency.desire-outcome-review',
-    taskType: 'desire_review',
-    usesLLM: true,
-    priority: 'normal',
-    risk: 'standard',
-    defaultTrigger: { type: 'manual' },
-    parentIds: ['sleep-workflow'],
-    tags: ['agency', 'sleep', 'workflow-child'],
+    tags: ['agency', 'sleep', 'workflow-child', 'controller'],
   },
   'desire-planner': {
     id: 'desire-planner',
@@ -182,9 +158,9 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
     usesLLM: true,
     priority: 'normal',
     risk: 'standard',
-    defaultTrigger: { type: 'manual' },
-    parentIds: ['sleep-workflow'],
-    tags: ['agency', 'sleep', 'workflow-child'],
+    parentIds: ['desire-agent'],
+    tags: ['agency', 'internal-worker'],
+    internalOwner: 'desire-agent',
   },
   'environment-bridge': {
     id: 'environment-bridge',
@@ -284,7 +260,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'robot-operator': {
     id: 'robot-operator',
     displayName: 'Robot Operator',
-    description: 'Owns robot-autonomy scheduling, correlated-work completion tracking, mutual exclusion, and admission. Semi uses configured workflow timers; Full admits one context-driven Robot Autonomy Controller decision after each completed chain.',
+    description: 'Owns robot-autonomy scheduling, correlated-work completion tracking, mutual exclusion, and admission. Semi uses configured workflow timers; Full sends unresolved action results to Robot Goal Review and otherwise admits one context-driven Robot Autonomy Controller decision.',
     lifecycle: 'service',
     executionContext: 'system',
     servicePath: 'services/robot-operator.ts',

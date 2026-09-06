@@ -31,7 +31,14 @@ import { defineNode, type NodeDefinition } from '../types.js';
 import { saveDesireManifest, addScratchpadEntryToFolder } from '../../agency/storage.js';
 import { curiosityQuestionStore } from '../../curiosity-questions.js';
 import { approveDesireForExecution } from '../../agency/user-approval-transition.js';
-import type { Desire, DesireStatus, ClarifyingAnswer } from '../../agency/types.js';
+import { archiveCurrentDesireCycle } from '../../agency/desire-outcome-transition.js';
+import {
+  initializeDesireMetrics,
+  statusToStage,
+  type Desire,
+  type DesireStatus,
+  type ClarifyingAnswer,
+} from '../../agency/types.js';
 import type { ResponseBuffer } from '../../response-buffer.js';
 
 const ACTIONS_BY_CARD_TYPE: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -239,12 +246,17 @@ async function handleDesireRejection(
 
     // Update desire
     desire = {
-      ...desire,
+      ...archiveCurrentDesireCycle(desire),
       status: nextStatus,
-      currentStage: 'planning',
+      currentStage: statusToStage(nextStatus),
       userCritique: newCritique,
       critiqueAt: now,
       updatedAt: now,
+      metrics: {
+        ...(desire.metrics || initializeDesireMetrics()),
+        userCritiqueCount: (desire.metrics?.userCritiqueCount || 0) + 1,
+        lastActivityAt: now,
+      },
     };
 
     await saveDesireManifest(desire, userId);
@@ -256,8 +268,9 @@ async function handleDesireRejection(
       data: { action, feedbackSummary, shouldRetry },
     }, userId);
 
-    const { submitDesirePlanning } = await import('../../queue/work-submission.js');
-    await submitDesirePlanning({
+    const { submitDesireAgent } = await import('../../queue/work-submission.js');
+    await submitDesireAgent({
+      operation: 'plan',
       username: userId,
       desireId: desire.id,
       source: 'user',
@@ -350,10 +363,13 @@ async function handleClarifyingQuestion(
   };
 
   const updatedAnswers = [...desire.clarifyingQuestions.answers, newAnswer];
-  const allAnswered = updatedAnswers.length >= desire.clarifyingQuestions.questions.length;
+  const answeredIdsAfterUpdate = new Set(updatedAnswers.map(answer => answer.questionId));
+  const requiredAnswered = desire.clarifyingQuestions.questions
+    .filter(question => question.required)
+    .every(question => answeredIdsAfterUpdate.has(question.id));
 
-  if (action === 'move_to_planning' && (!answerComplete || !allAnswered)) {
-    throw new Error('Cannot move desire to planning before all clarifying questions are answered');
+  if (action === 'move_to_planning' && (!answerComplete || !requiredAnswered)) {
+    throw new Error('Cannot move desire to planning before all required clarifying questions are answered');
   }
   if (action === 'save_answer' && !answerComplete) {
     throw new Error('Cannot save a completed clarifying answer when answerComplete is false');
@@ -362,7 +378,7 @@ async function handleClarifyingQuestion(
   let nextStatus: DesireStatus = desire.status;
   let pipelineTriggered = false;
 
-  if (action === 'move_to_planning' || (action === 'save_answer' && allAnswered)) {
+  if (action === 'move_to_planning' || (action === 'save_answer' && requiredAnswered)) {
     nextStatus = 'planning';
     pipelineTriggered = true;
   }
@@ -374,9 +390,14 @@ async function handleClarifyingQuestion(
     clarifyingQuestions: {
       ...desire.clarifyingQuestions,
       answers: updatedAnswers,
-      completedAt: allAnswered ? now : undefined,
+      completedAt: requiredAnswered ? now : undefined,
     },
     updatedAt: now,
+    metrics: {
+      ...(desire.metrics || initializeDesireMetrics()),
+      userInputCount: (desire.metrics?.userInputCount || 0) + 1,
+      lastActivityAt: now,
+    },
   };
 
   await saveDesireManifest(desire, userId);
@@ -385,12 +406,13 @@ async function handleClarifyingQuestion(
     type: 'questions_answered',
     description: `Answered question: "${unansweredQuestion.text.substring(0, 50)}..."`,
     actor: 'user',
-    data: { questionId: unansweredQuestion.id, answer: extractedAnswer, allAnswered },
+    data: { questionId: unansweredQuestion.id, answer: extractedAnswer, requiredAnswered },
   }, userId);
 
   if (pipelineTriggered) {
-    const { submitDesirePlanning } = await import('../../queue/work-submission.js');
-    await submitDesirePlanning({
+    const { submitDesireAgent } = await import('../../queue/work-submission.js');
+    await submitDesireAgent({
+      operation: 'plan',
       username: userId,
       desireId: desire.id,
       source: 'user',
@@ -406,7 +428,7 @@ async function handleClarifyingQuestion(
   }
 
   return {
-    actionTaken: allAnswered ? 'All questions answered, moving to planning' : 'Answer saved',
+    actionTaken: requiredAnswered ? 'Required questions answered, moving to planning' : 'Answer saved',
     pipelineTriggered,
     nextStatus: pipelineTriggered ? nextStatus : null,
     desire,
@@ -444,14 +466,15 @@ async function handleDesirePlan(
   let nextStatus: DesireStatus | null = null;
   let pipelineTriggered = false;
   let actionTaken = 'Feedback noted';
+  const { submitDesireAgent } = await import('../../queue/work-submission.js');
 
   switch (action) {
     case 'approve_plan':
       if (userApproves !== true) throw new Error('Plan approval action requires explicit user approval');
       if (userRole !== 'owner') throw new Error('Owner role required to approve desire plans');
       desire = await approveDesireForExecution(desire, userId);
-      const { submitDesireExecution } = await import('../../queue/work-submission.js');
-      await submitDesireExecution({
+      await submitDesireAgent({
+        operation: 'execute',
         username: userId,
         desireId: desire.id,
         source: 'user',
@@ -481,12 +504,17 @@ async function handleDesirePlan(
         : `[${now}] Plan feedback:\n${feedbackSummary}`;
 
       desire = {
-        ...desire,
+        ...archiveCurrentDesireCycle(desire),
         status: nextStatus,
-        currentStage: 'planning',
+        currentStage: statusToStage(nextStatus),
         userCritique: newCritique,
         critiqueAt: now,
         updatedAt: now,
+        metrics: {
+          ...(desire.metrics || initializeDesireMetrics()),
+          userCritiqueCount: (desire.metrics?.userCritiqueCount || 0) + 1,
+          lastActivityAt: now,
+        },
       };
 
       await saveDesireManifest(desire, userId);
@@ -498,8 +526,8 @@ async function handleDesirePlan(
         data: { action, feedbackSummary },
       }, userId);
 
-      const { submitDesirePlanning } = await import('../../queue/work-submission.js');
-      await submitDesirePlanning({
+      await submitDesireAgent({
+        operation: 'plan',
         username: userId,
         desireId: desire.id,
         source: 'user',
@@ -517,13 +545,14 @@ async function handleDesirePlan(
 
     case 'abandon_plan':
       if (userRole !== 'owner') throw new Error('Owner role required to abandon desire plans');
-      nextStatus = 'abandoned';
-      actionTaken = 'Desire abandoned per user request';
+      nextStatus = 'archived';
+      actionTaken = 'Desire archived per user request';
 
       desire = {
-        ...desire,
+        ...archiveCurrentDesireCycle(desire),
         status: nextStatus,
-        currentStage: 'abandoned',
+        currentStage: statusToStage(nextStatus),
+        dispositionReason: feedbackSummary || 'Archived by owner from the plan response',
         completedAt: now,
         updatedAt: now,
       };

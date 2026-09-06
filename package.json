@@ -53,6 +53,7 @@
 		"score:environment-action-selector:development": "node --import tsx brain/training/environment-action-selector/score-development.ts",
 		"export:environment-action-selector:merged": "node --import tsx brain/training/environment-action-selector/export-merged.ts",
 		"validate:user-agnostic": "node --import tsx scripts/check-user-agnostic.ts",
+		"migrate:agency": "node --import tsx scripts/migrate-agency-desires.ts",
 		"validate:terminal-lifecycle": "node --import tsx packages/core/src/api/handlers/terminal.spec.ts",
 		"validate:big-brother-session": "node --import tsx packages/core/src/big-brother-session.spec.ts",
 		"audit:graph-executors": "node --import tsx scripts/audit-graph-executors.ts",

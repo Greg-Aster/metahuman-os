@@ -7,6 +7,7 @@ import fs, { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from './path-builder.js';
 import { getAgentCatalogSnapshot, type AgentCatalogSnapshot } from './agent-catalog.js';
+import { getQueueManager } from './queue/unified-queue-manager.js';
 import {
   bootEntryForDescriptor,
   buildAgentDescriptor,
@@ -296,30 +297,14 @@ function configuredAgent(config: AgentMonitorConfig, id: string): AgentCatalogEn
 }
 
 /**
- * Get list of available agents
- * Lists modular agent directories with an index.ts contract.
+ * Get the public runnable agents from the canonical Agent Catalog.
+ * Internal worker source directories are deliberately not an execution menu.
  */
 export function listAvailableAgents(): string[] {
-
-  const agentsDir = systemPaths.agents;
-
-  if (!fs.existsSync(agentsDir)) {
-    return [];
-  }
-
-  const agents: string[] = [];
-  const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const indexPath = path.join(agentsDir, entry.name, 'index.ts');
-      if (fs.existsSync(indexPath)) {
-        agents.push(entry.name);
-      }
-    }
-  }
-
-  return agents;
+  return getAgentCatalogSnapshot().agents
+    .filter(agent => agent.canRun)
+    .map(agent => agent.id)
+    .sort();
 }
 
 /**
@@ -619,6 +604,26 @@ export function getAgentMonitorSnapshot(): AgentMonitorSnapshot {
   const catalogById = new Map(catalog.agents.map(agent => [agent.id, agent]));
   const statuses = getAgentStatuses();
   const statusByName = new Map(statuses.map(status => [status.name, status]));
+  for (const task of getQueueManager().getAllTasks()) {
+    if (task.state !== 'leased') continue;
+    const monitorAgentId = typeof task.metadata?.monitorAgentId === 'string'
+      ? task.metadata.monitorAgentId
+      : typeof task.input?.agentId === 'string'
+        ? task.input.agentId
+        : undefined;
+    if (!monitorAgentId) continue;
+    const startedAt = task.startedAt || task.createdAt;
+    const current = statusByName.get(monitorAgentId);
+    if (current?.status === 'running' && (current.startedAt || '') >= startedAt) continue;
+    statusByName.set(monitorAgentId, {
+      name: monitorAgentId,
+      status: 'running',
+      startedAt,
+      lastActivity: startedAt,
+      uptime: Math.max(0, Math.floor((Date.now() - Date.parse(startedAt)) / 1_000)),
+      errors: [],
+    });
+  }
   const failures = getAgentFailures();
   const failureByName = new Map(failures.map(failure => [failure.agent, failure]));
   const cards: AgentMonitorCard[] = [];

@@ -144,7 +144,6 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
     const delegatedMemories = sampledMemoryContent(inputs.memories);
     const nextObservation: EnvironmentObservation = sanitizeEnvironmentBridgeObservation({
       ...observation,
-      timestamp,
       text: [],
       feedback: observation.feedback ?? [],
       metadata: { ...(observation.metadata ?? {}), correlationId: cycle.cycleId },
@@ -161,9 +160,12 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       priority: source === 'user' ? 'high' : 'background',
       input: {
         observation: nextObservation,
+        observationCurrent: false,
         graph,
         robotOperatorContext: {
           robotObserver: cycle,
+          sourceObservationAt: observation.timestamp,
+          currentVisualEvidence: false,
           plannerDecision: {
             observed,
             instruction,

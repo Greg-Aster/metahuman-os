@@ -21,11 +21,12 @@ executor and the web editor.
   owns cognition, both Inner Dialogue persistence effects, and optional Train
   of Thought admission.
 - Robot Autonomy Controller (`robot-autonomy-controller-mode.json`) is the one
-  Full-mode LLM decision workflow. Its task-catalog node advertises configured,
-  currently executable finite agents with their canonical descriptions. After
-  the prior autonomy chain finishes, one LLM may select one of those tasks,
-  delegate one high-level embodied intention to Robot Autonomy Executor, and
-  optionally speak.
+  general Full-mode LLM decision workflow. Its task-catalog node advertises
+  configured, currently executable finite agents with their canonical
+  descriptions. After any unresolved correlated result receives its one Goal
+  Review, one controller LLM may select one of those tasks, delegate one
+  high-level embodied intention to Robot Autonomy Executor, and optionally
+  speak.
 - Boredom Observer, Movement, and Reflection are contextual planner graphs;
   Robot Autonomy Executor (`boredom-autonomy-mode.json`, stable runtime key
   `boredom-autonomy`) routes the unchanged internal intention, executes one

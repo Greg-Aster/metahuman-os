@@ -1,5 +1,5 @@
 /**
- * Desire Generator Agent — Module Definition
+ * Desire Agent — Module Definition
  *
  * Exports the AgentModule for registration with agent-runtime.
  */
@@ -8,9 +8,9 @@ import type { AgentModule, AgentMeta } from '@metahuman/agent-runtime';
 import { run } from './core.js';
 
 export const meta: AgentMeta = {
-  id: 'desire-generator',
-  name: 'Desire Generator',
-  description: 'Synthesizes desires from persona goals, tasks, memories, and other sources',
+  id: 'desire-agent',
+  name: 'Desire Agent',
+  description: 'Sole controller for Desire generation, planning, execution, and outcome review',
   usesLLM: true,
   priority: 'normal',
   tags: ['agency', 'llm', 'background', 'desire'],
@@ -25,6 +25,7 @@ export {
   gatherInputs,
   identifyDesires,
   parseDesireGeneratorArgs,
+  selectRecentUserRequests,
   type DesireGeneratorOptions,
   type DesireGeneratorResult,
 } from './core.js';

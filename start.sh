@@ -368,7 +368,7 @@ cleanup() {
     kill_pattern_fast "VLLM::EngineCore"
     rm -f "$RUN_LOG_DIR/vllm.pid" "$RUN_LOG_DIR/vllm.starting"
     run_with_timeout 5 "$REPO_ROOT/bin/mh" agent stop --all
-    kill_pattern_fast "brain/scripts/_bootstrap.ts"
+    kill_pattern_fast "packages/core/src/agent-bootstrap.ts"
     kill_pattern_fast "maintenance-service"
     kill_pattern_fast "audio-organizer"
     kill_pattern_fast "mh start --no-restart"

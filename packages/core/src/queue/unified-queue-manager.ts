@@ -30,6 +30,40 @@ import {
 
 const RESOURCE_LANES: ResourceLaneId[] = ['local-llm', 'vector-index', 'remote-llm'];
 const TERMINAL_STATES = new Set<WorkState>(['completed', 'failed', 'cancelled', 'expired']);
+const DESIRE_AGENT_HANDLER = 'agent.desire-generator';
+const DESIRE_AGENT_INTERNAL_HANDLERS = new Map<string, TaskType>([
+  ['agent.desire-planner', 'generic'],
+  ['agency.desire-execute', 'desire_execute'],
+  ['agency.desire-outcome-review', 'desire_review'],
+  ['agency.desire-checkin', 'desire_checkin'],
+]);
+const DESIRE_AGENT_TASK_TYPES = new Set<TaskType>([
+  'desire_generate',
+  'desire_execute',
+  'desire_review',
+  'desire_checkin',
+]);
+const LEGACY_DESIRE_HANDLERS = new Set([
+  'agency.desire-signal',
+  'agent.desire-agent',
+  'agent.desire-executor',
+  'agent.desire-outcome-reviewer',
+]);
+
+export function isDesireAgentAdmission(input: Pick<TaskInput, 'type' | 'handler' | 'input' | 'metadata'>): boolean {
+  const handler = input.handler || DEFAULT_HANDLERS[input.type];
+  if (LEGACY_DESIRE_HANDLERS.has(handler)) return false;
+  if (handler === DESIRE_AGENT_HANDLER) {
+    return input.type === 'desire_generate' && input.input?.agentId === 'desire-agent';
+  }
+  const internalTaskType = DESIRE_AGENT_INTERNAL_HANDLERS.get(handler);
+  if (internalTaskType) {
+    return input.type === internalTaskType
+      && input.metadata?.producer === 'desire-agent'
+      && input.input?.triggeredBy === 'desire-agent';
+  }
+  return !DESIRE_AGENT_TASK_TYPES.has(input.type);
+}
 
 const DEFAULT_LANE_CONFIGS: Record<ResourceLaneId, LaneConfig & { id: ResourceLaneId; cooldownMs: number }> = {
   'local-llm': {
@@ -137,6 +171,13 @@ export class UnifiedQueueManager {
   enqueue(input: TaskInput): QueuedTask {
     if (!input.username?.trim()) throw new Error('Work item username is required');
     if (!input.type) throw new Error('Work item type is required');
+    const handler = input.handler || DEFAULT_HANDLERS[input.type];
+    if (!isDesireAgentAdmission(input)) {
+      if (handler === DESIRE_AGENT_HANDLER) {
+        throw new Error('Desire generation must be admitted as the public Desire Agent');
+      }
+      throw new Error('Desire lifecycle work must be admitted by the Desire Agent');
+    }
 
     const scope = this.idempotencyScope(input);
     if (scope) {
@@ -163,7 +204,7 @@ export class UnifiedQueueManager {
     const task: QueuedTask = {
       id: `task-${Date.now()}-${randomUUID().slice(0, 8)}`,
       type: input.type,
-      handler: input.handler || DEFAULT_HANDLERS[input.type],
+      handler,
       state: 'queued',
       priority: input.priority || DEFAULT_PRIORITIES[input.type],
       source: input.source || 'system',
@@ -571,6 +612,21 @@ export class UnifiedQueueManager {
 
   importState(state: QueueState): void {
     this.clear(false);
+    // Terminal history is canonical newest-first. Normalize timestamps to
+    // repair state written by older loaders that reversed history, then replay
+    // oldest-first because addTerminal() prepends each receipt.
+    const restoredHistory = [...(state.history || [])].sort((left, right) => {
+      const leftAt = Date.parse(left.completedAt || left.createdAt);
+      const rightAt = Date.parse(right.completedAt || right.createdAt);
+      const normalizedLeft = Number.isFinite(leftAt) ? leftAt : 0;
+      const normalizedRight = Number.isFinite(rightAt) ? rightAt : 0;
+      return normalizedRight - normalizedLeft;
+    });
+    for (const rawTask of restoredHistory.reverse()) {
+      const task: QueuedTask = { ...rawTask, input: { ...rawTask.input } };
+      this.tasks.set(task.id, task);
+      this.addTerminal(task);
+    }
     for (const rawTask of state.items || []) {
       const task: QueuedTask = { ...rawTask, input: { ...rawTask.input } };
       if (task.type === 'user_message'
@@ -614,11 +670,6 @@ export class UnifiedQueueManager {
       this.tasks.set(task.id, task);
       if (TERMINAL_STATES.has(task.state)) this.addTerminal(task);
       else if (task.idempotencyKey) this.idempotency.set(`${task.username}:${task.idempotencyKey}`, task.id);
-    }
-    for (const rawTask of state.history || []) {
-      const task: QueuedTask = { ...rawTask, input: { ...rawTask.input } };
-      this.tasks.set(task.id, task);
-      this.addTerminal(task);
     }
     for (const handle of state.inFlightRemote || []) this.inFlightRemote.set(handle.taskId, handle);
     this.notifyChange();

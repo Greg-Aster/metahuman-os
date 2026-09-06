@@ -171,7 +171,7 @@ test('manual planning delegates to the agent and has no competing inline reviewe
     'utf8',
   );
   const routerSource = fs.readFileSync(path.join(ROOT, 'packages/core/src/api/router.ts'), 'utf8');
-  assert.match(apiSource, /submitDesirePlanning\(/);
+  assert.match(apiSource, /submitDesireAgent\(/);
   assert.doesNotMatch(apiSource, /callLLM\(/);
   assert.doesNotMatch(apiSource, /saveGeneratedPlan/);
   assert.doesNotMatch(apiSource, /runAlignmentReview|runSafetyReview/);

@@ -68,6 +68,7 @@
     executionAttemptCount: number;
     executionSuccessCount: number;
     executionFailCount: number;
+    outcomeRetryCount: number;
     avgSuccessScore: number;
     userInputCount: number;
     userApprovalCount: number;
@@ -97,6 +98,21 @@
     notifyUser: boolean;
     userMessage?: string;
     executionSummary?: string;
+  }
+
+  interface ClarifyingQuestion {
+    id: string;
+    text: string;
+    type: 'free_text' | 'yes_no' | 'choice';
+    options?: string[];
+    required: boolean;
+  }
+
+  interface DesireClarifyingQuestions {
+    questions: ClarifyingQuestion[];
+    answers: Array<{ questionId: string; answer: string; answeredAt: string }>;
+    askedAt?: string;
+    completedAt?: string;
   }
 
   // Long-running goal types
@@ -149,6 +165,7 @@
     execution?: DesireExecution;
     scratchpad?: DesireScratchpadSummary;
     outcomeReview?: DesireOutcomeReview;
+    clarifyingQuestions?: DesireClarifyingQuestions;
     folderPath?: string;  // For folder-based storage
     // Long-running goal fields
     goalType?: DesireGoalType;
@@ -167,6 +184,35 @@
     successRate: number;
   }
 
+  interface AgencyConfigView {
+    enabled: boolean;
+    mode: 'off' | 'supervised' | 'autonomous' | 'yolo';
+    thresholds: {
+      activation: number;
+      autoApprove: number;
+      decay: { enabled: boolean; ratePerDay: number; minStrength: number; reinforcementBoost: number; initialStrength: number };
+    };
+    sources: Record<string, { enabled: boolean; weight: number }>;
+    limits: {
+      maxActiveDesires: number;
+      maxPendingDesires: number;
+      maxDailyExecutions: number;
+      retentionDays: { completed: number; rejected: number; abandoned: number };
+    };
+    riskPolicy: {
+      reviewBypass: 'never' | 'trust_based' | 'always';
+      autoApproveRisk: string[];
+      requireApprovalRisk: string[];
+      blockRisk: string[];
+      autoApproveTrustLevel: string;
+    };
+    execution: { preferredBackend: string; fallbackBackend: string; feasibilityCheckEnabled: boolean; maxPlanRetries: number };
+    logging: { verbose: boolean; logToTerminal: boolean; logToInnerDialogue: boolean };
+  }
+
+  const riskLevels = ['none', 'low', 'medium', 'high', 'critical'] as const;
+  type RiskPolicyList = 'autoApproveRisk' | 'requireApprovalRisk' | 'blockRisk';
+
   interface DesireCounts {
     nascent: number;
     pending: number;
@@ -176,9 +222,14 @@
     approved: number;
     executing: number;
     awaiting_review: number;
+    questioning: number;
+    awaiting_approval: number;
+    needs_attention: number;
+    paused: number;
     completed: number;
     rejected: number;
     abandoned: number;
+    archived: number;
     failed: number;
   }
 
@@ -186,7 +237,9 @@
   let desires: Desire[] = [];
   let metrics: AgencyMetrics | null = null;
   let counts: DesireCounts | null = null;
-  let summary: { total: number; active: number; waiting: number; completed: number; failed: number } | null = null;
+  let summary: { total: number; active: number; waiting: number; needsAction: number; completed: number; failed: number } | null = null;
+  let agencyConfig: AgencyConfigView | null = null;
+  let savingAgencyConfig = false;
 
   let loading = true;
   let error = '';
@@ -215,6 +268,7 @@
 
   // Plan detail view and critique
   let critiqueText: Record<string, string> = {};
+  let questionAnswers: Record<string, Record<string, string>> = {};
   let showHistoryFor: string | null = null;
   let revisingId: string | null = null;
   let showScratchpadFor: string | null = null;
@@ -505,16 +559,20 @@
       case 'approved': return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
       case 'executing': return 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200';
       case 'awaiting_review': return 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200';
+      case 'needs_attention': return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200';
+      case 'paused': return 'bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-200';
       case 'completed': return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200';
       case 'rejected':
       case 'failed': return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-      case 'abandoned': return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200';
+      case 'abandoned':
+      case 'archived': return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200';
       default: return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200';
     }
   }
 
   function getSourceIcon(source: string): string {
     switch (source) {
+      case 'user_request': return '💬';
       case 'persona_goal': return '🎯';
       case 'urgent_task': return '🔥';
       case 'task': return '📋';
@@ -578,34 +636,11 @@
     };
   }
 
-  // Map grouped filter options to actual status values
-  function getStatusesForFilter(filter: string): string[] {
-    switch (filter) {
-      case 'active':
-        // Everything that's being worked on (not finished)
-        return ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'executing', 'awaiting_review'];
-      case 'needs_action':
-        // User needs to do something
-        return ['awaiting_approval', 'awaiting_review'];
-      case 'completed':
-        return ['completed', 'failed'];
-      case 'archived':
-        return ['rejected', 'abandoned'];
-      case 'all':
-      default:
-        return []; // Empty means all
-    }
-  }
-
   async function loadDesires() {
     try {
-      const params = new URLSearchParams();
-      const statuses = getStatusesForFilter(statusFilter);
-      if (statuses.length > 0) {
-        params.set('status', statuses.join(','));
-      }
-      const url = params.size ? `/api/agency/desires?${params}` : '/api/agency/desires?status=all';
-      console.log(`[AgencyDashboard] Loading desires with filter: "${statusFilter}" → statuses: ${statuses.join(',') || 'all'}`);
+      const params = new URLSearchParams({ status: statusFilter });
+      const url = `/api/agency/desires?${params}`;
+      console.log(`[AgencyDashboard] Loading desires with canonical filter: "${statusFilter}"`);
       const res = await apiFetch(url);
       if (!res.ok) throw new Error('Failed to load desires');
       const data = await res.json();
@@ -626,6 +661,59 @@
       summary = data.summary;
     } catch (e) {
       console.error('Failed to load metrics:', e);
+    }
+  }
+
+  async function loadAgencyConfig() {
+    try {
+      const res = await apiFetch('/api/agency/config');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load Agency settings');
+      agencyConfig = data.config;
+    } catch (e) {
+      console.error('Failed to load Agency settings:', e);
+    }
+  }
+
+  function updateSourceConfig(source: string, field: 'enabled' | 'weight', value: boolean | number) {
+    if (!agencyConfig) return;
+    agencyConfig = {
+      ...agencyConfig,
+      sources: {
+        ...agencyConfig.sources,
+        [source]: { ...agencyConfig.sources[source], [field]: value },
+      },
+    };
+  }
+
+  function updateRiskPolicyList(field: RiskPolicyList, risk: string, checked: boolean) {
+    if (!agencyConfig) return;
+    const current = agencyConfig.riskPolicy[field];
+    const next = checked
+      ? [...new Set([...current, risk])]
+      : current.filter(value => value !== risk);
+    agencyConfig = {
+      ...agencyConfig,
+      riskPolicy: { ...agencyConfig.riskPolicy, [field]: next },
+    };
+  }
+
+  async function saveAgencySettings() {
+    if (!agencyConfig) return;
+    savingAgencyConfig = true;
+    try {
+      const res = await apiFetch('/api/agency/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(agencyConfig),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save Agency settings');
+      agencyConfig = data.config;
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      savingAgencyConfig = false;
     }
   }
 
@@ -770,7 +858,7 @@
     if (showLoading) loading = true;
     error = '';
     try {
-      await Promise.all([loadDesires(), loadMetrics()]);
+      await Promise.all([loadDesires(), loadMetrics(), loadAgencyConfig()]);
       lastLoadTime = Date.now();
     } finally {
       loading = false;
@@ -853,7 +941,7 @@
   }
 
   async function handleReset(id: string) {
-    if (!confirm('Reset this desire back to planning?\n\nThis will:\n• Clear any clarifying questions (for fresh start)\n• Abort any current execution\n• Allow you to test the questioning phase again')) return;
+    if (!confirm('Reset this desire back to planning?\n\nThis clears clarifying questions and queues a fresh planning pass. Active executions must be cancelled from the queue first.')) return;
 
     processingId = id;
     try {
@@ -882,12 +970,70 @@
       const res = await apiFetch(`/api/agency/desires/${id}/advance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newStatus: 'abandoned' }),
+        body: JSON.stringify({ newStatus: 'archived', reason: 'Archived by owner' }),
       });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Failed to archive desire');
       }
+      await loadAll(true, true);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      processingId = null;
+    }
+  }
+
+  async function handlePause(id: string) {
+    processingId = id;
+    try {
+      const res = await apiFetch(`/api/agency/desires/${id}/advance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newStatus: 'paused', reason: 'Paused by owner' }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to pause desire');
+      }
+      await loadAll(true, true);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      processingId = null;
+    }
+  }
+
+  function setQuestionAnswer(desireId: string, questionId: string, answer: string) {
+    questionAnswers = {
+      ...questionAnswers,
+      [desireId]: { ...(questionAnswers[desireId] || {}), [questionId]: answer },
+    };
+  }
+
+  async function handleAnswerQuestions(desire: Desire) {
+    const questions = desire.clarifyingQuestions?.questions || [];
+    const values = questionAnswers[desire.id] || {};
+    const missing = questions.filter(question => question.required && !values[question.id]?.trim());
+    if (missing.length > 0) {
+      error = `Please answer ${missing.length} required question${missing.length === 1 ? '' : 's'}.`;
+      return;
+    }
+    processingId = desire.id;
+    try {
+      const res = await apiFetch(`/api/agency/desires/${desire.id}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          answers: questions
+            .map(question => ({ questionId: question.id, answer: values[question.id]?.trim() || '' }))
+            .filter(answer => answer.answer),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to submit clarifying answers');
+      delete questionAnswers[desire.id];
+      questionAnswers = { ...questionAnswers };
       await loadAll(true, true);
     } catch (e) {
       error = (e as Error).message;
@@ -1292,6 +1438,17 @@
       expandedPlanId = null;
       showHistoryFor = null;
       showScratchpadFor = null;
+    } else {
+      const desire = desires.find(item => item.id === id);
+      if (desire?.clarifyingQuestions) {
+        questionAnswers = {
+          ...questionAnswers,
+          [id]: Object.fromEntries(desire.clarifyingQuestions.questions.map(question => [
+            question.id,
+            desire.clarifyingQuestions?.answers.find(answer => answer.questionId === question.id)?.answer || '',
+          ])),
+        };
+      }
     }
   }
 
@@ -1374,7 +1531,7 @@
   {:else}
     <!-- Summary Stats -->
     {#if summary}
-      <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <div class="panel p-4 text-center">
           <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Desires</div>
           <div class="text-2xl font-bold mt-1">{summary.total}</div>
@@ -1388,11 +1545,15 @@
           <div class="text-2xl font-bold mt-1 text-yellow-600 dark:text-yellow-400">{summary.waiting}</div>
         </div>
         <div class="panel p-4 text-center">
+          <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Needs Action</div>
+          <div class="text-2xl font-bold mt-1 text-orange-600 dark:text-orange-400">{summary.needsAction}</div>
+        </div>
+        <div class="panel p-4 text-center">
           <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Completed</div>
           <div class="text-2xl font-bold mt-1 text-green-600 dark:text-green-400">{summary.completed}</div>
         </div>
         <div class="panel p-4 text-center">
-          <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Failed/Rejected</div>
+          <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Archived/Failed</div>
           <div class="text-2xl font-bold mt-1 text-red-600 dark:text-red-400">{summary.failed}</div>
         </div>
       </div>
@@ -1423,6 +1584,157 @@
       </div>
     {/if}
 
+    {#if agencyConfig}
+      <details class="panel p-4 mt-4">
+        <summary class="cursor-pointer font-semibold">Agency lifecycle settings</summary>
+        <p class="text-xs muted mt-2">These profile settings control desire admission, strength, approval, and execution. YOLO bypasses approval gates only after the plan has passed alignment and safety review.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4 text-sm">
+          <label class="flex items-center gap-2">
+            <input type="checkbox" bind:checked={agencyConfig.enabled} />
+            Agency enabled
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Operating mode</span>
+            <select class="select-field" bind:value={agencyConfig.mode}>
+              <option value="off">Off</option>
+              <option value="supervised">Supervised (owner approval)</option>
+              <option value="autonomous">Autonomous within trust policy</option>
+              <option value="yolo">YOLO approval bypass</option>
+            </select>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Review bypass</span>
+            <select class="select-field" bind:value={agencyConfig.riskPolicy.reviewBypass}>
+              <option value="never">Never</option>
+              <option value="trust_based">Trust based</option>
+              <option value="always">Always</option>
+            </select>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Minimum trust for auto-approval</span>
+            <select class="select-field" bind:value={agencyConfig.riskPolicy.autoApproveTrustLevel}>
+              <option value="observe">Observe</option>
+              <option value="suggest">Suggest</option>
+              <option value="supervised_auto">Supervised auto</option>
+              <option value="bounded_auto">Bounded auto</option>
+              <option value="adaptive_auto">Adaptive auto</option>
+            </select>
+          </label>
+          <div class="md:col-span-2 lg:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+            {#each [
+              { field: 'autoApproveRisk' as RiskPolicyList, label: 'Auto-approval risk levels' },
+              { field: 'requireApprovalRisk' as RiskPolicyList, label: 'Owner-approval risk levels' },
+              { field: 'blockRisk' as RiskPolicyList, label: 'Blocked risk levels' },
+            ] as policy}
+              <fieldset class="rounded border border-gray-200 dark:border-gray-700 p-3">
+                <legend class="px-1 text-xs font-medium">{policy.label}</legend>
+                <div class="flex flex-wrap gap-x-3 gap-y-2">
+                  {#each riskLevels as risk}
+                    <label class="flex items-center gap-1 text-xs capitalize">
+                      <input
+                        type="checkbox"
+                        checked={agencyConfig.riskPolicy[policy.field].includes(risk)}
+                        on:change={(event) => updateRiskPolicyList(policy.field, risk, event.currentTarget.checked)}
+                      />
+                      {risk}
+                    </label>
+                  {/each}
+                </div>
+              </fieldset>
+            {/each}
+          </div>
+          <label class="flex flex-col gap-1">
+            <span>Activation strength</span>
+            <input class="input-field" type="number" min="0" max="1" step="0.01" bind:value={agencyConfig.thresholds.activation} />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Auto-approval strength</span>
+            <input class="input-field" type="number" min="0" max="1" step="0.01" bind:value={agencyConfig.thresholds.autoApprove} />
+          </label>
+          <label class="flex items-center gap-2 self-end py-2">
+            <input type="checkbox" bind:checked={agencyConfig.thresholds.decay.enabled} />
+            Time-based decay enabled
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Decay per elapsed day</span>
+            <input class="input-field" type="number" min="0" max="1" step="0.001" bind:value={agencyConfig.thresholds.decay.ratePerDay} />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Minimum strength</span>
+            <input class="input-field" type="number" min="0" max="1" step="0.01" bind:value={agencyConfig.thresholds.decay.minStrength} />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Reinforcement boost</span>
+            <input class="input-field" type="number" min="0" max="1" step="0.01" bind:value={agencyConfig.thresholds.decay.reinforcementBoost} />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>New desire strength</span>
+            <input class="input-field" type="number" min="0" max="1" step="0.01" bind:value={agencyConfig.thresholds.decay.initialStrength} />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Maximum operational desires</span>
+            <input class="input-field" type="number" min="1" step="1" bind:value={agencyConfig.limits.maxActiveDesires} />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Maximum nascent/pending desires</span>
+            <input class="input-field" type="number" min="1" step="1" bind:value={agencyConfig.limits.maxPendingDesires} />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Maximum daily executions</span>
+            <input class="input-field" type="number" min="0" step="1" bind:value={agencyConfig.limits.maxDailyExecutions} />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Maximum plan retries</span>
+            <input class="input-field" type="number" min="0" step="1" bind:value={agencyConfig.execution.maxPlanRetries} />
+          </label>
+          <label class="flex items-center gap-2 self-end py-2">
+            <input type="checkbox" bind:checked={agencyConfig.execution.feasibilityCheckEnabled} />
+            Feasibility check enabled
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Preferred execution backend</span>
+            <input class="input-field" type="text" bind:value={agencyConfig.execution.preferredBackend} />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>Fallback execution backend</span>
+            <input class="input-field" type="text" bind:value={agencyConfig.execution.fallbackBackend} />
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="checkbox" bind:checked={agencyConfig.logging.logToInnerDialogue} />
+            Log Agency reflections to inner dialogue
+          </label>
+        </div>
+        <h4 class="text-sm font-semibold mt-5 mb-2">Input sources</h4>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+          {#each Object.entries(agencyConfig.sources) as [source, sourceConfig]}
+            <div class="flex items-center gap-2 p-2 rounded border border-gray-200 dark:border-gray-700">
+              <input
+                type="checkbox"
+                checked={sourceConfig.enabled}
+                on:change={(event) => updateSourceConfig(source, 'enabled', event.currentTarget.checked)}
+              />
+              <span class="text-xs flex-1">{source.replaceAll('_', ' ')}</span>
+              <input
+                class="input-field !w-20"
+                aria-label={`${source} source weight`}
+                type="number"
+                min="0"
+                max="1"
+                step="0.05"
+                value={sourceConfig.weight}
+                on:change={(event) => updateSourceConfig(source, 'weight', event.currentTarget.valueAsNumber)}
+              />
+            </div>
+          {/each}
+        </div>
+        <div class="flex justify-end mt-4">
+          <button class="btn-primary btn-sm" disabled={savingAgencyConfig} on:click={saveAgencySettings}>
+            {savingAgencyConfig ? 'Saving…' : 'Save Agency settings'}
+          </button>
+        </div>
+      </details>
+    {/if}
+
     <!-- Error Display -->
     {#if error}
       <div class="banner banner-error mt-4">
@@ -1435,7 +1747,9 @@
     <div class="flex justify-between items-center flex-wrap gap-2 mt-4">
       <div class="flex items-center gap-2">
         <select bind:value={statusFilter} on:change={loadDesires} class="select-field">
-          <option value="active">🔄 Active (In Progress)</option>
+          <option value="active">🔄 Active (Operational)</option>
+          <option value="waiting">⏳ Waiting</option>
+          <option value="open">📂 All Open</option>
           <option value="needs_action">⚠️ Needs Your Action</option>
           <option value="completed">✅ Completed</option>
           <option value="archived">📦 Archived</option>
@@ -1516,7 +1830,7 @@
                 </span>
               </label>
               <label class="text-sm flex flex-col gap-1">
-                <span class="text-gray-600 dark:text-gray-400">Decay Rate: {newDesire.decayRate.toFixed(3)}/run</span>
+                <span class="text-gray-600 dark:text-gray-400">Decay Rate: {newDesire.decayRate.toFixed(3)}/day</span>
                 <input
                   type="range"
                   bind:value={newDesire.decayRate}
@@ -1668,6 +1982,58 @@
 
                 {#if desire.reason}
                   <p class="text-xs text-gray-500 dark:text-gray-500 mb-2 italic">"{desire.reason}"</p>
+                {/if}
+
+                {#if desire.status === 'questioning' && desire.clarifyingQuestions?.questions.length}
+                  <div class="p-4 mb-3 rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-950/30" on:click|stopPropagation>
+                    <h5 class="text-sm font-semibold text-amber-800 dark:text-amber-200">Questions needed before planning</h5>
+                    <p class="text-xs text-amber-700 dark:text-amber-300 mt-1 mb-3">Your answers are saved with this desire and planning resumes automatically.</p>
+                    <div class="flex flex-col gap-3">
+                      {#each desire.clarifyingQuestions.questions as question}
+                        <label class="text-sm flex flex-col gap-1">
+                          <span class="font-medium">{question.text}{question.required ? ' *' : ''}</span>
+                          {#if question.type === 'yes_no'}
+                            <select
+                              class="select-field"
+                              value={questionAnswers[desire.id]?.[question.id] || ''}
+                              on:change={(event) => setQuestionAnswer(desire.id, question.id, event.currentTarget.value)}
+                            >
+                              <option value="">Select an answer</option>
+                              <option value="Yes">Yes</option>
+                              <option value="No">No</option>
+                            </select>
+                          {:else if question.type === 'choice' && question.options?.length}
+                            <select
+                              class="select-field"
+                              value={questionAnswers[desire.id]?.[question.id] || ''}
+                              on:change={(event) => setQuestionAnswer(desire.id, question.id, event.currentTarget.value)}
+                            >
+                              <option value="">Select an answer</option>
+                              {#each question.options as option}
+                                <option value={option}>{option}</option>
+                              {/each}
+                            </select>
+                          {:else}
+                            <textarea
+                              class="input-field resize-y"
+                              rows="2"
+                              value={questionAnswers[desire.id]?.[question.id] || ''}
+                              on:input={(event) => setQuestionAnswer(desire.id, question.id, event.currentTarget.value)}
+                            ></textarea>
+                          {/if}
+                        </label>
+                      {/each}
+                    </div>
+                    <div class="flex justify-end mt-3">
+                      <button
+                        class="btn-primary btn-sm"
+                        disabled={processingId === desire.id}
+                        on:click={() => handleAnswerQuestions(desire)}
+                      >
+                        {processingId === desire.id ? 'Submitting…' : 'Submit answers and continue'}
+                      </button>
+                    </div>
+                  </div>
                 {/if}
 
                 <!-- Nature explanation (compact) -->
@@ -2426,7 +2792,7 @@
                   {/if}
 
                   <!-- Reset/Unstick for desires in later stages (to go back to planning) -->
-                  {#if ['executing', 'failed', 'awaiting_approval', 'reviewing', 'approved', 'questioning', 'awaiting_review', 'outcome_review'].includes(desire.status)}
+                  {#if ['failed', 'needs_attention', 'awaiting_approval', 'reviewing', 'approved', 'questioning', 'awaiting_review'].includes(desire.status)}
                     <button
                       class="px-3 py-1.5 text-xs font-medium rounded text-white inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                       style="background: linear-gradient(135deg, #f59e0b, #d97706);"
@@ -2457,7 +2823,7 @@
                   {/if}
 
                   <!-- Reject -->
-                  {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved'].includes(desire.status)}
+                  {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'needs_attention'].includes(desire.status)}
                     <button
                       class="btn-danger btn-xs"
                       disabled={processingId === desire.id}
@@ -2467,7 +2833,7 @@
                     </button>
                   {/if}
                   <!-- Archive - for active desires (send to dormant state) -->
-                  {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'completed'].includes(desire.status)}
+                  {#if ['nascent', 'pending', 'planning', 'reviewing', 'awaiting_approval', 'approved', 'needs_attention', 'paused', 'completed'].includes(desire.status)}
                     <button
                       class="px-3 py-1.5 text-xs font-medium rounded text-white inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                       style="background: linear-gradient(135deg, #8b5cf6, #7c3aed);"
@@ -2479,8 +2845,19 @@
                     </button>
                   {/if}
 
+                  {#if ['nascent', 'pending', 'planning', 'questioning', 'reviewing', 'awaiting_approval', 'approved', 'needs_attention'].includes(desire.status)}
+                    <button
+                      class="px-3 py-1.5 text-xs font-medium rounded bg-slate-600 hover:bg-slate-700 text-white disabled:opacity-50"
+                      disabled={processingId === desire.id}
+                      on:click={() => handlePause(desire.id)}
+                      title="Pause autonomous processing without archiving history"
+                    >
+                      ⏸ Pause
+                    </button>
+                  {/if}
+
                   <!-- Revive - for archived desires (bring back to active) -->
-                  {#if ['rejected', 'abandoned', 'failed'].includes(desire.status)}
+                  {#if ['rejected', 'abandoned', 'archived', 'failed', 'paused'].includes(desire.status)}
                     <button
                       class="px-3 py-1.5 text-xs font-medium rounded text-white inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                       style="background: linear-gradient(135deg, #10b981, #059669);"
@@ -2492,7 +2869,7 @@
                     </button>
                   {/if}
 
-                  {#if ['nascent', 'pending', 'rejected', 'abandoned', 'failed', 'completed', 'awaiting_review'].includes(desire.status)}
+                  {#if ['nascent', 'pending', 'rejected', 'abandoned', 'archived', 'failed', 'completed', 'awaiting_review'].includes(desire.status)}
                     <button
                       class="px-3 py-1.5 text-xs font-medium rounded bg-gray-500 hover:bg-gray-600 text-white disabled:opacity-50"
                       disabled={processingId === desire.id}

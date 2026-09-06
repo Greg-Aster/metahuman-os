@@ -881,6 +881,13 @@
         {/if}
 
         {#if hasModelRegistry}
+          <div
+            class="mt-1 rounded border border-white/10 bg-black/20 px-2 py-1.5 text-[0.6875rem] leading-snug text-gray-400"
+            title="These assignments follow the active conversation mode. Background agents resolve their own cognitive mode through the same model router."
+          >
+            Showing <span class="font-medium text-gray-200">{$currentMode}</span>-mode assignments.
+            Background agents may use separate <span class="font-medium text-gray-200">agent</span>-mode assignments.
+          </div>
           {#each Object.entries(modelRoles) as [role, info]}
             <div class="model-role-row">
               <span class="activity-indicator">

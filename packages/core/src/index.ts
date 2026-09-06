@@ -526,9 +526,10 @@ export {
   DEFAULT_PRIORITIES,
   PRIORITY_VALUES,
   submitAgentFollowOn,
-  submitDesireExecution,
-  submitDesireOutcomeReview,
+  submitDesireAgent,
   type AgentFollowOnSubmission,
+  type DesireAgentOperation,
+  type DesireAgentSubmission,
   // Persistence
   loadQueueState,
   persistQueueState,

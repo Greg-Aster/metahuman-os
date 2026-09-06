@@ -268,6 +268,20 @@ export function robotGoalNeedsReview(task: RobotStatusTask | null | undefined): 
   return task.decision.outcome === 'incomplete' || task.decision.outcome === 'failed'
 }
 
+/**
+ * Full autonomy returns an unresolved physical result to the dedicated Goal
+ * Review LLM. Every other completed chain returns to the general contextual
+ * controller. This is lifecycle routing, not action or outcome selection.
+ */
+export function nextFullRobotOperatorChild(
+  task: RobotStatusTask | null | undefined,
+  goalReviewEnabled = true,
+): RobotOperatorStimulusAgent {
+  return goalReviewEnabled && robotGoalNeedsReview(task)
+    ? 'robot-goal-review'
+    : 'robot-autonomy-controller'
+}
+
 function hasRobotObserverMetadata(value: unknown): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const record = value as Record<string, any>
@@ -287,11 +301,14 @@ export function isRobotAutonomyWorkItem(
 }
 
 export function hasActiveRobotAutonomyCycle(
-  tasks: Array<Pick<QueuedTask, 'id' | 'handler' | 'input' | 'state'>>,
+  tasks: Array<Pick<QueuedTask, 'id' | 'handler' | 'input' | 'state' | 'correlationId'>>,
   ignoreTaskId?: string,
+  ignoreCycleId?: string,
 ): boolean {
+  const normalizedIgnoreCycleId = ignoreCycleId?.trim() ?? ''
   return tasks.some(task => (
     task.id !== ignoreTaskId
+    && (!normalizedIgnoreCycleId || task.correlationId?.trim() !== normalizedIgnoreCycleId)
     && (task.state === 'queued' || task.state === 'leased' || task.state === 'waiting')
     && isRobotAutonomyWorkItem(task)
   ))

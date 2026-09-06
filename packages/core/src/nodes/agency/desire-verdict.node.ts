@@ -19,7 +19,7 @@
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import type { Desire, DesirePlan, DesireReview } from '../../agency/types.js';
 import { generateReviewId } from '../../agency/types.js';
-import { canAutoApprove, isRiskBlocked } from '../../agency/config.js';
+import { canAutoApprove, isRiskBlocked, loadConfig } from '../../agency/config.js';
 import {
   highestPlanStepRisk,
   planRequiresManualApproval,
@@ -153,7 +153,8 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
   let autoApproveReason = review.autoApproveReason || 'Manual approval required';
 
   if (verdict === 'approve') {
-    if (planRequiresManualApproval(plan)) {
+    const yoloMode = (await loadConfig(username)).mode === 'yolo';
+    if (planRequiresManualApproval(plan) && !yoloMode) {
       autoApproveReason = 'One or more plan steps require explicit user approval';
     } else {
       // Use the trust value from the same policy-loader snapshot reviewed above.

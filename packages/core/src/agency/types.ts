@@ -66,7 +66,7 @@ export type DesireStatus =
   | 'paused'            // Intentionally dormant and excluded from autonomous work
   | 'completed'         // Successfully executed
   | 'rejected'          // User rejected or LLM review rejected
-  | 'abandoned'         // Decayed below threshold
+  | 'abandoned'         // Legacy terminal state retained for migrated records
   | 'archived'          // Explicitly archived while retaining its full history
   | 'failed';           // Execution failed
 
@@ -252,6 +252,8 @@ export interface DesireMetrics {
   executionSuccessCount: number;
   /** Failed executions */
   executionFailCount: number;
+  /** Outcome-review requests for another execution cycle */
+  outcomeRetryCount: number;
   /** Average success score across attempts (0-1) */
   avgSuccessScore: number;
 
@@ -289,6 +291,7 @@ export function initializeDesireMetrics(): DesireMetrics {
     executionAttemptCount: 0,
     executionSuccessCount: 0,
     executionFailCount: 0,
+    outcomeRetryCount: 0,
     avgSuccessScore: 0,
     userInputCount: 0,
     userApprovalCount: 0,
@@ -323,6 +326,8 @@ export function statusToStage(status: DesireStatus): DesireStage {
     case 'evaluating':
     case 'planning':
       return 'planning';
+    case 'questioning':
+      return 'questioning';
     case 'reviewing':
       return 'plan_review';
     case 'awaiting_approval':
@@ -499,6 +504,10 @@ export interface DesireOutcomeReview {
   completionCriteriaMet?: boolean;
   /** Human-readable summary of what was accomplished during execution */
   executionSummary?: string;
+  /** Whether the installation owner explicitly confirmed this outcome */
+  userConfirmed?: boolean;
+  /** ISO timestamp of explicit owner confirmation */
+  userConfirmedAt?: string;
 }
 
 // ============================================================================
@@ -649,6 +658,9 @@ export interface Desire {
   /** Previous plan versions (for comparison during review) */
   planHistory?: DesirePlan[];
 
+  /** Completed plan reviews retained with their matching plan versions */
+  reviewHistory?: DesireReview[];
+
   // User critique (for revision requests)
   /** User's critique/feedback for re-planning */
   userCritique?: string;
@@ -666,6 +678,8 @@ export interface Desire {
   // Outcome Review (populated after execution review)
   /** Post-execution outcome review - determines next steps */
   outcomeReview?: DesireOutcomeReview;
+  /** Completed outcome reviews retained across replanning cycles */
+  outcomeReviewHistory?: DesireOutcomeReview[];
 
   // Scratchpad summary (full log stored as individual files in folder)
   /** Summary of scratchpad - entries are in <folderPath>/scratchpad/ */
@@ -674,6 +688,8 @@ export interface Desire {
   // Execution (populated during/after execution)
   /** Execution state and results */
   execution?: DesireExecution;
+  /** Completed execution records retained across replanning cycles */
+  executionHistory?: DesireExecution[];
 
   // Rejection tracking
   /** History of rejections (for learning) */
@@ -857,8 +873,8 @@ export interface DesireDecayConfig {
   /** Whether decay is enabled */
   enabled: boolean;
   /** Strength lost per elapsed day (small value, e.g., 0.03) */
-  ratePerRun: number;
-  /** Minimum strength before abandonment */
+  ratePerDay: number;
+  /** Minimum strength before automatic archival */
   minStrength: number;
   /** Strength boost when inputs reinforce an existing desire */
   reinforcementBoost: number;
@@ -952,7 +968,7 @@ export interface AgencyConfig {
   /** Whether agency is enabled */
   enabled: boolean;
   /** Operating mode */
-  mode: 'off' | 'supervised' | 'autonomous';
+  mode: 'off' | 'supervised' | 'autonomous' | 'yolo';
   /** Threshold settings */
   thresholds: DesireThresholdsConfig;
   /** Source configurations */
@@ -975,6 +991,8 @@ export interface AgencyConfig {
  * Inputs gathered for desire generation.
  */
 export interface DesireGeneratorInputs {
+  /** Explicit user wants admitted from persisted conversation turns. */
+  userRequests: Array<{ id: string; content: string; timestamp: string }>;
   /** Explicit goals from persona */
   personaGoals: PersonaGoal[];
   /** High-priority tasks */

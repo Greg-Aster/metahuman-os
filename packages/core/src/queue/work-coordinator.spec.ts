@@ -100,6 +100,11 @@ function input(overrides: Record<string, unknown> = {}) {
 
   assert.equal(duplicate.id, first.id, 'active idempotency keys must return the existing work item');
   assert.equal(manager.getAllTasks().length, 1);
+
+  manager.claim(first.id);
+  manager.complete(first.id, true, { completed: true });
+  const nextCycle = manager.enqueue(input({ idempotencyKey: 'timer:reflector:2026-07-14T12' }));
+  assert.notEqual(nextCycle.id, first.id, 'a terminal item must release its idempotency key for the next cycle');
 }
 
 {
@@ -125,6 +130,39 @@ function input(overrides: Record<string, unknown> = {}) {
 
   assert.equal(manager.getHistory().length, 2, 'terminal history must be bounded');
   assert.equal(manager.getHistory()[0]?.result?.index, 2);
+}
+
+{
+  const beforeRestart = new UnifiedQueueManager({ historyLimit: 3 });
+  for (let index = 0; index < 3; index += 1) {
+    const task = beforeRestart.enqueue(input({ idempotencyKey: `restore-history:${index}` }));
+    beforeRestart.claim(task.id);
+    beforeRestart.complete(task.id, true, { index });
+  }
+  const expected = beforeRestart.getHistory().map(task => task.id);
+  const persisted = beforeRestart.exportState();
+  for (const task of persisted.history || []) {
+    const index = Number(task.result?.index ?? 0);
+    task.completedAt = new Date(Date.UTC(2020, 0, 1, 0, 0, index)).toISOString();
+  }
+  persisted.history?.reverse();
+
+  const afterRestart = new UnifiedQueueManager({ historyLimit: 3 });
+  afterRestart.importState(persisted);
+  assert.deepEqual(
+    afterRestart.getHistory().map(task => task.id),
+    expected,
+    'terminal history must remain newest-first after persistence restore',
+  );
+
+  const newest = afterRestart.enqueue(input({ idempotencyKey: 'restore-history:newest' }));
+  afterRestart.claim(newest.id);
+  afterRestart.complete(newest.id, true, { index: 3 });
+  assert.deepEqual(
+    afterRestart.getHistory().map(task => task.result?.index),
+    [3, 2, 1],
+    'new terminal work must evict the oldest restored receipt',
+  );
 }
 
 {

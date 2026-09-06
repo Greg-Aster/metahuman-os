@@ -3,9 +3,10 @@ import test from 'node:test'
 
 import {
   buildAgentFollowOnTaskInput,
-  buildDesirePlanningTaskInput,
+  buildDesireAgentTaskInput,
   buildMemoryIndexRefreshTaskInput,
 } from './work-submission.js'
+import { UnifiedQueueManager } from './unified-queue-manager.js'
 
 test('Agent follow-on submission builds one coordinator-owned finite task contract', () => {
   assert.deepEqual(buildAgentFollowOnTaskInput({
@@ -103,8 +104,9 @@ test('Memory index reconciliation rejects invalid profile identity and limits', 
   )
 })
 
-test('Desire planning builds one targeted coordinator-owned agent task', () => {
-  assert.deepEqual(buildDesirePlanningTaskInput({
+test('Desire Agent planning builds one targeted coordinator-owned task', () => {
+  assert.deepEqual(buildDesireAgentTaskInput({
+    operation: 'plan',
     username: 'profile-one',
     desireId: 'desire-123-abc',
     source: 'user',
@@ -119,23 +121,86 @@ test('Desire planning builds one targeted coordinator-owned agent task', () => {
     input: {
       agentId: 'desire-planner',
       args: ['--desire-id', 'desire-123-abc'],
-      triggeredBy: 'agency-api',
+      triggeredBy: 'desire-agent',
     },
     parentTaskId: undefined,
     correlationId: undefined,
-    idempotencyKey: 'desire-plan:desire-123-abc',
+    idempotencyKey: 'desire-agent:plan:desire-123-abc',
     maxAttempts: 2,
-    metadata: { producer: 'agency-api' },
+    metadata: {
+      producer: 'desire-agent',
+      monitorAgentId: 'desire-agent',
+      desireAgentOperation: 'plan',
+      requestedBy: 'agency-api',
+    },
   })
 })
 
-test('Desire planning rejects invalid profile and desire identity', () => {
+test('Desire Agent rejects invalid profile, desire identity, and untargeted check-ins', () => {
   assert.throws(
-    () => buildDesirePlanningTaskInput({ username: '../profile', desireId: 'desire-1', source: 'user' }),
+    () => buildDesireAgentTaskInput({ operation: 'plan', username: '../profile', desireId: 'desire-1', source: 'user' }),
     /valid profile username/,
   )
   assert.throws(
-    () => buildDesirePlanningTaskInput({ username: 'profile', desireId: '../desire-1', source: 'user' }),
+    () => buildDesireAgentTaskInput({ operation: 'execute', username: 'profile', desireId: '../desire-1', source: 'user' }),
     /valid desire ID/,
   )
+  assert.throws(
+    () => buildDesireAgentTaskInput({ operation: 'checkin', username: 'profile', source: 'user' }),
+    /check-in requires a desire ID/,
+  )
+})
+
+test('Desire Agent owns execution, review, and check-in attribution', () => {
+  for (const [operation, handler, type] of [
+    ['execute', 'agency.desire-execute', 'desire_execute'],
+    ['review', 'agency.desire-outcome-review', 'desire_review'],
+    ['checkin', 'agency.desire-checkin', 'desire_checkin'],
+  ] as const) {
+    const task = buildDesireAgentTaskInput({
+      operation,
+      username: 'profile-one',
+      desireId: 'desire-123-abc',
+      source: 'user',
+      metadata: { producer: 'agency-api' },
+    })
+    assert.equal(task.handler, handler)
+    assert.equal(task.type, type)
+    assert.equal(task.input.triggeredBy, 'desire-agent')
+    assert.equal(task.metadata?.producer, 'desire-agent')
+    assert.equal(task.metadata?.monitorAgentId, 'desire-agent')
+    assert.equal(task.metadata?.requestedBy, 'agency-api')
+  }
+})
+
+test('Work Coordinator rejects Desire lifecycle bypasses', () => {
+  const queue = new UnifiedQueueManager()
+  assert.throws(() => queue.enqueue({
+    type: 'desire_execute',
+    handler: 'agency.desire-execute',
+    source: 'system',
+    username: 'profile-one',
+    input: { desireId: 'desire-123-abc' },
+  }), /must be admitted by the Desire Agent/)
+  assert.throws(() => queue.enqueue({
+    type: 'desire_generate',
+    handler: 'agent.desire-generator',
+    source: 'system',
+    username: 'profile-one',
+    input: { agentId: 'desire-generator' },
+  }), /public Desire Agent/)
+  assert.throws(() => queue.enqueue({
+    type: 'desire_generate',
+    handler: 'custom.desire-generator',
+    source: 'system',
+    username: 'profile-one',
+    input: { agentId: 'desire-agent' },
+  }), /must be admitted by the Desire Agent/)
+  assert.throws(() => queue.enqueue({
+    type: 'generic',
+    handler: 'agent.desire-agent',
+    source: 'system',
+    username: 'profile-one',
+    input: { agentId: 'desire-agent' },
+  }), /must be admitted by the Desire Agent/)
 })

@@ -36,8 +36,6 @@ const COORDINATED_PROPOSAL_TYPES = new Set<TaskType>([
   'memory_curate',
   'training_curate',
   'index_build',
-  'desire_generate',
-  'desire_execute',
   'psychoanalyze',
   'custom',
 ]);

@@ -32,6 +32,7 @@ function review(overrides: Partial<DesireOutcomeReview> = {}): DesireOutcomeRevi
 function dependencies(saved: Desire[]): Partial<DesireOutcomeTransitionDependencies> {
   return {
     loadConfig: async () => structuredClone(DEFAULT_AGENCY_CONFIG),
+    addScratchpadEntry: async () => ({ entryCount: 1, lastEntryNumber: 1 }),
     saveReview: async () => undefined,
     saveManifest: async value => { saved.push(structuredClone(value)) },
   }
@@ -47,7 +48,21 @@ test('canonical outcome transition completes an achievable desire', async () => 
   assert.equal(saved.length, 1)
 })
 
-test('possible system defects pause for user approval without creating repair work', async () => {
+test('outcome transition durably appends its audit entry before reporting success', async () => {
+  const saved: Desire[] = []
+  const entries: Array<{ type: string }> = []
+  await applyDesireOutcomeReview(desire(), review(), 'profile-a', {
+    ...dependencies(saved),
+    addScratchpadEntry: async (_id, entry) => {
+      entries.push(entry)
+      return { entryCount: 1, lastEntryNumber: 1 }
+    },
+  })
+  assert.deepEqual(entries.map(entry => entry.type), ['outcome_review'])
+  assert.equal(saved[0].scratchpad?.entryCount, 1)
+})
+
+test('possible system defects enter distinct owner-attention state without creating repair work', async () => {
   const saved: Desire[] = []
   const result = await applyDesireOutcomeReview(
     desire(),
@@ -56,7 +71,8 @@ test('possible system defects pause for user approval without creating repair wo
     dependencies(saved),
   )
   assert.equal(result.action, 'escalated')
-  assert.equal(result.desire.status, 'awaiting_approval')
+  assert.equal(result.desire.status, 'needs_attention')
+  assert.equal(result.desire.currentStage, 'user_attention')
   assert.match(result.summary, /no repair task was created/i)
 })
 
@@ -70,5 +86,39 @@ test('retry returns the same desire to planning under the configured limit', asy
   )
   assert.equal(result.action, 'retry')
   assert.equal(result.desire.status, 'planning')
-  assert.equal(result.desire.metrics.planRevisionCount, 1)
+  assert.equal(result.desire.metrics.planRevisionCount, 0, 'revision count advances only after a replacement plan is persisted')
+  assert.equal(result.desire.metrics.outcomeRetryCount, 1)
+  assert.equal(result.desire.outcomeReview, undefined)
+  assert.equal(result.desire.outcomeReviewHistory?.[0]?.id, 'review-1')
+})
+
+test('explicit recurring desires reset only after a completed cycle', async () => {
+  const saved: Desire[] = []
+  const recurring = { ...desire(), goalType: 'recurring' as const }
+  const result = await applyDesireOutcomeReview(recurring, review(), 'profile-a', dependencies(saved))
+  assert.equal(result.action, 'recurring_reset')
+  assert.equal(result.desire.status, 'nascent')
+  assert.equal(result.desire.metrics.cycleCount, 1)
+})
+
+test('long-running completion requires its explicit criteria', async () => {
+  const saved: Desire[] = []
+  const longRunning = { ...desire(), goalType: 'long_running' as const }
+  const incomplete = await applyDesireOutcomeReview(
+    longRunning,
+    review({ completionCriteriaMet: false }),
+    'profile-a',
+    dependencies(saved),
+  )
+  assert.equal(incomplete.action, 'continued')
+  assert.equal(incomplete.desire.status, 'planning')
+
+  const complete = await applyDesireOutcomeReview(
+    longRunning,
+    review({ id: 'review-2', completionCriteriaMet: true }),
+    'profile-a',
+    dependencies(saved),
+  )
+  assert.equal(complete.action, 'completed')
+  assert.equal(complete.desire.status, 'completed')
 })

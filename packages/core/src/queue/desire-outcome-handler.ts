@@ -6,6 +6,7 @@ import { withUserContext } from '../context.js'
 import { getUserByUsername } from '../users.js'
 import type { WorkHandlerContext } from './execution-engine.js'
 import type { QueuedTask } from './types.js'
+import { buildDesireAgentTaskInput } from './work-submission.js'
 
 export async function executeDesireOutcomeReviewWork(
   task: QueuedTask,
@@ -17,7 +18,7 @@ export async function executeDesireOutcomeReviewWork(
     ? task.input.desireId.trim()
     : undefined
 
-  return withUserContext(
+  const result = await withUserContext(
     { userId: user.id, username: user.username, role: user.role },
     () => reviewPendingDesireOutcomes({
       username: user.username,
@@ -25,4 +26,18 @@ export async function executeDesireOutcomeReviewWork(
       signal: context.signal,
     }),
   )
+  for (const transition of result.transitions) {
+    if (transition.status !== 'planning' && transition.status !== 'pending') continue
+    context.enqueue(buildDesireAgentTaskInput({
+      operation: 'plan',
+      username: user.username,
+      desireId: transition.desireId,
+      source: 'autonomy',
+      parentTaskId: task.id,
+      correlationId: task.correlationId,
+      idempotencyKey: `desire-plan:${transition.desireId}:outcome:${task.id}`,
+      metadata: { producer: 'desire-outcome-transition', action: transition.action },
+    }))
+  }
+  return result
 }

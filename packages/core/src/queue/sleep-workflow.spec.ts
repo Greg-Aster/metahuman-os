@@ -78,10 +78,7 @@ test('sleep-owned agents have no independent autonomy schedules', async () => {
   const sleepOwned = [
     'organizer',
     'curator',
-    'desire-generator',
-    'desire-executor',
-    'desire-planner',
-    'desire-outcome-reviewer',
+    'desire-agent',
   ]
   for (const id of sleepOwned) assert.equal(config.agents[id].type, 'manual', id)
 
@@ -90,5 +87,7 @@ test('sleep-owned agents have no independent autonomy schedules', async () => {
   assert.ok(scheduledAwake.length > 0)
   assert.ok(scheduledAwake.every(agent => JSON.stringify(agent.allowedModes) === JSON.stringify(['semi'])))
   assert.deepEqual(config.agents['sleep-workflow'].allowedModes, ['semi', 'full'])
+  assert.equal(SLEEP_WORKFLOW_STAGES.filter(stage => stage.id.includes('desire')).length, 1)
+  assert.equal(SLEEP_WORKFLOW_STAGES.find(stage => stage.id.includes('desire'))?.agentId, 'desire-agent')
   assert.equal(SLEEP_WORKFLOW_STAGES.at(-1)?.handler, 'vector.index-build')
 })

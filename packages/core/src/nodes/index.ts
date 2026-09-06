@@ -21,6 +21,7 @@ export {
   parseReinforcementResponse,
   validateCandidateSources,
 } from './agency/desire-generation.node.js';
+export type { DesireReinforcementDecision } from './agency/desire-generation.node.js';
 export { parseFeasibilityResponse } from './agency/desire-feasibility.node.js';
 export type { DesireFeasibilityResult } from './agency/desire-feasibility.node.js';
 export {

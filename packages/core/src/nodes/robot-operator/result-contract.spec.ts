@@ -17,9 +17,13 @@ test('robot result parsers derive completion and expose instructions only for co
   assert.equal('allOf' in ROBOT_ACTION_RESULT_JSON_SCHEMA, false)
   assert.equal('objectiveComplete' in ROBOT_ACTION_RESULT_JSON_SCHEMA.properties.taskDecision, false)
   assert.equal('continuationPolicy' in ROBOT_ACTION_RESULT_JSON_SCHEMA.properties.taskDecision, false)
+  assert.equal('objective' in ROBOT_ACTION_RESULT_JSON_SCHEMA.properties.taskDecision, false)
   assert.equal('allOf' in ROBOT_GOAL_REVIEW_JSON_SCHEMA, false)
   assert.equal('objectiveComplete' in ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties, false)
   assert.equal('continuationPolicy' in ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties, false)
+  assert.equal('objective' in ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties, false)
+  assert.match(ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties.response.description, /outcome token/i)
+  assert.match(ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties.outcome.description, /not spoken/i)
 
   const actionResult = await robotActionResultParserNode.execute({
     response: JSON.stringify({
@@ -27,12 +31,12 @@ test('robot result parsers derive completion and expose instructions only for co
       taskDecision: {
         overallObjectiveState: 'not_achieved',
         reason: 'The action finished, but the objective still needs visual evidence.',
-        objective: 'Find the cat.',
         requiredCompletionBasis: 'visual_observation',
         observationSummary: 'The current view does not contain a cat.',
         completionEvidence: '',
       },
     }),
+    robotStatus: { task: { objective: 'Find the cat.' } },
   }, {}, {})
   assert.equal(actionResult.taskDecision.objectiveComplete, false)
 
@@ -42,14 +46,31 @@ test('robot result parsers derive completion and expose instructions only for co
       taskDecision: {
         overallObjectiveState: 'achieved',
         reason: 'The objective is established by the returned evidence.',
-        objective: 'Stand up.',
         requiredCompletionBasis: 'action_result',
         observationSummary: 'The stand action completed.',
         completionEvidence: 'The matched terminal report recorded successful execution.',
       },
     }),
+    robotStatus: { task: { objective: 'Stand up.' } },
   }, {}, {})
   assert.equal(completedAction.taskDecision.objectiveComplete, true)
+
+  await assert.rejects(
+    robotActionResultParserNode.execute({
+      response: JSON.stringify({
+        response: '',
+        taskDecision: {
+          overallObjectiveState: 'achieved',
+          reason: 'The objective is claimed complete without evidence.',
+          requiredCompletionBasis: 'visual_observation',
+          observationSummary: 'No supporting observation was supplied.',
+          completionEvidence: '',
+        },
+      }),
+      robotStatus: { task: { objective: 'Find the cat.' } },
+    }, {}, {}),
+    /requires supplied completion evidence/,
+  )
 
   const standaloneAction = await robotActionResultParserNode.execute({
     response: JSON.stringify({
@@ -64,26 +85,42 @@ test('robot result parsers derive completion and expose instructions only for co
       response: '',
       outcome: 'continue',
       reason: 'Another viewpoint is useful.',
-      objective: 'Find the cat.',
       requiredCompletionBasis: 'visual_observation',
       observationSummary: 'No cat is visible from the current viewpoint.',
       completionEvidence: '',
       nextInstruction: 'Inspect a different part of the room for the cat.',
     }),
+    robotStatus: { task: { objective: 'Find the cat.' } },
   }, {}, {})
   assert.equal(goalReview.executorDecision?.instruction, 'Inspect a different part of the room for the cat.')
+
+  await assert.rejects(
+    robotGoalReviewParserNode.execute({
+      response: JSON.stringify({
+        response: '',
+        outcome: 'complete',
+        reason: 'The objective is claimed complete without evidence.',
+        requiredCompletionBasis: 'visual_observation',
+        observationSummary: 'No supporting observation was supplied.',
+        completionEvidence: '',
+        nextInstruction: '',
+      }),
+      robotStatus: { task: { objective: 'Find the cat.' } },
+    }, {}, {}),
+    /requires supplied completion evidence/,
+  )
 
   const waitingReview = await robotGoalReviewParserNode.execute({
     response: JSON.stringify({
       response: '',
       outcome: 'wait',
       reason: 'The current condition does not support another attempt yet.',
-      objective: 'Find the cat.',
       requiredCompletionBasis: 'visual_observation',
       observationSummary: 'The current view is too dark to establish the cat location.',
       completionEvidence: '',
       nextInstruction: 'This unused text must not become an action.',
     }),
+    robotStatus: { task: { objective: 'Find the cat.' } },
   }, {}, {})
   assert.equal(waitingReview.executorDecision, null)
   assert.equal('nextInstruction' in waitingReview.taskDecision, false)
@@ -93,12 +130,12 @@ test('robot result parsers derive completion and expose instructions only for co
       response: 'I cannot make useful progress on this objective with the evidence available.',
       outcome: 'abandon',
       reason: 'Repeated attempts produced no new evidence and no useful next step remains.',
-      objective: 'Find the cat.',
       requiredCompletionBasis: 'visual_observation',
       observationSummary: 'Recent views have not established the cat location.',
       completionEvidence: '',
       nextInstruction: '',
     }),
+    robotStatus: { task: { objective: 'Find the cat.' } },
   }, {}, {})
   assert.equal(abandonedReview.taskDecision.objectiveComplete, false)
   assert.equal(abandonedReview.taskDecision.outcome, 'abandon')
@@ -120,6 +157,8 @@ test('Robot Autonomy Controller exposes one contextual task choice from its supp
     buildRobotAutonomyControllerJsonSchema(availableTasks).properties.taskId.enum,
     ['robot-autonomy-executor', 'none'],
   )
+  assert.equal('allOf' in buildRobotAutonomyControllerJsonSchema(availableTasks), false)
+  assert.equal('minLength' in buildRobotAutonomyControllerJsonSchema(availableTasks).properties.instruction, false)
 
   const executor = await robotAutonomyControllerParserNode.execute({
     response: JSON.stringify({
@@ -133,6 +172,7 @@ test('Robot Autonomy Controller exposes one contextual task choice from its supp
   }, {}, {})
   assert.equal(executor.taskDecision, null)
   assert.equal(executor.executorDecision.instruction, 'Investigate the open doorway in a way appropriate to my current capabilities.')
+  assert.equal(executor.decisionReceipt.taskId, 'robot-autonomy-executor')
 
   await assert.rejects(
     robotAutonomyControllerParserNode.execute({
@@ -147,6 +187,21 @@ test('Robot Autonomy Controller exposes one contextual task choice from its supp
     }, {}, {}),
     /requires one high-level instruction/,
   )
+
+  const silent = await robotAutonomyControllerParserNode.execute({
+    response: JSON.stringify({
+      response: '',
+      taskId: 'none',
+      reason: 'No available activity is presently useful.',
+      observationSummary: 'There is no unfinished objective or new stimulus.',
+      instruction: '',
+    }),
+    availableTasks,
+  }, {}, {})
+  assert.equal(silent.taskDecision, null)
+  assert.equal(silent.executorDecision, null)
+  assert.equal(silent.response, '')
+  assert.equal(silent.decisionReceipt.taskId, 'none')
 
   await assert.rejects(
     robotAutonomyControllerParserNode.execute({

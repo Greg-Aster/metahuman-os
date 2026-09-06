@@ -38,6 +38,8 @@ export * from './desire-outcome-service.js';
 export * from './desire-outcome-transition.js';
 export * from './desire-plan-review-transition.js';
 export * from './lifecycle-policy.js';
+export * from './desire-strength.js';
+export * from './migration.js';
 export * from './user-approval-transition.js';
 
 // Outcome review remains a public Agency operation. Desire execution itself is
@@ -68,10 +70,14 @@ export type { TrustDegradationConfig } from './config.js';
 export {
   // Original status-based storage
   saveDesire,
+  saveDesireMigrationBackup,
   loadDesire,
   deleteDesire,
   moveDesire,
   listActiveDesires,
+  listOpenDesires,
+  listDesiresNeedingAction,
+  listTerminalDesires,
   listPendingDesires,
   listNascentDesires,
   listDesiresByStatus,
@@ -105,6 +111,13 @@ export {
   getDesireFolderSize,
   listDesireFolders,
   listDesiresFromFolders,
+  findSimilarDesires,
+  reinforceDesire,
+  depreciateDesire,
+  loadGeneratorScratchpad,
+  saveGeneratorScratchpad,
+  filterUnanalyzedGeneratorInputs,
+  markGeneratorInputsAnalyzed,
   // Long-running goal functions
   updateDesireMilestones,
   advanceDesireMilestone,

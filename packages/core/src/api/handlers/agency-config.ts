@@ -8,7 +8,7 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { audit } from '../../audit.js';
-import { loadConfig } from '../../agency/config.js';
+import { loadConfig, validateConfig } from '../../agency/config.js';
 import { saveAgencyConfig } from '../../agency/storage.js';
 import type { AgencyConfig } from '../../agency/types.js';
 
@@ -83,6 +83,14 @@ export async function handleSetAgencyConfig(req: UnifiedRequest): Promise<Unifie
         ...currentConfig.sources,
         ...(updates.sources || {}),
       },
+      limits: {
+        ...currentConfig.limits,
+        ...(updates.limits || {}),
+        retentionDays: {
+          ...currentConfig.limits.retentionDays,
+          ...(updates.limits?.retentionDays || {}),
+        },
+      },
       riskPolicy: {
         ...currentConfig.riskPolicy,
         ...(updates.riskPolicy || {}),
@@ -91,7 +99,16 @@ export async function handleSetAgencyConfig(req: UnifiedRequest): Promise<Unifie
         ...currentConfig.execution,
         ...(updates.execution || {}),
       },
+      logging: {
+        ...currentConfig.logging,
+        ...(updates.logging || {}),
+      },
     };
+
+    const validation = validateConfig(updatedConfig);
+    if (!validation.valid) {
+      return { status: 400, error: validation.errors.join('; ') };
+    }
 
     // Save user overrides
     await saveAgencyConfig(updatedConfig, user.username);

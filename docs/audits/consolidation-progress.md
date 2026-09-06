@@ -2772,3 +2772,86 @@ Validation:
   training-file warning.
 - A live Psychoanalyzer model run and real encrypted-profile mutation were not
   performed because both would modify installation-owner profile data.
+
+## Desire System Lifecycle and Evidence Repair - 2026-09-04
+
+Root cause and surviving owners:
+
+- The dashboard grouped nearly every nonterminal record as in progress, while
+  many legacy manifests lacked canonical stages, evidence, and metric values.
+  Generation could repeatedly process unchanged inputs, decay strength once per
+  invocation instead of elapsed time, and apply source weight a second time to
+  activation. Persisted conversation turns did not enter Desire generation at
+  all. These faults produced a large inert backlog without a dependable path to
+  planning or Robot Status.
+- Core Agency remains the single owner of Desire identity, evidence, strength,
+  lifecycle state, trust and risk policy, profile storage, and migration.
+  `desire-agent` is the sole public controller and Work Coordinator owns every
+  admitted lifecycle task. The Brain planner and Core execution, outcome, and
+  check-in handlers are internal Desire Agent stages, not separate agents.
+
+Repair and consolidation:
+
+- Added persisted conversation history to the bounded Desire Agent input. The
+  agent reads it only during an intentional manual, Sleep Workflow, or Robot
+  Autonomy run; conversation persistence does not admit Desire work. Stable
+  content tokens prevent an unchanged source from inflating strength again.
+- Consolidated public admission to `desire-agent`. Removed the per-turn Desire
+  Signal service and trigger, the direct task-completion reinforcement hook,
+  separately registered planner/executor/outcome agents, and the queue-only
+  executor and outcome wrapper processes. Sleep now contains one Desire Agent
+  stage, Robot Autonomy offers one Desire Agent task, and every owner action or
+  internal lifecycle transition uses the same Desire Agent operation contract.
+  Removed legacy Desire task types from Operator Proposals, consolidated the
+  mobile adapter onto the same handler identity, and made the Work Coordinator
+  reject or cancel stage-level admissions without Desire Agent provenance.
+- Made decay elapsed-time and idempotent, made source weight order competing
+  desires without suppressing activation, enforced active and waiting capacity,
+  and made below-minimum decay archive a desire. Canonical status groups now
+  distinguish waiting, operationally active, owner-attention, completed, and
+  archived records.
+- Completed the plan lifecycle: exact plan-version review receipts are required;
+  revision archives the old plan, review, execution, and outcome receipts;
+  approval queues execution; terminal execution queues outcome review; retry and
+  continuation return to a higher plan version; retry exhaustion enters owner
+  attention; and completion, pause, denial, or archival remain explicit states.
+  Recurring and long-running goals retain their distinct completion rules.
+- Separated supervised, autonomous, off, and YOLO policy. Supervised always asks
+  the owner; autonomous combines risk, trust, strength, and earned maturity;
+  very strong desires can lower trust requirements by at most two levels but
+  never below Suggest; YOLO bypasses approval only after alignment and safety
+  review. Daily execution limits and editable settings now have runtime owners
+  and reject malformed persisted policy.
+- Robot Status, Robot Autonomy Controller, and Robot Goal Review consume bounded
+  summaries from the canonical active-desire selector. The dashboard exposes
+  truthful semantic counts and owner pause, archive, revive, approval, denial,
+  retry, question-answer, and policy controls.
+- Applied explicit migration `20260905004904` to 62 Ainekio manifests with 62
+  inert backups. A repeat dry-run reports zero changes and zero unsafe records.
+  Fifteen above-threshold legacy records without traceable evidence, four exact
+  title duplicate groups, and one duplicate source-ID group remain held for
+  owner review; traceable evidence is now an activation invariant, so a later
+  generator run cannot promote those records from numeric legacy strength
+  alone. Migration did not activate, merge, or delete them. The canonical summary
+  now reports 0 in progress, 43 waiting, 10 needing owner action, and 9 archived
+  or failed instead of labeling 52 records as in progress.
+
+Validation:
+
+- Eighteen focused Agency, Brain Desire, Trigger Manager, Work Submission,
+  response-contract, and Sleep Workflow test files pass with 87 assertions.
+  Five additional conversation-buffer, check-in, outcome-node, and Robot Status
+  test files pass with 20 assertions. Core, Brain, Site, scripts, and tests
+  typechecks pass.
+- All 38 cognitive graphs validate; all 343 configured nodes have executors.
+  Node-default validation passes with its existing 461 documentation gaps. The
+  user-agnostic guard checks 727 maintained runtime files, and the architecture
+  guard reports zero violations. The production Site build, final Agency
+  migration dry-run, `git diff --check`, and `./bin/audit check` pass. The audit
+  retains the pre-existing large tracked environment-action-selector training
+  file warning. One Site build run concurrently with Astro Site type-checking
+  observed a transient missing generated chunk; the immediate isolated build
+  completed successfully.
+- No live LLM Desire interpretation, autonomous external execution, browser
+  interaction, or physical robot action was performed. Those remain runtime,
+  external-effect, and physical-hardware evidence rather than source/build proof.

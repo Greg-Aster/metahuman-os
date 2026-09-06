@@ -225,15 +225,17 @@ test('Movement Generator establishes standing before planning from an unknown po
     },
   }, {});
 
-  assert.equal(calls, 0);
+  assert.equal(calls, 1);
   assert.equal(result.valid, true);
-  assert.equal(result.action.type, 'robotCommand');
-  assert.equal(result.action.command, 'stand');
-  assert.equal(result.response, '');
-  assert.equal(
-    result.action.metadata.motionPreparation.movementRequest.description,
-    'Invent a low sideways stretch.',
+  assert.equal(result.action.type, 'robotMotionPlan');
+  assert.deepEqual(
+    Object.fromEntries(result.action.frames[0].targets.map((target: any) => [target.joint, target.degrees])),
+    AINEKIO_FREESTYLE_BODY_MODEL.referencePoses.standing,
   );
+  assert.equal(result.action.frames[0].durationMs, 600);
+  assert.equal(result.action.frames.length, (generatedResult().frames as unknown[]).length + 1);
+  assert.equal(result.action.metadata.posePreparation, 'stand');
+  assert.equal(result.response, '');
 });
 
 test('rejects prose, raw control fields, incomplete joints, precision, and duration overflow', () => {
@@ -545,7 +547,8 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
   assert.deepEqual(unsupported.actions, []);
   assert.equal(unsupported.actionAdmission.admitted, false);
   assert.equal(unsupported.actionAdmission.reason, 'robot_command_unavailable');
-  assert.match(unsupported.response, /does not advertise/i);
+  assert.equal(unsupported.response, '');
+  assert.match(unsupported.error, /does not advertise/i);
 
   const routerCannotVetoModelAction = await environmentActionParserNode.execute({
     response: selectorJson({

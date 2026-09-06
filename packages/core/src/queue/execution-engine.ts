@@ -30,14 +30,95 @@ import {
   resolveAgentExecutablePath,
   resolveTsx,
 } from '../agent-executable-resolver.js';
+import { agentFailureMessage } from '../agent-process-runner.js';
 import { getUserByUsername, getUsers } from '../users.js';
 import { withUserContext } from '../context.js';
 import { canWriteMemory } from '../cognitive-mode.js';
+import type { GraphExecutionState } from '../graph-executor.js';
 
 const DEFERRED = Symbol('deferred-work-completion');
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function completedNodeOutput(
+  graphState: GraphExecutionState,
+  nodeType: string,
+): Record<string, unknown> | null {
+  const matches = [...graphState.nodes.values()].filter(node => node.definition?.type === nodeType);
+  if (matches.length !== 1 || matches[0].status !== 'completed' || !matches[0].outputs) return null;
+  return matches[0].outputs;
+}
+
+function compactQueuedEnvironmentAction(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const result: Record<string, unknown> = {};
+  for (const key of ['id', 'type', 'command', 'direction', 'target', 'status']) {
+    if (typeof value[key] === 'string' && value[key].trim()) result[key] = value[key].trim();
+  }
+  if (typeof value.units === 'number') result.units = value.units;
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+function compactTaskDecision(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const result: Record<string, unknown> = {};
+  for (const key of [
+    'outcome',
+    'overallObjectiveState',
+    'reason',
+    'objective',
+    'observationSummary',
+    'completionEvidence',
+    'requiredCompletionBasis',
+  ]) {
+    if (typeof value[key] === 'string' && value[key].trim()) result[key] = value[key].trim();
+  }
+  if (typeof value.objectiveComplete === 'boolean') result.objectiveComplete = value.objectiveComplete;
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
+ * Summarize what one Environment graph actually admitted or persisted. This is
+ * a receipt for later autonomy context; graph completion itself is not treated
+ * as proof that a physical action completed.
+ */
+export function summarizeEnvironmentGraphEffect(
+  graphState: GraphExecutionState,
+): Record<string, unknown> {
+  const effect: Record<string, unknown> = {};
+  const bridge = completedNodeOutput(graphState, 'environment_send_action');
+  if (bridge) {
+    const commands = Array.isArray(bridge.commands)
+      ? bridge.commands.map(compactQueuedEnvironmentAction).filter(Boolean)
+      : [];
+    effect.actionQueue = {
+      status: typeof bridge.status === 'string' ? bridge.status : 'unknown',
+      reason: typeof bridge.reason === 'string' ? bridge.reason : '',
+      queuedCount: typeof bridge.count === 'number' ? bridge.count : commands.length,
+      rejectedCount: typeof bridge.rejectedCount === 'number' ? bridge.rejectedCount : 0,
+      commands,
+    };
+  }
+
+  const delegation = completedNodeOutput(graphState, 'robot_operator_environment_dispatch');
+  if (delegation) {
+    effect.executorDelegation = {
+      queued: delegation.queued === true,
+      taskId: typeof delegation.taskId === 'string' ? delegation.taskId : '',
+      status: typeof delegation.status === 'string' ? delegation.status : 'unknown',
+    };
+  }
+
+  const actionResult = completedNodeOutput(graphState, 'robot_action_result_parser')
+    ?? completedNodeOutput(graphState, 'robot_goal_review_parser');
+  const taskDecision = compactTaskDecision(actionResult?.taskDecision);
+  if (taskDecision) effect.objectiveEvaluation = taskDecision;
+
+  const statusOut = completedNodeOutput(graphState, 'robot_status_out');
+  if (statusOut) effect.robotStatusPersisted = statusOut.persisted === true;
+  return effect;
 }
 
 const AGENT_HANDLERS: Record<string, string> = Object.fromEntries(
@@ -286,6 +367,7 @@ export class ExecutionEngine {
             allowMemoryWrites: canWriteMemory('environment'),
             environment: 'server',
             environmentObservation: observation,
+            environmentObservationCurrent: task.input.observationCurrent === true,
             environmentActionContext: actionContext,
             robotOperatorContext: robotObserver
               ? {
@@ -314,6 +396,7 @@ export class ExecutionEngine {
         graphExecuted: true,
         graph: graphName,
         robotObserver,
+        effect: summarizeEnvironmentGraphEffect(graphState),
       };
     });
     for (const handler of [
@@ -571,7 +654,7 @@ export class ExecutionEngine {
         } else if (code === 0) {
           resolve({ stdout, stderr });
         } else {
-          reject(new Error(`Agent exited with code ${code}: ${stderr || stdout}`));
+          reject(new Error(agentFailureMessage(agentId, code, stderr || stdout)));
         }
       });
     });

@@ -250,6 +250,15 @@ test('Environment Bridge Input always exposes complete Ainekio observation and b
   assert.equal('location' in selected, false);
   assert.equal('map' in selected, false);
 
+  const saved = await environmentBridgeInputNode.execute({}, {
+    environmentObservation: observation,
+    environmentObservationCurrent: false,
+  }, { sessionId: '' });
+  assert.equal(saved.observationSource, 'saved');
+  assert.equal(saved.isTriggeringObservation, false);
+  assert.equal(saved.observation.timestamp, observation.timestamp);
+  assert.equal(saved.visual.id, 'frame-1');
+
   const graph = JSON.parse(fs.readFileSync(
     path.join(ROOT, 'etc/cognitive-graphs/environment-mode.json'),
     'utf8',

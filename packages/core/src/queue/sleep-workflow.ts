@@ -32,10 +32,7 @@ export interface SleepWorkflowMarker {
 export const SLEEP_WORKFLOW_STAGES: readonly SleepWorkflowStage[] = [
   { id: 'organize-memory', displayName: 'Organize memories', type: 'memory_curate', handler: 'agent.organizer', agentId: 'organizer', args: ['--limit=20'], maxAttempts: 2 },
   { id: 'curate-memory', displayName: 'Curate training memories', type: 'training_curate', handler: 'agent.curator', agentId: 'curator', maxAttempts: 2 },
-  { id: 'generate-desires', displayName: 'Generate desires', type: 'desire_generate', handler: 'agent.desire-generator', agentId: 'desire-generator', maxAttempts: 2 },
-  { id: 'plan-desires', displayName: 'Plan desires', type: 'generic', handler: 'agent.desire-planner', agentId: 'desire-planner', maxAttempts: 2 },
-  { id: 'execute-desires', displayName: 'Execute approved desires', type: 'desire_execute', handler: 'agency.desire-execute', agentId: 'desire-executor', maxAttempts: 1 },
-  { id: 'review-outcomes', displayName: 'Review desire outcomes', type: 'desire_review', handler: 'agency.desire-outcome-review', agentId: 'desire-outcome-reviewer', maxAttempts: 1 },
+  { id: 'run-desire-agent', displayName: 'Run Desire Agent', type: 'desire_generate', handler: 'agent.desire-generator', agentId: 'desire-agent', maxAttempts: 2 },
   { id: 'dream', displayName: 'Dream from memories', type: 'dream', handler: 'agent.dreamer', agentId: 'dreamer', maxAttempts: 2 },
   { id: 'review-persona', displayName: 'Review persona learnings', type: 'psychoanalyze', handler: 'agent.psychoanalyzer', agentId: 'psychoanalyzer', maxAttempts: 2 },
   { id: 'rebuild-index', displayName: 'Refresh memory index', type: 'index_build', handler: 'vector.index-build', maxAttempts: 2 },

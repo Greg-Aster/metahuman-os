@@ -20,7 +20,16 @@ import type {
   DesireExecution,
   DesireMilestone,
   DesireGoalProgress,
+  DesireEvidence,
 } from './types.js';
+import { statusToStage, initializeDesireMetrics } from './types.js';
+import { isDesireActivationEligible } from './desire-strength.js';
+import {
+  ACTIVE_DESIRE_STATUSES,
+  NEEDS_ACTION_DESIRE_STATUSES,
+  OPEN_DESIRE_STATUSES,
+  TERMINAL_DESIRE_STATUSES,
+} from './lifecycle-policy.js';
 
 // ============================================================================
 // Constants
@@ -80,6 +89,28 @@ export async function saveDesire(desire: Desire, username?: string): Promise<voi
     category: CATEGORY,
     subcategory: SUBCATEGORY,
     relativePath: `${folderPath}/manifest.json`,
+    data: JSON.stringify({
+      ...desire,
+      folderPath,
+      currentStage: statusToStage(desire.status),
+      metrics: desire.metrics || initializeDesireMetrics(),
+    }, null, 2),
+    encoding: 'utf8',
+  });
+}
+
+/** Preserve the exact pre-migration manifest in an inert, timestamped backup. */
+export async function saveDesireMigrationBackup(
+  migrationId: string,
+  desire: Desire,
+  username?: string,
+): Promise<void> {
+  if (!/^[a-zA-Z0-9_-]+$/.test(migrationId)) throw new Error('Invalid Agency migration ID');
+  await storageClient.write({
+    username,
+    category: CATEGORY,
+    subcategory: SUBCATEGORY,
+    relativePath: `migration-backups/${migrationId}/${desire.id}.json`,
     data: JSON.stringify(desire, null, 2),
     encoding: 'utf8',
   });
@@ -125,9 +156,10 @@ export async function deleteDesire(desire: Desire, username?: string): Promise<v
   // Also delete from legacy status directories if present
   // These are old storage format files at <status>/<desire.id>.json
   const legacyStatuses = [
-    'nascent', 'pending', 'evaluating', 'planning', 'reviewing',
+    'nascent', 'pending', 'evaluating', 'planning', 'questioning', 'reviewing',
     'approved', 'awaiting_approval', 'executing', 'awaiting_review',
-    'completed', 'rejected', 'abandoned', 'failed', 'active', 'executed',
+    'needs_attention', 'paused', 'completed', 'rejected', 'abandoned',
+    'archived', 'failed', 'active', 'executed',
   ];
 
   for (const status of legacyStatuses) {
@@ -178,7 +210,7 @@ export async function moveDesire(
 
 /**
  * List desires by status.
- * Uses folder-based storage only.
+ * Reads the canonical folder records plus any not-yet-migrated legacy records.
  */
 export async function listDesiresByStatus(
   status: DesireStatus,
@@ -194,9 +226,23 @@ export async function listDesiresByStatus(
  * Uses folder-based storage only.
  */
 export async function listActiveDesires(username?: string): Promise<Desire[]> {
-  const activeStatuses: DesireStatus[] = ['evaluating', 'planning', 'reviewing', 'approved', 'executing', 'awaiting_review'];
-  const allDesires = await listDesiresFromFolders(username);
-  return allDesires.filter(d => activeStatuses.includes(d.status));
+  const allDesires = await listAllDesires(username);
+  return allDesires.filter(d => ACTIVE_DESIRE_STATUSES.includes(d.status));
+}
+
+export async function listOpenDesires(username?: string): Promise<Desire[]> {
+  const allDesires = await listAllDesires(username);
+  return allDesires.filter(d => OPEN_DESIRE_STATUSES.includes(d.status));
+}
+
+export async function listDesiresNeedingAction(username?: string): Promise<Desire[]> {
+  const allDesires = await listAllDesires(username);
+  return allDesires.filter(d => NEEDS_ACTION_DESIRE_STATUSES.includes(d.status));
+}
+
+export async function listTerminalDesires(username?: string): Promise<Desire[]> {
+  const allDesires = await listAllDesires(username);
+  return allDesires.filter(d => TERMINAL_DESIRE_STATUSES.includes(d.status));
 }
 
 /**
@@ -473,7 +519,8 @@ export async function initializeAgencyStorage(username?: string): Promise<void> 
 /**
  * Get all desires (across all statuses).
  * Uses folder-based storage with fallback to legacy status directories.
- * Also attempts to repair/migrate desires found in legacy locations.
+ * This read is deliberately side-effect free. Legacy migration is an explicit,
+ * dry-run-first owner operation rather than a hidden consequence of listing.
  */
 export async function listAllDesires(username?: string): Promise<Desire[]> {
   // First get desires from folder-based storage
@@ -482,23 +529,14 @@ export async function listAllDesires(username?: string): Promise<Desire[]> {
 
   // Then check legacy status directories for any not in folders
   const legacyDesires = await listDesiresFromLegacyDirectories(username);
-  const missingDesires = legacyDesires.filter(d => !folderIds.has(d.id));
-
-  if (missingDesires.length > 0) {
-    console.log(`[agency-storage] Found ${missingDesires.length} desires in legacy directories not in folders`);
-
-    // Auto-migrate legacy desires to folder storage
-    for (const desire of missingDesires) {
-      try {
-        await migrateDesireToFolderStorage(desire, username);
-        console.log(`[agency-storage] Migrated legacy desire ${desire.id} to folder storage`);
-      } catch (error) {
-        console.warn(`[agency-storage] Failed to migrate desire ${desire.id}:`, error);
-      }
+  const missingById = new Map<string, Desire>();
+  for (const desire of legacyDesires) {
+    if (!folderIds.has(desire.id) && !missingById.has(desire.id)) {
+      missingById.set(desire.id, desire);
     }
   }
 
-  return [...folderDesires, ...missingDesires];
+  return [...folderDesires, ...missingById.values()];
 }
 
 /**
@@ -509,9 +547,9 @@ export async function listAllDesires(username?: string): Promise<Desire[]> {
 async function listDesiresFromLegacyDirectories(username?: string): Promise<Desire[]> {
   // Note: 'active' is not a valid DesireStatus but exists as a legacy directory
   const legacyStatuses: string[] = [
-    'nascent', 'pending', 'evaluating', 'planning', 'reviewing',
+    'nascent', 'pending', 'evaluating', 'planning', 'questioning', 'reviewing',
     'approved', 'awaiting_approval', 'executing', 'awaiting_review',
-    'completed', 'rejected', 'abandoned', 'failed', 'active',
+    'needs_attention', 'paused', 'completed', 'rejected', 'abandoned', 'archived', 'failed', 'active',
   ];
 
   const desires: Desire[] = [];
@@ -590,30 +628,6 @@ async function listDesiresFromLegacyDirectories(username?: string): Promise<Desi
   return desires;
 }
 
-/**
- * Migrate a desire from legacy storage to folder-based storage.
- * Creates the folder structure and saves the manifest.
- */
-async function migrateDesireToFolderStorage(desire: Desire, username?: string): Promise<void> {
-  const folderPath = getDesireFolderPath(desire.id);
-
-  // Ensure folder exists
-  await createDesireFolder(desire.id, username);
-
-  // Update desire with folder path
-  desire.folderPath = folderPath;
-
-  // Save manifest
-  await storageClient.write({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: `${folderPath}/manifest.json`,
-    data: JSON.stringify(desire, null, 2),
-    encoding: 'utf8',
-  });
-}
-
 // ============================================================================
 // Folder-Based Desire Storage (New Architecture)
 // ============================================================================
@@ -642,68 +656,28 @@ import {
  * Create desire folder structure
  */
 export async function createDesireFolder(desireId: string, username?: string): Promise<string> {
-  const folderPath = getDesireFolderPath(desireId);
-  const subdirs = ['scratchpad', 'plans', 'reviews', 'executions'];
-
-  for (const subdir of subdirs) {
-    await storageClient.write({
-      username,
-      category: CATEGORY,
-      subcategory: SUBCATEGORY,
-      relativePath: `${folderPath}/${subdir}/.gitkeep`,
-      data: '',
-      encoding: 'utf8',
-    });
-  }
-
-  return folderPath;
+  await ensureDesireFolder(desireId, username);
+  return getDesireFolderPath(desireId);
 }
 
 /**
  * Save desire manifest (core data only, references other files)
  */
 export async function saveDesireManifest(desire: Desire, username?: string): Promise<void> {
-  const folderPath = desire.folderPath || getDesireFolderPath(desire.id);
-
-  // Ensure folder exists
-  await createDesireFolder(desire.id, username);
-
-  // Save manifest
-  await storageClient.write({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: `${folderPath}/manifest.json`,
-    data: JSON.stringify({ ...desire, folderPath }, null, 2),
-    encoding: 'utf8',
-  });
+  await saveDesire(desire, username);
 }
 
 /**
  * Load desire from folder (manifest only)
  */
 export async function loadDesireFromFolder(desireId: string, username?: string): Promise<Desire | null> {
-  const folderPath = getDesireFolderPath(desireId);
-
-  const result = await storageClient.read({
-    username,
-    category: CATEGORY,
-    subcategory: SUBCATEGORY,
-    relativePath: `${folderPath}/manifest.json`,
-    encoding: 'utf8',
-  });
-
-  if (!result.success || !result.data) {
-    return null;
-  }
-
-  return JSON.parse(result.data as string) as Desire;
+  return loadDesire(desireId, username);
 }
 
 /**
  * Add a scratchpad entry to a desire's folder.
- * If the desire exists in file-based storage but not folder-based,
- * it will be migrated to folder-based storage first.
+ * The explicit Agency migration owns legacy conversion; this writer only
+ * appends to an existing canonical folder record.
  */
 export async function addScratchpadEntryToFolder(
   desireId: string,
@@ -715,18 +689,8 @@ export async function addScratchpadEntryToFolder(
   // Load current manifest to get scratchpad summary
   let desire = await loadDesireFromFolder(desireId, username);
 
-  // If not found in folder-based storage, check file-based storage and migrate
   if (!desire) {
-    const fileBased = await loadDesire(desireId, username);
-    if (fileBased) {
-      // Migrate to folder-based storage
-      console.log(`[agency:storage] Migrating desire ${desireId} to folder-based storage`);
-      await createDesireFolder(desireId, username);
-      await saveDesireManifest(fileBased, username);
-      desire = fileBased;
-    } else {
-      throw new Error(`Desire ${desireId} not found`);
-    }
+    throw new Error(`Canonical desire ${desireId} not found`);
   }
 
   const idempotencyKey = typeof entry.data?.idempotencyKey === 'string'
@@ -1124,23 +1088,28 @@ export async function listDesiresFromFolders(username?: string): Promise<Desire[
 }
 
 // ============================================================================
-// Generator Scratchpad - Tracks Memory Analysis Progress
+// Generator Scratchpad - Tracks Source Evidence Analysis Progress
 // ============================================================================
-// The generator scratchpad is a global tracking file (not per-desire) that
-// records which memories have been analyzed for potential desires.
-// This prevents the same memories from being analyzed multiple times.
+// The generator scratchpad is a global tracking file (not per-desire). It
+// records stable, content-aware evidence tokens so an unchanged goal, task,
+// memory, reflection, curiosity item, or dream cannot inflate strength again.
 
-interface GeneratorScratchpad {
+export interface GeneratorScratchpad {
   /** Last time the generator ran */
   lastRunAt: string;
-  /** Total number of memories analyzed */
-  totalMemoriesAnalyzed: number;
-  /** IDs/paths of memories that have been analyzed */
-  analyzedMemoryIds: string[];
-  /** Maximum number of IDs to keep (rolling window) */
+  /** Total number of distinct evidence observations analyzed */
+  totalInputsAnalyzed: number;
+  /** Stable source/id/content tokens already admitted to generation */
+  analyzedInputTokens: string[];
+  /** Maximum number of tokens to keep (rolling window) */
   maxTrackedIds: number;
-  /** Last memory timestamp analyzed (for incremental analysis) */
-  lastMemoryTimestamp?: string;
+}
+
+interface LegacyGeneratorScratchpad {
+  lastRunAt?: string;
+  totalMemoriesAnalyzed?: number;
+  analyzedMemoryIds?: string[];
+  maxTrackedIds?: number;
 }
 
 const GENERATOR_SCRATCHPAD_PATH = 'generator-scratchpad.json';
@@ -1158,15 +1127,21 @@ export async function loadGeneratorScratchpad(username?: string): Promise<Genera
   });
 
   if (result.success && result.data) {
-    return JSON.parse(result.data as string) as GeneratorScratchpad;
+    const parsed = JSON.parse(result.data as string) as Partial<GeneratorScratchpad> & LegacyGeneratorScratchpad;
+    return {
+      lastRunAt: parsed.lastRunAt || new Date().toISOString(),
+      totalInputsAnalyzed: parsed.totalInputsAnalyzed ?? parsed.totalMemoriesAnalyzed ?? 0,
+      analyzedInputTokens: parsed.analyzedInputTokens ?? parsed.analyzedMemoryIds ?? [],
+      maxTrackedIds: parsed.maxTrackedIds ?? 10_000,
+    };
   }
 
   // Return default scratchpad
   return {
     lastRunAt: new Date().toISOString(),
-    totalMemoriesAnalyzed: 0,
-    analyzedMemoryIds: [],
-    maxTrackedIds: 1000,
+    totalInputsAnalyzed: 0,
+    analyzedInputTokens: [],
+    maxTrackedIds: 10_000,
   };
 }
 
@@ -1178,8 +1153,8 @@ export async function saveGeneratorScratchpad(
   username?: string
 ): Promise<void> {
   // Trim to max size if needed
-  if (scratchpad.analyzedMemoryIds.length > scratchpad.maxTrackedIds) {
-    scratchpad.analyzedMemoryIds = scratchpad.analyzedMemoryIds.slice(-scratchpad.maxTrackedIds);
+  if (scratchpad.analyzedInputTokens.length > scratchpad.maxTrackedIds) {
+    scratchpad.analyzedInputTokens = scratchpad.analyzedInputTokens.slice(-scratchpad.maxTrackedIds);
   }
 
   await storageClient.write({
@@ -1193,49 +1168,40 @@ export async function saveGeneratorScratchpad(
 }
 
 /**
- * Mark memories as analyzed in the generator scratchpad
+ * Mark stable input evidence tokens as analyzed in the generator scratchpad.
  */
-export async function markMemoriesAsAnalyzed(
-  memoryIds: string[],
+export async function markGeneratorInputsAnalyzed(
+  inputTokens: string[],
   username?: string
 ): Promise<void> {
   const scratchpad = await loadGeneratorScratchpad(username);
 
-  // Add new IDs (avoiding duplicates)
-  const existingSet = new Set(scratchpad.analyzedMemoryIds);
-  for (const id of memoryIds) {
-    if (!existingSet.has(id)) {
-      scratchpad.analyzedMemoryIds.push(id);
+  const existingSet = new Set(scratchpad.analyzedInputTokens);
+  let added = 0;
+  for (const token of inputTokens) {
+    if (!existingSet.has(token)) {
+      scratchpad.analyzedInputTokens.push(token);
+      existingSet.add(token);
+      added++;
     }
   }
 
-  scratchpad.totalMemoriesAnalyzed += memoryIds.length;
+  scratchpad.totalInputsAnalyzed += added;
   scratchpad.lastRunAt = new Date().toISOString();
 
   await saveGeneratorScratchpad(scratchpad, username);
 }
 
 /**
- * Check if a memory has already been analyzed
+ * Filter out evidence tokens that have already been analyzed.
  */
-export async function isMemoryAnalyzed(
-  memoryId: string,
-  username?: string
-): Promise<boolean> {
-  const scratchpad = await loadGeneratorScratchpad(username);
-  return scratchpad.analyzedMemoryIds.includes(memoryId);
-}
-
-/**
- * Filter out already-analyzed memories from a list
- */
-export async function filterUnanalyzedMemories(
-  memoryIds: string[],
+export async function filterUnanalyzedGeneratorInputs(
+  inputTokens: string[],
   username?: string
 ): Promise<string[]> {
   const scratchpad = await loadGeneratorScratchpad(username);
-  const analyzedSet = new Set(scratchpad.analyzedMemoryIds);
-  return memoryIds.filter(id => !analyzedSet.has(id));
+  const analyzedSet = new Set(scratchpad.analyzedInputTokens);
+  return inputTokens.filter(token => !analyzedSet.has(token));
 }
 
 // ============================================================================
@@ -1278,7 +1244,7 @@ export async function findSimilarDesires(
   }
 ): Promise<Array<{ desire: Desire; similarity: number }>> {
   const minSimilarity = options?.minSimilarity ?? 0.4;
-  const excludeStatuses = options?.excludeStatuses ?? ['completed', 'rejected', 'abandoned', 'failed'];
+  const excludeStatuses = options?.excludeStatuses ?? ['completed', 'rejected', 'abandoned', 'archived', 'failed'];
   const limit = options?.limit ?? 5;
 
   const allDesires = await listDesiresFromFolders(username);
@@ -1313,11 +1279,18 @@ export async function reinforceDesire(
     boost: number;
     reason: string;
     sourceInput?: string;
+    evidence?: DesireEvidence;
+    activateWhenThresholdReached?: boolean;
   },
   username?: string
 ): Promise<Desire | null> {
   const desire = await loadDesireFromFolder(desireId, username);
   if (!desire) return null;
+
+  if (reinforcementData.evidence
+    && desire.evidence?.some(item => item.id === reinforcementData.evidence!.id)) {
+    return desire;
+  }
 
   const now = new Date().toISOString();
   const oldStrength = desire.strength;
@@ -1326,16 +1299,29 @@ export async function reinforceDesire(
   // Update desire
   desire.strength = newStrength;
   desire.reinforcements = (desire.reinforcements || 0) + 1;
+  desire.runCount = (desire.runCount || 0) + 1;
   desire.updatedAt = now;
+  desire.lastReviewedAt = now;
+  desire.lastDecayAt = now;
+  desire.evidence = reinforcementData.evidence
+    ? [...(desire.evidence || []), reinforcementData.evidence].slice(-200)
+    : desire.evidence;
 
   // Update metrics
-  if (desire.metrics) {
-    desire.metrics.reinforcementCount++;
-    desire.metrics.netReinforcement++;
-    desire.metrics.lastActivityAt = now;
-    if (newStrength > desire.metrics.peakStrength) {
-      desire.metrics.peakStrength = newStrength;
-    }
+  const metrics = desire.metrics || initializeDesireMetrics();
+  desire.metrics = {
+    ...metrics,
+    reinforcementCount: metrics.reinforcementCount + 1,
+    netReinforcement: metrics.netReinforcement + 1,
+    lastActivityAt: now,
+    peakStrength: Math.max(metrics.peakStrength, newStrength),
+  };
+  if (reinforcementData.activateWhenThresholdReached
+    && desire.status === 'nascent'
+    && isDesireActivationEligible(desire)) {
+    desire.status = 'pending';
+    desire.currentStage = 'strengthening';
+    desire.activatedAt = desire.activatedAt || now;
   }
 
   // Save manifest
@@ -1353,6 +1339,7 @@ export async function reinforceDesire(
       boost: reinforcementData.boost,
       reason: reinforcementData.reason,
       sourceInput: reinforcementData.sourceInput,
+      evidenceId: reinforcementData.evidence?.id,
     },
   }, username);
 
@@ -1368,7 +1355,7 @@ export async function depreciateDesire(
   depreciationData: {
     reduction: number;
     reason: string;
-    markAbandoned?: boolean;
+    terminalStatus?: 'abandoned' | 'archived';
   },
   username?: string
 ): Promise<Desire | null> {
@@ -1381,21 +1368,27 @@ export async function depreciateDesire(
 
   // Update desire
   desire.strength = newStrength;
+  desire.runCount = (desire.runCount || 0) + 1;
   desire.updatedAt = now;
+  desire.lastReviewedAt = now;
+  desire.lastDecayAt = now;
 
   // Update metrics
-  if (desire.metrics) {
-    desire.metrics.decayCount++;
-    desire.metrics.netReinforcement--;
-    desire.metrics.lastActivityAt = now;
-    if (newStrength < desire.metrics.troughStrength) {
-      desire.metrics.troughStrength = newStrength;
-    }
-  }
+  const metrics = desire.metrics || initializeDesireMetrics();
+  desire.metrics = {
+    ...metrics,
+    decayCount: metrics.decayCount + 1,
+    netReinforcement: metrics.netReinforcement - 1,
+    lastActivityAt: now,
+    troughStrength: Math.min(metrics.troughStrength, newStrength),
+  };
 
-  // Mark as abandoned if requested or strength is 0
-  if (depreciationData.markAbandoned || newStrength <= 0) {
-    desire.status = 'abandoned';
+  // Time-based expiry archives the record while preserving its history.
+  if (depreciationData.terminalStatus || newStrength <= 0) {
+    const terminalStatus = depreciationData.terminalStatus || 'archived';
+    desire.status = terminalStatus;
+    desire.currentStage = terminalStatus;
+    desire.dispositionReason = depreciationData.reason;
     desire.completedAt = now;
   }
 
@@ -1413,7 +1406,7 @@ export async function depreciateDesire(
       newStrength,
       reduction: depreciationData.reduction,
       reason: depreciationData.reason,
-      abandoned: depreciationData.markAbandoned || newStrength <= 0,
+      terminalStatus: depreciationData.terminalStatus || (newStrength <= 0 ? 'archived' : undefined),
     },
   }, username);
 

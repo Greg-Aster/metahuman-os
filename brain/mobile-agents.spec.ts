@@ -116,9 +116,14 @@ test('mobile registry contains one default handler for each supported canonical 
     'curiosity-service',
     'inner-curiosity',
     'psychoanalyzer',
-    'desire-generator',
-    'desire-planner',
+    'desire-agent',
   ])
   assert.equal(new Set(ids).size, ids.length)
-  assert.ok(registrations.every(registration => registration.handler === undefined))
+  assert.equal(
+    registrations.find(registration => registration.id === 'desire-agent')?.handler,
+    'agent.desire-generator',
+  )
+  assert.ok(registrations
+    .filter(registration => registration.id !== 'desire-agent')
+    .every(registration => registration.handler === undefined))
 })

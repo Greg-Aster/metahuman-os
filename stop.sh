@@ -217,6 +217,7 @@ kill_repo_process_pattern "maintenance-service" "Maintenance Service"
 kill_repo_process_pattern "audio-organizer" "Audio Organizer"
 
 # Stop any running agents by pattern
+kill_repo_process_pattern "packages/core/src/agent-bootstrap.ts" "MetaHuman Agents"
 kill_repo_process_pattern "brain/agents" "Background Agents"
 
 # Stop terminal processes through their scoped listener ports. The terminal API

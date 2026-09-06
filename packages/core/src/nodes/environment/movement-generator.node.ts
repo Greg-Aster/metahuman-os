@@ -16,6 +16,7 @@ const COMPACT_RESULT_KEYS = ['summary', 'frames', 'endPose'] as const;
 const MOTION_FRAME_KEYS = ['durationMs', ...ENVIRONMENT_MOTION_PLAN_JOINTS] as const;
 const MOTION_DURATION_PATTERN = '^(?:[1-9][0-9]{2}|[1-4][0-9]{3}|5000)$';
 const MOTION_DEGREES_PATTERN = '^(?:(?:[0-9]|[1-9][0-9]|1[0-7][0-9])(?:\\.[0-9]{1,2})?|180(?:\\.0{1,2})?)$';
+const UNKNOWN_POSE_STAND_DURATION_MS = 600;
 
 export const AINEKIO_FREESTYLE_BODY_MODEL = Object.freeze({
   version: 1,
@@ -90,6 +91,20 @@ export const MOVEMENT_GENERATOR_JSON_SCHEMA = {
     endPose: { type: 'string', enum: [...ENVIRONMENT_MOTION_PLAN_END_POSES] },
   },
 } as const;
+
+function movementGeneratorJsonSchema(prependStandingFrame: boolean): Record<string, unknown> {
+  if (!prependStandingFrame) return MOVEMENT_GENERATOR_JSON_SCHEMA;
+  return {
+    ...MOVEMENT_GENERATOR_JSON_SCHEMA,
+    properties: {
+      ...MOVEMENT_GENERATOR_JSON_SCHEMA.properties,
+      frames: {
+        ...MOVEMENT_GENERATOR_JSON_SCHEMA.properties.frames,
+        maxItems: ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrames - 1,
+      },
+    },
+  };
+}
 
 function exactKeys(
   value: Record<string, unknown>,
@@ -226,6 +241,15 @@ export function movementGeneratorPrompt(
   observation?: EnvironmentObservation,
 ): Array<{ role: 'system' | 'user'; content: string }> {
   const currentPose = commandedPose(observation);
+  const needsStandingPreparation = !currentPose;
+  const authoredDurationLimitMs = ENVIRONMENT_MOTION_PLAN_LIMITS.maxTotalDurationMs
+    - (needsStandingPreparation ? UNKNOWN_POSE_STAND_DURATION_MS : 0);
+  const planningPose = currentPose?.pose ?? AINEKIO_FREESTYLE_BODY_MODEL.referencePoses.standing;
+  const planningBasis = currentPose?.basis ?? {
+    kind: 'reference',
+    reference: 'stand',
+    establishedBy: 'motion_plan_first_frame',
+  };
   const system = [
     'You are the freestyle trajectory planner for a physical eight-servo quadruped robot.',
     'Generate one original, complete, time-indexed logical-joint trajectory that expresses the requested movement. Calculate the movement yourself from the supplied body model and intent; do not retrieve, copy, blend, or approximate an installed named motion.',
@@ -237,10 +261,11 @@ export function movementGeneratorPrompt(
     'Solve the movement anatomically: identify which limb or whole-body posture expresses the intent, coordinate both joints of each involved limb, and account for the other limbs when that improves the chosen result. Mirrored anatomy normally requires opposite numeric changes around the reference pose rather than identical left/right angles.',
     'Balance, support, weight transfer, and recovery are planning options, not mandatory goals. Falling, rolling, collapsing, unusual support patterns, abrupt gestures, and ending away from stand are valid choices. Make the choice that best expresses the intent.',
     'For a look or scan, remember there is no independent head or neck joint: create any desired view-changing gesture with coordinated body and limb motion. Do not reduce every look request to the same canned stance.',
-    'currentCommandedPose is the correlated logical target established before this planning call. Treat every output frame as an absolute target and calculate the trajectory from that exact starting geometry.',
+    'currentCommandedPose is the logical target from which your authored frames begin. Treat every output frame as an absolute target and calculate the trajectory from that exact starting geometry.',
+    'When posePreparation.required is true, the executor prepends the supplied standing target before your authored frames. Plan from that standing geometry and do not spend an authored frame duplicating the preparation target.',
     'Understand the playback timing before choosing frames: each frame eases toward its target for at most 300 ms, then holds that target for the remainder of durationMs. Longer duration alone does not make a large transition slower. Use additional calculated intermediate targets when you want a gradual transition; use a large direct change when an abrupt motion is intentional.',
     'Choose the number of distinct frames and their amplitude from the movement itself. Avoid accidental low-amplitude jitter and meaningless reversals; motion may still be subtle, rapid, irregular, or twitch-like when that is the intended expression.',
-    `Encode durationMs and every joint degree as decimal strings. Use ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrames}..${ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrames} frames with integer durations ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrameDurationMs}..${ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrameDurationMs} ms. Each duration is individual, never an absolute or cumulative timestamp. Add every frame duration and keep the sum at or below ${ENVIRONMENT_MOTION_PLAN_LIMITS.maxTotalDurationMs} ms.`,
+    `Encode durationMs and every joint degree as decimal strings. Use ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrames}..${needsStandingPreparation ? ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrames - 1 : ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrames} frames with integer durations ${ENVIRONMENT_MOTION_PLAN_LIMITS.minFrameDurationMs}..${ENVIRONMENT_MOTION_PLAN_LIMITS.maxFrameDurationMs} ms. Each duration is individual, never an absolute or cumulative timestamp. Add every authored frame duration and keep the sum at or below ${authoredDurationLimitMs} ms.`,
     'Degrees must be finite logical angles from 0 through 180 with no more than two decimal places. Choose hold, stand, or neutral for endPose according to the intended result; hold may preserve any reachable final pose.',
     'Do not emit an action wrapper, target objects, session IDs, action IDs, sequence numbers, repeat counts, servo/PWM/GPIO fields, calibration, simulator commands, persistence, named motions, metadata, or partial joint frames.',
   ].join('\n');
@@ -248,8 +273,15 @@ export function movementGeneratorPrompt(
     movementRequest: request.description,
     originalInstruction: instruction.slice(0, 1_000),
     bodyModel: AINEKIO_FREESTYLE_BODY_MODEL,
-    currentCommandedPose: currentPose?.pose ?? null,
-    currentCommandedPoseBasis: currentPose?.basis ?? null,
+    currentCommandedPose: planningPose,
+    currentCommandedPoseBasis: planningBasis,
+    posePreparation: needsStandingPreparation
+      ? {
+          required: true,
+          target: AINEKIO_FREESTYLE_BODY_MODEL.referencePoses.standing,
+          durationMs: UNKNOWN_POSE_STAND_DURATION_MS,
+        }
+      : { required: false },
   });
   return [
     { role: 'system', content: system },
@@ -268,9 +300,9 @@ export const movementGeneratorNode = defineNode({
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
   ],
   outputs: [
-    { name: 'action', type: 'object', description: 'One standing preparation or validated robotMotionPlan action, or null' },
+    { name: 'action', type: 'object', description: 'One validated robotMotionPlan action, or null' },
     { name: 'actions', type: 'array', description: 'Validated action list for Environment Bridge Out' },
-    { name: 'valid', type: 'boolean', description: 'Whether standing preparation or a validated plan was produced' },
+    { name: 'valid', type: 'boolean', description: 'Whether a validated plan was produced' },
     { name: 'rejected', type: 'boolean', description: 'Whether a requested plan was rejected' },
     { name: 'error', type: 'string', description: 'Validation or generation error' },
     { name: 'response', type: 'string', description: 'Short visible generation result or rejection' },
@@ -347,43 +379,7 @@ export const movementGeneratorNode = defineNode({
       };
     }
     const currentPose = commandedPose(observation);
-    if (!currentPose) {
-      const canStand = observation.capabilities.actions.includes('robotCommand')
-        && observation.capabilities.robotCommands?.includes('stand') === true;
-      if (!canStand) {
-        const error = 'Off-script movement requires a known commanded pose or an advertised stand command.';
-        return {
-          action: null,
-          actions: [],
-          valid: false,
-          rejected: true,
-          error,
-          response: error,
-          planSummary: null,
-        };
-      }
-      const action: Partial<EnvironmentAction> = {
-        type: 'robotCommand',
-        command: 'stand',
-        sessionId,
-        metadata: {
-          motionPreparation: {
-            version: 1,
-            kind: 'stand_before_freestyle',
-            movementRequest: request,
-          },
-        },
-      };
-      return {
-        action,
-        actions: [action],
-        valid: true,
-        rejected: false,
-        error: '',
-        response: '',
-        planSummary: { preparing: true, requiredPose: 'stand' },
-      };
-    }
+    const needsStandingPreparation = !currentPose;
     try {
       const instruction = typeof inputs.instruction === 'string' ? inputs.instruction.trim() : '';
       const messages = movementGeneratorPrompt(request, instruction, observation);
@@ -397,7 +393,7 @@ export const movementGeneratorNode = defineNode({
           temperature: properties?.temperature ?? 0.2,
           repeatPenalty: 1,
           format: 'json',
-          jsonSchema: MOVEMENT_GENERATOR_JSON_SCHEMA,
+          jsonSchema: movementGeneratorJsonSchema(needsStandingPreparation),
         },
         onProgress: context.emitProgress,
       });
@@ -405,12 +401,32 @@ export const movementGeneratorNode = defineNode({
       const result = typeof injected === 'function'
         ? { content: await injected({ request, instruction, observation, messages }) }
         : await callGenerator(messages);
-      const normalized = normalizeGeneratedMotionPlan(result.content, sessionId, request.description);
+      const generated = normalizeGeneratedMotionPlan(result.content, sessionId, request.description);
+      const normalized = needsStandingPreparation
+        ? normalizeGeneratedMotionPlan({
+            summary: generated.summary,
+            frames: [
+              {
+                durationMs: String(UNKNOWN_POSE_STAND_DURATION_MS),
+                ...Object.fromEntries(ENVIRONMENT_MOTION_PLAN_JOINTS.map(joint => [
+                  joint,
+                  String(AINEKIO_FREESTYLE_BODY_MODEL.referencePoses.standing[joint]),
+                ])),
+              },
+              ...(generated.action.frames ?? []).map(frame => ({
+                durationMs: String(frame.durationMs),
+                ...Object.fromEntries(frame.targets.map(target => [target.joint, String(target.degrees)])),
+              })),
+            ],
+            endPose: generated.action.endPose,
+          }, sessionId, request.description)
+        : generated;
       const action = {
         ...normalized.action,
         metadata: {
           ...(normalized.action.metadata ?? {}),
           motionSummary: normalized.summary,
+          ...(needsStandingPreparation ? { posePreparation: 'stand' } : {}),
         },
       };
       return {

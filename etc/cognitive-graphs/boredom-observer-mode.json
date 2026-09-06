@@ -114,8 +114,8 @@
       "position": { "x": 850, "y": 200 },
       "data": {
         "label": "Build Observation Planning Context",
-        "nodeType": "robot_operator_context_builder",
-        "properties": { "outputContract": "delegation" }
+        "nodeType": "robot_autonomy_planner_context",
+        "properties": {}
       }
     },
     {
@@ -220,7 +220,7 @@
     { "id": "e-robot-decision-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "plannerDecision", "targetHandle": "plannerDecision", "type": "default", "data": { "type": "object" } },
     { "id": "e-robot-memories-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "memories", "targetHandle": "delegatedMemories", "type": "default", "data": { "type": "array" } },
     { "id": "e-robot-observed-at-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "sourceObservationAt", "targetHandle": "sourceObservationAt", "type": "default", "data": { "type": "string" } },
-    { "id": "e-robot-visual-planner", "source": "robot-operator-input", "target": "planner-context", "sourceHandle": "currentVisualEvidence", "targetHandle": "currentVisualEvidence", "type": "default", "data": { "type": "boolean" } },
+    { "id": "e-current-image-planner", "source": "image-input", "target": "planner-context", "sourceHandle": "current", "targetHandle": "currentVisualEvidence", "type": "default", "data": { "type": "boolean" } },
     { "id": "e-robot-observer-dispatch", "source": "robot-operator-input", "target": "environment-dispatch", "sourceHandle": "robotObserver", "targetHandle": "robotObserver", "type": "default", "data": { "type": "object" } },
     {
       "id": "e-observation-visual-image",
@@ -446,6 +446,15 @@
       "targetHandle": "sessionId",
       "type": "default",
       "data": { "type": "string" }
+    },
+    {
+      "id": "e-robot-observer-capture",
+      "source": "robot-operator-input",
+      "target": "capture-image",
+      "sourceHandle": "robotObserver",
+      "targetHandle": "robotObserver",
+      "type": "default",
+      "data": { "type": "object" }
     }
   ]
 }

@@ -7,6 +7,7 @@ import {
   recordAgentFailure,
 } from '@metahuman/core/agent-monitor';
 import { getAgentCatalogSnapshot, startAgentProcess } from '@metahuman/core';
+import { getQueueManager } from '@metahuman/core/queue';
 import {
   getEnvironmentBridgeStatePath,
   readEnvironmentBridgeState,
@@ -206,6 +207,25 @@ async function main() {
     startableOverlap.length === 0,
     failDetails(startableOverlap),
   ));
+
+  const queue = getQueueManager();
+  const desireTask = queue.enqueue({
+    type: 'generic',
+    handler: 'agent.desire-planner',
+    resource: 'remote-llm',
+    source: 'user',
+    username: 'agent-monitor-validation',
+    priority: 'normal',
+    input: { agentId: 'desire-planner', args: [], triggeredBy: 'desire-agent' },
+    metadata: { producer: 'desire-agent', monitorAgentId: 'desire-agent' },
+  });
+  queue.claim(desireTask.id, 'agent-monitor-validation');
+  const finiteSnapshot = getAgentMonitorSnapshot();
+  checks.push(check(
+    'runningAgents attributes internal Desire work to the Desire Agent',
+    finiteSnapshot.runningAgents.some(agent => agent.name === 'desire-agent'),
+  ));
+  queue.complete(desireTask.id, true, {});
 
   for (const expectedStartableAgent of ['curator', 'profile-sync']) {
     checks.push(check(

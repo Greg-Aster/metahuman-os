@@ -7,37 +7,15 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
-
-// Dynamic import for optional agency functions
-let loadMetrics: ((username: string) => Promise<any>) | null = null;
-let listDesiresByStatus: ((status: DesireStatus, username?: string) => Promise<any[]>) | null = null;
-
-async function ensureAgencyFunctions(): Promise<boolean> {
-  try {
-    const core = await import('../../index.js');
-    if (core.loadMetrics && core.listDesiresByStatus) {
-      loadMetrics = core.loadMetrics;
-      listDesiresByStatus = core.listDesiresByStatus;
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-type DesireStatus =
-  | 'nascent'
-  | 'pending'
-  | 'evaluating'
-  | 'planning'
-  | 'reviewing'
-  | 'approved'
-  | 'executing'
-  | 'completed'
-  | 'rejected'
-  | 'abandoned'
-  | 'failed';
+import {
+  DESIRE_STATUSES,
+  IN_PROGRESS_DESIRE_STATUSES,
+  NEEDS_ACTION_DESIRE_STATUSES,
+  TERMINAL_DESIRE_STATUSES,
+  WAITING_DESIRE_STATUSES,
+} from '../../agency/lifecycle-policy.js';
+import type { DesireStatus } from '../../agency/types.js';
+import { listAllDesires, loadMetrics } from '../../agency/storage.js';
 
 /**
  * GET /api/agency/metrics - Get agency metrics and desire counts
@@ -53,35 +31,15 @@ export async function handleGetAgencyMetrics(req: UnifiedRequest): Promise<Unifi
   }
 
   try {
-    const available = await ensureAgencyFunctions();
-    if (!available || !loadMetrics || !listDesiresByStatus) {
-      return {
-        status: 501,
-        error: 'Agency metrics not available',
-      };
-    }
-
-    const metrics = await loadMetrics(user.username);
-
-    // Get counts by status
-    const statuses: DesireStatus[] = [
-      'nascent',
-      'pending',
-      'evaluating',
-      'planning',
-      'reviewing',
-      'approved',
-      'executing',
-      'completed',
-      'rejected',
-      'abandoned',
-      'failed',
-    ];
-
-    const counts: Record<string, number> = {};
-    for (const status of statuses) {
-      const desires = await listDesiresByStatus(status, user.username);
-      counts[status] = desires.length;
+    const [metrics, desires] = await Promise.all([
+      loadMetrics(user.username),
+      listAllDesires(user.username),
+    ]);
+    const counts = Object.fromEntries(
+      DESIRE_STATUSES.map(status => [status, 0]),
+    ) as Record<DesireStatus, number>;
+    for (const desire of desires) {
+      if (desire.status in counts) counts[desire.status] += 1;
     }
 
     return successResponse({
@@ -89,15 +47,13 @@ export async function handleGetAgencyMetrics(req: UnifiedRequest): Promise<Unifi
       counts,
       summary: {
         total: Object.values(counts).reduce((a, b) => a + b, 0),
-        active:
-          counts.evaluating +
-          counts.planning +
-          counts.reviewing +
-          counts.approved +
-          counts.executing,
-        waiting: counts.nascent + counts.pending,
+        active: IN_PROGRESS_DESIRE_STATUSES.reduce((total, status) => total + counts[status], 0),
+        waiting: WAITING_DESIRE_STATUSES.reduce((total, status) => total + counts[status], 0),
+        needsAction: NEEDS_ACTION_DESIRE_STATUSES.reduce((total, status) => total + counts[status], 0),
         completed: counts.completed,
-        failed: counts.rejected + counts.abandoned + counts.failed,
+        failed: TERMINAL_DESIRE_STATUSES
+          .filter(status => status !== 'completed')
+          .reduce((total, status) => total + counts[status], 0),
       },
     });
   } catch (error) {

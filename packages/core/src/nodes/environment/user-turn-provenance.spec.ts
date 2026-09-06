@@ -59,7 +59,8 @@ test('a current user instruction owns provenance over an unfinished autonomous R
   assert.equal(result.currentInstruction, 'What do you see?')
   assert.equal(result.instructionSource, 'user')
   assert.equal(envelope.inputSource, 'user')
-  assert.deepEqual((result.jsonSchema as any).properties.taskDecision, { type: 'null' })
+  assert.equal((result.jsonSchema as any).properties.taskDecision.type, 'null')
+  assert.match((result.jsonSchema as any).properties.taskDecision.description, /durable objective/i)
 })
 
 test('a standalone action may omit task lifecycle state', async () => {

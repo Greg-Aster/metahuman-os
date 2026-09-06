@@ -9,8 +9,10 @@ import {
 } from '../../robot-operator.js';
 import {
   buildEnvironmentSelectorJsonSchema,
+  projectRobotStatusContext,
   projectRobotCommandDescriptions,
 } from '../environment/helpers.js';
+import type { NodeSlot } from '../types.js';
 import { ROBOT_OPERATOR_DECISION_JSON_SCHEMA } from './decision-parser.node.js';
 import { ROBOT_ACTION_RESULT_JSON_SCHEMA } from './action-result-parser.node.js';
 import { ROBOT_GOAL_REVIEW_JSON_SCHEMA } from './goal-review-parser.node.js';
@@ -122,6 +124,18 @@ function consolidatedInnerHistory(value: unknown): Array<Record<string, unknown>
   });
 }
 
+function controllerConversationWindow(
+  entries: Array<Record<string, unknown>>,
+  limit = 8,
+): Array<Record<string, unknown>> {
+  if (entries.length <= limit) return entries;
+  const recent = entries.slice(-limit);
+  const latestUserIndex = entries.findLastIndex(entry => entry.role === 'user');
+  if (latestUserIndex < 0 || latestUserIndex >= entries.length - limit) return recent;
+  if (limit === 1) return [entries[latestUserIndex]];
+  return [entries[latestUserIndex], ...entries.slice(-(limit - 1))];
+}
+
 function boundedObject(value: unknown, maxLength = 8_000): unknown {
   if (!isRecord(value) && !Array.isArray(value)) return value ?? null;
   try {
@@ -134,18 +148,13 @@ function boundedObject(value: unknown, maxLength = 8_000): unknown {
 }
 
 function selectedImageParts(
-  expectedCorrelationId: string,
   images: unknown,
   frames: unknown,
 ): Array<Record<string, unknown>> {
   if (!Array.isArray(images) || !Array.isArray(frames)) return [];
-  if (!expectedCorrelationId) return [];
-  const frameList = frames.filter(isRecord) as unknown as EnvironmentVisualFrame[];
-  const index = frameList.findIndex(frame => (
-    cleanText(frame.metadata?.correlationId, 200) === expectedCorrelationId
+  return images.slice(0, frames.length).filter((image): image is Record<string, unknown> => (
+    isRecord(image) && image.type === 'image_url'
   ));
-  if (index < 0 || !isRecord(images[index]) || images[index].type !== 'image_url') return [];
-  return [images[index]];
 }
 
 function robotTrigger(
@@ -208,6 +217,30 @@ function compactAction(value: unknown): Record<string, unknown> | null {
   };
 }
 
+function compactBridgeSummary(value: unknown, sessionId: string): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const sessions = Array.isArray(value.sessions) ? value.sessions.filter(isRecord) : [];
+  const selected = sessions.find(session => cleanText(session.sessionId, 200) === sessionId)
+    ?? sessions.find(session => cleanText(session.status, 40) === 'connected')
+    ?? null;
+  return {
+    enabled: value.enabled === true,
+    updatedAt: cleanText(value.updatedAt, 100) || null,
+    sessionCount: typeof value.sessionCount === 'number' ? value.sessionCount : sessions.length,
+    pendingCommandCount: typeof value.pendingCommandCount === 'number' ? value.pendingCommandCount : 0,
+    selectedSession: selected
+      ? {
+          sessionId: cleanText(selected.sessionId, 200) || null,
+          environmentId: cleanText(selected.environmentId, 160) || null,
+          adapter: cleanText(selected.adapter, 160) || null,
+          status: cleanText(selected.status, 40) || null,
+          firstSeenAt: cleanText(selected.firstSeenAt, 100) || null,
+          lastSeenAt: cleanText(selected.lastSeenAt, 100) || null,
+        }
+      : null,
+  };
+}
+
 function autonomySelectorSchema(
   observation: EnvironmentObservation | null,
   robotObserver: RobotObserverCycleMetadata | null,
@@ -220,7 +253,8 @@ function autonomySelectorSchema(
     actionRouteSelected: routingAnalysis.needsAction === true
       || (routingAnalysis.needsVision === true && !currentVisionAvailable),
     taskLifecycleSelected: routingAnalysis.needsTaskLifecycle === true,
-    requireAction: robotObserver?.requestedBy === 'boredom-movement',
+    requireAction: routingAnalysis.needsAction === true
+      || robotObserver?.requestedBy === 'boredom-movement',
     requireProgress: true,
     requireAutonomousConsequence: true,
   });
@@ -279,57 +313,53 @@ function verifiedActionHistory(value: unknown): Array<Record<string, unknown>> {
     }
   }
 
-  return [...actions.values()].filter(entry => entry.requested).slice(-8);
+  return [...actions.values()].filter(entry => entry.requested);
 }
 
-export const robotOperatorContextBuilderNode = defineNode({
-  id: 'robot_operator_context_builder',
-  name: 'Robot Operator Context',
-  category: 'operator',
-  inputs: [
-    { name: 'instruction', type: 'string', description: 'Graph-owned Robot Operator instructions' },
-    { name: 'stimulusInstruction', type: 'string', optional: true, description: 'Specialized trigger instruction for this autonomous cycle' },
-    { name: 'observation', type: 'object', optional: true, description: 'Current correlated robot observation when an environment, vision, or action route was selected' },
-    { name: 'bridgeSummary', type: 'object', optional: true, description: 'Current Environment Bridge connection and session summary' },
-    { name: 'images', type: 'array', optional: true, description: 'Validated image content parts' },
-    { name: 'frames', type: 'array', optional: true, description: 'Validated visual frame metadata' },
-    { name: 'conversationHistory', type: 'array', optional: true, description: 'Canonical recent conversation with unified inner context when enabled' },
-    { name: 'innerHistory', type: 'array', optional: true, description: 'Canonical recent private reflection entries supplied separately' },
-    { name: 'actionHistory', type: 'array', optional: true, description: 'Canonical Robot Buffer entries used as verified prior-action evidence' },
-    { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona' },
-    { name: 'memoryContext', type: 'array', optional: true, description: 'Historical memories supplied as inspiration, never current-world evidence' },
-    { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
-    { name: 'activeDesires', type: 'array', optional: true, description: 'Bounded active Agency Desire summaries' },
-    { name: 'availableTasks', type: 'array', optional: true, description: 'Catalog-backed finite tasks available to the Full-mode controller' },
-    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from Robot Operator Input' },
-    { name: 'plannerDecision', type: 'object', optional: true, description: 'Planner decision from Robot Operator Input' },
-    { name: 'delegatedMemories', type: 'array', optional: true, description: 'Planner-delegated memories from Robot Operator Input' },
-    { name: 'actionContext', type: 'object', optional: true, description: 'Matched Work Coordinator record for the robot result being evaluated' },
-    { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Bridge observation timestamp from Robot Operator Input' },
-    { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Robot Operator acquired the current frame in this cycle' },
-    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Intent Orchestrator route switches for the autonomous instruction' },
-  ],
-  outputs: [
-    { name: 'messages', type: 'array', description: 'Multimodal messages for the configured Robot Operator LLM' },
-    { name: 'jsonSchema', type: 'object', description: 'Capability-bounded Environment action output schema' },
-    { name: 'context', type: 'object', description: 'Structured high-level deliberation context' },
-    { name: 'stimulusReady', type: 'boolean', description: 'Whether a correlated image or action result is available for an evidence-first planner' },
-    { name: 'valid', type: 'boolean', description: 'Whether the configured context is ready for deliberation' },
-    { name: 'error', type: 'string', description: 'Visible configuration or input error' },
-  ],
-  properties: { outputContract: 'environment' },
-  propertySchemas: {
-    outputContract: {
-      type: 'select',
-      default: 'environment',
-      label: 'Output Contract',
-      options: ['environment', 'delegation', 'action_result', 'goal_review', 'autonomy_controller'],
-      description: 'Choose the exact structured decision expected from this graph’s LLM.',
-    },
-  },
-  description: 'Consolidates separately supplied instructions, conversation, inner context, persona, trigger metadata, and current robot perception for the Robot Operator LLM.',
-  async execute(inputs, _context, properties) {
-    const outputContract = properties?.outputContract ?? 'environment';
+type RobotOperatorContextContract = 'environment' | 'delegation' | 'action_result' | 'goal_review' | 'autonomy_controller';
+
+const CONTEXT_OUTPUTS: NodeSlot[] = [
+  { name: 'messages', type: 'array', description: 'Multimodal messages for this workflow LLM' },
+  { name: 'jsonSchema', type: 'object', description: 'Structured output contract for this workflow LLM' },
+  { name: 'context', type: 'object', description: 'Inspectable context summary' },
+  { name: 'stimulusReady', type: 'boolean', description: 'Whether correlated image or action-result evidence is available' },
+  { name: 'valid', type: 'boolean', description: 'Whether context construction succeeded' },
+  { name: 'error', type: 'string', description: 'Visible input error' },
+];
+
+const COMMON_CONTEXT_INPUTS: Record<string, NodeSlot> = {
+  instruction: { name: 'instruction', type: 'string', description: 'Graph-owned instructions for this one LLM task' },
+  observation: { name: 'observation', type: 'object', optional: true, description: 'Environment Bridge observation supplied to this workflow' },
+  bridgeSummary: { name: 'bridgeSummary', type: 'object', optional: true, description: 'Current Environment Bridge connection and session summary' },
+  images: { name: 'images', type: 'array', optional: true, description: 'Validated image content parts' },
+  frames: { name: 'frames', type: 'array', optional: true, description: 'Validated visual frame metadata' },
+  conversationHistory: { name: 'conversationHistory', type: 'array', optional: true, description: 'Conversation entries selected by the connected Buffer History node' },
+  innerHistory: { name: 'innerHistory', type: 'array', optional: true, description: 'Private reflection entries selected by the connected Buffer History node' },
+  actionHistory: { name: 'actionHistory', type: 'array', optional: true, description: 'Robot Buffer entries used as verified prior-action evidence' },
+  personaText: { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona' },
+  memoryContext: { name: 'memoryContext', type: 'array', optional: true, description: 'Historical memories supplied as inspiration, never current-world evidence' },
+  robotStatus: { name: 'robotStatus', type: 'object', optional: true, description: 'Canonical Robot Status snapshot' },
+  activeDesires: { name: 'activeDesires', type: 'array', optional: true, description: 'Active Agency Desire summaries selected by the connected node' },
+  availableTasks: { name: 'availableTasks', type: 'array', optional: true, description: 'Catalog-backed finite tasks available to the Full-mode controller' },
+  autonomyActivityHistory: { name: 'autonomyActivityHistory', type: 'array', optional: true, description: 'Terminal receipts selected by Recent Autonomy Activity' },
+  robotObserver: { name: 'robotObserver', type: 'object', optional: true, description: 'Current Robot Operator cycle' },
+  plannerDecision: { name: 'plannerDecision', type: 'object', optional: true, description: 'Planner-authored intention delegated to Robot Autonomy Executor' },
+  delegatedMemories: { name: 'delegatedMemories', type: 'array', optional: true, description: 'Historical memories delegated with a planner intention' },
+  actionContext: { name: 'actionContext', type: 'object', optional: true, description: 'Work Coordinator action record matched to the returned robot report' },
+  sourceObservationAt: { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Timestamp of the bridge observation that started this cycle' },
+  currentVisualEvidence: { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified the attached frame for this decision' },
+  stimulusInstruction: { name: 'stimulusInstruction', type: 'string', optional: true, description: 'High-level intention delegated to Robot Autonomy Executor' },
+  routingAnalysis: { name: 'routingAnalysis', type: 'object', description: 'Intent Orchestrator route switches for the delegated intention' },
+};
+
+function contextInputs(...names: string[]): NodeSlot[] {
+  return names.map(name => COMMON_CONTEXT_INPUTS[name]);
+}
+
+async function buildRobotOperatorContext(
+  inputs: Record<string, any>,
+  outputContract: RobotOperatorContextContract,
+) {
     const suppliedObservation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
@@ -373,16 +403,18 @@ export const robotOperatorContextBuilderNode = defineNode({
       || routingAnalysis?.needsVision === true;
 
     const innerContext = conversationSelected
-      ? consolidatedInnerHistory(inputs.innerHistory).slice(-2)
+      ? consolidatedInnerHistory(inputs.innerHistory)
       : [];
-    const conversationContext = (conversationSelected
+    const allAvailableConversation = (conversationSelected
       ? consolidatedHistory(inputs.conversationHistory)
       : [])
       .filter(entry => innerContext.length === 0 || !(
         isRecord(entry.context) && entry.context.isInnerDialogue === true
-      ))
-      .slice(-4);
-    const recentContext = [...conversationContext, ...innerContext];
+      ));
+    const availableConversation = outputContract === 'autonomy_controller'
+      ? controllerConversationWindow(allAvailableConversation)
+      : allAvailableConversation;
+    const recentContext = [...availableConversation, ...innerContext];
     const allActionHistory = actionHistorySelected ? verifiedActionHistory(inputs.actionHistory) : [];
     const innerContextCount = recentContext.filter(entry => (
       isRecord(entry.context) && entry.context.isInnerDialogue === true
@@ -408,9 +440,8 @@ export const robotOperatorContextBuilderNode = defineNode({
       seenMemories.add(key);
       return [bounded];
     }).slice(0, 5);
-    const expectedCorrelationId = correlationId(observation, robotObserver);
-    const images = visionSelected
-      ? selectedImageParts(expectedCorrelationId, inputs.images, inputs.frames)
+    const images = visionSelected && inputs.currentVisualEvidence === true
+      ? selectedImageParts(inputs.images, inputs.frames)
       : [];
     const frames = (visionSelected && Array.isArray(inputs.frames) ? inputs.frames : [])
       .filter((frame): frame is EnvironmentVisualFrame => isRecord(frame))
@@ -441,17 +472,26 @@ export const robotOperatorContextBuilderNode = defineNode({
       && !latestActionAlreadyInHistory
       ? boundedObject(latestActionContext, 2_000)
       : null;
-    const robotStatus = robotStatusSelected && isRecord(inputs.robotStatus)
-      ? boundedObject(inputs.robotStatus, 6_000)
+    const projectedRobotStatus = robotStatusSelected && isRecord(inputs.robotStatus)
+      ? projectRobotStatusContext(inputs.robotStatus)
       : null;
-    const bridgeSummary = outputContract === 'autonomy_controller' && isRecord(inputs.bridgeSummary)
-      ? boundedObject(inputs.bridgeSummary, 4_000)
+    const robotStatus = projectedRobotStatus
+      && (outputContract === 'autonomy_controller' || outputContract === 'goal_review')
+      ? Object.fromEntries(Object.entries(projectedRobotStatus).filter(([key]) => key !== 'agency'))
+      : projectedRobotStatus;
+    const bridgeSummary = outputContract === 'autonomy_controller'
+      ? compactBridgeSummary(inputs.bridgeSummary, cleanText(observation?.sessionId, 200))
       : null;
-    const activeDesires = outputContract === 'autonomy_controller' && Array.isArray(inputs.activeDesires)
-      ? inputs.activeDesires.map(desire => boundedObject(desire, 1_500)).slice(0, 10)
+    const activeDesires = (outputContract === 'autonomy_controller' || outputContract === 'goal_review')
+      && Array.isArray(inputs.activeDesires)
+      ? inputs.activeDesires.map(desire => boundedObject(desire, 1_500))
       : [];
     const availableTasks = outputContract === 'autonomy_controller' && Array.isArray(inputs.availableTasks)
-      ? inputs.availableTasks.filter(isRecord).map(task => boundedObject(task, 2_000)).slice(0, 30)
+      ? inputs.availableTasks.filter(isRecord).map(task => boundedObject(task, 2_000))
+      : [];
+    const autonomyActivityHistory = outputContract === 'autonomy_controller'
+      && Array.isArray(inputs.autonomyActivityHistory)
+      ? inputs.autonomyActivityHistory.filter(isRecord)
       : [];
     const taskNarrative = recentContext.filter(entry => (
       isRecord(entry.context) && cleanText(entry.context.correlationId, 200) === cycleId
@@ -461,7 +501,8 @@ export const robotOperatorContextBuilderNode = defineNode({
     const feedback = currentActionId && observation
       ? compactFeedback(observation).filter(item => item.actionId === currentActionId)
       : [];
-    const stimulusReady = images.length > 0 || feedback.length > 0;
+    const visualEvidenceVerified = images.length > 0 && inputs.currentVisualEvidence === true;
+    const stimulusReady = visualEvidenceVerified || feedback.length > 0;
     const robotCommandDescriptions = outputContract === 'environment' && observation
       ? projectRobotCommandDescriptions(observation.capabilities)
       : {};
@@ -493,10 +534,87 @@ export const robotOperatorContextBuilderNode = defineNode({
         : {}),
       feedback,
       verifiedCurrentAction: boundedObject(currentActionContext, 2_000),
-      visualFrames: frames,
-      currentVisualEvidence: visionSelected && inputs.currentVisualEvidence === true,
+      visualEvidence: {
+        attached: images.length > 0,
+        verifiedForDecision: visualEvidenceVerified,
+        frames,
+      },
     };
-    const stimulusText = JSON.stringify({
+    const supportingMemoryContext = reflectionTrigger ? [] : memoryContext;
+    const contextEnvelope = {
+      robotOperatorContext: {
+        activePersona: personaText || null,
+        ...(routingAnalysis ? { selectedRoutes: routingAnalysis } : {}),
+        ...(robotStatus
+          ? {
+              robotStatus: {
+                provenance: 'profile_robot_status_snapshot',
+                state: robotStatus,
+              },
+            }
+          : {}),
+        ...(bridgeSummary
+          ? {
+              environmentBridge: {
+                provenance: 'environment_bridge_state',
+                state: bridgeSummary,
+              },
+            }
+          : {}),
+        ...(autonomyActivityHistory.length > 0
+          ? {
+              recentAutonomyActivity: {
+                provenance: 'work_coordinator_terminal_history',
+                entries: autonomyActivityHistory,
+              },
+            }
+          : {}),
+        ...(recentContext.length > 0
+          ? {
+              correlatedTaskNarrative: taskNarrative,
+              recentNarrativeContext: {
+                provenance: 'canonical_conversation_history',
+                evidenceStatus: 'narrative_only',
+                includesUnifiedInnerContext: innerContextCount > 0,
+                entries: backgroundNarrative,
+              },
+            }
+          : {}),
+        ...(actionHistorySelected
+          ? {
+              verifiedActionHistory: {
+                provenance: 'canonical_robot_buffer',
+                entries: actionHistory,
+              },
+            }
+          : {}),
+        ...(activeDesires.length > 0
+          ? {
+              activeDesires: {
+                provenance: 'canonical_agency_storage',
+                entries: activeDesires,
+              },
+            }
+          : {}),
+        ...(historicalLatestAction
+          ? {
+              recentActionContext: {
+                provenance: 'latest_environment_action_context',
+                currentEvidence: false,
+                entry: historicalLatestAction,
+              },
+            }
+          : {}),
+        ...(supportingMemoryContext.length > 0
+          ? {
+              sampledMemories: {
+                provenance: 'historical_memory_inspiration',
+                currentEvidence: false,
+                entries: supportingMemoryContext,
+              },
+            }
+          : {}),
+      },
       robotStimulus: stimulus,
       ...(plannerDecision
         ? { plannerDecision }
@@ -512,89 +630,15 @@ export const robotOperatorContextBuilderNode = defineNode({
             },
           }
         : {}),
-    });
-    const userContent = images.length > 0
-      ? [{ type: 'text', text: `The attached image is what you currently see.\n${stimulusText}` }, ...images]
-      : stimulusText;
-    const supportingMemoryContext = reflectionTrigger ? [] : memoryContext;
-    const supportingContext = {
-      role: 'assistant',
-      content: JSON.stringify({
-        robotOperatorContext: {
-          activePersona: personaText || null,
-          ...(routingAnalysis ? { selectedRoutes: routingAnalysis } : {}),
-          ...(recentContext.length > 0
-            ? {
-                correlatedTaskNarrative: taskNarrative,
-                recentContext: {
-                  provenance: 'canonical_conversation_history',
-                  evidenceStatus: 'narrative_only',
-                  includesUnifiedInnerContext: innerContextCount > 0,
-                  entries: backgroundNarrative,
-                },
-              }
-            : {}),
-          ...(actionHistorySelected
-            ? {
-                verifiedActionHistory: {
-                  provenance: 'canonical_robot_buffer',
-                  entries: actionHistory,
-                },
-              }
-            : {}),
-          ...(robotStatus
-            ? {
-                robotStatus: {
-                  provenance: 'profile_robot_status_snapshot',
-                  currentEvidence: false,
-                  state: robotStatus,
-                },
-              }
-            : {}),
-          ...(bridgeSummary ? { environmentBridge: bridgeSummary } : {}),
-          ...(activeDesires.length > 0
-            ? {
-                activeDesires: {
-                  provenance: 'canonical_agency_storage',
-                  entries: activeDesires,
-                },
-              }
-            : {}),
-          ...(availableTasks.length > 0
-            ? {
-                availableAutonomyTasks: {
-                  provenance: 'canonical_agent_catalog',
-                  entries: availableTasks,
-                },
-              }
-            : {}),
-          ...(historicalLatestAction
-            ? {
-                recentActionContext: {
-                  provenance: 'latest_environment_action_context',
-                  currentEvidence: false,
-                  entry: historicalLatestAction,
-                },
-              }
-            : {}),
-          ...(supportingMemoryContext.length > 0
-            ? {
-                sampledMemories: {
-                  provenance: 'historical_memory_inspiration',
-                  currentEvidence: false,
-                  entries: supportingMemoryContext,
-                },
-              }
-            : {}),
-          currentEvidence: false,
-        },
-      }),
     };
+    const envelopeText = JSON.stringify(contextEnvelope);
+    const userContent = images.length > 0
+      ? [{ type: 'text', text: `Attached robot-camera evidence is described by robotStimulus.visualEvidence.\n${envelopeText}` }, ...images]
+      : envelopeText;
 
     return {
       messages: [
         { role: 'system', content: instruction },
-        supportingContext,
         { role: 'user', content: userContent },
       ],
       jsonSchema: outputContract === 'delegation'
@@ -609,7 +653,7 @@ export const robotOperatorContextBuilderNode = defineNode({
                 observation,
                 robotObserver,
                 routingAnalysis ?? {},
-                images.length > 0,
+                visualEvidenceVerified,
               ),
       context: {
         instruction,
@@ -627,6 +671,7 @@ export const robotOperatorContextBuilderNode = defineNode({
         bridgeSummaryIncluded: Boolean(bridgeSummary),
         activeDesireCount: activeDesires.length,
         availableTaskCount: availableTasks.length,
+        autonomyActivityCount: autonomyActivityHistory.length,
         plannerDecisionIncluded: Boolean(plannerDecision),
         reflectionMaterialIncluded: reflectionTrigger && memoryContext.length > 0,
         imageCount: images.length,
@@ -638,5 +683,88 @@ export const robotOperatorContextBuilderNode = defineNode({
       valid: true,
       error: '',
     };
-  },
-});
+}
+
+function fixedContextNode(
+  id: string,
+  name: string,
+  description: string,
+  inputs: NodeSlot[],
+  outputContract: RobotOperatorContextContract,
+) {
+  return defineNode({
+    id,
+    name,
+    category: 'operator',
+    inputs,
+    outputs: CONTEXT_OUTPUTS,
+    properties: {},
+    propertySchemas: {},
+    description,
+    async execute(nodeInputs) {
+      return buildRobotOperatorContext(nodeInputs, outputContract);
+    },
+  });
+}
+
+export const robotAutonomyExecutorContextNode = fixedContextNode(
+  'robot_autonomy_executor_context',
+  'Robot Autonomy Executor Context',
+  'Builds the routed context and capability-bounded action contract for one delegated physical or sensing intention.',
+  contextInputs(
+    'instruction', 'stimulusInstruction', 'routingAnalysis', 'observation', 'images', 'frames',
+    'conversationHistory', 'innerHistory', 'actionHistory', 'personaText', 'memoryContext',
+    'robotStatus', 'robotObserver', 'plannerDecision', 'delegatedMemories', 'actionContext',
+    'sourceObservationAt', 'currentVisualEvidence',
+  ),
+  'environment',
+);
+
+export const robotAutonomyPlannerContextNode = fixedContextNode(
+  'robot_autonomy_planner_context',
+  'Robot Autonomy Planner Context',
+  'Builds correlated perception and narrative context for one planner that may delegate a high-level intention.',
+  contextInputs(
+    'instruction', 'observation', 'images', 'frames', 'conversationHistory', 'innerHistory',
+    'actionHistory', 'personaText', 'memoryContext', 'robotStatus', 'robotObserver',
+    'plannerDecision', 'delegatedMemories', 'actionContext', 'sourceObservationAt',
+    'currentVisualEvidence',
+  ),
+  'delegation',
+);
+
+export const robotActionResultContextNode = fixedContextNode(
+  'robot_action_result_context',
+  'Robot Action Result Context',
+  'Builds the evidence package for interpreting one correlated terminal robot action report.',
+  contextInputs(
+    'instruction', 'observation', 'images', 'frames', 'robotStatus', 'robotObserver',
+    'actionContext', 'sourceObservationAt', 'currentVisualEvidence',
+  ),
+  'action_result',
+);
+
+export const robotGoalReviewContextNode = fixedContextNode(
+  'robot_goal_review_context',
+  'Robot Goal Review Context',
+  'Builds current objective, outcome, narrative, persona, desire, and evidence context for one goal review.',
+  contextInputs(
+    'instruction', 'observation', 'images', 'frames', 'conversationHistory', 'innerHistory',
+    'actionHistory', 'personaText', 'robotStatus', 'activeDesires', 'robotObserver',
+    'sourceObservationAt', 'currentVisualEvidence',
+  ),
+  'goal_review',
+);
+
+export const robotAutonomyControllerContextNode = fixedContextNode(
+  'robot_autonomy_controller_context',
+  'Robot Autonomy Controller Context',
+  'Builds one Full-mode decision package from current status, bridge facts, selected histories, persona, desires, task meanings, and prior task receipts.',
+  contextInputs(
+    'instruction', 'observation', 'bridgeSummary', 'images', 'frames', 'conversationHistory',
+    'innerHistory', 'actionHistory', 'personaText', 'robotStatus', 'activeDesires',
+    'availableTasks', 'autonomyActivityHistory', 'robotObserver', 'sourceObservationAt',
+    'currentVisualEvidence',
+  ),
+  'autonomy_controller',
+);

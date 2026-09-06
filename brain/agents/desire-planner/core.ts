@@ -43,6 +43,7 @@ import {
   isAgencyEnabled,
   submitSystemEvent,
   submitInnerReflection,
+  submitDesireAgent,
 } from '@metahuman/core';
 
 const LOCK_NAME = 'desire-planner';
@@ -291,7 +292,7 @@ export function evaluateDesirePlanGraph(result: GraphExecutionState): DesirePlan
 export interface DesireReviewGraphReceipt {
   desire: Desire;
   review: DesireReview;
-  action: 'rejected' | 'auto_approved' | 'awaiting_approval';
+  action: 'rejected' | 'auto_approved' | 'revision_required' | 'awaiting_approval';
   reasoning: string;
 }
 
@@ -329,13 +330,14 @@ export function evaluateDesireReviewGraph(result: GraphExecutionState): DesireRe
   if (transition.success !== true
     || !updatedDesire
     || updatedDesire.review?.id !== review.id
-    || !['rejected', 'auto_approved', 'awaiting_approval'].includes(action)) {
+    || !['rejected', 'auto_approved', 'revision_required', 'awaiting_approval'].includes(action)) {
     throw new Error(`Plan review transition failed: ${transition.error || 'durable transition not confirmed'}`);
   }
 
   const expectedStatus = action === 'rejected'
     ? 'rejected'
-    : action === 'auto_approved' ? 'approved' : 'awaiting_approval';
+    : action === 'auto_approved' ? 'approved'
+      : action === 'revision_required' ? 'planning' : 'awaiting_approval';
   if (updatedDesire.status !== expectedStatus) {
     throw new Error(`Plan review transition reported ${action} but persisted '${updatedDesire.status}'`);
   }
@@ -350,7 +352,7 @@ export function evaluateDesireReviewGraph(result: GraphExecutionState): DesireRe
 
 type DesireProcessingResult = {
   success: boolean;
-  outcome: 'planned' | 'approved' | 'needs_approval' | 'rejected' | 'failed' | 'needs_questions';
+  outcome: 'planned' | 'approved' | 'needs_revision' | 'needs_approval' | 'rejected' | 'failed' | 'needs_questions';
   error?: string;
   feasibilityResult?: DesireFeasibilityResult;
 };
@@ -395,10 +397,53 @@ async function reviewPlannedDesire(
 
   if (reviewReceipt.action === 'auto_approved') {
     console.log(`${LOG_PREFIX}     Plan auto-approved (high alignment + safety)`);
+    await submitDesireAgent({
+      operation: 'execute',
+      username,
+      desireId: desire.id,
+      source: 'autonomy',
+      idempotencyKey: `desire-execute:${desire.id}:plan:${desire.plan?.version || 0}`,
+      metadata: { producer: 'desire-plan-auto-approval' },
+    });
     return { success: true, outcome: 'approved' };
   }
 
+  if (reviewReceipt.action === 'revision_required') {
+    console.log(`${LOG_PREFIX}     Plan returned to planning for revision`);
+    await submitSystemEvent(
+      username,
+      `🔄 **Plan Revision Required:** "${desire.title}"\n\n${reviewReceipt.reasoning}`,
+      {
+        type: 'desire_plan_revision',
+        source: 'agency',
+        desireId: desire.id,
+        desireTitle: desire.title,
+      },
+    );
+    await submitDesireAgent({
+      operation: 'plan',
+      username,
+      desireId: desire.id,
+      source: 'autonomy',
+      idempotencyKey: `desire-plan:${desire.id}:revision:${reviewReceipt.review.id}`,
+      metadata: { producer: 'desire-plan-review' },
+    });
+    return { success: true, outcome: 'needs_revision' };
+  }
+
   console.log(`${LOG_PREFIX}     Plan queued for manual approval`);
+  await submitSystemEvent(
+    username,
+    `✅ **Plan Ready for Approval:** "${desire.title}"\n\n${reviewReceipt.reasoning}`,
+    {
+      type: 'approval_request',
+      source: 'agency',
+      desireId: desire.id,
+      desireTitle: desire.title,
+      planId: reviewReceipt.desire.plan?.id,
+      planVersion: reviewReceipt.desire.plan?.version,
+    },
+  );
   return { success: true, outcome: 'needs_approval' };
 }
 
@@ -562,6 +607,7 @@ export async function promotePendingDesires(
     const updatedDesire: Desire = {
       ...desire,
       status: 'planning',
+      currentStage: 'planning',
       updatedAt: now,
     };
 
@@ -703,6 +749,9 @@ export async function processPlanningDesires(
         break;
       case 'needs_approval':
         needsApproval++;
+        break;
+      case 'needs_revision':
+        planned++;
         break;
       case 'needs_questions':
         needsQuestions++;

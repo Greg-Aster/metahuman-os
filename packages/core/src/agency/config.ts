@@ -10,6 +10,7 @@ import path from 'node:path';
 import type {
   AgencyConfig,
   Desire,
+  DesireDecayConfig,
   DesireMetrics,
   DesireSource,
   DesireSourceConfig,
@@ -73,8 +74,8 @@ export const DEFAULT_AGENCY_CONFIG: AgencyConfig = {
     autoApprove: 0.85,
     decay: {
       enabled: true,
-      ratePerRun: 0.03,        // Small decay per run - desires fade slowly without reinforcement
-      minStrength: 0.05,       // Minimum before abandonment
+      ratePerDay: 0.03,        // Strength lost per elapsed day without reinforcement
+      minStrength: 0.05,       // Minimum before automatic archival
       reinforcementBoost: 0.08, // Boost when related inputs found
       initialStrength: 0.15,   // New desires start small and grow
     },
@@ -189,12 +190,17 @@ function mergeConfig(base: AgencyConfig, override: Partial<AgencyConfig>): Agenc
   if (override.mode !== undefined) result.mode = override.mode;
 
   if (override.thresholds) {
+    const decayOverride = override.thresholds.decay as (Partial<DesireDecayConfig> & { ratePerRun?: number }) | undefined;
+    const { ratePerRun: legacyRatePerRun, ...canonicalDecayOverride } = decayOverride || {};
     result.thresholds = {
       ...result.thresholds,
       ...override.thresholds,
       decay: {
         ...result.thresholds.decay,
-        ...(override.thresholds.decay || {}),
+        ...canonicalDecayOverride,
+        ...(canonicalDecayOverride.ratePerDay === undefined && legacyRatePerRun !== undefined
+          ? { ratePerDay: legacyRatePerRun }
+          : {}),
       },
     };
   }
@@ -250,48 +256,114 @@ function mergeConfig(base: AgencyConfig, override: Partial<AgencyConfig>): Agenc
  */
 export function validateConfig(config: AgencyConfig): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
+  const riskValues = new Set(['none', 'low', 'medium', 'high', 'critical']);
+  const trustValues = new Set(['observe', 'suggest', 'supervised_auto', 'bounded_auto', 'adaptive_auto']);
+  const isUnitInterval = (value: unknown): value is number => (
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+  );
+  const isNonNegativeInteger = (value: unknown): value is number => (
+    typeof value === 'number' && Number.isInteger(value) && value >= 0
+  );
+
+  if (typeof config.enabled !== 'boolean') {
+    errors.push('enabled must be boolean');
+  }
+
+  if (!['off', 'supervised', 'autonomous', 'yolo'].includes(config.mode)) {
+    errors.push(`unsupported agency mode '${config.mode}'`);
+  }
 
   // Validate thresholds
-  if (config.thresholds.activation < 0 || config.thresholds.activation > 1) {
+  if (!isUnitInterval(config.thresholds.activation)) {
     errors.push('activation threshold must be between 0 and 1');
   }
-  if (config.thresholds.autoApprove < 0 || config.thresholds.autoApprove > 1) {
+  if (!isUnitInterval(config.thresholds.autoApprove)) {
     errors.push('autoApprove threshold must be between 0 and 1');
   }
-  if (config.thresholds.activation > config.thresholds.autoApprove) {
+  if (isUnitInterval(config.thresholds.activation)
+    && isUnitInterval(config.thresholds.autoApprove)
+    && config.thresholds.activation > config.thresholds.autoApprove) {
     errors.push('activation threshold should be less than or equal to autoApprove');
   }
 
   // Validate decay
-  if (config.thresholds.decay.ratePerRun < 0 || config.thresholds.decay.ratePerRun > 1) {
+  if (typeof config.thresholds.decay.enabled !== 'boolean') {
+    errors.push('decay enabled must be boolean');
+  }
+  if (!isUnitInterval(config.thresholds.decay.ratePerDay)) {
     errors.push('decay rate must be between 0 and 1');
   }
-  if (config.thresholds.decay.minStrength < 0 || config.thresholds.decay.minStrength > 1) {
+  if (!isUnitInterval(config.thresholds.decay.minStrength)) {
     errors.push('minimum strength must be between 0 and 1');
+  }
+  if (!isUnitInterval(config.thresholds.decay.reinforcementBoost)) {
+    errors.push('reinforcement boost must be between 0 and 1');
+  }
+  if (!isUnitInterval(config.thresholds.decay.initialStrength)) {
+    errors.push('initial strength must be between 0 and 1');
   }
 
   // Validate source weights
-  for (const [source, sourceConfig] of Object.entries(config.sources)) {
-    if (sourceConfig.weight < 0 || sourceConfig.weight > 1) {
+  const expectedSources = Object.keys(DESIRE_SOURCE_WEIGHTS) as DesireSource[];
+  for (const source of expectedSources) {
+    const sourceConfig = config.sources[source];
+    if (!sourceConfig) {
+      errors.push(`source ${source} configuration is required`);
+      continue;
+    }
+    if (typeof sourceConfig.enabled !== 'boolean') {
+      errors.push(`source ${source} enabled must be boolean`);
+    }
+    if (!isUnitInterval(sourceConfig.weight)) {
       errors.push(`source ${source} weight must be between 0 and 1`);
     }
   }
+  for (const source of Object.keys(config.sources)) {
+    if (!(source in DESIRE_SOURCE_WEIGHTS)) {
+      errors.push(`source ${source} is not supported`);
+    }
+  }
+
+  if (!['never', 'trust_based', 'always'].includes(config.riskPolicy.reviewBypass)) {
+    errors.push('reviewBypass must be never, trust_based, or always');
+  }
+  for (const [name, values] of Object.entries({
+    autoApproveRisk: config.riskPolicy.autoApproveRisk,
+    requireApprovalRisk: config.riskPolicy.requireApprovalRisk,
+    blockRisk: config.riskPolicy.blockRisk,
+  })) {
+    if (!Array.isArray(values) || values.some(value => !riskValues.has(value))) {
+      errors.push(`${name} contains an unsupported risk level`);
+    }
+  }
+  if (!trustValues.has(config.riskPolicy.autoApproveTrustLevel)) {
+    errors.push('autoApproveTrustLevel is not a supported trust level');
+  }
 
   // Validate limits
-  if (config.limits.maxActiveDesires < 1) {
+  if (!isNonNegativeInteger(config.limits.maxActiveDesires)
+    || config.limits.maxActiveDesires < 1) {
     errors.push('maxActiveDesires must be at least 1');
   }
-  if (config.limits.maxPendingDesires < 1) {
+  if (!isNonNegativeInteger(config.limits.maxPendingDesires)
+    || config.limits.maxPendingDesires < 1) {
     errors.push('maxPendingDesires must be at least 1');
   }
-  if (config.limits.maxDailyExecutions < 0) {
-    errors.push('maxDailyExecutions must be non-negative');
+  if (!isNonNegativeInteger(config.limits.maxDailyExecutions)) {
+    errors.push('maxDailyExecutions must be a non-negative integer');
+  }
+  for (const [status, days] of Object.entries(config.limits.retentionDays)) {
+    if (!isNonNegativeInteger(days)) {
+      errors.push(`retentionDays.${status} must be a non-negative integer`);
+    }
   }
 
-  if (!config.execution.preferredBackend.trim()) {
+  if (typeof config.execution.preferredBackend !== 'string'
+    || !config.execution.preferredBackend.trim()) {
     errors.push('preferred execution backend is required');
   }
-  if (!config.execution.fallbackBackend.trim()) {
+  if (typeof config.execution.fallbackBackend !== 'string'
+    || !config.execution.fallbackBackend.trim()) {
     errors.push('fallback execution backend is required');
   }
   if (typeof config.execution.feasibilityCheckEnabled !== 'boolean') {
@@ -300,6 +372,11 @@ export function validateConfig(config: AgencyConfig): { valid: boolean; errors: 
   if (!Number.isInteger(config.execution.maxPlanRetries)
     || config.execution.maxPlanRetries < 0) {
     errors.push('maxPlanRetries must be a non-negative integer');
+  }
+  for (const [name, value] of Object.entries(config.logging)) {
+    if (typeof value !== 'boolean') {
+      errors.push(`logging.${name} must be boolean`);
+    }
   }
 
   return {
@@ -368,6 +445,29 @@ const TRUST_LEVEL_NAMES: Record<number, string> = {
   3: 'bounded_auto',
   4: 'adaptive_auto',
 };
+
+export function resolveAutoApprovalTrustRequirement(
+  config: AgencyConfig,
+  strength: number,
+  desire?: Desire,
+): { requiredTrust: string; reduction: number; reason: string } {
+  const configuredOrder = TRUST_LEVEL_ORDER[config.riskPolicy.autoApproveTrustLevel] ?? 3;
+  const desireOrder = desire ? (TRUST_LEVEL_ORDER[desire.requiredTrustLevel] ?? 0) : 0;
+  const baseOrder = Math.max(configuredOrder, desireOrder);
+  const maturity = desire ? calculateEffectiveTrustLevel(desire) : undefined;
+  const strengthReduction = strength >= 0.98 ? 2 : strength >= 0.95 ? 1 : 0;
+  const reduction = Math.min(2, (maturity?.reduction || 0) + strengthReduction);
+  const requiredOrder = Math.max(TRUST_LEVEL_ORDER.suggest, baseOrder - reduction);
+  const reasons = [
+    ...(maturity?.reduction ? [maturity.reason] : []),
+    ...(strengthReduction ? [`very strong desire (${strength.toFixed(2)}) reduced trust by ${strengthReduction}`] : []),
+  ];
+  return {
+    requiredTrust: TRUST_LEVEL_NAMES[requiredOrder] || config.riskPolicy.autoApproveTrustLevel,
+    reduction,
+    reason: reasons.join('; ') || 'No trust reduction',
+  };
+}
 
 /**
  * Check if current trust level meets minimum required.
@@ -505,6 +605,16 @@ export async function canAutoApprove(
 ): Promise<{ autoApprove: boolean; reason: string; trustDegradation?: { effectiveLevel: string; reduction: number; degradationReason: string } }> {
   const config = await loadConfig(username);
 
+  if (config.mode === 'yolo') {
+    return { autoApprove: true, reason: 'Agency YOLO mode bypasses user approval after plan review' };
+  }
+  if (config.mode === 'off') {
+    return { autoApprove: false, reason: 'Agency is off' };
+  }
+  if (config.mode === 'supervised') {
+    return { autoApprove: false, reason: 'Agency supervised mode requires owner approval' };
+  }
+
   // Check review bypass setting
   if (config.riskPolicy.reviewBypass === 'never') {
     return { autoApprove: false, reason: 'Review bypass disabled (never)' };
@@ -516,6 +626,12 @@ export async function canAutoApprove(
 
   // Trust-based logic
   const trustLevel = currentTrustLevel || 'supervised_auto';
+
+  if (config.riskPolicy.requireApprovalRisk.includes(
+    risk as typeof config.riskPolicy.requireApprovalRisk[number]
+  )) {
+    return { autoApprove: false, reason: `Risk level "${risk}" is configured to require owner approval` };
+  }
 
   // Check if risk is in auto-approve list
   const riskAllowed = config.riskPolicy.autoApproveRisk.includes(
@@ -530,11 +646,13 @@ export async function canAutoApprove(
   // - adaptive_auto: 50% (most trusting - low bar)
   // - bounded_auto: 65%
   // - supervised_auto: 85% (default config threshold)
-  // - suggest/observe: no auto-approve
+  // - suggest: only exceptionally strong desires after required-trust reduction
+  // - observe: no auto-approval
   const trustStrengthThresholds: Record<string, number> = {
     adaptive_auto: 0.50,
     bounded_auto: 0.65,
     supervised_auto: config.thresholds.autoApprove, // default 0.85
+    suggest: 0.98,
   };
 
   const effectiveThreshold = trustStrengthThresholds[trustLevel];
@@ -555,21 +673,18 @@ export async function canAutoApprove(
     };
   }
 
-  // Calculate effective required trust level (with degradation from maturity)
-  let requiredTrust: string = config.riskPolicy.autoApproveTrustLevel;
+  // Mature or exceptionally strong desires can lower the configured trust
+  // requirement by at most two levels, never below suggest. Observe remains
+  // approval-only regardless of strength.
   let trustDegradation: { effectiveLevel: string; reduction: number; degradationReason: string } | undefined;
-
-  if (desire) {
-    const degradation = calculateEffectiveTrustLevel(desire);
-    if (degradation.reduction > 0) {
-      // Use the degraded (lower) trust level
-      requiredTrust = degradation.effectiveLevel;
-      trustDegradation = {
-        effectiveLevel: degradation.effectiveLevel,
-        reduction: degradation.reduction,
-        degradationReason: degradation.reason,
-      };
-    }
+  const trustRequirement = resolveAutoApprovalTrustRequirement(config, strength, desire);
+  const requiredTrust = trustRequirement.requiredTrust;
+  if (trustRequirement.reduction > 0) {
+    trustDegradation = {
+      effectiveLevel: requiredTrust,
+      reduction: trustRequirement.reduction,
+      degradationReason: trustRequirement.reason,
+    };
   }
 
   if (!meetsMinTrustLevel(trustLevel, requiredTrust)) {
@@ -596,6 +711,7 @@ export async function canAutoApprove(
  */
 export async function isRiskBlocked(risk: string, username?: string): Promise<boolean> {
   const config = await loadConfig(username);
+  if (config.mode === 'yolo') return false;
   return config.riskPolicy.blockRisk.includes(risk as typeof config.riskPolicy.blockRisk[number]);
 }
 

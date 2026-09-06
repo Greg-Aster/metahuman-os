@@ -199,10 +199,7 @@ test('Environment Context Builder does not present a saved camera frame as curre
   const conversationEnvelope = JSON.parse(String(conversationOnly.message))
   assert.equal(conversationEnvelope.currentEnvironment, null)
   assert.equal(conversationOnly.messages.length, 2)
-  assert.deepEqual(
-    (conversationOnly.jsonSchema as any).properties.taskDecision,
-    { type: 'null' },
-  )
+  assert.equal((conversationOnly.jsonSchema as any).properties.taskDecision.type, 'null')
 })
 
 test('Environment selector schema exposes conversation, advertised action, and Freestyle as the three LLM-owned routes', () => {
@@ -230,13 +227,81 @@ test('Environment selector schema exposes conversation, advertised action, and F
   assert.deepEqual(meaningfulOutputs[1].properties.actions, { type: 'array', minItems: 1 })
   assert.deepEqual(meaningfulOutputs[2].properties.movementRequest, { type: 'object' })
   assert.deepEqual(meaningfulOutputs[3].properties.taskDecision, { type: 'object' })
-  assert.equal(schema.properties.taskDecision.type, 'object')
+  assert.deepEqual(schema.properties.taskDecision.anyOf[0], { type: 'null' })
+  assert.equal(schema.properties.taskDecision.anyOf[1].type, 'object')
 
   const standaloneSchema = buildEnvironmentSelectorJsonSchema({
     actions: ['robotCommand', 'robotMotionPlan'],
     robotCommands: ['stand'],
     taskLifecycleSelected: false,
+    requireAction: true,
   }) as any
-  assert.deepEqual(standaloneSchema.properties.taskDecision, { type: 'null' })
+  assert.equal(standaloneSchema.properties.taskDecision.type, 'null')
   assert.equal(standaloneSchema.allOf[1].anyOf.length, 3)
+  const standaloneActionBranches = standaloneSchema.allOf.find((constraint: any) => (
+    constraint.anyOf?.length === 2
+    && constraint.anyOf.every((branch: any) => (
+      branch.properties?.actions?.minItems === 1
+      || branch.properties?.movementRequest?.type === 'object'
+    ))
+  )).anyOf
+  assert.equal(standaloneActionBranches.length, 2)
+  assert.ok(standaloneActionBranches.every((branch: any) => (
+    branch.properties.taskDecision.type === 'null'
+  )))
+  assert.equal(standaloneSchema.properties.response.type, 'string')
+  assert.match(standaloneSchema.properties.response.description, /never substitutes/i)
+})
+
+test('Environment Image Input admits a saved frame only when it matches the current Robot Status action result', async () => {
+  const savedObservation = observation()
+  savedObservation.visual = {
+    ...savedObservation.visual!,
+    metadata: {
+      correlationId: 'action-cycle-1',
+      actionId: 'action-1',
+    },
+  }
+  const matched = await environmentImageInputNode.execute({
+    visual: savedObservation.visual,
+    observationCurrent: false,
+    robotStatus: {
+      ...robotStatus,
+      task: {
+        ...robotStatus.task,
+        actionId: 'action-1',
+        feedback: {
+          type: 'completed',
+          actionId: 'action-1',
+          message: 'done',
+          observedAt: '2026-09-02T12:00:00.000Z',
+        },
+      },
+    },
+  }, {}, {})
+
+  assert.equal(matched.current, false)
+  assert.equal(matched.verified, true)
+  assert.equal(matched.images.length, 1)
+
+  const mismatched = await environmentImageInputNode.execute({
+    visual: savedObservation.visual,
+    observationCurrent: false,
+    robotStatus: {
+      ...robotStatus,
+      task: {
+        ...robotStatus.task,
+        actionId: 'different-action',
+        feedback: {
+          type: 'completed',
+          actionId: 'different-action',
+          message: 'done',
+          observedAt: '2026-09-02T12:00:00.000Z',
+        },
+      },
+    },
+  }, {}, {})
+
+  assert.equal(mismatched.verified, false)
+  assert.deepEqual(mismatched.images, [])
 })

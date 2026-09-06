@@ -69,8 +69,16 @@ function failedStart(
   };
 }
 
-function failureMessage(agentName: string, code: number | null, stderr?: string): string {
-  return stderr || `Agent ${agentName} exited with code ${code ?? 'unknown'}`;
+export function agentFailureMessage(agentName: string, code: number | null, output?: string): string {
+  const trimmed = output?.trim()
+  if (!trimmed) return `Agent ${agentName} exited with code ${code ?? 'unknown'}`
+  const terminalSummary = trimmed
+    .split(/\r?\n/)
+    .reverse()
+    .find(line => /^\[[^\]]+\]\s+(?:Failed|Fatal error):/.test(line.trim()))
+    ?.trim()
+  const detail = terminalSummary || (trimmed.length > 2_000 ? trimmed.slice(-2_000) : trimmed)
+  return `Agent ${agentName} exited with code ${code ?? 'unknown'}: ${detail}`
 }
 
 function processLockName(agentName: string): string {
@@ -226,7 +234,7 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
           agent: agentName,
           pid,
           exitCode: code,
-          error: failureMessage(agentName, code, stderr),
+          error: agentFailureMessage(agentName, code, stderr),
           stderr,
           stdout,
           source,
@@ -284,7 +292,7 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
         success: false,
         pid,
         exitCode: closeCode,
-        error: failureMessage(agentName, closeCode, stderr),
+        error: agentFailureMessage(agentName, closeCode, stderr),
         stderr,
         stdout,
       };

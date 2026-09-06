@@ -26,7 +26,7 @@ import type {
   DesireGoalProgress,
   DesireOutcomeReview,
 } from '../../agency/types.js';
-import { statusToStage } from '../../agency/types.js';
+import { initializeDesireMetrics, statusToStage } from '../../agency/types.js';
 import {
   saveDesireManifest,
   loadDesireFromFolder,
@@ -127,6 +127,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
     // Attach plan if provided
     if (plan) {
+      const replacingPlan = Boolean(updatedDesire.plan) || plan.version > 1;
       // If there's an existing plan, move it to history
       if (updatedDesire.plan) {
         if (!updatedDesire.planHistory) {
@@ -142,6 +143,13 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       // Set the new plan
       updatedDesire.plan = plan;
       updatedDesire.updatedAt = now;
+      const metrics = updatedDesire.metrics || initializeDesireMetrics();
+      updatedDesire.metrics = {
+        ...metrics,
+        planVersionCount: Math.max(metrics.planVersionCount + 1, plan.version),
+        planRevisionCount: metrics.planRevisionCount + (replacingPlan ? 1 : 0),
+        lastActivityAt: now,
+      };
 
       // Clear the critique since it's been addressed by this new plan
       if (updatedDesire.userCritique) {
@@ -317,7 +325,8 @@ export const DesireUpdaterNode: NodeDefinition = defineNode({
       options: [
         '', 'nascent', 'pending', 'evaluating', 'planning', 'questioning',
         'reviewing', 'awaiting_approval', 'approved', 'executing',
-        'awaiting_review', 'completed', 'rejected', 'abandoned', 'failed',
+        'awaiting_review', 'needs_attention', 'paused', 'completed',
+        'rejected', 'abandoned', 'archived', 'failed',
       ],
     },
     applyOutcomePolicy: {

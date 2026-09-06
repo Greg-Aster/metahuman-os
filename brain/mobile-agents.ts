@@ -24,12 +24,12 @@ import curiosityServiceAgent from './agents/curiosity-service/index.js'
 import innerCuriosityAgent from './agents/inner-curiosity/index.js'
 import psychoanalyzerAgent from './agents/psychoanalyzer/index.js'
 import desireGeneratorAgent from './agents/desire-generator/index.js'
-import desirePlannerAgent from './agents/desire-planner/index.js'
 
 type ResolvedUser = NonNullable<ReturnType<typeof getUserByUsername>>
 
 export interface MobileAgentBinding {
   agent: AgentModule
+  handler?: string
   systemOptions?: (context: MobileAgentContext) => Record<string, unknown>
 }
 
@@ -58,8 +58,7 @@ const MOBILE_AGENT_BINDINGS: MobileAgentBinding[] = [
     }),
   },
   { agent: psychoanalyzerAgent },
-  { agent: desireGeneratorAgent },
-  { agent: desirePlannerAgent },
+  { agent: desireGeneratorAgent, handler: 'agent.desire-generator' },
 ]
 
 function assertTaskIdentity(context: MobileAgentContext, agentName: string): string {
@@ -112,6 +111,7 @@ export function createMobileAgentRegistration(
   return {
     id: agent.meta.id,
     name: agent.meta.name,
+    handler: binding.handler,
     async run(context): Promise<void> {
       const requestedUsername = assertTaskIdentity(context, agent.meta.name)
       const user = resolveUser(requestedUsername)

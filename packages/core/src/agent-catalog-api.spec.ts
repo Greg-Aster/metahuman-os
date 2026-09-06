@@ -26,7 +26,7 @@ const owner = await handleGetAgentCatalog(request('owner'));
 assert.equal(owner.status, 200);
 assert.equal(
   (owner.data as any).snapshot.counts.total,
-  Object.keys(AGENT_CATALOG_DEFINITIONS).length,
+  Object.values(AGENT_CATALOG_DEFINITIONS).filter(definition => !definition.internalOwner).length,
 );
 
 const invalidAction = await handleAgentCatalogControl(request('owner', { action: 'delete-source', agentId: 'organizer' }));

@@ -196,12 +196,15 @@ export const environmentBridgeInputNode = defineNode({
     const supplied = isRecord(context.environmentObservation)
       ? context.environmentObservation as unknown as EnvironmentObservation
       : null;
-    const isTriggeringObservation = Boolean(
-      supplied && (!requestedSessionId || supplied.sessionId === requestedSessionId),
-    );
-    const sourceObservation: EnvironmentObservation | null = isTriggeringObservation
+    const suppliedForSession = supplied && (!requestedSessionId || supplied.sessionId === requestedSessionId)
       ? supplied
-      : getLatestEnvironmentObservation(requestedSessionId) ?? null;
+      : null;
+    const isTriggeringObservation = Boolean(
+      suppliedForSession && context.environmentObservationCurrent !== false,
+    );
+    const sourceObservation: EnvironmentObservation | null = suppliedForSession
+      ?? getLatestEnvironmentObservation(requestedSessionId)
+      ?? null;
     const observation = sourceObservation
       ? projectAinekioBridgeObservation(sanitizeEnvironmentBridgeObservation(sourceObservation))
       : null;

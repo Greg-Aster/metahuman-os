@@ -39,6 +39,7 @@ export const robotAutonomyTaskDispatchNode = defineNode({
     const selectedTaskId = cleanText(selected?.id, 100)
     const reason = cleanText(decision?.reason, 500)
     const observationSummary = cleanText(decision?.observationSummary, 500)
+    const instruction = cleanText(decision?.instruction, 1_000)
     const reject = (status: string) => ({ queued: false, taskId: '', selectedTaskId, status })
     if (!selectedTaskId) return reject('no_decision')
     if (!reason || !observationSummary || selected?.kind !== 'agent') return reject('invalid_decision')
@@ -77,7 +78,14 @@ export const robotAutonomyTaskDispatchNode = defineNode({
         usesLLM: currentAgent.usesLLM,
         cycleId,
         ...(sessionId ? { sessionId } : {}),
-        robotOperatorContext: { robotObserver },
+        robotOperatorContext: {
+          robotObserver,
+          controllerDecision: {
+            ...(instruction ? { instruction } : {}),
+            reason,
+            observationSummary,
+          },
+        },
       },
       correlationId: cycleId,
       idempotencyKey: `robot-autonomy-controller:${cycleId}:${selectedTaskId}`,
@@ -85,6 +93,7 @@ export const robotAutonomyTaskDispatchNode = defineNode({
       metadata: {
         producer: 'robot-autonomy-controller',
         selectedAgent: selectedTaskId,
+        ...(instruction ? { decisionInstruction: instruction } : {}),
         decisionReason: reason,
         observationSummary,
       },

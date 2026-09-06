@@ -102,13 +102,18 @@ test('approved review auto-approves only when policy explicitly allows it', asyn
   assert.equal(saved.length, 1)
 })
 
-test('non-auto-approved and revision reviews use the manifest approval state without a second queue', async () => {
+test('revision reviews return to planning and cannot enter owner approval', async () => {
   const saved: Desire[] = []
   const manualReview = { ...review('revise'), autoApprove: false }
   const result = await applyDesirePlanReview(desire(), manualReview, false, 'profile-a', dependencies(saved))
-  assert.equal(result.action, 'awaiting_approval')
-  assert.equal(result.desire.status, 'awaiting_approval')
-  assert.equal(result.desire.currentStage, 'user_approval')
+  assert.equal(result.action, 'revision_required')
+  assert.equal(result.desire.status, 'planning')
+  assert.equal(result.desire.currentStage, 'planning')
+  assert.match(result.desire.userCritique || '', /aligned and safe/)
+  assert.equal(result.desire.plan, undefined)
+  assert.equal(result.desire.review, undefined)
+  assert.equal(result.desire.planHistory?.[0]?.id, 'plan-1')
+  assert.equal(result.desire.reviewHistory?.[0]?.id, 'review-desire-1-v1')
 })
 
 test('rejected review is terminal and records retryable review history', async () => {

@@ -11,8 +11,12 @@ import { setAuditEnabled } from './audit.js';
 setAuditEnabled(false);
 
 const live = getAgentCatalogSnapshot();
-assert.equal(live.counts.total, Object.keys(AGENT_CATALOG_DEFINITIONS).length, 'every maintained definition must appear exactly once');
-assert.equal(live.counts.triggerRegistered, 16, 'only configured Trigger Manager registrations must be counted');
+assert.equal(
+  live.counts.total,
+  Object.values(AGENT_CATALOG_DEFINITIONS).filter(definition => !definition.internalOwner).length,
+  'every public maintained definition must appear exactly once',
+);
+assert.equal(live.counts.triggerRegistered, 13, 'only configured Trigger Manager registrations must be counted');
 assert.equal(live.counts.services, 3, 'persistent lifecycle must expose the three configured system services');
 assert.equal(live.counts.missingSource, 0, 'every maintained catalog item must have a resolvable implementation');
 assert.deepEqual(
@@ -25,6 +29,10 @@ assert.equal(live.agents.some(agent => agent.id === 'curiosity-service'), false,
 assert.equal(live.agents.some(agent => agent.id === 'transcriber'), false, 'the retired duplicate Transcriber must not return to the agent catalog');
 assert.equal(live.agents.find(agent => agent.id === 'mood')?.enabled, false, 'Mood must remain opt-in even while registered');
 assert.equal(AGENT_CATALOG_DEFINITIONS.mood.defaultTrigger?.enabled, false, 're-registering Mood must preserve its disabled default');
+assert.equal(live.agents.some(agent => agent.id === 'desire-agent'), true, 'the sole Desire Agent must be public');
+for (const internalId of ['desire-planner', 'desire-generator', 'desire-executor', 'desire-outcome-reviewer', 'desire-signal']) {
+  assert.equal(live.agents.some(agent => agent.id === internalId), false, `${internalId} must not be independently runnable`);
+}
 for (const childId of ['boredom-observer', 'boredom-movement', 'boredom-reflection']) {
   const child = live.agents.find(agent => agent.id === childId);
   assert.equal(child?.owner, 'robot-operator', `${childId} must expose Robot Operator as its runtime owner`);

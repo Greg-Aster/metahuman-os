@@ -112,8 +112,8 @@
       "position": { "x": 1110, "y": 220 },
       "data": {
         "label": "Build Reflection Planning Context",
-        "nodeType": "robot_operator_context_builder",
-        "properties": { "outputContract": "delegation" }
+        "nodeType": "robot_autonomy_planner_context",
+        "properties": {}
       }
     },
     {

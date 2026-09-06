@@ -163,7 +163,7 @@ function projectSelectorState(value: unknown): unknown {
   );
 }
 
-function projectRobotStatusContext(value: unknown): unknown {
+export function projectRobotStatusContext(value: unknown): unknown {
   if (!isRecord(value)) return null;
   const body = isRecord(value.body) ? value.body : null;
   const lastAction = isRecord(value.lastAction) ? value.lastAction : null;
@@ -713,18 +713,49 @@ export function buildEnvironmentSelectorJsonSchema(
       },
     },
   };
+  const actionTaskDecisionObjectSchema = {
+    ...taskDecisionObjectSchema,
+    properties: {
+      ...taskDecisionObjectSchema.properties,
+      outcome: { type: 'string', enum: ['act'] },
+      objectiveComplete: { type: 'boolean', enum: [false] },
+    },
+  };
+  const taskLifecycleDisabled = input.taskLifecycleSelected === false;
+  const nonActionTaskDecisionConstraint = taskLifecycleDisabled
+    ? { type: 'null' }
+    : {
+        required: ['outcome'],
+        properties: {
+          outcome: { type: 'string', enum: nonActionOutcomes },
+        },
+      };
+  const actionTaskDecisionConstraint = taskLifecycleDisabled
+    ? { type: 'null' }
+    : {
+        required: ['outcome', 'objectiveComplete'],
+        properties: {
+          outcome: { type: 'string', enum: ['act'] },
+          objectiveComplete: { type: 'boolean', enum: [false] },
+        },
+      };
+  const generatedMovementTaskDecisionConstraint = taskLifecycleDisabled
+    ? { type: 'null' }
+    : {
+        required: ['outcome', 'objectiveComplete'],
+        properties: {
+          outcome: { type: 'string', enum: ['act'] },
+          objectiveComplete: { type: 'boolean', enum: [false] },
+          motionClass: { type: 'string', enum: ['body_local'] },
+        },
+      };
   const progressBranches: Record<string, unknown>[] = [];
   const autonomyWorkBranches: Record<string, unknown>[] = [];
   const outputRouteBranches: Record<string, unknown>[] = [{
     properties: {
       actions: { maxItems: 0 },
       movementRequest: { type: 'null' },
-      taskDecision: {
-        required: ['outcome'],
-        properties: {
-          outcome: { type: 'string', enum: nonActionOutcomes },
-        },
-      },
+      taskDecision: nonActionTaskDecisionConstraint,
     },
   }];
   if (directActionTypes.length > 0) {
@@ -732,13 +763,7 @@ export function buildEnvironmentSelectorJsonSchema(
       properties: {
         actions: { minItems: 1 },
         movementRequest: { type: 'null' },
-        taskDecision: {
-          required: ['outcome', 'objectiveComplete'],
-          properties: {
-            outcome: { type: 'string', enum: ['act'] },
-            objectiveComplete: { type: 'boolean', enum: [false] },
-          },
-        },
+        taskDecision: actionTaskDecisionConstraint,
       },
     };
     outputRouteBranches.push(directActionBranch);
@@ -750,51 +775,48 @@ export function buildEnvironmentSelectorJsonSchema(
       properties: {
         actions: { maxItems: 0 },
         movementRequest: { type: 'object' },
-        taskDecision: {
-          required: ['outcome', 'objectiveComplete'],
-          properties: {
-            outcome: { type: 'string', enum: ['act'] },
-            objectiveComplete: { type: 'boolean', enum: [false] },
-            motionClass: { type: 'string', enum: ['body_local'] },
-          },
-        },
+        taskDecision: generatedMovementTaskDecisionConstraint,
       },
     };
     outputRouteBranches.push(generatedMovementBranch);
     progressBranches.push(generatedMovementBranch);
     autonomyWorkBranches.push(generatedMovementBranch);
   }
-  progressBranches.push({
-    properties: {
-      actions: { maxItems: 0 },
-      movementRequest: { type: 'null' },
-      taskDecision: {
-        required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis', 'completionEvidence'],
-        properties: {
-          outcome: { type: 'string', enum: ['complete'] },
-          objectiveComplete: { type: 'boolean', enum: [true] },
-          requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
-          completionEvidence: { type: 'string', minLength: 1, maxLength: 1_000 },
+  if (!taskLifecycleDisabled) {
+    progressBranches.push({
+      properties: {
+        actions: { maxItems: 0 },
+        movementRequest: { type: 'null' },
+        taskDecision: {
+          required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis', 'completionEvidence'],
+          properties: {
+            outcome: { type: 'string', enum: ['complete'] },
+            objectiveComplete: { type: 'boolean', enum: [true] },
+            requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
+            completionEvidence: { type: 'string', minLength: 1, maxLength: 1_000 },
+          },
         },
       },
-    },
-  });
-  const autonomyCompletionBranch = {
+    });
+  }
+  const autonomyResponseBranch = {
     properties: {
       response: { type: 'string', minLength: 1 },
       actions: { maxItems: 0 },
       movementRequest: { type: 'null' },
-      taskDecision: {
-        required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis'],
-        properties: {
-          outcome: { type: 'string', enum: ['complete'] },
-          objectiveComplete: { type: 'boolean', enum: [true] },
-          requiredCompletionBasis: { type: 'string', enum: ['response'] },
-        },
-      },
+      taskDecision: taskLifecycleDisabled
+        ? { type: 'null' }
+        : {
+            required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis'],
+            properties: {
+              outcome: { type: 'string', enum: ['complete'] },
+              objectiveComplete: { type: 'boolean', enum: [true] },
+              requiredCompletionBasis: { type: 'string', enum: ['response'] },
+            },
+          },
     },
   };
-  const autonomyBranches = [...autonomyWorkBranches, autonomyCompletionBranch];
+  const autonomyBranches = [...autonomyWorkBranches, autonomyResponseBranch];
   const meaningfulOutputBranches: Record<string, unknown>[] = [
     { properties: { response: { type: 'string', minLength: 1 } } },
     ...(directActionTypes.length > 0
@@ -826,9 +848,13 @@ export function buildEnvironmentSelectorJsonSchema(
     required: ['response', 'actions', 'movementRequest', 'taskDecision'],
     allOf: routeConstraints,
     properties: {
-      response: SELECTOR_SCHEMA_STRING,
+      response: {
+        ...SELECTOR_SCHEMA_STRING,
+        description: 'Optional natural speech. It may accompany a selected consequence but never substitutes for a required physical or sensing action.',
+      },
       actions: {
         type: 'array',
+        description: 'One advertised action only when its supplied capability meaning implements the intended effect.',
         ...(input.requireAction && !movementSupported && directActionTypes.length > 0
           ? { minItems: 1 }
           : {}),
@@ -837,6 +863,7 @@ export function buildEnvironmentSelectorJsonSchema(
       },
       movementRequest: movementSupported
         ? {
+            description: 'A novel body-local movement whose intended effect is not implemented by an advertised action. The dedicated movement generator authors the plan.',
             anyOf: [
               { type: 'null' },
               {
@@ -851,8 +878,16 @@ export function buildEnvironmentSelectorJsonSchema(
           }
         : { type: 'null' },
       taskDecision: {
+        description: 'Durable objective state only when this pass creates, advances, completes, or otherwise changes an objective.',
         ...(input.taskLifecycleSelected === true
-          ? taskDecisionObjectSchema
+          ? {
+              anyOf: [
+                { type: 'null' },
+                input.requireAction === true
+                  ? actionTaskDecisionObjectSchema
+                  : taskDecisionObjectSchema,
+              ],
+            }
           : input.taskLifecycleSelected === false
             ? { type: 'null' }
             : { anyOf: [{ type: 'null' }, taskDecisionObjectSchema] }),

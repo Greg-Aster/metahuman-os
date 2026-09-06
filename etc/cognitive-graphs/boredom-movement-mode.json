@@ -102,8 +102,8 @@
       "position": { "x": 850, "y": 220 },
       "data": {
         "label": "Build Movement Planning Context",
-        "nodeType": "robot_operator_context_builder",
-        "properties": { "outputContract": "delegation" }
+        "nodeType": "robot_autonomy_planner_context",
+        "properties": {}
       }
     },
     {

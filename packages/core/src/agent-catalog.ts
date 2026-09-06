@@ -172,7 +172,10 @@ export class AgentCatalogService {
       ...Object.keys(triggerRead.config.agents),
       ...Object.keys(services),
     ]);
-    const agents = [...ids].sort().map(agentId => {
+    const agents = [...ids]
+      .filter(agentId => !getAgentCatalogDefinition(agentId)?.internalOwner)
+      .sort()
+      .map(agentId => {
       const definition = getAgentCatalogDefinition(agentId);
       const trigger = triggerRead.config.agents[agentId];
       const service = services[agentId];
