@@ -70,7 +70,7 @@
       "data": {
         "label": "Recent Conversation",
         "nodeType": "conversation_history",
-        "properties": { "mode": "conversation", "limit": 0 }
+        "properties": { "mode": "conversation", "limit": 8 }
       }
     },
     {

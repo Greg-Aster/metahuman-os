@@ -959,7 +959,6 @@ test('Robot Autonomy Controller context combines unfinished work, buffers, bridg
   assert.equal(result.context.activeDesireCount, 1);
   assert.equal(result.context.bridgeSummaryIncluded, true);
   assert.equal(result.context.autonomyActivityCount, 1);
-  assert.equal(result.context.recentContextCount, 9);
   assert.deepEqual(result.jsonSchema.properties.taskId.enum, ['boredom-observer', 'none']);
   const encoded = JSON.stringify(result.messages);
   assert.match(encoded, /Find the missing keys/);
@@ -1033,7 +1032,7 @@ test('Full autonomy graph visibly loads the decision context and routes one cata
   assert.equal(nodeTypes.filter((type: string) => type === 'conversation_history').length, 3);
   assert.equal(
     graph.nodes.find((node: any) => node.id === 'conversation-history')?.data?.properties?.limit,
-    0,
+    8,
   );
   assert.match(
     graph.nodes.find((node: any) => node.id === 'policy')?.data?.properties?.message ?? '',

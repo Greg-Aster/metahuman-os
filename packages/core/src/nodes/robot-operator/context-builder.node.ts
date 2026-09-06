@@ -124,18 +124,6 @@ function consolidatedInnerHistory(value: unknown): Array<Record<string, unknown>
   });
 }
 
-function controllerConversationWindow(
-  entries: Array<Record<string, unknown>>,
-  limit = 8,
-): Array<Record<string, unknown>> {
-  if (entries.length <= limit) return entries;
-  const recent = entries.slice(-limit);
-  const latestUserIndex = entries.findLastIndex(entry => entry.role === 'user');
-  if (latestUserIndex < 0 || latestUserIndex >= entries.length - limit) return recent;
-  if (limit === 1) return [entries[latestUserIndex]];
-  return [entries[latestUserIndex], ...entries.slice(-(limit - 1))];
-}
-
 function boundedObject(value: unknown, maxLength = 8_000): unknown {
   if (!isRecord(value) && !Array.isArray(value)) return value ?? null;
   try {
@@ -405,15 +393,12 @@ async function buildRobotOperatorContext(
     const innerContext = conversationSelected
       ? consolidatedInnerHistory(inputs.innerHistory)
       : [];
-    const allAvailableConversation = (conversationSelected
+    const availableConversation = (conversationSelected
       ? consolidatedHistory(inputs.conversationHistory)
       : [])
       .filter(entry => innerContext.length === 0 || !(
         isRecord(entry.context) && entry.context.isInnerDialogue === true
       ));
-    const availableConversation = outputContract === 'autonomy_controller'
-      ? controllerConversationWindow(allAvailableConversation)
-      : allAvailableConversation;
     const recentContext = [...availableConversation, ...innerContext];
     const allActionHistory = actionHistorySelected ? verifiedActionHistory(inputs.actionHistory) : [];
     const innerContextCount = recentContext.filter(entry => (
