@@ -138,6 +138,169 @@ function robotContextSchema(
 // ============================================================================
 
 export const nodeSchemas: NodeSchema[] = [
+  defineSchema({
+    id: 'execution_event_wait', name: 'Wait for Continuation', category: 'utility',
+    description: 'Keeps this execution saved until a user correction or an authorized autonomy trigger arrives. Full mode can authorize an already selected next workflow immediately.',
+    inputs: [{ name: 'invocation', type: 'object', optional: true, description: 'Next workflow already chosen by the LLM' }],
+    outputs: [{ name: 'invocation', type: 'object', description: 'Authorized next workflow with the newly received context' }],
+    properties: { waitForEvent: false, userGraph: 'environment', autonomyGraph: 'robot-autonomy-controller' },
+    propertySchemas: {
+      waitForEvent: { type: 'boolean', default: false, label: 'Always Await a New Event', description: 'Used when the LLM chose to wait or request input, instead of selecting a next action.' },
+      userGraph: { type: 'text', default: 'environment', label: 'User Workflow', description: 'Workflow used for a user correction.' },
+      autonomyGraph: { type: 'text', default: 'robot-autonomy-controller', label: 'Autonomy Workflow', description: 'Workflow used to reconsider context after an autonomy trigger.' },
+    },
+  }),
+  defineSchema({
+    id: 'execution_event_out', name: 'Send Input to Existing Execution', category: 'output',
+    description: 'Appends the unchanged input to the execution selected by the intent LLM. It neither interprets the message nor creates an objective.',
+    inputs: [
+      { name: 'selection', type: 'object', description: 'Existing execution and event kind selected by the LLM' },
+      { name: 'message', type: 'string', description: 'Original user input' },
+    ],
+    outputs: [{ name: 'sent', type: 'boolean', description: 'Input handoff committed with this node output' }],
+    properties: {},
+  }),
+  defineSchema({
+    "id": "workflow_call",
+    "name": "Run Child Workflow",
+    "category": "utility",
+    "inputs": [
+      {
+        "name": "invocation",
+        "type": "object",
+        "optional": true,
+        "description": "Selected workflow name and its input context"
+      },
+      {
+        "name": "context",
+        "type": "object",
+        "optional": true,
+        "description": "Explicit inputs for the configured child workflow"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "childResult",
+        "type": "object",
+        "description": "Child workflow output"
+      },
+      {
+        "name": "nodeOutputs",
+        "type": "object",
+        "description": "Saved outputs from the child nodes"
+      },
+      {
+        "name": "completed",
+        "type": "boolean",
+        "description": "Child workflow reached its end"
+      }
+    ],
+    "properties": {
+      "graph": ""
+    },
+    "propertySchemas": {
+      "graph": {
+        "type": "text",
+        "default": "",
+        "label": "Child Workflow",
+        "description": "Configured workflow; a connected invocation can select it instead."
+      }
+    },
+    "description": "Runs the selected editable workflow inside this execution and returns its outputs. A waiting child releases the worker and resumes here when its result arrives."
+  }),
+  defineSchema({
+    "id": "environment_result_wait",
+    "name": "Wait for Robot Results",
+    "category": "environment",
+    "inputs": [
+      {
+        "name": "commands",
+        "type": "array",
+        "description": "Checkpointed commands from Environment Bridge Out"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "context",
+        "type": "object",
+        "description": "Correlated results and observations for the next workflow"
+      },
+      {
+        "name": "events",
+        "type": "array",
+        "description": "Ordered events received while waiting"
+      },
+      {
+        "name": "observation",
+        "type": "object",
+        "description": "Bridge observation correlated to the returned action"
+      },
+      {
+        "name": "actionContext",
+        "type": "object",
+        "description": "Verified Coordinator action record"
+      }
+    ],
+    "properties": {},
+    "description": "Waits for the identified robot actions to finish. It does not send commands or judge whether an objective succeeded."
+  }),
+  defineSchema({
+    "id": "work_result_wait",
+    "name": "Wait for Agent Result",
+    "category": "utility",
+    "inputs": [
+      {
+        "name": "work",
+        "type": "object",
+        "description": "Checkpointed finite-agent dispatch"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "type": "object",
+        "description": "Agent result, including failure or cancellation"
+      }
+    ],
+    "properties": {},
+    "description": "Releases the workflow worker until the selected finite agent returns its correlated Coordinator result."
+  }),
+  defineSchema({
+    "id": "execution_context",
+    "name": "Current Execution",
+    "category": "context",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "context",
+        "type": "object",
+        "description": "Execution identity, task and recent event facts"
+      },
+      {
+        "name": "task",
+        "type": "object",
+        "description": "Checkpointed task, or null for an execution without a task"
+      },
+      { "name": "activeExecutions", "type": "array", "description": "Other unfinished executions available for user steering" },
+      {
+        "name": "hasActiveTask",
+        "type": "boolean",
+        "description": "Whether the saved LLM decision leaves an objective unfinished"
+      }
+    ],
+    "properties": {
+      "eventLimit": 16
+    },
+    "propertySchemas": {
+      "eventLimit": {
+        "type": "number",
+        "default": 16,
+        "label": "Recent Events",
+        "description": "Events included in model context; the complete execution evidence remains saved."
+      }
+    },
+    "description": "Reads this execution’s checkpointed objective and ordered events. Robot Status and conversation history do not own or replace this task."
+  }),
   // INPUT NODES
   defineSchema({
     id: 'mic_input',
@@ -229,150 +392,594 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Reads current environment bridge status without creating observations or actions.',
   }),
   defineSchema({
-    id: 'environment_bridge_input',
-    name: 'Environment Bridge Input',
-    category: 'environment',
-    inputs: [
-      { name: 'sessionId', type: 'string', optional: true, description: 'Specific environment session for a direct user turn' },
-    ],
-    outputs: [
-      { name: 'observation', type: 'object', description: 'Current Ainekio Environment Bridge observation', group: 'Core', primary: true },
-      { name: 'observationSource', type: 'string', description: 'Whether the observation triggered this run, came from saved bridge state, or is unavailable', group: 'Core', primary: true },
-      { name: 'isTriggeringObservation', type: 'boolean', description: 'True only when this graph run received this exact observation from Environment Bridge', group: 'Core', primary: true },
-      { name: 'environmentId', type: 'string', description: 'Environment identifier from the observation envelope', group: 'Identity' },
-      { name: 'adapter', type: 'string', description: 'Adapter that supplied the observation', group: 'Identity' },
-      { name: 'timestamp', type: 'string', description: 'Observation timestamp', group: 'Identity' },
-      { name: 'robotId', type: 'string', description: 'Ainekio body identifier', group: 'Identity' },
-      { name: 'robotEpoch', type: 'number', description: 'Authenticated Ainekio body connection epoch', group: 'Identity' },
-      { name: 'capabilities', type: 'object', description: 'Actions and robot commands currently advertised by the Ainekio adapter', group: 'Observation' },
-      { name: 'text', type: 'array', description: 'Text and microphone transcript events carried by the Ainekio bridge', group: 'Observation' },
-      { name: 'state', type: 'object', description: 'Complete Ainekio gateway, body, safety, transport, and movement state', group: 'Observation' },
-      { name: 'visual', label: 'current camera frame', type: 'object', description: 'Current Ainekio camera frame, when supplied', group: 'Observation' },
-      { name: 'visuals', label: 'observation frames', type: 'array', description: 'Camera frames carried by the current Ainekio observation; this is not durable image history', group: 'Observation' },
-      { name: 'feedback', type: 'array', description: 'Ainekio action acceptance, completion, rejection, expiry, or failure events', group: 'Observation' },
-      { name: 'metadata', label: 'observation provenance', type: 'object', description: 'Ainekio correlation metadata plus Environment Bridge timing provenance', group: 'Observation' },
-      { name: 'actionId', type: 'string', description: 'Action identifier reported by the adapter observation or feedback', group: 'Lifecycle and provenance' },
-      { name: 'correlationId', type: 'string', description: 'Correlation identifier reported by the adapter', group: 'Lifecycle and provenance' },
-      { name: 'body', type: 'object', description: 'Normalized Ainekio body availability and readiness state', group: 'Body status' },
-      { name: 'bodyStatus', type: 'object', description: 'Freshest Ainekio body status packet available for this session', group: 'Body status' },
-      { name: 'bodyEvent', type: 'object', description: 'Latest Ainekio connection, battery, storage, boot, asset, or TTS event carried by the observation', group: 'Body status' },
-      { name: 'bodyAuthenticated', type: 'boolean', description: 'Whether the Ainekio body authenticated with the gateway', group: 'Body status' },
-      { name: 'bodyState', type: 'string', description: 'Ainekio body state such as active, idle, dozing, deep-sleep, or failsafe', group: 'Body status' },
-      { name: 'bodyStatusTimestamp', type: 'string', description: 'Timestamp of the freshest Ainekio body status packet', group: 'Body status' },
-      { name: 'batteryVoltage', type: 'number', description: 'Battery voltage reported by the Ainekio body as vbat', group: 'Body status' },
-      { name: 'wifiRssi', type: 'number', description: 'Ainekio body Wi-Fi signal strength in dBm', group: 'Body status' },
-      { name: 'uptimeSeconds', type: 'number', description: 'Ainekio body uptime in seconds', group: 'Body status' },
-      { name: 'freeHeapBytes', type: 'number', description: 'Free memory reported by the Ainekio body in bytes', group: 'Body status' },
-      { name: 'sdAvailable', type: 'boolean', description: 'Whether the Ainekio body reports an available SD card', group: 'Body status' },
-      { name: 'motionAvailable', type: 'boolean', description: 'Whether body motion commands are available', group: 'Body status' },
-      { name: 'cameraReady', type: 'boolean', description: 'Whether the Ainekio camera is ready', group: 'Body status' },
-      { name: 'microphoneReady', type: 'boolean', description: 'Ainekio microphone readiness when reported; null means unknown', group: 'Body status' },
-      { name: 'speakerReady', type: 'boolean', description: 'Whether the Ainekio speaker path is ready', group: 'Body status' },
-      { name: 'cameraDrops', type: 'number', description: 'Dropped Ainekio camera-frame count', group: 'Body status' },
-      { name: 'microphoneDrops', type: 'number', description: 'Dropped Ainekio microphone-frame count', group: 'Body status' },
-      { name: 'speakerUnderruns', type: 'number', description: 'Ainekio speaker underrun count', group: 'Body status' },
-      { name: 'wakeEnabled', type: 'boolean', description: 'Whether local wake-word detection is enabled', group: 'Body status' },
-      { name: 'wakeModel', type: 'string', description: 'Ainekio wake-word model identifier', group: 'Body status' },
-      { name: 'wakeReady', type: 'boolean', description: 'Whether the Ainekio wake-word model is ready', group: 'Body status' },
-      { name: 'gateway', type: 'object', description: 'Complete Ainekio gateway snapshot carried by the observation', group: 'Gateway and transport' },
-      { name: 'adapterConnected', type: 'boolean', description: 'Whether the Environment Bridge adapter transport is connected', group: 'Gateway and transport' },
-      { name: 'sessionStatus', type: 'string', description: 'Stored bridge session status: connected, stale, or disconnected', group: 'Gateway and transport' },
-      { name: 'connectionState', type: 'string', description: 'Selected Ainekio body connection state', group: 'Gateway and transport' },
-      { name: 'heartbeatAgeMs', type: 'number', description: 'Age of the selected Ainekio body heartbeat in milliseconds', group: 'Gateway and transport' },
-      { name: 'transport', type: 'string', description: 'Ainekio body transport protocol', group: 'Gateway and transport' },
-      { name: 'safety', type: 'string', description: 'Owner of physical safety enforcement', group: 'Gateway and transport' },
-      { name: 'freestyleMovement', type: 'object', description: 'Ainekio movement-plan support, policy, and route availability', group: 'Gateway and transport' },
-      { name: 'lastAudioResult', type: 'object', description: 'Latest Ainekio audio transcription result acknowledged by the adapter', group: 'Gateway and transport' },
-      { name: 'bridgeSummary', type: 'object', description: 'Complete current Environment Bridge summary', group: 'Bridge diagnostics' },
-      { name: 'bridgeEnabled', type: 'boolean', description: 'Whether the Environment Bridge is enabled', group: 'Bridge diagnostics' },
-      { name: 'bridgeUpdatedAt', type: 'string', description: 'Timestamp of the stored Environment Bridge summary', group: 'Bridge diagnostics' },
-      { name: 'sessions', type: 'array', description: 'All known Environment Bridge sessions', group: 'Bridge diagnostics' },
-      { name: 'pendingCommandCount', type: 'number', description: 'Number of active Environment Bridge commands', group: 'Bridge diagnostics' },
-      { name: 'diagnosticsSnapshot', type: 'object', description: 'Complete current Environment Bridge diagnostics snapshot for all sessions', group: 'Bridge diagnostics' },
-      { name: 'diagnostics', type: 'object', description: 'Complete diagnostics for the selected Ainekio session', group: 'Bridge diagnostics' },
-      { name: 'diagnosticsUpdatedAt', type: 'string', description: 'Timestamp of the selected session diagnostics', group: 'Bridge diagnostics' },
-      { name: 'transportDiagnostics', type: 'object', description: 'Bridge byte, message, and transfer-rate diagnostics', group: 'Bridge diagnostics' },
-      { name: 'mediaDiagnostics', type: 'object', description: 'Bridge image and audio counts and byte totals', group: 'Bridge diagnostics' },
-      { name: 'microphoneLevel', type: 'number', description: 'Latest normalized Ainekio microphone level', group: 'Bridge diagnostics' },
-      { name: 'pendingAudioUtterances', type: 'number', description: 'Number of Ainekio utterances awaiting transcription', group: 'Bridge diagnostics' },
-      { name: 'transcriptionStatus', type: 'string', description: 'Latest Ainekio transcription status', group: 'Bridge diagnostics' },
-      { name: 'transcript', type: 'string', description: 'Latest transcript retained by bridge diagnostics', group: 'Bridge diagnostics' },
-      { name: 'movementPlan', type: 'object', description: 'Latest Ainekio movement-plan progress diagnostics', group: 'Bridge diagnostics' },
-      { name: 'latestImage', type: 'object', description: 'Latest bounded bridge diagnostic image metadata', group: 'Bridge diagnostics' },
-      { name: 'latestAudio', type: 'object', description: 'Latest bounded bridge diagnostic audio metadata', group: 'Bridge diagnostics' },
-      { name: 'recentEvents', type: 'array', description: 'Recent bounded Environment Bridge transport events', group: 'Bridge diagnostics' },
-      { name: 'sessionId', type: 'string', description: 'Environment Bridge session identifier', group: 'Core', primary: true },
+    "id": "environment_bridge_input",
+    "name": "Environment Bridge Input",
+    "category": "environment",
+    "inputs": [
       {
-        name: 'connected',
-        label: 'observation available',
-        type: 'boolean',
-        description: 'Whether a bridge observation is available; this is not a live connection-health check',
-        group: 'Core',
-        primary: true,
+        "name": "observation",
+        "type": "object",
+        "optional": true,
+        "description": "Correlated Bridge observation returned within this execution"
       },
+      {
+        "name": "sessionId",
+        "type": "string",
+        "optional": true,
+        "description": "Specific environment session for a direct user turn"
+      }
     ],
-    properties: {
-      sessionId: '',
-    },
-    propertySchemas: {
-      sessionId: {
-        type: 'string',
-        default: '',
-        label: 'Observation Session',
-        description: 'Use the triggering observation when it matches. Otherwise read this saved session; leave blank to use the latest connected session.',
-        placeholder: 'Triggering / latest connected',
-        emptyLabel: 'Triggering / latest connected',
-        suggestions: 'environment-sessions',
+    "outputs": [
+      {
+        "name": "observation",
+        "type": "object",
+        "description": "Current Ainekio Environment Bridge observation",
+        "group": "Core",
+        "primary": true
       },
+      {
+        "name": "observationSource",
+        "type": "string",
+        "description": "Whether the observation triggered this run, came from saved bridge state, or is unavailable",
+        "group": "Core",
+        "primary": true
+      },
+      {
+        "name": "isTriggeringObservation",
+        "type": "boolean",
+        "description": "True only when this graph run received this exact observation from Environment Bridge",
+        "group": "Core",
+        "primary": true
+      },
+      {
+        "name": "environmentId",
+        "type": "string",
+        "description": "Environment identifier from the observation envelope",
+        "group": "Identity"
+      },
+      {
+        "name": "adapter",
+        "type": "string",
+        "description": "Adapter that supplied the observation",
+        "group": "Identity"
+      },
+      {
+        "name": "timestamp",
+        "type": "string",
+        "description": "Observation timestamp",
+        "group": "Identity"
+      },
+      {
+        "name": "robotId",
+        "type": "string",
+        "description": "Ainekio body identifier",
+        "group": "Identity"
+      },
+      {
+        "name": "robotEpoch",
+        "type": "number",
+        "description": "Authenticated Ainekio body connection epoch",
+        "group": "Identity"
+      },
+      {
+        "name": "capabilities",
+        "type": "object",
+        "description": "Actions and robot commands currently advertised by the Ainekio adapter",
+        "group": "Observation"
+      },
+      {
+        "name": "text",
+        "type": "array",
+        "description": "Text and microphone transcript events carried by the Ainekio bridge",
+        "group": "Observation"
+      },
+      {
+        "name": "state",
+        "type": "object",
+        "description": "Complete Ainekio gateway, body, safety, transport, and movement state",
+        "group": "Observation"
+      },
+      {
+        "name": "visual",
+        "type": "object",
+        "label": "current camera frame",
+        "description": "Current Ainekio camera frame, when supplied",
+        "group": "Observation"
+      },
+      {
+        "name": "visuals",
+        "type": "array",
+        "label": "observation frames",
+        "description": "Camera frames carried by the current Ainekio observation; this is not durable image history",
+        "group": "Observation"
+      },
+      {
+        "name": "feedback",
+        "type": "array",
+        "description": "Ainekio action acceptance, completion, rejection, expiry, or failure events",
+        "group": "Observation"
+      },
+      {
+        "name": "metadata",
+        "type": "object",
+        "label": "observation provenance",
+        "description": "Ainekio correlation metadata plus Environment Bridge timing provenance",
+        "group": "Observation"
+      },
+      {
+        "name": "actionId",
+        "type": "string",
+        "description": "Action identifier reported by the adapter observation or feedback",
+        "group": "Lifecycle and provenance"
+      },
+      {
+        "name": "correlationId",
+        "type": "string",
+        "description": "Correlation identifier reported by the adapter",
+        "group": "Lifecycle and provenance"
+      },
+      {
+        "name": "body",
+        "type": "object",
+        "description": "Normalized Ainekio body availability and readiness state",
+        "group": "Body status"
+      },
+      {
+        "name": "bodyStatus",
+        "type": "object",
+        "description": "Freshest Ainekio body status packet available for this session",
+        "group": "Body status"
+      },
+      {
+        "name": "bodyEvent",
+        "type": "object",
+        "description": "Latest Ainekio connection, battery, storage, boot, asset, or TTS event carried by the observation",
+        "group": "Body status"
+      },
+      {
+        "name": "bodyAuthenticated",
+        "type": "boolean",
+        "description": "Whether the Ainekio body authenticated with the gateway",
+        "group": "Body status"
+      },
+      {
+        "name": "bodyState",
+        "type": "string",
+        "description": "Ainekio body state such as active, idle, dozing, deep-sleep, or failsafe",
+        "group": "Body status"
+      },
+      {
+        "name": "bodyStatusTimestamp",
+        "type": "string",
+        "description": "Timestamp of the freshest Ainekio body status packet",
+        "group": "Body status"
+      },
+      {
+        "name": "batteryVoltage",
+        "type": "number",
+        "description": "Battery voltage reported by the Ainekio body as vbat",
+        "group": "Body status"
+      },
+      {
+        "name": "wifiRssi",
+        "type": "number",
+        "description": "Ainekio body Wi-Fi signal strength in dBm",
+        "group": "Body status"
+      },
+      {
+        "name": "uptimeSeconds",
+        "type": "number",
+        "description": "Ainekio body uptime in seconds",
+        "group": "Body status"
+      },
+      {
+        "name": "freeHeapBytes",
+        "type": "number",
+        "description": "Free memory reported by the Ainekio body in bytes",
+        "group": "Body status"
+      },
+      {
+        "name": "sdAvailable",
+        "type": "boolean",
+        "description": "Whether the Ainekio body reports an available SD card",
+        "group": "Body status"
+      },
+      {
+        "name": "motionAvailable",
+        "type": "boolean",
+        "description": "Whether body motion commands are available",
+        "group": "Body status"
+      },
+      {
+        "name": "cameraReady",
+        "type": "boolean",
+        "description": "Whether the Ainekio camera is ready",
+        "group": "Body status"
+      },
+      {
+        "name": "microphoneReady",
+        "type": "boolean",
+        "description": "Ainekio microphone readiness when reported; null means unknown",
+        "group": "Body status"
+      },
+      {
+        "name": "speakerReady",
+        "type": "boolean",
+        "description": "Whether the Ainekio speaker path is ready",
+        "group": "Body status"
+      },
+      {
+        "name": "cameraDrops",
+        "type": "number",
+        "description": "Dropped Ainekio camera-frame count",
+        "group": "Body status"
+      },
+      {
+        "name": "microphoneDrops",
+        "type": "number",
+        "description": "Dropped Ainekio microphone-frame count",
+        "group": "Body status"
+      },
+      {
+        "name": "speakerUnderruns",
+        "type": "number",
+        "description": "Ainekio speaker underrun count",
+        "group": "Body status"
+      },
+      {
+        "name": "wakeEnabled",
+        "type": "boolean",
+        "description": "Whether local wake-word detection is enabled",
+        "group": "Body status"
+      },
+      {
+        "name": "wakeModel",
+        "type": "string",
+        "description": "Ainekio wake-word model identifier",
+        "group": "Body status"
+      },
+      {
+        "name": "wakeReady",
+        "type": "boolean",
+        "description": "Whether the Ainekio wake-word model is ready",
+        "group": "Body status"
+      },
+      {
+        "name": "gateway",
+        "type": "object",
+        "description": "Complete Ainekio gateway snapshot carried by the observation",
+        "group": "Gateway and transport"
+      },
+      {
+        "name": "adapterConnected",
+        "type": "boolean",
+        "description": "Whether the Environment Bridge adapter transport is connected",
+        "group": "Gateway and transport"
+      },
+      {
+        "name": "sessionStatus",
+        "type": "string",
+        "description": "Stored bridge session status: connected, stale, or disconnected",
+        "group": "Gateway and transport"
+      },
+      {
+        "name": "connectionState",
+        "type": "string",
+        "description": "Selected Ainekio body connection state",
+        "group": "Gateway and transport"
+      },
+      {
+        "name": "heartbeatAgeMs",
+        "type": "number",
+        "description": "Age of the selected Ainekio body heartbeat in milliseconds",
+        "group": "Gateway and transport"
+      },
+      {
+        "name": "transport",
+        "type": "string",
+        "description": "Ainekio body transport protocol",
+        "group": "Gateway and transport"
+      },
+      {
+        "name": "safety",
+        "type": "string",
+        "description": "Owner of physical safety enforcement",
+        "group": "Gateway and transport"
+      },
+      {
+        "name": "freestyleMovement",
+        "type": "object",
+        "description": "Ainekio movement-plan support, policy, and route availability",
+        "group": "Gateway and transport"
+      },
+      {
+        "name": "lastAudioResult",
+        "type": "object",
+        "description": "Latest Ainekio audio transcription result acknowledged by the adapter",
+        "group": "Gateway and transport"
+      },
+      {
+        "name": "bridgeSummary",
+        "type": "object",
+        "description": "Complete current Environment Bridge summary",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "bridgeEnabled",
+        "type": "boolean",
+        "description": "Whether the Environment Bridge is enabled",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "bridgeUpdatedAt",
+        "type": "string",
+        "description": "Timestamp of the stored Environment Bridge summary",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "sessions",
+        "type": "array",
+        "description": "All known Environment Bridge sessions",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "pendingCommandCount",
+        "type": "number",
+        "description": "Number of active Environment Bridge commands",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "diagnosticsSnapshot",
+        "type": "object",
+        "description": "Complete current Environment Bridge diagnostics snapshot for all sessions",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "diagnostics",
+        "type": "object",
+        "description": "Complete diagnostics for the selected Ainekio session",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "diagnosticsUpdatedAt",
+        "type": "string",
+        "description": "Timestamp of the selected session diagnostics",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "transportDiagnostics",
+        "type": "object",
+        "description": "Bridge byte, message, and transfer-rate diagnostics",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "mediaDiagnostics",
+        "type": "object",
+        "description": "Bridge image and audio counts and byte totals",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "microphoneLevel",
+        "type": "number",
+        "description": "Latest normalized Ainekio microphone level",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "pendingAudioUtterances",
+        "type": "number",
+        "description": "Number of Ainekio utterances awaiting transcription",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "transcriptionStatus",
+        "type": "string",
+        "description": "Latest Ainekio transcription status",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "transcript",
+        "type": "string",
+        "description": "Latest transcript retained by bridge diagnostics",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "movementPlan",
+        "type": "object",
+        "description": "Latest Ainekio movement-plan progress diagnostics",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "latestImage",
+        "type": "object",
+        "description": "Latest bounded bridge diagnostic image metadata",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "latestAudio",
+        "type": "object",
+        "description": "Latest bounded bridge diagnostic audio metadata",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "recentEvents",
+        "type": "array",
+        "description": "Recent bounded Environment Bridge transport events",
+        "group": "Bridge diagnostics"
+      },
+      {
+        "name": "sessionId",
+        "type": "string",
+        "description": "Environment Bridge session identifier",
+        "group": "Core",
+        "primary": true
+      },
+      {
+        "name": "connected",
+        "label": "observation available",
+        "type": "boolean",
+        "description": "Whether a bridge observation is available; this is not a live connection-health check",
+        "group": "Core",
+        "primary": true
+      }
+    ],
+    "properties": {
+      "sessionId": ""
     },
-    description: 'Complete read-only Ainekio Environment Bridge source. Every observation, body-status, gateway, session, and diagnostic output is always available; workflows choose data by connecting only the ports they need.',
-    presentation: {
-      defaultExpanded: true,
-      badges: [
-        { label: 'Read only', tone: 'info' },
-        { label: 'No prompt', tone: 'neutral' },
-        { label: 'No direct effects', tone: 'neutral' },
-      ],
-      statusTitle: 'Last observation',
-      statusFields: [
-        { output: 'connected', label: 'Observation', format: 'availability' },
-        { output: 'sessionId', label: 'Session', hideWhenEmpty: true },
-        { output: 'adapter', label: 'Adapter', hideWhenEmpty: true },
-        { output: 'timestamp', label: 'Observed', format: 'relative-time', hideWhenEmpty: true },
-        { output: 'bodyState', label: 'Body', hideWhenEmpty: true },
-        { output: 'batteryVoltage', label: 'Battery (V)', hideWhenEmpty: true },
-        { output: 'actionId', label: 'Action', hideWhenEmpty: true },
-      ],
+    "propertySchemas": {
+      "sessionId": {
+        "type": "string",
+        "default": "",
+        "label": "Observation Session",
+        "description": "Use the triggering observation when it matches. Otherwise read this saved session; leave blank to use the latest connected session.",
+        "placeholder": "Triggering / latest connected",
+        "emptyLabel": "Triggering / latest connected",
+        "suggestions": "environment-sessions"
+      }
     },
+    "description": "Complete read-only Ainekio Environment Bridge source. Every observation, body-status, gateway, session, and diagnostic output is always available; workflows choose data by connecting only the ports they need.",
+    "presentation": {
+      "defaultExpanded": true,
+      "badges": [
+        {
+          "label": "Read only",
+          "tone": "info"
+        },
+        {
+          "label": "No prompt",
+          "tone": "neutral"
+        },
+        {
+          "label": "No direct effects",
+          "tone": "neutral"
+        }
+      ],
+      "statusTitle": "Last observation",
+      "statusFields": [
+        {
+          "output": "connected",
+          "label": "Observation",
+          "format": "availability"
+        },
+        {
+          "output": "sessionId",
+          "label": "Session",
+          "hideWhenEmpty": true
+        },
+        {
+          "output": "adapter",
+          "label": "Adapter",
+          "hideWhenEmpty": true
+        },
+        {
+          "output": "timestamp",
+          "label": "Observed",
+          "format": "relative-time",
+          "hideWhenEmpty": true
+        },
+        {
+          "output": "bodyState",
+          "label": "Body",
+          "hideWhenEmpty": true
+        },
+        {
+          "output": "batteryVoltage",
+          "label": "Battery (V)",
+          "hideWhenEmpty": true
+        },
+        {
+          "output": "actionId",
+          "label": "Action",
+          "hideWhenEmpty": true
+        }
+      ]
+    }
   }),
   defineSchema({
-    id: 'environment_action_context_input',
-    name: 'Verify Matched Sent Action',
-    category: 'environment',
-    inputs: [
-      { name: 'actionId', label: 'Robot-reported action ID', type: 'string', optional: true, description: 'The action ID contained in the robot’s latest observation or feedback.' },
+    "id": "environment_action_context_input",
+    "name": "Verify Matched Sent Action",
+    "category": "environment",
+    "inputs": [
+      {
+        "name": "record",
+        "type": "object",
+        "optional": true,
+        "description": "Correlated sent-action record from the durable result wait"
+      },
+      {
+        "name": "actionId",
+        "label": "Robot-reported action ID",
+        "type": "string",
+        "optional": true,
+        "description": "The action ID contained in the robot’s latest observation or feedback."
+      }
     ],
-    outputs: [
-      { name: 'actionContext', label: 'Matched sent-action record', type: 'object', description: 'Core’s pre-resolved record of the sent command: requested action, status, result, timestamps, timing, and autonomy details.' },
-      { name: 'actionId', label: 'Verified sent action ID', type: 'string', description: 'The action ID only when the robot-reported ID matches a command MetaHuman sent.' },
-      { name: 'correlationId', label: 'Action cycle ID', type: 'string', description: 'The ID used to tie the sent action to returned robot reports and camera frames.' },
-      { name: 'robotObserver', label: 'Autonomy cycle', type: 'object', description: 'The Robot Operator cycle attached when an autonomy workflow sent the action.' },
-      { name: 'available', label: 'Match found', type: 'boolean', description: 'True when the robot-reported ID matches the trusted sent-action record supplied by Core.' },
+    "outputs": [
+      {
+        "name": "actionContext",
+        "label": "Matched sent-action record",
+        "type": "object",
+        "description": "Core’s pre-resolved record of the sent command: requested action, originating instruction, status, result, timestamps, timing, and autonomy details."
+      },
+      {
+        "name": "actionId",
+        "label": "Verified sent action ID",
+        "type": "string",
+        "description": "The action ID only when the robot-reported ID matches a command MetaHuman sent."
+      },
+      {
+        "name": "correlationId",
+        "label": "Action cycle ID",
+        "type": "string",
+        "description": "The ID used to tie the sent action to returned robot reports and camera frames."
+      },
+      {
+        "name": "robotObserver",
+        "label": "Autonomy cycle",
+        "type": "object",
+        "description": "The Robot Operator cycle attached when an autonomy workflow sent the action."
+      },
+      {
+        "name": "available",
+        "label": "Match found",
+        "type": "boolean",
+        "description": "True when the robot-reported ID matches the trusted sent-action record supplied by Core."
+      }
     ],
-    presentation: {
-      badges: [
-        { label: 'Verifies Core match', tone: 'info' },
-        { label: 'No model', tone: 'neutral' },
-        { label: 'Sends nothing', tone: 'neutral' },
+    "description": "Verifies that the action ID reported by the robot matches the trusted sent-action record Core resolved before graph execution. A match exposes the sent command and its result details. This node performs no lookup, sends no command, changes no status, and calls no model.",
+    "presentation": {
+      "badges": [
+        {
+          "label": "Verifies Core match",
+          "tone": "info"
+        },
+        {
+          "label": "No model",
+          "tone": "neutral"
+        },
+        {
+          "label": "Sends nothing",
+          "tone": "neutral"
+        }
       ],
-      statusTitle: 'Last action correlation',
-      statusFields: [
-        { output: 'available', label: 'Matched', format: 'availability' },
-        { output: 'actionId', label: 'Sent action', hideWhenEmpty: true },
-        { output: 'correlationId', label: 'Cycle', hideWhenEmpty: true },
-      ],
-    },
-    description: 'Verifies that the action ID reported by the robot matches the trusted sent-action record Core resolved before graph execution. A match exposes the sent command and its result details. This node performs no lookup, sends no command, changes no status, and calls no model.',
+      "statusTitle": "Last action correlation",
+      "statusFields": [
+        {
+          "output": "available",
+          "label": "Matched",
+          "format": "availability"
+        },
+        {
+          "output": "actionId",
+          "label": "Sent action",
+          "hideWhenEmpty": true
+        },
+        {
+          "output": "correlationId",
+          "label": "Cycle",
+          "hideWhenEmpty": true
+        }
+      ]
+    }
   }),
   defineSchema({
     id: 'environment_feedback',
@@ -442,88 +1049,262 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Provides optional graph-authored map and location context without baking environment data into Environment Mode.',
   }),
   defineSchema({
-    id: 'environment_image_input',
-    name: 'Select Camera Frames for Current Action',
-    category: 'environment',
-    inputs: [
-      { name: 'visual', label: 'Current camera frame', type: 'object', optional: true, description: 'The latest camera frame received from the robot bridge.' },
-      { name: 'visuals', label: 'Camera frame list', type: 'array', optional: true, description: 'Other camera frames included in the current robot observation.' },
-      { name: 'observationCurrent', label: 'Current-run observation', type: 'boolean', optional: true, description: 'Whether these frames arrived with the observation that triggered this graph run.' },
-      { name: 'robotStatus', label: 'Saved robot status', type: 'object', optional: true, description: 'Robot Status containing the current task and an optional saved before-action frame.' },
-      { name: 'terminalFeedback', label: 'Finished robot result', type: 'object', optional: true, description: 'The finished robot report selected for the sent action.' },
-      { name: 'actionId', label: 'Sent action ID', type: 'string', optional: true, description: 'The verified ID of the sent action whose camera frame is returning.' },
-      { name: 'correlationId', label: 'Action cycle ID', type: 'string', optional: true, description: 'The verified cycle ID used to match a returned camera frame.' },
+    "id": "environment_image_input",
+    "name": "Select Camera Frames for Current Action",
+    "category": "environment",
+    "inputs": [
+      {
+        "name": "visual",
+        "label": "Current camera frame",
+        "type": "object",
+        "optional": true,
+        "description": "The latest camera frame received from the robot bridge."
+      },
+      {
+        "name": "visuals",
+        "label": "Camera frame list",
+        "type": "array",
+        "optional": true,
+        "description": "Other camera frames included in the current robot observation."
+      },
+      {
+        "name": "observationCurrent",
+        "label": "Current-run observation",
+        "type": "boolean",
+        "optional": true,
+        "description": "Whether these frames arrived with the observation that triggered this graph run. Omit only in workflows whose input is already current by contract."
+      },
+      {
+        "name": "execution",
+        "label": "Current execution",
+        "type": "object",
+        "optional": true,
+        "description": "Checkpointed task containing an optional before-action frame reference."
+      },
+      {
+        "name": "terminalFeedback",
+        "label": "Finished robot result",
+        "type": "object",
+        "optional": true,
+        "description": "The finished robot report selected for the sent action."
+      },
+      {
+        "name": "actionId",
+        "label": "Sent action ID",
+        "type": "string",
+        "optional": true,
+        "description": "The verified ID of the sent action whose camera frame is returning."
+      },
+      {
+        "name": "correlationId",
+        "label": "Action cycle ID",
+        "type": "string",
+        "optional": true,
+        "description": "The verified cycle ID used to match a returned camera frame."
+      }
     ],
-    outputs: [
-      { name: 'images', label: 'Images for the model', type: 'array', description: 'The selected camera frames formatted for an image-capable model.' },
-      { name: 'frames', label: 'Selected camera frames', type: 'array', description: 'Metadata for the camera frames this node selected.' },
-      { name: 'rejectedCount', label: 'Rejected frames', type: 'number', description: 'Number of frames rejected because they were not valid supported JPEG data.' },
-      { name: 'current', label: 'Current evidence available', type: 'boolean', description: 'Whether at least one selected frame belongs to this graph run.' },
-      { name: 'verified', label: 'Verified evidence available', type: 'boolean', description: 'Whether a selected frame either belongs to this graph run or matches the current Robot Status action result.' },
+    "outputs": [
+      {
+        "name": "images",
+        "label": "Images for the model",
+        "type": "array",
+        "description": "The selected camera frames formatted for an image-capable model."
+      },
+      {
+        "name": "frames",
+        "label": "Selected camera frames",
+        "type": "array",
+        "description": "Metadata for the camera frames this node selected."
+      },
+      {
+        "name": "rejectedCount",
+        "label": "Rejected frames",
+        "type": "number",
+        "description": "Number of frames rejected because they were not valid supported JPEG data."
+      },
+      {
+        "name": "current",
+        "label": "Current evidence available",
+        "type": "boolean",
+        "description": "Whether at least one selected frame belongs to this graph run."
+      },
+      {
+        "name": "verified",
+        "label": "Verified evidence available",
+        "type": "boolean",
+        "description": "Whether a selected frame either belongs to this graph run or matches the current Robot Status action result."
+      }
     ],
-    presentation: {
-      badges: [
-        { label: 'Checks camera frames', tone: 'info' },
-        { label: 'No model', tone: 'neutral' },
-        { label: 'Sends nothing', tone: 'neutral' },
+    "description": "Checks camera frames received from the robot. It returns a triggering frame or a saved frame that matches the current Robot Status action result, plus an optional saved before-action frame. It sends no command, changes no status, and calls no model.",
+    "presentation": {
+      "badges": [
+        {
+          "label": "Checks camera frames",
+          "tone": "info"
+        },
+        {
+          "label": "No model",
+          "tone": "neutral"
+        },
+        {
+          "label": "Sends nothing",
+          "tone": "neutral"
+        }
       ],
-      statusTitle: 'Last frame selection',
-      statusFields: [
-        { output: 'rejectedCount', label: 'Rejected' },
-      ],
-    },
-    description: 'Checks camera frames received from the robot. It returns a triggering frame or a saved frame that matches the current Robot Status action result, plus an optional saved before-action frame. It sends no command, changes no status, and calls no model.',
+      "statusTitle": "Last frame selection",
+      "statusFields": [
+        {
+          "output": "rejectedCount",
+          "label": "Rejected"
+        }
+      ]
+    }
   }),
   defineSchema({
-    id: 'environment_context_builder',
-    name: 'Environment Context Builder',
-    category: 'environment',
-    inputs: [
-      { name: 'observation', type: 'object', optional: true, description: 'Environment observation selected for this turn' },
-      { name: 'observationCurrent', type: 'boolean', optional: true, description: 'Whether the observation directly triggered this graph execution' },
-      { name: 'instruction', type: 'string', optional: true, description: 'Additional task instruction' },
-      { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
-      { name: 'images', type: 'array', optional: true, description: 'Validated model image content parts' },
-      { name: 'conversationHistory', type: 'array', optional: true, description: 'Shared rolling conversation history' },
-      { name: 'memories', type: 'array', optional: true, description: 'Relevant long-term conversational memories' },
-      { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona supplied once to the selector' },
-      { name: 'routingAnalysis', type: 'object', description: 'Intent Orchestrator route switches for this turn' },
-      { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
-    ],
-    outputs: [
-      { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
-      { name: 'messages', type: 'array', description: 'Model-router message array' },
-      { name: 'jsonSchema', type: 'object', description: 'Provider schema constrained to currently advertised capabilities' },
-      { name: 'context', type: 'object', description: 'Structured environment context package' },
-      { name: 'currentInstruction', type: 'string', description: 'Current unchanged user instruction' },
-      { name: 'instructionSource', type: 'string', description: 'Instruction provenance for this interactive workflow: user' },
-      { name: 'location', type: 'object', description: 'Resolved location data' },
-      { name: 'map', type: 'object', description: 'Resolved map data' },
-      { name: 'images', type: 'array', description: 'Visual frames suitable for image-capable models' },
-      { name: 'availableActions', type: 'array', description: 'Available action types' },
-    ],
-    properties: {
-      systemPrompt: '',
-      recentHistoryLimit: 4,
-    },
-    propertySchemas: {
-      systemPrompt: {
-        type: 'text_multiline',
-        default: '',
-        label: 'System Prompt',
-        rows: 5,
+    "id": "environment_context_builder",
+    "name": "Environment Context Builder",
+    "category": "environment",
+    "inputs": [
+      {
+        "name": "execution",
+        "type": "object",
+        "optional": true,
+        "description": "Checkpointed objective and execution events"
       },
-      recentHistoryLimit: {
-        type: 'slider',
-        default: 4,
-        label: 'Recent History Limit',
-        description: 'Maximum dialogue messages included for a direct user turn.',
-        min: 0,
-        max: 12,
-        step: 1,
+      {
+        "name": "observation",
+        "type": "object",
+        "optional": true,
+        "description": "Environment observation selected for this turn"
       },
+      {
+        "name": "observationCurrent",
+        "type": "boolean",
+        "optional": true,
+        "description": "Whether the observation directly triggered this graph execution"
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "optional": true,
+        "description": "Additional task instruction"
+      },
+      {
+        "name": "userInstruction",
+        "type": "string",
+        "optional": true,
+        "description": "Current human-authored instruction, when present"
+      },
+      {
+        "name": "images",
+        "type": "array",
+        "optional": true,
+        "description": "Validated model image content parts"
+      },
+      {
+        "name": "conversationHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Shared rolling conversation history"
+      },
+      {
+        "name": "memories",
+        "type": "array",
+        "optional": true,
+        "description": "Relevant long-term conversational memories"
+      },
+      {
+        "name": "personaText",
+        "type": "string",
+        "optional": true,
+        "description": "Formatted active persona supplied once to the selector"
+      },
+      {
+        "name": "routingAnalysis",
+        "type": "object",
+        "description": "Intent Orchestrator route switches for this turn"
+      },
+      {
+        "name": "robotStatus",
+        "type": "object",
+        "optional": true,
+        "description": "Reusable Robot Status supporting context"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "message",
+        "type": "string",
+        "description": "Prompt-ready environment message"
+      },
+      {
+        "name": "messages",
+        "type": "array",
+        "description": "Compact action-selector message array"
+      },
+      {
+        "name": "jsonSchema",
+        "type": "object",
+        "description": "Provider schema constrained to currently advertised capabilities"
+      },
+      {
+        "name": "context",
+        "type": "object",
+        "description": "Structured environment context package"
+      },
+      {
+        "name": "currentInstruction",
+        "type": "string",
+        "description": "Current unchanged user instruction"
+      },
+      {
+        "name": "instructionSource",
+        "type": "string",
+        "description": "Instruction provenance for this interactive workflow: user"
+      },
+      {
+        "name": "location",
+        "type": "object",
+        "description": "Resolved location data"
+      },
+      {
+        "name": "map",
+        "type": "object",
+        "description": "Resolved map data"
+      },
+      {
+        "name": "images",
+        "type": "array",
+        "description": "Visual frames suitable for image-capable models"
+      },
+      {
+        "name": "availableActions",
+        "type": "array",
+        "description": "Available action types"
+      }
+    ],
+    "properties": {
+      "systemPrompt": "",
+      "recentHistoryLimit": 4
     },
-    description: 'Packages only the context selected by Intent Orchestrator for one Environment Action Selector call.',
+    "propertySchemas": {
+      "systemPrompt": {
+        "type": "text_multiline",
+        "default": "",
+        "label": "System Prompt",
+        "rows": 5
+      },
+      "recentHistoryLimit": {
+        "type": "slider",
+        "default": 4,
+        "label": "Recent History Limit",
+        "description": "Maximum dialogue messages included when the context router marks the instruction as a follow-up.",
+        "min": 0,
+        "max": 12,
+        "step": 1
+      }
+    },
+    "description": "Packages only the context selected by Intent Orchestrator for one Environment Action Selector call."
   }),
   defineSchema({
     id: 'environment_action_parser',
@@ -542,7 +1323,6 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
       { name: 'movementRequested', type: 'boolean', description: 'Whether off-script generation was requested' },
       { name: 'taskDecision', type: 'object', description: 'Optional durable task decision; null for conversation or standalone action' },
-      { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
       { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result' },
       { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
       { name: 'hasActions', type: 'boolean', description: 'Whether an admitted preset action is ready for Environment Bridge Out' },
@@ -580,75 +1360,196 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Generates and strictly validates one bounded off-script logical-joint trajectory.',
   }),
   defineSchema({
-    id: 'environment_send_action',
-    name: 'Environment Bridge Out',
-    category: 'environment',
-    inputs: [
-      { name: 'action', type: 'object', optional: true, description: 'Single action to enqueue' },
-      { name: 'actions', type: 'array', optional: true, description: 'Actions to enqueue' },
-      { name: 'generatedActions', type: 'array', optional: true, description: 'Validated actions from Movement Generator' },
-      { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
-      { name: 'instruction', type: 'string', optional: true, description: 'Current resolved instruction' },
-      { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
-      { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
+    "id": "environment_send_action",
+    "name": "Environment Bridge Out",
+    "category": "environment",
+    "inputs": [
+      {
+        "name": "action",
+        "type": "object",
+        "optional": true,
+        "description": "Single action to enqueue"
+      },
+      {
+        "name": "actions",
+        "type": "array",
+        "optional": true,
+        "description": "Actions to enqueue"
+      },
+      {
+        "name": "generatedActions",
+        "type": "array",
+        "optional": true,
+        "description": "Validated actions from Movement Generator"
+      },
+      {
+        "name": "sessionId",
+        "type": "string",
+        "optional": true,
+        "description": "Target environment session"
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "optional": true,
+        "description": "Current resolved instruction"
+      },
+      {
+        "name": "userInstruction",
+        "type": "string",
+        "optional": true,
+        "description": "Current human-authored instruction, when present"
+      }
     ],
-    outputs: [
-      { name: 'commands', type: 'array', description: 'Coordinator work created for the environment adapter' },
-      { name: 'rejectedActions', type: 'array', description: 'Actions rejected by the node before queueing' },
-      { name: 'count', type: 'number', description: 'Number of coordinator commands created' },
-      { name: 'rejectedCount', type: 'number', description: 'Number of rejected actions' },
-      { name: 'success', type: 'boolean', description: 'Whether every provided action was accepted and a receiver is ready' },
-      { name: 'ready', type: 'boolean', description: 'Whether an adapter receiver is available for the target session' },
-      { name: 'status', type: 'string', description: 'Bridge queue/delivery-readiness status' },
-      { name: 'reason', type: 'string', description: 'Machine-readable bridge status reason' },
-      { name: 'message', type: 'string', description: 'Human-readable bridge status message' },
-      { name: 'targetSessionId', type: 'string', description: 'Target environment session used for delivery checks' },
-      { name: 'bridgeEnabled', type: 'boolean', description: 'Whether Environment Bridge is enabled' },
-      { name: 'adapterReady', type: 'boolean', description: 'Whether the target adapter subscriber is connected' },
-      { name: 'bodyAuthenticated', type: 'boolean', description: 'Whether the target adapter reports an authenticated physical body' },
-      { name: 'streamSubscriberCount', type: 'number', description: 'Number of connected action stream subscribers for the target' },
-      { name: 'activeSessionCount', type: 'number', description: 'Number of non-stale environment sessions' },
-      { name: 'bridgeRecord', type: 'object', description: 'Structured outbound bridge result for downstream persistence' },
+    "outputs": [
+      {
+        "name": "commands",
+        "type": "array",
+        "description": "Coordinator work created for the environment adapter"
+      },
+      {
+        "name": "rejectedActions",
+        "type": "array",
+        "description": "Actions rejected by the node before queueing"
+      },
+      {
+        "name": "count",
+        "type": "number",
+        "description": "Number of coordinator commands created"
+      },
+      {
+        "name": "rejectedCount",
+        "type": "number",
+        "description": "Number of rejected actions"
+      },
+      {
+        "name": "success",
+        "type": "boolean",
+        "description": "Whether every provided action was accepted and a receiver is ready"
+      },
+      {
+        "name": "ready",
+        "type": "boolean",
+        "description": "Whether an adapter receiver is available for the target session"
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "description": "Bridge delivery status"
+      },
+      {
+        "name": "reason",
+        "type": "string",
+        "description": "Machine-readable bridge status reason"
+      },
+      {
+        "name": "message",
+        "type": "string",
+        "description": "Human-readable bridge status message"
+      },
+      {
+        "name": "targetSessionId",
+        "type": "string",
+        "description": "Target environment session used for delivery checks"
+      },
+      {
+        "name": "bridgeEnabled",
+        "type": "boolean",
+        "description": "Whether Environment Bridge is enabled"
+      },
+      {
+        "name": "adapterReady",
+        "type": "boolean",
+        "description": "Whether the target adapter subscriber is connected"
+      },
+      {
+        "name": "bodyAuthenticated",
+        "type": "boolean",
+        "description": "Whether the target adapter reports an authenticated physical body"
+      },
+      {
+        "name": "streamSubscriberCount",
+        "type": "number",
+        "description": "Number of connected action stream subscribers for the target"
+      },
+      {
+        "name": "activeSessionCount",
+        "type": "number",
+        "description": "Number of non-stale environment sessions"
+      },
+      {
+        "name": "bridgeRecord",
+        "type": "object",
+        "description": "Structured outbound bridge result for downstream persistence"
+      }
     ],
-    properties: {
-      allowedActions: ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'],
-      maxDurationMs: 1500,
-      defaultDurationMs: 0,
-      feedbackGraph: '',
+    "properties": {
+      "allowedActions": [
+        "move",
+        "look",
+        "jump",
+        "interact",
+        "stop",
+        "captureImage",
+        "robotCommand",
+        "robotMotionPlan",
+        "inspect",
+        "visualApproach",
+        "sendText"
+      ],
+      "maxDurationMs": 1500,
+      "defaultDurationMs": 0
     },
-    propertySchemas: {
-      allowedActions: {
-        type: 'multiselect',
-        default: ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'],
-        label: 'Allowed Actions',
-        options: ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'],
+    "propertySchemas": {
+      "allowedActions": {
+        "type": "multiselect",
+        "default": [
+          "move",
+          "look",
+          "jump",
+          "interact",
+          "stop",
+          "captureImage",
+          "robotCommand",
+          "robotMotionPlan",
+          "inspect",
+          "visualApproach",
+          "sendText"
+        ],
+        "label": "Allowed Actions",
+        "options": [
+          "move",
+          "look",
+          "jump",
+          "interact",
+          "stop",
+          "captureImage",
+          "robotCommand",
+          "robotMotionPlan",
+          "inspect",
+          "visualApproach",
+          "sendText"
+        ]
       },
-      maxDurationMs: {
-        type: 'number',
-        default: 1500,
-        label: 'Max Duration',
-        min: 1,
-        max: 10000,
-        step: 50,
+      "maxDurationMs": {
+        "type": "number",
+        "default": 1500,
+        "label": "Max Duration",
+        "min": 1,
+        "max": 10000,
+        "step": 50
       },
-      defaultDurationMs: {
-        type: 'number',
-        default: 0,
-        label: 'Default Duration',
-        min: 0,
-        max: 10000,
-        step: 50,
-        description: 'Optional fallback duration for move/look actions. Leave 0 to require explicit durationMs.',
-      },
-      feedbackGraph: {
-        type: 'text',
-        default: '',
-        label: 'Feedback Workflow',
-        description: 'Optional one-pass workflow that receives the correlated action result. Empty means record transport feedback without running another graph.',
-        placeholder: 'For example: robot-action-result',
-      },
+      "defaultDurationMs": {
+        "type": "number",
+        "default": 0,
+        "label": "Default Duration",
+        "min": 0,
+        "max": 10000,
+        "step": 50,
+        "description": "Optional fallback duration for move/look actions. Leave 0 to require explicit durationMs."
+      }
     },
-    description: 'Queues selected actions for Environment Bridge and returns transport facts only.',
+    "description": "Queues selected actions for Environment Bridge and returns transport facts only; it never authors or replaces conversation."
   }),
   defineSchema({
     id: 'environment_send_text',
@@ -808,58 +1709,672 @@ export const nodeSchemas: NodeSchema[] = [
     ],
     description: 'Reads only the Robot Operator handoff supplied with the current Work Coordinator execution.',
   }),
-  robotContextSchema(
-    'robot_autonomy_executor_context',
-    'Robot Autonomy Executor Context',
-    'Builds the routed context and capability-bounded action contract for one delegated physical or sensing intention.',
-    [
-      'instruction', 'stimulusInstruction', 'routingAnalysis', 'observation', 'images', 'frames',
-      'conversationHistory', 'innerHistory', 'actionHistory', 'personaText', 'memoryContext',
-      'robotStatus', 'robotObserver', 'plannerDecision', 'delegatedMemories', 'actionContext',
-      'sourceObservationAt', 'currentVisualEvidence',
+  defineSchema({
+    "id": "robot_autonomy_executor_context",
+    "name": "Robot Autonomy Executor Context",
+    "category": "operator",
+    "inputs": [
+      {
+        "name": "execution",
+        "type": "object",
+        "optional": true,
+        "description": "Checkpointed task and ordered events from Current Execution"
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Graph-owned instructions for this one LLM task"
+      },
+      {
+        "name": "stimulusInstruction",
+        "type": "string",
+        "optional": true,
+        "description": "High-level intention delegated to Robot Autonomy Executor"
+      },
+      {
+        "name": "routingAnalysis",
+        "type": "object",
+        "description": "Intent Orchestrator route switches for the delegated intention"
+      },
+      {
+        "name": "observation",
+        "type": "object",
+        "optional": true,
+        "description": "Environment Bridge observation supplied to this workflow"
+      },
+      {
+        "name": "images",
+        "type": "array",
+        "optional": true,
+        "description": "Validated image content parts"
+      },
+      {
+        "name": "frames",
+        "type": "array",
+        "optional": true,
+        "description": "Validated visual frame metadata"
+      },
+      {
+        "name": "conversationHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Conversation entries selected by the connected Buffer History node"
+      },
+      {
+        "name": "innerHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Private reflection entries selected by the connected Buffer History node"
+      },
+      {
+        "name": "actionHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Robot Buffer entries used as verified prior-action evidence"
+      },
+      {
+        "name": "personaText",
+        "type": "string",
+        "optional": true,
+        "description": "Formatted active persona"
+      },
+      {
+        "name": "memoryContext",
+        "type": "array",
+        "optional": true,
+        "description": "Historical memories supplied as inspiration, never current-world evidence"
+      },
+      {
+        "name": "robotStatus",
+        "type": "object",
+        "optional": true,
+        "description": "Canonical Robot Status snapshot"
+      },
+      {
+        "name": "robotObserver",
+        "type": "object",
+        "optional": true,
+        "description": "Current Robot Operator cycle"
+      },
+      {
+        "name": "plannerDecision",
+        "type": "object",
+        "optional": true,
+        "description": "Planner-authored intention delegated to Robot Autonomy Executor"
+      },
+      {
+        "name": "delegatedMemories",
+        "type": "array",
+        "optional": true,
+        "description": "Historical memories delegated with a planner intention"
+      },
+      {
+        "name": "actionContext",
+        "type": "object",
+        "optional": true,
+        "description": "Work Coordinator action record matched to the returned robot report"
+      },
+      {
+        "name": "sourceObservationAt",
+        "type": "string",
+        "optional": true,
+        "description": "Timestamp of the bridge observation that started this cycle"
+      },
+      {
+        "name": "currentVisualEvidence",
+        "type": "boolean",
+        "optional": true,
+        "description": "Whether Environment Image Input verified the attached frame for this decision"
+      }
     ],
-  ),
-  robotContextSchema(
-    'robot_autonomy_planner_context',
-    'Robot Autonomy Planner Context',
-    'Builds correlated perception and narrative context for one planner that may delegate a high-level intention.',
-    [
-      'instruction', 'observation', 'images', 'frames', 'conversationHistory', 'innerHistory',
-      'actionHistory', 'personaText', 'memoryContext', 'robotStatus', 'robotObserver',
-      'plannerDecision', 'delegatedMemories', 'actionContext', 'sourceObservationAt',
-      'currentVisualEvidence',
+    "outputs": [
+      {
+        "name": "messages",
+        "type": "array",
+        "description": "Multimodal messages for this workflow LLM"
+      },
+      {
+        "name": "jsonSchema",
+        "type": "object",
+        "description": "Structured output contract for this workflow LLM"
+      },
+      {
+        "name": "context",
+        "type": "object",
+        "description": "Inspectable context summary"
+      },
+      {
+        "name": "stimulusReady",
+        "type": "boolean",
+        "description": "Whether correlated image or action-result evidence is available"
+      },
+      {
+        "name": "valid",
+        "type": "boolean",
+        "description": "Whether context construction succeeded"
+      },
+      {
+        "name": "error",
+        "type": "string",
+        "description": "Visible input error"
+      }
     ],
-  ),
-  robotContextSchema(
-    'robot_action_result_context',
-    'Robot Action Result Context',
-    'Builds the evidence package for interpreting one correlated terminal robot action report.',
-    [
-      'instruction', 'observation', 'images', 'frames', 'robotStatus', 'robotObserver',
-      'actionContext', 'sourceObservationAt', 'currentVisualEvidence',
+    "properties": {},
+    "propertySchemas": {},
+    "description": "Builds the routed context and capability-bounded action contract for one delegated physical or sensing intention."
+  }),
+  defineSchema({
+    "id": "robot_autonomy_planner_context",
+    "name": "Robot Autonomy Planner Context",
+    "category": "operator",
+    "inputs": [
+      {
+        "name": "execution",
+        "type": "object",
+        "optional": true,
+        "description": "Checkpointed task and ordered events from Current Execution"
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Graph-owned instructions for this one LLM task"
+      },
+      {
+        "name": "observation",
+        "type": "object",
+        "optional": true,
+        "description": "Environment Bridge observation supplied to this workflow"
+      },
+      {
+        "name": "images",
+        "type": "array",
+        "optional": true,
+        "description": "Validated image content parts"
+      },
+      {
+        "name": "frames",
+        "type": "array",
+        "optional": true,
+        "description": "Validated visual frame metadata"
+      },
+      {
+        "name": "conversationHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Conversation entries selected by the connected Buffer History node"
+      },
+      {
+        "name": "innerHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Private reflection entries selected by the connected Buffer History node"
+      },
+      {
+        "name": "actionHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Robot Buffer entries used as verified prior-action evidence"
+      },
+      {
+        "name": "personaText",
+        "type": "string",
+        "optional": true,
+        "description": "Formatted active persona"
+      },
+      {
+        "name": "memoryContext",
+        "type": "array",
+        "optional": true,
+        "description": "Historical memories supplied as inspiration, never current-world evidence"
+      },
+      {
+        "name": "robotStatus",
+        "type": "object",
+        "optional": true,
+        "description": "Canonical Robot Status snapshot"
+      },
+      {
+        "name": "robotObserver",
+        "type": "object",
+        "optional": true,
+        "description": "Current Robot Operator cycle"
+      },
+      {
+        "name": "plannerDecision",
+        "type": "object",
+        "optional": true,
+        "description": "Planner-authored intention delegated to Robot Autonomy Executor"
+      },
+      {
+        "name": "delegatedMemories",
+        "type": "array",
+        "optional": true,
+        "description": "Historical memories delegated with a planner intention"
+      },
+      {
+        "name": "actionContext",
+        "type": "object",
+        "optional": true,
+        "description": "Work Coordinator action record matched to the returned robot report"
+      },
+      {
+        "name": "sourceObservationAt",
+        "type": "string",
+        "optional": true,
+        "description": "Timestamp of the bridge observation that started this cycle"
+      },
+      {
+        "name": "currentVisualEvidence",
+        "type": "boolean",
+        "optional": true,
+        "description": "Whether Environment Image Input verified the attached frame for this decision"
+      }
     ],
-  ),
-  robotContextSchema(
-    'robot_goal_review_context',
-    'Robot Goal Review Context',
-    'Builds current objective, outcome, narrative, persona, desire, and evidence context for one goal review.',
-    [
-      'instruction', 'observation', 'images', 'frames', 'conversationHistory', 'innerHistory',
-      'actionHistory', 'personaText', 'robotStatus', 'activeDesires', 'robotObserver',
-      'sourceObservationAt', 'currentVisualEvidence',
+    "outputs": [
+      {
+        "name": "messages",
+        "type": "array",
+        "description": "Multimodal messages for this workflow LLM"
+      },
+      {
+        "name": "jsonSchema",
+        "type": "object",
+        "description": "Structured output contract for this workflow LLM"
+      },
+      {
+        "name": "context",
+        "type": "object",
+        "description": "Inspectable context summary"
+      },
+      {
+        "name": "stimulusReady",
+        "type": "boolean",
+        "description": "Whether correlated image or action-result evidence is available"
+      },
+      {
+        "name": "valid",
+        "type": "boolean",
+        "description": "Whether context construction succeeded"
+      },
+      {
+        "name": "error",
+        "type": "string",
+        "description": "Visible input error"
+      }
     ],
-  ),
-  robotContextSchema(
-    'robot_autonomy_controller_context',
-    'Robot Autonomy Controller Context',
-    'Builds one Full-mode decision package from current status, bridge facts, selected histories, persona, desires, task meanings, and prior task receipts.',
-    [
-      'instruction', 'observation', 'bridgeSummary', 'images', 'frames', 'conversationHistory',
-      'innerHistory', 'actionHistory', 'personaText', 'robotStatus', 'activeDesires',
-      'availableTasks', 'autonomyActivityHistory', 'robotObserver', 'sourceObservationAt',
-      'currentVisualEvidence',
+    "properties": {},
+    "propertySchemas": {},
+    "description": "Builds correlated perception and narrative context for one planner that may delegate a high-level intention."
+  }),
+  defineSchema({
+    "id": "robot_action_result_context",
+    "name": "Robot Action Result Context",
+    "category": "operator",
+    "inputs": [
+      {
+        "name": "execution",
+        "type": "object",
+        "optional": true,
+        "description": "Checkpointed task and ordered events from Current Execution"
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Graph-owned instructions for this one LLM task"
+      },
+      {
+        "name": "observation",
+        "type": "object",
+        "optional": true,
+        "description": "Environment Bridge observation supplied to this workflow"
+      },
+      {
+        "name": "images",
+        "type": "array",
+        "optional": true,
+        "description": "Validated image content parts"
+      },
+      {
+        "name": "frames",
+        "type": "array",
+        "optional": true,
+        "description": "Validated visual frame metadata"
+      },
+      {
+        "name": "robotStatus",
+        "type": "object",
+        "optional": true,
+        "description": "Canonical Robot Status snapshot"
+      },
+      {
+        "name": "robotObserver",
+        "type": "object",
+        "optional": true,
+        "description": "Current Robot Operator cycle"
+      },
+      {
+        "name": "actionContext",
+        "type": "object",
+        "optional": true,
+        "description": "Work Coordinator action record matched to the returned robot report"
+      },
+      {
+        "name": "sourceObservationAt",
+        "type": "string",
+        "optional": true,
+        "description": "Timestamp of the bridge observation that started this cycle"
+      },
+      {
+        "name": "currentVisualEvidence",
+        "type": "boolean",
+        "optional": true,
+        "description": "Whether Environment Image Input verified the attached frame for this decision"
+      }
     ],
-  ),
+    "outputs": [
+      {
+        "name": "messages",
+        "type": "array",
+        "description": "Multimodal messages for this workflow LLM"
+      },
+      {
+        "name": "jsonSchema",
+        "type": "object",
+        "description": "Structured output contract for this workflow LLM"
+      },
+      {
+        "name": "context",
+        "type": "object",
+        "description": "Inspectable context summary"
+      },
+      {
+        "name": "stimulusReady",
+        "type": "boolean",
+        "description": "Whether correlated image or action-result evidence is available"
+      },
+      {
+        "name": "valid",
+        "type": "boolean",
+        "description": "Whether context construction succeeded"
+      },
+      {
+        "name": "error",
+        "type": "string",
+        "description": "Visible input error"
+      }
+    ],
+    "properties": {},
+    "propertySchemas": {},
+    "description": "Builds the evidence package for interpreting one correlated terminal robot action report."
+  }),
+  defineSchema({
+    "id": "robot_goal_review_context",
+    "name": "Robot Goal Review Context",
+    "category": "operator",
+    "inputs": [
+      {
+        "name": "execution",
+        "type": "object",
+        "optional": true,
+        "description": "Checkpointed task and ordered events from Current Execution"
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Graph-owned instructions for this one LLM task"
+      },
+      {
+        "name": "observation",
+        "type": "object",
+        "optional": true,
+        "description": "Environment Bridge observation supplied to this workflow"
+      },
+      {
+        "name": "images",
+        "type": "array",
+        "optional": true,
+        "description": "Validated image content parts"
+      },
+      {
+        "name": "frames",
+        "type": "array",
+        "optional": true,
+        "description": "Validated visual frame metadata"
+      },
+      {
+        "name": "conversationHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Conversation entries selected by the connected Buffer History node"
+      },
+      {
+        "name": "innerHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Private reflection entries selected by the connected Buffer History node"
+      },
+      {
+        "name": "actionHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Robot Buffer entries used as verified prior-action evidence"
+      },
+      {
+        "name": "personaText",
+        "type": "string",
+        "optional": true,
+        "description": "Formatted active persona"
+      },
+      {
+        "name": "robotStatus",
+        "type": "object",
+        "optional": true,
+        "description": "Canonical Robot Status snapshot"
+      },
+      {
+        "name": "activeDesires",
+        "type": "array",
+        "optional": true,
+        "description": "Active Agency Desire summaries selected by the connected node"
+      },
+      {
+        "name": "robotObserver",
+        "type": "object",
+        "optional": true,
+        "description": "Current Robot Operator cycle"
+      },
+      {
+        "name": "sourceObservationAt",
+        "type": "string",
+        "optional": true,
+        "description": "Timestamp of the bridge observation that started this cycle"
+      },
+      {
+        "name": "currentVisualEvidence",
+        "type": "boolean",
+        "optional": true,
+        "description": "Whether Environment Image Input verified the attached frame for this decision"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messages",
+        "type": "array",
+        "description": "Multimodal messages for this workflow LLM"
+      },
+      {
+        "name": "jsonSchema",
+        "type": "object",
+        "description": "Structured output contract for this workflow LLM"
+      },
+      {
+        "name": "context",
+        "type": "object",
+        "description": "Inspectable context summary"
+      },
+      {
+        "name": "stimulusReady",
+        "type": "boolean",
+        "description": "Whether correlated image or action-result evidence is available"
+      },
+      {
+        "name": "valid",
+        "type": "boolean",
+        "description": "Whether context construction succeeded"
+      },
+      {
+        "name": "error",
+        "type": "string",
+        "description": "Visible input error"
+      }
+    ],
+    "properties": {},
+    "propertySchemas": {},
+    "description": "Builds current objective, outcome, narrative, persona, desire, and evidence context for one goal review."
+  }),
+  defineSchema({
+    "id": "robot_autonomy_controller_context",
+    "name": "Robot Autonomy Controller Context",
+    "category": "operator",
+    "inputs": [
+      {
+        "name": "execution",
+        "type": "object",
+        "optional": true,
+        "description": "Checkpointed task and ordered events from Current Execution"
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Graph-owned instructions for this one LLM task"
+      },
+      {
+        "name": "observation",
+        "type": "object",
+        "optional": true,
+        "description": "Environment Bridge observation supplied to this workflow"
+      },
+      {
+        "name": "bridgeSummary",
+        "type": "object",
+        "optional": true,
+        "description": "Current Environment Bridge connection and session summary"
+      },
+      {
+        "name": "images",
+        "type": "array",
+        "optional": true,
+        "description": "Validated image content parts"
+      },
+      {
+        "name": "frames",
+        "type": "array",
+        "optional": true,
+        "description": "Validated visual frame metadata"
+      },
+      {
+        "name": "conversationHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Conversation entries selected by the connected Buffer History node"
+      },
+      {
+        "name": "innerHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Private reflection entries selected by the connected Buffer History node"
+      },
+      {
+        "name": "actionHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Robot Buffer entries used as verified prior-action evidence"
+      },
+      {
+        "name": "personaText",
+        "type": "string",
+        "optional": true,
+        "description": "Formatted active persona"
+      },
+      {
+        "name": "robotStatus",
+        "type": "object",
+        "optional": true,
+        "description": "Canonical Robot Status snapshot"
+      },
+      {
+        "name": "activeDesires",
+        "type": "array",
+        "optional": true,
+        "description": "Active Agency Desire summaries selected by the connected node"
+      },
+      {
+        "name": "availableTasks",
+        "type": "array",
+        "optional": true,
+        "description": "Catalog-backed finite tasks available to the Full-mode controller"
+      },
+      {
+        "name": "autonomyActivityHistory",
+        "type": "array",
+        "optional": true,
+        "description": "Terminal receipts selected by Recent Autonomy Activity"
+      },
+      {
+        "name": "robotObserver",
+        "type": "object",
+        "optional": true,
+        "description": "Current Robot Operator cycle"
+      },
+      {
+        "name": "sourceObservationAt",
+        "type": "string",
+        "optional": true,
+        "description": "Timestamp of the bridge observation that started this cycle"
+      },
+      {
+        "name": "currentVisualEvidence",
+        "type": "boolean",
+        "optional": true,
+        "description": "Whether Environment Image Input verified the attached frame for this decision"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "messages",
+        "type": "array",
+        "description": "Multimodal messages for this workflow LLM"
+      },
+      {
+        "name": "jsonSchema",
+        "type": "object",
+        "description": "Structured output contract for this workflow LLM"
+      },
+      {
+        "name": "context",
+        "type": "object",
+        "description": "Inspectable context summary"
+      },
+      {
+        "name": "stimulusReady",
+        "type": "boolean",
+        "description": "Whether correlated image or action-result evidence is available"
+      },
+      {
+        "name": "valid",
+        "type": "boolean",
+        "description": "Whether context construction succeeded"
+      },
+      {
+        "name": "error",
+        "type": "string",
+        "description": "Visible input error"
+      }
+    ],
+    "properties": {},
+    "propertySchemas": {},
+    "description": "Builds one Full-mode decision package from current status, bridge facts, selected histories, persona, desires, task meanings, and prior task receipts."
+  }),
   defineSchema({
     id: 'robot_operator_decision_parser',
     name: 'Robot Operator Decision Parser',
@@ -878,33 +2393,76 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Strictly validates one contextual boredom-planner instruction.',
   }),
   defineSchema({
-    id: 'robot_action_result_parser',
-    name: 'Interpret Robot Action Result',
-    category: 'operator',
-    inputs: [
-      { name: 'response', type: 'any', description: 'Strict JSON from the Robot Action Result LLM' },
-      { name: 'robotStatus', type: 'object', description: 'Canonical Robot Status whose current objective may be affected by this result' },
+    "id": "robot_action_result_parser",
+    "name": "Interpret Robot Action Result",
+    "category": "operator",
+    "inputs": [
+      {
+        "name": "response",
+        "type": "any",
+        "description": "Strict JSON from the Robot Action Result LLM"
+      },
+      {
+        "name": "execution",
+        "type": "object",
+        "description": "Checkpointed execution whose objective may be affected by this result"
+      }
     ],
-    outputs: [
-      { name: 'taskDecision', type: 'object', description: 'Validated task effect, or null when the returned action was standalone' },
-      { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
+    "outputs": [
+      {
+        "name": "taskDecision",
+        "type": "object",
+        "description": "Validated task effect, or null when the returned action was standalone"
+      },
+      {
+        "name": "response",
+        "type": "string",
+        "description": "Optional concise conversation authored by the LLM"
+      }
     ],
-    description: 'Validates one LLM interpretation of a correlated robot success or failure. It neither sends an action nor schedules another workflow.',
+    "properties": {},
+    "propertySchemas": {},
+    "description": "Validates one LLM interpretation of a correlated robot success or failure. It neither sends an action nor schedules another workflow."
   }),
   defineSchema({
-    id: 'robot_goal_review_parser',
-    name: 'Validate Robot Goal Review',
-    category: 'operator',
-    inputs: [
-      { name: 'response', type: 'any', description: 'Strict JSON from the Robot Goal Review LLM' },
-      { name: 'robotStatus', type: 'object', description: 'Canonical Robot Status whose current objective is being reviewed' },
+    "id": "robot_goal_review_parser",
+    "name": "Validate Robot Goal Review",
+    "category": "operator",
+    "inputs": [
+      {
+        "name": "response",
+        "type": "any",
+        "description": "Strict JSON from the Robot Goal Review LLM"
+      },
+      {
+        "name": "execution",
+        "type": "object",
+        "description": "Checkpointed execution whose objective is being reviewed"
+      }
     ],
-    outputs: [
-      { name: 'executorDecision', type: 'object', description: 'High-level next instruction only when the LLM chose to continue through Robot Autonomy Executor' },
-      { name: 'taskDecision', type: 'object', description: 'Validated LLM assessment persisted to Robot Status' },
-      { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
+    "outputs": [
+      {
+        "name": "awaitContinuation", "type": "boolean", "description": "The LLM chose to wait for a new event or user input"
+      },
+      {
+        "name": "executorDecision",
+        "type": "object",
+        "description": "High-level next instruction only when the LLM chose to continue through Robot Autonomy Executor"
+      },
+      {
+        "name": "taskDecision",
+        "type": "object",
+        "description": "Validated LLM assessment persisted to Robot Status"
+      },
+      {
+        "name": "response",
+        "type": "string",
+        "description": "Optional concise conversation authored by the LLM"
+      }
     ],
-    description: 'Validates one LLM goal review and exposes a next instruction only when the LLM chose continuation.',
+    "properties": {},
+    "propertySchemas": {},
+    "description": "Validates one LLM goal review and exposes a next instruction only when the LLM chose continuation."
   }),
   defineSchema({
     id: 'robot_autonomy_task_catalog',
@@ -946,46 +2504,141 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Validates one LLM-owned Full-mode decision against the exact task catalog it received.',
   }),
   defineSchema({
-    id: 'robot_autonomy_task_dispatch',
-    name: 'Start Selected Autonomy Task',
-    category: 'operator',
-    inputs: [
-      { name: 'decision', type: 'object', description: 'Validated Agent Catalog task selected by the controller' },
-      { name: 'robotObserver', type: 'object', description: 'Robot Operator cycle that owns this Full-mode decision' },
-      { name: 'sessionId', type: 'string', optional: true, description: 'Current Environment Bridge session, when available' },
+    "id": "robot_autonomy_task_dispatch",
+    "name": "Start Selected Autonomy Task",
+    "category": "operator",
+    "inputs": [
+      {
+        "name": "decision",
+        "type": "object",
+        "description": "Validated Agent Catalog task selected by the controller"
+      },
+      {
+        "name": "robotObserver",
+        "type": "object",
+        "description": "Robot Operator cycle that owns this Full-mode decision"
+      },
+      {
+        "name": "sessionId",
+        "type": "string",
+        "optional": true,
+        "description": "Current Environment Bridge session, when available"
+      },
+      {
+        "name": "observation",
+        "type": "object",
+        "optional": true,
+        "description": "Bridge evidence already loaded by this workflow"
+      }
     ],
-    outputs: [
-      { name: 'queued', type: 'boolean', description: 'Whether the selected task was admitted' },
-      { name: 'taskId', type: 'string', description: 'Work Coordinator task ID' },
-      { name: 'selectedTaskId', type: 'string', description: 'Selected Agent Catalog task ID' },
-      { name: 'status', type: 'string', description: 'Dispatch result' },
+    "outputs": [
+      {
+        "name": "queued",
+        "type": "boolean",
+        "description": "Whether the selected task was admitted"
+      },
+      {
+        "name": "taskId",
+        "type": "string",
+        "description": "Work Coordinator task ID"
+      },
+      {
+        "name": "selectedTaskId",
+        "type": "string",
+        "description": "Selected Agent Catalog task ID"
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "description": "Dispatch result"
+      },
+      {
+        "name": "invocation",
+        "type": "object",
+        "description": "Selected editable Robot Operator child workflow"
+      },
+      {
+        "name": "work",
+        "type": "object",
+        "description": "Checkpointed finite-agent dispatch to await"
+      }
     ],
-    description: 'Submits one catalog-backed finite task through its existing Work Coordinator handler.',
+    "properties": {},
+    "propertySchemas": {},
+    "description": "Submits the one catalog-backed finite task selected by the LLM through the existing Work Coordinator handler. It does not choose a task or run an agent directly."
   }),
   defineSchema({
-    id: 'robot_operator_environment_dispatch',
-    name: 'Robot Operator Environment Dispatch',
-    category: 'operator',
-    inputs: [
-      { name: 'decision', type: 'object', description: 'Validated planner decision' },
-      { name: 'memories', type: 'array', optional: true, description: 'Historical inspiration' },
-      { name: 'observation', type: 'object', description: 'Correlated robot observation' },
-      { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle supplied by Robot Operator Input' },
+    "id": "robot_operator_environment_dispatch",
+    "name": "Robot Operator Environment Dispatch",
+    "category": "operator",
+    "inputs": [
+      {
+        "name": "decision",
+        "type": "object",
+        "description": "Validated boredom-planner decision"
+      },
+      {
+        "name": "memories",
+        "type": "array",
+        "optional": true,
+        "description": "Sampled historical inspiration delegated once to Environment Mode"
+      },
+      {
+        "name": "observation",
+        "type": "object",
+        "description": "Original correlated robot observation"
+      },
+      {
+        "name": "robotObserver",
+        "type": "object",
+        "optional": true,
+        "description": "Robot Operator cycle supplied by Robot Operator Input"
+      }
     ],
-    outputs: [
-      { name: 'queued', type: 'boolean', description: 'Whether Robot Autonomy Executor work was admitted' },
-      { name: 'taskId', type: 'string', description: 'Work Coordinator task ID' },
-      { name: 'status', type: 'string', description: 'Dispatch result' },
-      { name: 'instruction', type: 'string', description: 'Delegated intention' },
-      { name: 'result', type: 'object', description: 'Inspectable dispatch metadata' },
+    "outputs": [
+      {
+        "name": "queued",
+        "type": "boolean",
+        "description": "Whether one Environment Mode execution was admitted"
+      },
+      {
+        "name": "taskId",
+        "type": "string",
+        "description": "Work Coordinator task ID"
+      },
+      {
+        "name": "status",
+        "type": "string",
+        "description": "Dispatch result"
+      },
+      {
+        "name": "instruction",
+        "type": "string",
+        "description": "Delegated high-level intention"
+      },
+      {
+        "name": "result",
+        "type": "object",
+        "description": "Inspectable dispatch metadata"
+      },
+      {
+        "name": "invocation",
+        "type": "object",
+        "description": "Selected child workflow and its unchanged intention/evidence inputs"
+      }
     ],
-    properties: {
-      graph: 'boredom-autonomy',
+    "properties": {
+      "graph": "boredom-autonomy"
     },
-    propertySchemas: {
-      graph: { type: 'text', default: 'boredom-autonomy', label: 'Autonomy Execution Graph' },
+    "propertySchemas": {
+      "graph": {
+        "type": "text",
+        "default": "boredom-autonomy",
+        "label": "Autonomy Execution Graph",
+        "description": "Graph that decides how to execute the delegated high-level intention."
+      }
     },
-    description: 'Starts one correlated execution cycle from a validated boredom-planner instruction.',
+    "description": "Prepares the planner-authored intention and evidence for Run Child Workflow. It does not enqueue a separate execution."
   }),
 
   // ROUTING NODES
@@ -1069,11 +2722,14 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
       { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
+      { name: 'activeExecutions', type: 'array', optional: true, description: 'Existing objectives the user may steer, cancel, or leave separate from this turn' },
       { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
       { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
     ],
     outputs: [
       { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
+      { name: 'executionSelection', type: 'object', description: 'Existing execution selected for steering or cancellation' },
+      { name: 'continueHere', type: 'boolean', description: 'Whether this invocation interprets the input instead of handing it to an existing execution' },
       { name: 'needsResponse', type: 'boolean', description: 'Whether this turn needs a conversational response' },
       { name: 'needsConversationHistory', type: 'boolean', description: 'Whether downstream reasoning needs recent dialogue context' },
       { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },

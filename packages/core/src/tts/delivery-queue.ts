@@ -37,6 +37,7 @@ export interface TTSQueue {
   interruptionRevision?: number;
   lastInterruption?: TTSQueueInterruption;
   lastUpdated: string;
+  admissions?: Record<string, TTSQueueItem>;
 }
 
 export type TTSInterruptionReason =
@@ -140,12 +141,19 @@ export class TTSDeliveryQueueStore {
     mode: 'conversation' | 'inner',
     source?: string,
     expectedGeneration?: number,
+    identity?: { id: string; createdAt: number },
   ): TTSQueueItem | null {
     if (!text?.trim()) return null;
 
     try {
       const { queue, activePath } = this.loadActiveQueue();
       const now = this.now();
+      if (identity && now - identity.createdAt > TTS_DELIVERY_MAX_AGE_MS) return null;
+      const admitted = identity && queue.admissions?.[identity.id];
+      if (admitted) {
+        if (admitted.text !== text.trim() || admitted.mode !== mode || admitted.source !== source) throw new Error('TTS delivery ID conflicts with its admitted content');
+        return admitted;
+      }
       const generation = queue.generation ?? 0;
       if (expectedGeneration !== undefined && expectedGeneration !== generation) {
         console.log(
@@ -159,21 +167,23 @@ export class TTSDeliveryQueueStore {
         return null;
       }
       const item: TTSQueueItem = {
-        id: `tts-${now}-${Math.random().toString(36).slice(2, 8)}`,
+        id: identity?.id ?? `tts-${now}-${Math.random().toString(36).slice(2, 8)}`,
         text: text.trim(),
         mode,
         source,
-        timestamp: now,
+        timestamp: identity?.createdAt ?? now,
         generation,
         deliveryAttempts: 0,
       };
 
       queue.items.push(item);
+      if (identity) queue.admissions = { ...queue.admissions, [identity.id]: item };
       this.saveQueue(activePath, queue, 'queue write');
       this.notify();
       console.log(`[TTS Queue] Queued item ${item.id} (${mode})`);
       return item;
     } catch (error) {
+      if (identity) throw error;
       console.error('[TTS Queue] Failed to queue item:', error);
       return null;
     }
@@ -369,6 +379,8 @@ export class TTSDeliveryQueueStore {
       if (!raw) return this.defaultQueue();
       const parsed = JSON.parse(raw) as Partial<TTSQueue>;
       const queue = this.defaultQueue();
+      queue.admissions = Object.fromEntries(Object.entries(parsed.admissions ?? {}).filter(([, item]) =>
+        isQueueItem(item) && this.now() - item.timestamp <= TTS_DELIVERY_MAX_AGE_MS));
       queue.items = Array.isArray(parsed.items) ? parsed.items.filter(isQueueItem) : [];
       queue.failed = Array.isArray(parsed.failed)
         ? parsed.failed.filter(isQueueItem) as FailedTTSQueueItem[]
@@ -495,9 +507,10 @@ export function queueTTS(
   mode: 'conversation' | 'inner',
   source?: string,
   expectedGeneration?: number,
+  identity?: { id: string; createdAt: number },
 ): TTSQueueItem | null {
   if (!username || username === 'anonymous') return null;
-  return createTTSDeliveryQueueStore(username).enqueue(text, mode, source, expectedGeneration);
+  return createTTSDeliveryQueueStore(username).enqueue(text, mode, source, expectedGeneration, identity);
 }
 
 export function interruptTTSQueue(

@@ -31,6 +31,7 @@ function formatSSE(event: string, data: any): string {
  * - node_skip: { nodeId, reason }
  * - node_error: { nodeId, error, durationMs }
  * - graph_complete: { response, duration }
+ * - graph_waiting: { response, status, executionId, durationMs }
  * - graph_error: { error }
  */
 export async function handleExecuteGraphStream(
@@ -98,10 +99,7 @@ export async function handleExecuteGraphStream(
           break;
 
         case 'graph_error':
-          onEvent(formatSSE('graph_error', {
-            error: event.data?.error,
-            timestamp: event.timestamp,
-          }));
+          // The returned state or thrown runtime error is reported once below.
           break;
       }
     };
@@ -115,6 +113,9 @@ export async function handleExecuteGraphStream(
       environment: 'server',
       ttsGeneration,
     }, eventHandler });
+    if (graphState.status === 'failed' || graphState.error) {
+      throw graphState.error ?? new Error('Graph execution failed');
+    }
 
     const durationMs = Date.now() - startTime;
 
@@ -126,16 +127,18 @@ export async function handleExecuteGraphStream(
     const nodeOutputs = collectNodeOutputs(graphState);
     const skippedNodes = listSkippedNodes(graphState);
 
-    // Send final completion event with response and node outputs
-    onEvent(formatSSE('graph_complete', {
+    // End this stream without labelling a persisted wait as task completion.
+    onEvent(formatSSE(graphState.status === 'waiting' ? 'graph_waiting' : 'graph_complete', {
       response,
       durationMs,
       status: graphState.status,
+      executionId: graphState.executionId,
       nodeOutputs,
       skippedNodes,
     }));
 
-    console.log('[execute-graph-stream] Streaming execution completed:', {
+    console.log('[execute-graph-stream] Streaming execution returned:', {
+      status: graphState.status,
       durationMs,
       hasResponse: !!response,
     });

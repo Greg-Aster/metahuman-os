@@ -30,6 +30,7 @@ export interface RouterMessage {
 }
 
 export interface RouterCallOptions {
+  signal?: AbortSignal;
   role: ModelRole;
   messages: RouterMessage[];
   cognitiveMode?: string;
@@ -133,6 +134,7 @@ function getContextualCognitiveMode(explicitMode: string | undefined): string | 
  * Call an LLM using role-based routing
  */
 export async function callLLM(callOptions: RouterCallOptions): Promise<RouterResponse> {
+  callOptions.signal?.throwIfAborted();
   const startTime = Date.now();
 
   const effectiveCognitiveMode = getContextualCognitiveMode(callOptions.cognitiveMode);
@@ -199,6 +201,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
       messages,
       {
         model: resolved.model,
+        signal: callOptions.signal,
         temperature: mergedOptions.temperature,
         maxTokens: mergedOptions.maxTokens || mergedOptions.num_predict,
         topP: mergedOptions.topP || mergedOptions.top_p,

@@ -4,7 +4,7 @@
  * the Environment Bridge.
  */
 
-import { getBufferPathForUser, writeBufferEntry } from '../../conversation-buffer.js';
+import { getBufferPathForUser, admitBufferEntry } from '../../conversation-buffer.js';
 import { defineNode, type NodeExecutor } from '../types.js';
 
 export type RobotBridgeRecord = {
@@ -99,29 +99,19 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     };
   }
 
-  try {
-    const persisted = await writeBufferEntry(
+    await admitBufferEntry(
       username,
       'robot',
       createRobotBufferMessage(bridgeRecord),
+      context.graphExecution,
     );
 
     return {
-      persisted,
+      persisted: true,
       skipped: false,
       status,
       bufferPath: getBufferPathForUser(username, 'robot'),
     };
-  } catch (error) {
-    console.error('[RobotBuffer] Error:', error);
-    return {
-      persisted: false,
-      skipped: false,
-      status,
-      error: (error as Error).message,
-      bufferPath: getBufferPathForUser(username, 'robot'),
-    };
-  }
 };
 
 export const RobotBufferNode = defineNode({

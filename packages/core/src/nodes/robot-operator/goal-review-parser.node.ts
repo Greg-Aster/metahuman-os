@@ -77,9 +77,10 @@ export const robotGoalReviewParserNode = defineNode({
   category: 'operator',
   inputs: [
     { name: 'response', type: 'any', description: 'Strict JSON from the Robot Goal Review LLM' },
-    { name: 'robotStatus', type: 'object', description: 'Canonical Robot Status whose current objective is being reviewed' },
+    { name: 'execution', type: 'object', description: 'Checkpointed execution whose objective is being reviewed' },
   ],
   outputs: [
+    { name: 'awaitContinuation', type: 'boolean', description: 'The LLM chose to wait for a new event or user input' },
     { name: 'executorDecision', type: 'object', description: 'High-level next instruction only when the LLM chose to continue through Robot Autonomy Executor' },
     { name: 'taskDecision', type: 'object', description: 'Validated LLM assessment persisted to Robot Status' },
     { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
@@ -97,14 +98,14 @@ export const robotGoalReviewParserNode = defineNode({
 
     const outcome = cleanText(parsed.outcome, 40)
     const reason = cleanText(parsed.reason, 500)
-    const objective = currentObjective(inputs.robotStatus)
+    const objective = currentObjective(inputs.execution)
     const requiredCompletionBasis = cleanText(parsed.requiredCompletionBasis, 80)
     const observationSummary = cleanText(parsed.observationSummary, 500)
     const completionEvidence = cleanText(parsed.completionEvidence, 1_000)
     const nextInstruction = cleanText(parsed.nextInstruction, 1_000)
     if (!OUTCOMES.includes(outcome as typeof OUTCOMES[number])) return invalid('Robot goal review outcome is not supported.')
     const objectiveComplete = outcome === 'complete'
-    if (!objective) return invalid('Robot goal review requires one current Robot Status objective.')
+    if (!objective) return invalid('Robot goal review requires one current execution objective.')
     if (!reason || !observationSummary) return invalid('Robot goal review requires a reason and observation summary.')
     if (!COMPLETION_BASES.includes(requiredCompletionBasis as typeof COMPLETION_BASES[number])) {
       return invalid('Robot goal review completion basis is not supported.')
@@ -119,6 +120,7 @@ export const robotGoalReviewParserNode = defineNode({
       ? { observed: observationSummary, instruction: nextInstruction, reason }
       : null
     return {
+      awaitContinuation: outcome === 'wait' || outcome === 'request_user',
       executorDecision,
       taskDecision: {
         outcome,

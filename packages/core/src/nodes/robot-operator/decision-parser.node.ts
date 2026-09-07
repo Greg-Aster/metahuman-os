@@ -62,14 +62,7 @@ export const robotOperatorDecisionParserNode = defineNode({
         ? inputs.response.content
         : '';
     const parsed = strictJsonObject(raw);
-    const invalid = (error: string) => ({
-      decision: null,
-      observed: '',
-      instruction: '',
-      reason: '',
-      valid: false,
-      error,
-    });
+    const invalid = (error: string): never => { throw new Error(error); };
     if (!isRecord(parsed)) return invalid('Robot Operator response was not a JSON object.');
     const unknown = Object.keys(parsed).filter(field => !DECISION_FIELDS.has(field));
     if (unknown.length > 0 || Object.keys(parsed).length !== DECISION_FIELDS.size) {

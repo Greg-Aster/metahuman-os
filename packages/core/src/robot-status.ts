@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { getProfilePaths } from './paths.js'
+import { openExecutionStore } from './durable-execution/storage.js'
 
 const ROBOT_STATUS_FILE = 'robot-status.json'
 const ROBOT_STATUS_HISTORY_LIMIT = 8
@@ -95,6 +96,9 @@ export interface RobotStatusTaskFrame {
 }
 
 export interface RobotStatusTask {
+  objectiveId?: string
+  executionId?: string
+  completionCriteria?: string
   objective: string
   instruction: string
   source: string
@@ -116,6 +120,7 @@ export interface RobotStatusHistoryEntry {
 }
 
 export interface RobotStatusSnapshot {
+  projection?: { executionId: string; effectId: string }
   version: 1
   updatedAt: string
   sourceUpdatedAt: {
@@ -136,6 +141,8 @@ export interface RobotStatusSnapshot {
 }
 
 export interface RobotStatusSourceFacts {
+  generatedAt?: string
+  projection?: { executionId: string; effectId: string }
   sourceUpdatedAt: RobotStatusSnapshot['sourceUpdatedAt']
   body: RobotStatusBody | null
   lastAction: RobotStatusAction | null
@@ -226,6 +233,22 @@ function normalizeBody(value: unknown): RobotStatusBody | null {
   }
 }
 
+function mergeBody(previous: RobotStatusBody | null, value: unknown): RobotStatusBody | null {
+  const current = normalizeBody(value)
+  if (!previous) return current
+  if (!current) return previous
+  const observation = previous.observationAt > current.observationAt ? previous : current
+  if (previous.sessionId !== current.sessionId || previous.environmentId !== current.environmentId) return observation
+  const telemetry = previous.telemetryAt > current.telemetryAt ? previous : current
+  return {
+    ...observation,
+    telemetryAt: telemetry.telemetryAt,
+    telemetry: telemetry.telemetry,
+    battery: previous.battery.observedAt > current.battery.observedAt ? previous.battery : current.battery,
+    motion: previous.motion.observedAt > current.motion.observedAt ? previous.motion : current.motion,
+  }
+}
+
 function normalizeAction(value: unknown): RobotStatusAction | null {
   if (!isRecord(value)) return null
   const actionId = cleanText(value.actionId, 200)
@@ -310,6 +333,9 @@ function normalizeTask(value: unknown): RobotStatusTask | null {
   const objective = cleanText(value.objective, 1_000)
   if (!decision || !objective) return null
   return {
+    ...(typeof value.objectiveId === 'string' ? { objectiveId: value.objectiveId } : {}),
+    ...(typeof value.executionId === 'string' ? { executionId: value.executionId } : {}),
+    ...(typeof value.completionCriteria === 'string' ? { completionCriteria: value.completionCriteria } : {}),
     objective,
     instruction: cleanText(value.instruction, 4_000),
     source: cleanText(value.source, 80),
@@ -341,7 +367,7 @@ function normalizeDesires(value: unknown): RobotStatusDesireSummary[] {
   })
 }
 
-export function parseRobotStatusSituation(value: unknown): RobotStatusSituation {
+export function parseRobotStatusSituation(value: unknown, allowEmpty = false): RobotStatusSituation {
   if (!isRecord(value)) throw new Error('Robot Status model output must be a JSON object')
   const expected = new Set([
     'situationalSummary',
@@ -356,8 +382,8 @@ export function parseRobotStatusSituation(value: unknown): RobotStatusSituation 
   }
   const situationalSummary = cleanText(value.situationalSummary, 1_000)
   const environmentDescription = cleanText(value.environmentDescription, 1_000)
-  if (!situationalSummary) throw new Error('Robot Status requires a situationalSummary')
-  if (!environmentDescription) throw new Error('Robot Status requires an environmentDescription')
+  if (!allowEmpty && !situationalSummary) throw new Error('Robot Status requires a situationalSummary')
+  if (!allowEmpty && !environmentDescription) throw new Error('Robot Status requires an environmentDescription')
   if (!Array.isArray(value.uncertainties)) throw new Error('Robot Status uncertainties must be an array')
   const uncertainties = value.uncertainties
     .map(item => cleanText(item, 300))
@@ -377,17 +403,25 @@ export function robotStatusPath(username: string): string {
   return path.join(getProfilePaths(username).state, ROBOT_STATUS_FILE)
 }
 
-export function loadRobotStatus(username: string): RobotStatusSnapshot | null {
+function readRobotStatusSnapshot(username: string): RobotStatusSnapshot | null {
   const filePath = robotStatusPath(username)
   if (!fs.existsSync(filePath)) return null
   const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as RobotStatusSnapshot
   if (parsed.version !== 1 || !parsed.updatedAt || !parsed.situation) {
     throw new Error(`Invalid Robot Status snapshot for ${username}`)
   }
-  return {
-    ...parsed,
-    task: normalizeTask(parsed.task),
-  }
+  return parsed
+}
+
+export function loadRobotStatus(username: string): RobotStatusSnapshot | null {
+  const parsed = readRobotStatusSnapshot(username)
+  if (!parsed) return null
+  const store = openExecutionStore(username)
+  try {
+    const task = normalizeTask(store.projectedTask(username))
+    const ongoing = task && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete'].includes(task.decision.outcome)
+    return { ...parsed, task, situation: { ...parsed.situation, currentGoal: ongoing ? task.objective : '' } }
+  } finally { store.close() }
 }
 
 function previousHistoryEntry(snapshot: RobotStatusSnapshot): RobotStatusHistoryEntry {
@@ -400,39 +434,52 @@ function previousHistoryEntry(snapshot: RobotStatusSnapshot): RobotStatusHistory
   }
 }
 
-export function saveRobotStatus(
-  username: string,
+export function buildRobotStatusProjection(
+  previous: RobotStatusSnapshot | null,
+  currentTask: RobotStatusTask | null,
   situation: RobotStatusSituation,
   sources: RobotStatusSourceFacts,
 ): RobotStatusSnapshot {
-  const previous = loadRobotStatus(username)
-  const now = new Date().toISOString()
+  const task = normalizeTask(currentTask)
+  const ongoing = task && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete'].includes(task.decision.outcome)
+  const now = sources.generatedAt ?? new Date().toISOString()
   const history = previous
     ? [...previous.history, previousHistoryEntry(previous)].slice(-ROBOT_STATUS_HISTORY_LIMIT)
     : []
+  const body = mergeBody(previous?.body ?? null, sources.body)
+  const retainLastAction = previous?.lastAction && previous.sourceUpdatedAt.robotHistory > sources.sourceUpdatedAt.robotHistory
   const snapshot: RobotStatusSnapshot = {
+    projection: sources.projection ?? previous?.projection,
     version: 1,
     updatedAt: now,
     sourceUpdatedAt: {
-      environment: cleanText(sources.sourceUpdatedAt.environment, 80),
-      telemetry: cleanText(sources.sourceUpdatedAt.telemetry, 80),
+      environment: body?.observationAt ?? cleanText(sources.sourceUpdatedAt.environment, 80),
+      telemetry: body?.telemetryAt ?? cleanText(sources.sourceUpdatedAt.telemetry, 80),
       conversation: cleanText(sources.sourceUpdatedAt.conversation, 80),
-      robotHistory: cleanText(sources.sourceUpdatedAt.robotHistory, 80),
+      robotHistory: retainLastAction ? previous.sourceUpdatedAt.robotHistory : cleanText(sources.sourceUpdatedAt.robotHistory, 80),
       agency: cleanText(sources.sourceUpdatedAt.agency, 80),
     },
-    body: normalizeBody(sources.body),
-    lastAction: normalizeAction(sources.lastAction),
-    task: sources.task === undefined
-      ? previous?.task ?? null
-      : normalizeTask(sources.task),
+    body,
+    lastAction: retainLastAction ? previous.lastAction : normalizeAction(sources.lastAction),
+    task,
     agency: { activeDesires: normalizeDesires(sources.activeDesires) },
-    situation: parseRobotStatusSituation(situation),
+    situation: parseRobotStatusSituation({ ...situation, currentGoal: ongoing ? task.objective : '' }, true),
     history,
   }
+  return snapshot
+}
+
+export function saveRobotStatus(username: string, situation: RobotStatusSituation, sources: RobotStatusSourceFacts): RobotStatusSnapshot {
+  const store = openExecutionStore(username)
+  try { return store.db.transaction(() => {
+  const previous = readRobotStatusSnapshot(username)
+  if (sources.projection && previous?.projection?.effectId === sources.projection.effectId) return previous
+  const snapshot = buildRobotStatusProjection(previous, store.projectedTask(username), situation, sources)
   const filePath = robotStatusPath(username)
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
   const temporary = `${filePath}.${process.pid}.tmp`
   fs.writeFileSync(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8')
   fs.renameSync(temporary, filePath)
   return snapshot
+  }).immediate() } finally { store.close() }
 }

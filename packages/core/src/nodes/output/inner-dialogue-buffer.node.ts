@@ -8,8 +8,7 @@
 
 import {
   getBufferPathForUser,
-  loadBufferForUser,
-  writeBufferEntry,
+  admitBufferEntry,
   type ConversationMessage,
 } from '../../conversation-buffer.js';
 import { defineNode, type NodeExecutor } from '../types.js';
@@ -106,11 +105,10 @@ const admitSingle: NodeExecutor = async (inputs, context, properties) => {
     : typeof metadataInput.idempotencyKey === 'string'
       ? metadataInput.idempotencyKey.trim()
       : '';
-  const executionIdempotencyKey = typeof context.idempotencyKey === 'string'
-    ? context.idempotencyKey.trim()
-    : '';
+  const executionIdempotencyKey = context.graphExecution?.occurrenceId
+    || (typeof context.idempotencyKey === 'string' ? context.idempotencyKey.trim() : '');
   const idempotencyKey = explicitIdempotencyKey
-    || (executionIdempotencyKey ? `${executionIdempotencyKey}:${role}` : '');
+    || (executionIdempotencyKey ? `${executionIdempotencyKey}:${role}:${inputs.entryIndex ?? 0}` : '');
   const meta = {
     type: role,
     source: role === 'thought' ? 'user' : 'agent',
@@ -124,39 +122,13 @@ const admitSingle: NodeExecutor = async (inputs, context, properties) => {
 
   try {
     const timestamp = resolveTimestamp(explicitRecord, context);
-    const persisted = await writeBufferEntry(username, 'inner', { role, content: text, meta, timestamp });
-    if (!persisted) {
-      return {
-        saved: false,
-        persisted: false,
-        savedCount: 0,
-        roleCounts: {},
-        results: [],
-        entries: [],
-        text: '',
-        reason: 'Inner-dialogue buffer rejected the entry',
-        bufferPath: getBufferPathForUser(username, 'inner'),
-      };
-    }
-    const durableEntry = idempotencyKey
-      ? loadBufferForUser(username, 'inner').messages.find(
-        message => message.meta?.idempotencyKey === idempotencyKey,
-      )
-      : undefined;
-    if (idempotencyKey && !durableEntry) {
-      throw new Error('Inner-dialogue buffer did not retain the admitted idempotent entry');
-    }
-    const admittedEntry: ConversationMessage = durableEntry || {
-      role,
-      content: text,
-      meta,
-      timestamp,
-    };
+    const admittedEntry = await admitBufferEntry(username, 'inner', { role, content: text, meta, timestamp },
+      context.graphExecution, inputs.entryIndex ?? 0);
     const durableText = admittedEntry.content;
 
     const result = {
-      saved: persisted,
-      persisted,
+      saved: true,
+      persisted: true,
       text: durableText,
       role,
       entry: admittedEntry,
@@ -201,6 +173,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       ...inputs,
       entries: undefined,
       entry,
+      entryIndex: results.length,
       text: undefined,
       thinking: undefined,
     }, context, properties);

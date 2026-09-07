@@ -4,6 +4,7 @@ import svelte from '@astrojs/svelte';
 import node from '@astrojs/node';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sourceExecutableHash } from '@metahuman/core/executable-version';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
@@ -58,6 +59,7 @@ export default defineConfig({
   },
   output: 'server',
   vite: {
+    define: { __METAHUMAN_EXECUTABLE_HASH__: JSON.stringify(sourceExecutableHash(repoRoot)) },
     plugins: [externalizeMetahumanCoreForClient()],
     logLevel: 'warn', // Show warnings and errors, allow console.log from API handlers
     clearScreen: false, // Don't clear terminal on restart

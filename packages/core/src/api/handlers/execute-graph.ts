@@ -57,6 +57,9 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
       userMessage,
       environment: 'server', // Force server-side execution
     } });
+    if (graphState.status === 'failed' || graphState.error) {
+      throw graphState.error ?? new Error('Graph execution failed');
+    }
 
     const durationMs = Date.now() - startTime;
 
@@ -71,11 +74,11 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
     const executedNodes = listExecutedNodes(graphState);
     const skippedNodes = listSkippedNodes(graphState);
 
-    // Audit successful completion
+    // A successful invocation can park a durable execution without completing it.
     await audit({
       level: 'info',
       category: 'system',
-      event: 'graph_execution_complete',
+      event: graphState.status === 'waiting' ? 'graph_execution_waiting' : 'graph_execution_complete',
       details: {
         sessionId,
         durationMs,
@@ -86,7 +89,8 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
       },
     });
 
-    console.log('[execute-graph] Execution completed:', {
+    console.log('[execute-graph] Execution returned:', {
+      status: graphState.status,
       durationMs,
       executedNodes: executedNodes.length,
       skippedNodes: skippedNodes.length,
@@ -98,6 +102,7 @@ export async function handleExecuteGraph(req: UnifiedRequest): Promise<UnifiedRe
       success: true,
       result: {
         status: graphState.status,
+        executionId: graphState.executionId,
         response,
         nodeOutputs,
         executedNodes,

@@ -5,11 +5,13 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { canonicalJSON } from '../durable-execution/store.js';
 import {
   DEFAULT_HANDLERS,
   DEFAULT_PRIORITIES,
   PRIORITY_VALUES,
   TASK_LANE_MAP,
+  WorkCommitUncertainError,
   type LaneConfig,
   type Priority,
   type QueueConfig,
@@ -26,6 +28,7 @@ import {
   type WorkError,
   type WorkResource,
   type WorkState,
+  type BodyLease,
 } from './types.js';
 
 const RESOURCE_LANES: ResourceLaneId[] = ['local-llm', 'vector-index', 'remote-llm'];
@@ -49,6 +52,27 @@ const LEGACY_DESIRE_HANDLERS = new Set([
   'agent.desire-executor',
   'agent.desire-outcome-reviewer',
 ]);
+
+function immutableJSON<T>(value: T): T {
+  const freeze = (entry: any): any => {
+    if (entry && typeof entry === 'object') {
+      Object.values(entry).forEach(freeze);
+      Object.freeze(entry);
+    }
+    return entry;
+  };
+  return freeze(JSON.parse(JSON.stringify(value)));
+}
+
+function protectAdmission(task: QueuedTask): QueuedTask {
+  for (const key of ['input', 'metadata', 'durable', 'admissionIdentity'] as const) {
+    Object.defineProperty(task, key, {
+      value: task[key] === undefined ? undefined : immutableJSON(task[key]),
+      enumerable: true, writable: false, configurable: false,
+    });
+  }
+  return task;
+}
 
 export function isDesireAgentAdmission(input: Pick<TaskInput, 'type' | 'handler' | 'input' | 'metadata'>): boolean {
   const handler = input.handler || DEFAULT_HANDLERS[input.type];
@@ -90,6 +114,7 @@ export interface QueueManagerOptions extends Partial<QueueConfig> {
 
 export class UnifiedQueueManager {
   private readonly tasks = new Map<string, QueuedTask>();
+  private readonly bodyOwners = new Map<string, BodyLease>();
   private readonly terminalOrder: string[] = [];
   private readonly inFlightRemote = new Map<string, RemoteTaskHandle>();
   private readonly listeners = new Set<QueueEventListener>();
@@ -100,11 +125,16 @@ export class UnifiedQueueManager {
   private historyLimit: number;
   private outputReplayLimit: number;
   private onQueueChange?: () => void;
+  private committed!: ReturnType<UnifiedQueueManager['snapshot']>;
+  private committedIdentity = '';
+  private unconfirmedCommit = false;
 
   constructor(options: QueueManagerOptions = {}) {
     this.historyLimit = Math.max(1, options.historyLimit ?? 200);
     this.outputReplayLimit = Math.max(1, options.outputReplayLimit ?? 1_000);
     this.initializeResources();
+    this.committed = this.snapshot();
+    this.committedIdentity = canonicalJSON(this.committed);
     if (options.lanes || options.enabled !== undefined) {
       this.configure(options as QueueConfig);
     }
@@ -149,6 +179,8 @@ export class UnifiedQueueManager {
   }
 
   private emit(event: Omit<QueueEvent, 'timestamp'>): void {
+    // Lifecycle publication is an acknowledgement of a committed mutation.
+    this.notifyChange();
     const fullEvent: QueueEvent = { ...event, timestamp: new Date().toISOString() };
     for (const listener of this.listeners) {
       try {
@@ -164,14 +196,31 @@ export class UnifiedQueueManager {
     return TASK_LANE_MAP[type];
   }
 
-  private idempotencyScope(input: TaskInput): string | undefined {
+  private idempotencyScope(input: Pick<TaskInput, 'username' | 'idempotencyKey' | 'durable'>): string | undefined {
+    if (input.durable) return `${input.username}:execution:${input.durable.executionId}:${input.durable.effectId}`;
     return input.idempotencyKey ? `${input.username}:${input.idempotencyKey}` : undefined;
   }
 
   enqueue(input: TaskInput): QueuedTask {
+    return this.admit(input);
+  }
+
+  /** Persist non-dispatch at the same identity owner used by ordinary admission. */
+  cancelAdmission(input: TaskInput, reason = 'Cancelled'): QueuedTask {
+    if (!input.durable) throw new Error('Cancelled admission requires a durable execution reference');
+    return this.admit(input, reason);
+  }
+
+  private admit(input: TaskInput, cancellationReason?: string): QueuedTask {
+    if (this.unconfirmedCommit) this.notifyChange();
+    input = immutableJSON(input);
     if (!input.username?.trim()) throw new Error('Work item username is required');
     if (!input.type) throw new Error('Work item type is required');
     const handler = input.handler || DEFAULT_HANDLERS[input.type];
+    const admissionIdentity = input.durable ? canonicalJSON({
+      ...input, handler, resource: input.resource || TASK_LANE_MAP[input.type],
+      priority: input.priority || DEFAULT_PRIORITIES[input.type], source: input.source || 'system',
+    }) : undefined;
     if (!isDesireAgentAdmission(input)) {
       if (handler === DESIRE_AGENT_HANDLER) {
         throw new Error('Desire generation must be admitted as the public Desire Agent');
@@ -180,10 +229,27 @@ export class UnifiedQueueManager {
     }
 
     const scope = this.idempotencyScope(input);
+    if (input.durable && (!input.durable.executionId || !input.durable.effectId
+      || !['resume', 'reconcile'].includes(input.durable.recovery))) {
+      throw new Error('Durable work requires an execution, effect, and recovery contract');
+    }
     if (scope) {
       const existingId = this.idempotency.get(scope);
       const existing = existingId ? this.tasks.get(existingId) : undefined;
-      if (existing && !TERMINAL_STATES.has(existing.state)) return existing;
+      if (existing && (input.durable || !TERMINAL_STATES.has(existing.state))) {
+        if (input.durable && existing.admissionIdentity !== admissionIdentity) {
+          throw new Error(`Durable admission conflict: ${input.durable.effectId}`);
+        }
+        if (cancellationReason !== undefined && existing.state === 'queued' && !existing.startedAt && !existing.bodyLease) {
+          const event = this.applyCancellation(existing, cancellationReason);
+          this.notifyChange();
+          if (event) this.emit(event);
+          return existing;
+        }
+        // A previous attempt may have failed while persisting admission.
+        this.notifyChange();
+        return existing;
+      }
       this.idempotency.delete(scope);
     }
 
@@ -205,18 +271,21 @@ export class UnifiedQueueManager {
       id: `task-${Date.now()}-${randomUUID().slice(0, 8)}`,
       type: input.type,
       handler,
-      state: 'queued',
+      state: cancellationReason !== undefined ? 'cancelled' : 'queued',
       priority: input.priority || DEFAULT_PRIORITIES[input.type],
       source: input.source || 'system',
       username: input.username,
       cognitiveMode: input.cognitiveMode,
       resource,
       createdAt,
+      ...(cancellationReason !== undefined ? { cancellationReason, completedAt: createdAt } : {}),
       notBefore: input.notBefore,
       deadline: input.deadline,
       parentTaskId: input.parentTaskId,
       correlationId: input.correlationId,
       idempotencyKey: input.idempotencyKey,
+      durable: input.durable,
+      admissionIdentity,
       attempt: 0,
       maxAttempts,
       input: input.input,
@@ -224,15 +293,30 @@ export class UnifiedQueueManager {
       metadata: input.metadata,
     };
 
+    protectAdmission(task);
     this.tasks.set(task.id, task);
     if (scope) this.idempotency.set(scope, task.id);
+    const cancellationEvents: Omit<QueueEvent, 'timestamp'>[] = [];
+    if (cancellationReason !== undefined) this.addTerminal(task);
+    if (cancellationReason === undefined && task.type === 'environment_command' && task.input.type === 'stop') {
+      for (const prior of [...this.tasks.values()]) {
+        if (prior.type === 'environment_command' && prior.input.sessionId === task.input.sessionId
+          && prior.input.type !== 'stop' && ['queued', 'waiting'].includes(prior.state)) {
+          const event = this.applyCancellation(prior, 'Superseded by semantic stop');
+          if (event) cancellationEvents.push(event);
+        }
+      }
+    }
+    // Stop admission and supersession are one ledger transition. Publishing a
+    // partial cancellation set could let old queued motion run after the stop.
+    this.notifyChange();
+    for (const event of cancellationEvents) this.emit(event);
     this.emit({
-      type: 'task_enqueued',
+      type: cancellationReason !== undefined ? 'task_cancelled' : 'task_enqueued',
       taskId: task.id,
       lane: resourceLane,
       details: { type: task.type, handler: task.handler, priority: task.priority, source: task.source },
     });
-    this.notifyChange();
     return task;
   }
 
@@ -271,6 +355,12 @@ export class UnifiedQueueManager {
   private isResourceAvailable(task: QueuedTask, now = Date.now()): boolean {
     const resource = this.capacityFor(task);
     if (resource.currentRunning >= resource.config.maxConcurrent) return false;
+    if (task.type === 'environment_command' && task.input?.type !== 'stop') {
+      const bodyId = task.input?.sessionId;
+      if ([...this.tasks.values()].some(other => other.id !== task.id && !TERMINAL_STATES.has(other.state)
+        && (other.bodyLease?.bodyId === bodyId
+          || (other.type === 'environment_command' && other.input?.sessionId === bodyId && other.input?.type === 'stop')))) return false;
+    }
     if (resource.lastExecutionAt && resource.config.cooldownMs > 0) {
       return now - new Date(resource.lastExecutionAt).getTime() >= resource.config.cooldownMs;
     }
@@ -279,12 +369,13 @@ export class UnifiedQueueManager {
 
   private reconcileTimeBounds(now = Date.now()): void {
     for (const task of this.tasks.values()) {
-      if ((task.state !== 'queued' && task.state !== 'waiting') || !task.deadline) continue;
+      if ((task.state !== 'queued' && task.state !== 'waiting') || !task.deadline || task.bodyLease) continue;
       if (new Date(task.deadline).getTime() <= now) this.expire(task.id);
     }
   }
 
   getNextExecutable(canHandle?: (task: QueuedTask) => boolean): QueuedTask | null {
+    if (this.unconfirmedCommit) this.notifyChange();
     if (this.paused) return null;
     const now = Date.now();
     this.reconcileTimeBounds(now);
@@ -299,8 +390,9 @@ export class UnifiedQueueManager {
   }
 
   claim(taskId: string, leaseOwner = 'execution-engine'): QueuedTask | null {
+    if (this.unconfirmedCommit) this.notifyChange();
     const task = this.tasks.get(taskId);
-    if (!task || task.state !== 'queued' || this.paused) return null;
+    if (!task || task.state !== 'queued' || task.cancellationRequestedAt || this.paused) return null;
     const now = Date.now();
     if (task.notBefore && new Date(task.notBefore).getTime() > now) return null;
     if (task.deadline && new Date(task.deadline).getTime() <= now) {
@@ -312,15 +404,33 @@ export class UnifiedQueueManager {
     task.state = 'leased';
     task.leaseOwner = leaseOwner;
     task.startedAt = new Date(now).toISOString();
+    if (task.type === 'environment_command') {
+      const bodyId = String(task.input.sessionId);
+      const current = this.bodyOwners.get(bodyId);
+      task.bodyLease = Object.freeze({ bodyId, executionId: task.durable?.executionId ?? task.id,
+        generation: (current?.generation ?? 0) + 1 });
+      this.bodyOwners.set(bodyId, task.bodyLease);
+    }
     this.capacityFor(task).currentRunning += 1;
+    this.notifyChange();
     this.emit({
       type: 'task_started',
       taskId: task.id,
       lane: this.laneFor(task.resource, task.type),
       details: { type: task.type, handler: task.handler, attempt: task.attempt },
     });
-    this.notifyChange();
     return task;
+  }
+
+  assertBodyLease(taskId: string): BodyLease {
+    const task = this.tasks.get(taskId);
+    const lease = task?.bodyLease;
+    const current = lease && this.bodyOwners.get(lease.bodyId);
+    if (!lease || !current || lease.generation !== current.generation || lease.executionId !== current.executionId) {
+      throw new Error('Stale body ownership');
+    }
+    if (task?.cancellationRequestedAt || task?.state === 'cancelled') throw new Error('Body work was cancelled');
+    return lease;
   }
 
   private releaseCapacity(task: QueuedTask): void {
@@ -338,11 +448,11 @@ export class UnifiedQueueManager {
 
   private addTerminal(task: QueuedTask): void {
     if (!this.terminalOrder.includes(task.id)) this.terminalOrder.unshift(task.id);
-    const scope = task.idempotencyKey ? `${task.username}:${task.idempotencyKey}` : undefined;
-    if (scope && this.idempotency.get(scope) === task.id) this.idempotency.delete(scope);
+    const scope = this.idempotencyScope(task);
+    if (!task.durable && scope && this.idempotency.get(scope) === task.id) this.idempotency.delete(scope);
     while (this.terminalOrder.length > this.historyLimit) {
       const removedId = this.terminalOrder.pop();
-      if (removedId) this.tasks.delete(removedId);
+      if (removedId && !this.tasks.get(removedId)?.durable) this.tasks.delete(removedId);
     }
   }
 
@@ -352,8 +462,8 @@ export class UnifiedQueueManager {
     resultOrError?: Record<string, any> | string | WorkError,
   ): void {
     const task = this.tasks.get(taskId);
-    if (!task || task.state !== 'leased') return;
-    this.releaseCapacity(task);
+    if (!task || !['leased', 'waiting'].includes(task.state)) return;
+    if (task.state === 'leased') this.releaseCapacity(task);
     task.state = success ? 'completed' : 'failed';
     task.completedAt = new Date().toISOString();
     if (success && resultOrError && typeof resultOrError !== 'string' && !('message' in resultOrError && 'retryable' in resultOrError)) {
@@ -363,18 +473,35 @@ export class UnifiedQueueManager {
       task.error = this.normalizeError(resultOrError as string | WorkError | undefined, 'execution_failed');
     }
     this.addTerminal(task);
+    this.notifyChange();
     this.emit({
       type: success ? 'task_completed' : 'task_failed',
       taskId,
       lane: this.laneFor(task.resource, task.type),
       details: { type: task.type, handler: task.handler, error: task.error },
     });
-    this.notifyChange();
   }
 
   requeue(task: QueuedTask, error?: string | WorkError): boolean {
     const current = this.tasks.get(task.id);
     if (!current || current.state !== 'leased') return false;
+    const failure = this.normalizeError(error, 'execution_failed');
+    if (current.bodyLease || failure?.code === 'outcome_unknown') {
+      current.error = failure?.code === 'outcome_unknown' ? failure
+        : { code: 'outcome_unknown', message: 'Interrupted physical action requires a correlated result or reconciliation', retryable: false };
+      this.wait(current.id, 'outcome_unknown');
+      return false;
+    }
+    if (current.cancellationRequestedAt) {
+      this.acknowledgeCancellation(current.id);
+      return false;
+    }
+    if (current.durable?.recovery === 'reconcile') {
+      // A reported handler failure is known. Publish it to the parent; do not
+      // automatically replay a non-replayable effect or invent uncertainty.
+      this.complete(current.id, false, { ...(failure ?? { code: 'execution_failed', message: 'Handler failed' }), retryable: false });
+      return false;
+    }
     if (current.type === 'user_message'
       || current.type === 'desire_execute'
       || current.type === 'desire_review') current.maxAttempts = 1;
@@ -419,7 +546,7 @@ export class UnifiedQueueManager {
   releaseWaiting(now = Date.now()): number {
     let released = 0;
     for (const task of this.tasks.values()) {
-      if (task.state !== 'waiting' || !task.wakeAt || new Date(task.wakeAt).getTime() > now) continue;
+      if (task.bodyLease || task.state !== 'waiting' || !task.wakeAt || new Date(task.wakeAt).getTime() > now) continue;
       task.state = 'queued';
       task.waitingReason = undefined;
       task.wakeAt = undefined;
@@ -433,37 +560,43 @@ export class UnifiedQueueManager {
   cancel(taskId: string, reason = 'Cancelled'): QueuedTask | null {
     const task = this.tasks.get(taskId);
     if (!task || TERMINAL_STATES.has(task.state)) return null;
-    if (task.state === 'leased') {
+    const event = this.applyCancellation(task, reason);
+    if (event) {
+      this.notifyChange();
+      this.emit(event);
+    }
+    return task;
+  }
+
+  private applyCancellation(task: QueuedTask, reason: string): Omit<QueueEvent, 'timestamp'> | null {
+    if (task.state === 'leased' || (task.state === 'waiting' && task.bodyLease)) {
+      if (task.cancellationRequestedAt) return null;
       task.cancellationRequestedAt = new Date().toISOString();
       task.cancellationReason = reason;
-      this.emit({ type: 'task_cancel_requested', taskId, lane: this.laneFor(task.resource, task.type), details: { reason } });
-      this.notifyChange();
-      return task;
+      return { type: 'task_cancel_requested', taskId: task.id, lane: this.laneFor(task.resource, task.type), details: { reason } };
     }
     task.state = 'cancelled';
     task.cancellationReason = reason;
     task.completedAt = new Date().toISOString();
     this.addTerminal(task);
-    this.emit({ type: 'task_cancelled', taskId, lane: this.laneFor(task.resource, task.type), details: { reason } });
-    this.notifyChange();
-    return task;
+    return { type: 'task_cancelled', taskId: task.id, lane: this.laneFor(task.resource, task.type), details: { reason } };
   }
 
   acknowledgeCancellation(taskId: string): QueuedTask | null {
     const task = this.tasks.get(taskId);
-    if (!task || task.state !== 'leased' || !task.cancellationRequestedAt) return null;
-    this.releaseCapacity(task);
+    if (!task || !['leased', 'waiting'].includes(task.state) || !task.cancellationRequestedAt) return null;
+    if (task.state === 'leased') this.releaseCapacity(task);
     task.state = 'cancelled';
     task.completedAt = new Date().toISOString();
     this.addTerminal(task);
-    this.emit({ type: 'task_cancelled', taskId, lane: this.laneFor(task.resource, task.type), details: { reason: task.cancellationReason } });
     this.notifyChange();
+    this.emit({ type: 'task_cancelled', taskId, lane: this.laneFor(task.resource, task.type), details: { reason: task.cancellationReason } });
     return task;
   }
 
   expire(taskId: string): QueuedTask | null {
     const task = this.tasks.get(taskId);
-    if (!task || (task.state !== 'queued' && task.state !== 'waiting')) return null;
+    if (!task || task.bodyLease || (task.state !== 'queued' && task.state !== 'waiting')) return null;
     task.state = 'expired';
     task.completedAt = new Date().toISOString();
     task.error = { code: 'deadline_expired', message: 'Work deadline expired before execution', retryable: false };
@@ -498,6 +631,18 @@ export class UnifiedQueueManager {
 
   getTask(taskId: string): QueuedTask | null {
     return this.tasks.get(taskId) || null;
+  }
+
+  findTask(match: (task: QueuedTask) => boolean): QueuedTask | null {
+    return [...this.tasks.values()].find(match) || null;
+  }
+
+  attachExecution(taskId: string, executionId: string): void {
+    const task = this.tasks.get(taskId);
+    if (!task || task.state !== 'leased') throw new Error('Only leased work can enter a graph execution');
+    task.graphExecutions ??= [];
+    if (!task.graphExecutions.includes(executionId)) task.graphExecutions.push(executionId);
+    this.notifyChange();
   }
 
   getAllTasks(): QueuedTask[] {
@@ -605,6 +750,9 @@ export class UnifiedQueueManager {
     return {
       items,
       history: this.getHistory(),
+      durableReceipts: [...this.tasks.values()].filter(task => task.durable
+        && TERMINAL_STATES.has(task.state) && !this.terminalOrder.includes(task.id)),
+      bodyOwners: Object.fromEntries(this.bodyOwners),
       inFlightRemote: this.getInFlightRemote(),
       lastUpdated: new Date().toISOString(),
     };
@@ -612,6 +760,19 @@ export class UnifiedQueueManager {
 
   importState(state: QueueState): void {
     this.clear(false);
+    this.bodyOwners.clear();
+    for (const [bodyId, lease] of Object.entries(state.bodyOwners ?? {})) {
+      if (lease.bodyId !== bodyId || !lease.executionId || !Number.isSafeInteger(lease.generation) || lease.generation < 1) {
+        throw new Error('Invalid persisted body ownership');
+      }
+      this.bodyOwners.set(bodyId, Object.freeze({ ...lease }));
+    }
+    for (const rawTask of state.durableReceipts || []) {
+      if (!rawTask.durable || !TERMINAL_STATES.has(rawTask.state)) throw new Error('Invalid durable admission receipt');
+      const task = protectAdmission({ ...rawTask });
+      this.tasks.set(task.id, task);
+      this.idempotency.set(this.idempotencyScope(task)!, task.id);
+    }
     // Terminal history is canonical newest-first. Normalize timestamps to
     // repair state written by older loaders that reversed history, then replay
     // oldest-first because addTerminal() prepends each receipt.
@@ -623,18 +784,21 @@ export class UnifiedQueueManager {
       return normalizedRight - normalizedLeft;
     });
     for (const rawTask of restoredHistory.reverse()) {
-      const task: QueuedTask = { ...rawTask, input: { ...rawTask.input } };
+      const task = protectAdmission({ ...rawTask });
       this.tasks.set(task.id, task);
       this.addTerminal(task);
+      if (task.durable) this.idempotency.set(this.idempotencyScope(task)!, task.id);
     }
     for (const rawTask of state.items || []) {
-      const task: QueuedTask = { ...rawTask, input: { ...rawTask.input } };
+      const task = protectAdmission({ ...rawTask });
       if (task.type === 'user_message'
         || task.type === 'desire_execute'
         || task.type === 'desire_review') task.maxAttempts = 1;
       const staleTaskTimeoutMs = Math.max(0, this.config?.execution?.staleTaskTimeoutMs ?? 0);
       const createdAtMs = new Date(task.createdAt).getTime();
       const isStaleRecoveredWork = staleTaskTimeoutMs > 0
+        && !task.durable
+        && !task.bodyLease
         && task.source !== 'user'
         && !TERMINAL_STATES.has(task.state)
         && Number.isFinite(createdAtMs)
@@ -654,11 +818,24 @@ export class UnifiedQueueManager {
         continue;
       }
       if (task.state === 'leased') {
-        task.attempt += 1;
         task.startedAt = undefined;
         task.leaseOwner = undefined;
-        task.cancellationRequestedAt = undefined;
-        if (task.attempt >= task.maxAttempts) {
+        if (task.bodyLease) {
+          task.state = 'waiting';
+          task.waitingReason = 'outcome_unknown';
+          task.wakeAt = undefined;
+          task.error = { code: 'outcome_unknown', message: 'Interrupted physical action requires its adapter receipt', retryable: false };
+        } else if (task.cancellationRequestedAt) {
+          task.state = 'cancelled';
+          task.completedAt = new Date().toISOString();
+        } else if (task.durable?.recovery === 'reconcile') {
+          task.state = 'waiting';
+          task.waitingReason = 'outcome_unknown';
+          task.wakeAt = undefined;
+          task.error = { code: 'outcome_unknown', message: 'Interrupted effect requires reconciliation before another dispatch', retryable: false };
+        } else if (task.durable?.recovery === 'resume' || task.graphExecutions?.length) {
+          task.state = 'queued';
+        } else if (++task.attempt >= task.maxAttempts) {
           task.state = 'failed';
           task.completedAt = new Date().toISOString();
           task.error = { code: 'restart_attempts_exhausted', message: 'Interrupted work exhausted its attempt budget', retryable: false };
@@ -669,7 +846,8 @@ export class UnifiedQueueManager {
       }
       this.tasks.set(task.id, task);
       if (TERMINAL_STATES.has(task.state)) this.addTerminal(task);
-      else if (task.idempotencyKey) this.idempotency.set(`${task.username}:${task.idempotencyKey}`, task.id);
+      const scope = this.idempotencyScope(task);
+      if (scope && (task.durable || !TERMINAL_STATES.has(task.state))) this.idempotency.set(scope, task.id);
     }
     for (const handle of state.inFlightRemote || []) this.inFlightRemote.set(handle.taskId, handle);
     this.notifyChange();
@@ -684,12 +862,67 @@ export class UnifiedQueueManager {
     if (notify) this.notifyChange();
   }
 
+  /** Called only after the execution owner retires its terminal checkpoint. */
+  retireExecutionReceipts(executionId: string): void {
+    const tasks = [...this.tasks.values()].filter(task => task.durable?.executionId === executionId);
+    if (tasks.some(task => !TERMINAL_STATES.has(task.state))) throw new Error('Execution still owns unfinished work');
+    for (const task of tasks) {
+      this.idempotency.delete(this.idempotencyScope(task)!);
+      this.tasks.delete(task.id);
+      const index = this.terminalOrder.indexOf(task.id);
+      if (index >= 0) this.terminalOrder.splice(index, 1);
+    }
+    this.notifyChange();
+  }
+
   private notifyChange(): void {
+    const candidate = this.snapshot();
+    const identity = canonicalJSON(candidate);
+    if (identity === this.committedIdentity && !this.unconfirmedCommit) return;
     try {
       this.onQueueChange?.();
+      this.committed = candidate;
+      this.committedIdentity = identity;
+      this.unconfirmedCommit = false;
     } catch (error) {
-      console.error('[WorkCoordinator] onQueueChange error:', error);
+      if (error instanceof WorkCommitUncertainError) {
+        // Rename already published this identity. Do not manufacture an older
+        // ledger in RAM or a different work ID on retry. No dispatch proceeds
+        // until this exact candidate is durably confirmed.
+        this.committed = candidate;
+        this.committedIdentity = identity;
+        this.unconfirmedCommit = true;
+        throw error;
+      }
+      const previous = this.committed;
+      this.tasks.clear();
+      previous.tasks.forEach(task => this.tasks.set(task.id, protectAdmission({ ...task })));
+      this.terminalOrder.splice(0, this.terminalOrder.length, ...previous.terminalOrder);
+      this.idempotency.clear();
+      previous.idempotency.forEach(([key, id]) => this.idempotency.set(key, id));
+      this.resources.clear();
+      previous.resources.forEach(([key, resource]) => this.resources.set(key, structuredClone(resource)));
+      this.bodyOwners.clear();
+      previous.bodyOwners.forEach(([key, lease]) => this.bodyOwners.set(key, Object.freeze({ ...lease })));
+      this.inFlightRemote.clear();
+      previous.inFlightRemote.forEach(([key, handle]) => this.inFlightRemote.set(key, handle));
+      this.config = previous.config;
+      this.paused = previous.paused;
+      throw error;
     }
+  }
+
+  private snapshot() {
+    return {
+      tasks: structuredClone([...this.tasks.values()]),
+      terminalOrder: [...this.terminalOrder],
+      idempotency: [...this.idempotency],
+      resources: structuredClone([...this.resources]),
+      bodyOwners: structuredClone([...this.bodyOwners]),
+      inFlightRemote: [...this.inFlightRemote],
+      config: structuredClone(this.config),
+      paused: this.paused,
+    };
   }
 }
 

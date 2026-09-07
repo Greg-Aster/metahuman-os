@@ -432,9 +432,18 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
       yield push('error', { message: 'Graph execution returned no state' });
       return;
     }
+    if (graphState.status === 'failed' || graphState.error) {
+      throw graphState.error ?? new Error('Graph execution failed');
+    }
 
     const graphDuration = Date.now() - graphStartTime;
-    yield push('progress', { step: 'graph_complete', message: `✅ Graph complete in ${graphDuration}ms` });
+    const waiting = graphState.status === 'waiting';
+    yield push('progress', {
+      step: waiting ? 'graph_waiting' : 'graph_complete',
+      message: waiting ? `Execution saved and waiting after ${graphDuration}ms` : `Graph complete in ${graphDuration}ms`,
+      executionId: graphState.executionId,
+      status: graphState.status,
+    });
 
     const duration = Date.now() - startedAt;
     const output = extractGraphOutput(graphState);
@@ -457,6 +466,7 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     }
 
     if (!responseText && !actionOnlyTurn) {
+      if (waiting) return;
       yield push('error', { message: 'Graph executed but produced no response' });
       return;
     }
@@ -493,8 +503,8 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     }
 
     yield push('progress', {
-      step: 'graph_complete',
-      message: `Graph completed in ${duration}ms`,
+      step: waiting ? 'graph_waiting' : 'graph_complete',
+      message: waiting ? `Execution saved and waiting after ${duration}ms` : `Graph completed in ${duration}ms`,
     });
 
     // Update in-memory history
@@ -518,6 +528,8 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     const facet = getActiveFacet();
     yield push('answer', {
       response: responseText || '',
+      executionId: graphState.executionId,
+      status: graphState.status,
       facet,
       saved: null,
       executionTime: duration,

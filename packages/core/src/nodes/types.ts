@@ -161,6 +161,8 @@ export interface NodeExecutionPolicy {
   activation: NodeActivationMode;
   /** Stable input handles that must all receive active data. */
   requiredInputs: string[];
+  /** Child workflows enforce their own node deadlines; cancellation still propagates. */
+  timeoutOwner?: 'node' | 'children';
 }
 
 // ============================================================================
@@ -386,6 +388,7 @@ export function defineNode(
       activation: definition.execution?.activation
         ?? (requiredInputs.length > 0 ? 'required-inputs' : 'any-input'),
       requiredInputs,
+      ...(definition.execution?.timeoutOwner ? { timeoutOwner: definition.execution.timeoutOwner } : {}),
     },
   };
 }

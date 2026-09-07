@@ -78,6 +78,7 @@ export const environmentBridgeInputNode = defineNode({
   name: 'Environment Bridge Input',
   category: 'environment',
   inputs: [
+    { name: 'observation', type: 'object', optional: true, description: 'Correlated Bridge observation returned within this execution' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Specific environment session for a direct user turn' },
   ],
   outputs: [
@@ -193,14 +194,14 @@ export const environmentBridgeInputNode = defineNode({
     const inputSessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId.trim() : '';
     const propertySessionId = typeof properties?.sessionId === 'string' ? properties.sessionId.trim() : '';
     const requestedSessionId = inputSessionId || propertySessionId || undefined;
-    const supplied = isRecord(context.environmentObservation)
-      ? context.environmentObservation as unknown as EnvironmentObservation
+    const supplied = isRecord(inputs.observation ?? context.environmentObservation)
+      ? (inputs.observation ?? context.environmentObservation) as unknown as EnvironmentObservation
       : null;
     const suppliedForSession = supplied && (!requestedSessionId || supplied.sessionId === requestedSessionId)
       ? supplied
       : null;
     const isTriggeringObservation = Boolean(
-      suppliedForSession && context.environmentObservationCurrent !== false,
+      suppliedForSession && (isRecord(inputs.observation) || context.environmentObservationCurrent !== false),
     );
     const sourceObservation: EnvironmentObservation | null = suppliedForSession
       ?? getLatestEnvironmentObservation(requestedSessionId)

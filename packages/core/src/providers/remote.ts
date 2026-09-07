@@ -71,7 +71,7 @@ async function requestJson(
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal })
+    const response = await fetch(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal })
     const body = await response.text()
     if (!response.ok) {
       throw new Error(`${provider} request failed (${response.status}): ${body || response.statusText}`)
@@ -82,6 +82,7 @@ async function requestJson(
       throw new Error(`${provider} returned invalid JSON`)
     }
   } catch (error) {
+    init.signal?.throwIfAborted()
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error(`${provider} request timed out after ${timeoutMs}ms`)
     }
@@ -101,6 +102,7 @@ async function callClaude(
   const conversation = textMessages.filter(message => message.role !== 'system')
   const model = options.model || credentials.model || 'claude-3-5-sonnet-20241022'
   const data = asRecord(await requestJson('Anthropic', 'https://api.anthropic.com/v1/messages', {
+    signal: options.signal,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -145,6 +147,7 @@ async function callOpenAICompatible(
       ? 'https://openrouter.ai/api/v1/chat/completions'
       : credentials.endpoint || 'https://api.openai.com/v1/chat/completions',
     {
+      signal: options.signal,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

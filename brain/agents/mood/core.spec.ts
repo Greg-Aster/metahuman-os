@@ -1,15 +1,32 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import fs from 'node:fs'
+import { Socket } from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
+import test, { mock } from 'node:test'
 
 import type { GraphExecutionState } from '@metahuman/core'
-import {
+const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-mood-spec-'))
+assert.equal(fs.realpathSync(testRoot), testRoot)
+process.env.METAHUMAN_ROOT = testRoot
+globalThis.fetch = async () => { throw new Error('Network access is forbidden in Mood owner tests') }
+// Public Core registration may subscribe to telemetry. Keep this process off
+// installed transports without importing private Core infrastructure from Brain.
+mock.method(Socket.prototype, 'connect', function (this: Socket) {
+  queueMicrotask(() => this.destroy(Object.assign(new Error('Test transport disabled'), { code: 'ECONNREFUSED' })))
+  return this
+})
+const { ROOT, setAuditEnabled } = await import('@metahuman/core')
+assert.equal(ROOT, testRoot)
+setAuditEnabled(false)
+const {
   evaluateMoodGraph,
   parseMoodArgs,
   parseMoodTriggerData,
   resolveMoodResultNodeId,
   run,
   runCycle,
-} from './core.js'
+} = await import('./core.js')
 
 test('Mood resolves its result by node type instead of an editable graph id', () => {
   assert.deepEqual(parseMoodTriggerData(undefined), {})
@@ -69,6 +86,13 @@ test('Mood requires the editable result node to complete with its narrow output 
     outputs: { changed: false, activeFacet: 'default' },
   })
   assert.equal(evaluateMoodGraph(graph, missingOutput).success, false)
+
+  const failed = { ...completed, status: 'failed', error: new Error('Output delivery failed') } as GraphExecutionState
+  assert.deepEqual(evaluateMoodGraph(graph, failed), {
+    success: false, changed: false, error: 'Output delivery failed',
+  }, 'Completed node output does not override a graph-level persistence failure')
+  assert.equal(evaluateMoodGraph(graph, { ...completed, status: 'waiting' }).success, false,
+    'A saved waiting execution has not completed the finite Mood operation')
 })
 
 test('Mood treats unresolved profile identity as a failed execution', async () => {

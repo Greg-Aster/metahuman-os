@@ -117,10 +117,8 @@ export function findRepoRoot(): string {
     if (fs.existsSync(envRoot)) {
       console.log(`[path-builder] Using METAHUMAN_ROOT: ${envRoot}`);
       return envRoot;
-    } else {
-      console.warn(`[path-builder] METAHUMAN_ROOT set but path does not exist: ${envRoot}`);
-      // Fall through to local detection
     }
+    throw new Error(`METAHUMAN_ROOT does not exist: ${envRoot}. Refusing to use a different storage root.`);
   }
 
   // Local mode: Walk up from current file to find pnpm-workspace.yaml

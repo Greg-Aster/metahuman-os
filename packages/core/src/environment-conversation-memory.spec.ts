@@ -28,13 +28,13 @@ const executionEngineSource = fs.readFileSync(
   'utf8',
 );
 
-assert.match(conversationBufferSource, /writeBufferEntry/);
+assert.match(conversationBufferSource, /admitBufferEntry/);
 assert.doesNotMatch(
   conversationBufferSource,
   /writeFileSync/,
   'Conversation Buffer must delegate persistence to the canonical service',
 );
-assert.match(robotBufferSource, /writeBufferEntry/);
+assert.match(robotBufferSource, /admitBufferEntry/);
 assert.doesNotMatch(
   robotBufferSource,
   /writeFileSync/,
@@ -121,7 +121,7 @@ assert.equal(
     'environment_task_reducer',
   ].includes(node.data?.nodeType || '')),
   false,
-  'Robot Status is the sole durable Environment task owner',
+  'Retired Environment task stores remain absent; task state belongs to the durable execution',
 );
 assert.ok(hasEdge(bufferId, 'entries', captureId, 'entries'));
 assert.ok(hasEdge(bufferId, 'response', streamId, 'response'));

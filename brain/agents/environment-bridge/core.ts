@@ -237,6 +237,7 @@ export async function consumeActionStream(
   sessionId: string,
   sendAction: (action: Record<string, unknown>) => Promise<void>,
   signal: AbortSignal,
+  cancelAction?: (cancellation: Record<string, unknown>) => void,
 ): Promise<void> {
   const url = new URL('/api/environment-bridge/stream', config.coreUrl);
   url.searchParams.set('sessionId', sessionId);
@@ -269,7 +270,14 @@ export async function consumeActionStream(
       boundary = buffer.indexOf('\n\n');
       const event = block.match(/^event:\s*(.+)$/m)?.[1]?.trim();
       const rawData = block.match(/^data:\s*(.+)$/m)?.[1];
-      if (event !== 'actions' || !rawData) continue;
+      if (!rawData) continue;
+      if (event === 'cancellations') {
+        const data = JSON.parse(rawData) as { cancellations: Record<string, unknown>[] };
+        if (!cancelAction) throw new Error('Action stream requires its cancellation transport');
+        for (const cancellation of data.cancellations) cancelAction(cancellation);
+        continue;
+      }
+      if (event !== 'actions') continue;
       const data = JSON.parse(rawData) as { actions?: unknown[] };
       for (const action of data.actions ?? []) {
         if (!action || typeof action !== 'object') continue;
@@ -340,6 +348,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           observation as unknown as Record<string, unknown>,
         );
         latestObservation = observation;
+        if (observation.id) sendMessage({ type: 'environment.observation.ack', observationId: observation.id, admitted: true });
       },
       onError: error => {
         console.error(`${LOG_PREFIX} audio/visual join failed: ${error.message}`);
@@ -725,7 +734,8 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
               );
             }
             if (!actionStream) {
-              actionStream = consumeActionStream(config, sessionId, sendAction, localAbort.signal)
+              actionStream = consumeActionStream(config, sessionId, sendAction, localAbort.signal,
+                cancellation => sendMessage({ type: 'environment.cancel', version: PROTOCOL_VERSION, ...cancellation }))
                 .catch((error) => {
                   if (!localAbort.signal.aborted) reject(error);
                 });
@@ -759,7 +769,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
               diagnosticSessionId = receivedObservation.sessionId;
               recordVisual(timedObservation);
               recordFreestyleMovement(timedObservation);
-              let enriched = { ...timedObservation };
+              let enriched = { ...receivedObservation };
               if (pendingFeedback) {
                 const pendingFeedbackId = pendingFeedback.id;
                 enriched = attachCorrelatedFeedback(enriched, pendingFeedback);
@@ -776,6 +786,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
                   enriched as unknown as Record<string, unknown>,
                 );
               }
+              if (!joined) sendMessage({ type: 'environment.observation.ack', observationId: receivedObservation.id, admitted: true });
             }
             return;
           }
@@ -840,7 +851,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           if (message.type === 'environment.feedback') {
             const feedback = message.feedback;
             if (feedback && typeof feedback === 'object') {
-              const receivedFeedback = feedback as unknown as EnvironmentFeedback;
+              const receivedFeedback = structuredClone(feedback) as unknown as EnvironmentFeedback;
               const bridgeFeedbackReceivedAt = new Date().toISOString();
               const actionTiming = mergeEnvironmentActionTiming(
                 receivedFeedback.actionId ? actionTimings.get(receivedFeedback.actionId) : null,
@@ -861,7 +872,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
                   terminalActionsAwaitingObservation.add(receivedFeedback.actionId);
                 }
               }
-              pendingFeedback = receivedFeedback;
+              pendingFeedback = structuredClone(feedback) as unknown as EnvironmentFeedback;
               if (receivedFeedback.actionId) {
                 awaitingAdapterAcceptance.delete(receivedFeedback.actionId);
               }

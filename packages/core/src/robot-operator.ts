@@ -3,7 +3,7 @@ import path from 'node:path'
 import { systemPaths } from './path-builder.js'
 import type { EnvironmentObservation } from './environment-interface/types.js'
 import type { AutonomyMode, QueuedTask } from './queue/types.js'
-import type { RobotStatusTask } from './robot-status.js'
+import { openExecutionStore } from './durable-execution/storage.js'
 
 const SERVICES_CONFIG_PATH = path.join(systemPaths.etc, 'services.json')
 const AGENTS_CONFIG_PATH = path.join(systemPaths.etc, 'agents.json')
@@ -36,6 +36,15 @@ export interface RobotObserverCycleMetadata {
   triggerSource: RobotObserverTriggerSource
   graph: string
   requestedBy: RobotOperatorCycleRequester
+}
+
+/** Shared admission facts for a new Controller run or an existing execution's wake-up. */
+export function robotAutonomyControllerContext(cycleId: string, graph: string, sessionId?: string) {
+  const robotObserver: RobotObserverCycleMetadata = {
+    cycleId, step: 1, triggerSource: 'autonomy', graph, requestedBy: 'robot-autonomy-controller',
+  }
+  return { robotObserver, stimulusAgent: 'robot-autonomy-controller', currentVisualEvidence: false,
+    ...(sessionId ? { sessionId } : {}) }
 }
 
 export interface RobotOperatorConfig {
@@ -258,28 +267,15 @@ export function robotOperatorChildGraph(
   return config.boredomReflectionGraph
 }
 
-/**
- * A goal needs a new LLM review only after a terminal action result says the
- * objective remains unresolved. Decisions made by Goal Review itself already
- * describe what happens next and must not re-admit the reviewer immediately.
- */
-export function robotGoalNeedsReview(task: RobotStatusTask | null | undefined): boolean {
-  if (!task?.objective.trim() || task.decision.objectiveComplete) return false
-  return task.decision.outcome === 'incomplete' || task.decision.outcome === 'failed'
-}
-
-/**
- * Full autonomy returns an unresolved physical result to the dedicated Goal
- * Review LLM. Every other completed chain returns to the general contextual
- * controller. This is lifecycle routing, not action or outcome selection.
- */
-export function nextFullRobotOperatorChild(
-  task: RobotStatusTask | null | undefined,
-  goalReviewEnabled = true,
-): RobotOperatorStimulusAgent {
-  return goalReviewEnabled && robotGoalNeedsReview(task)
-    ? 'robot-goal-review'
-    : 'robot-autonomy-controller'
+/** Live graph executions, not a reconstruction from the Robot Status display. */
+export function activeRobotExecutions(username: string) {
+  const store = openExecutionStore(username)
+  try {
+    return store.list(username).filter(record => !['completed', 'failed', 'cancelled'].includes(record.status)
+      && store.entry(record.executionId).context?.cognitiveMode === 'environment')
+      .map(record => ({ executionId: record.executionId, status: record.status,
+        waitingReason: record.waitingReason, checkpointVersion: record.checkpointVersion }))
+  } finally { store.close() }
 }
 
 function hasRobotObserverMetadata(value: unknown): boolean {

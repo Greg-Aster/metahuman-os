@@ -60,6 +60,11 @@ interface GraphCacheEntry {
 }
 
 const graphCache: Record<string, GraphCacheEntry | null> = {};
+const graphSources = new WeakMap<SvelteFlowGraph, string>();
+
+export function loadedGraphSource(graph: SvelteFlowGraph): string | undefined {
+  return graphSources.get(graph);
+}
 
 /**
  * Read and validate a Svelte Flow graph from a file
@@ -72,6 +77,7 @@ async function readGraphFromFile(filePath: string): Promise<SvelteFlowGraph | nu
     const parsed = JSON.parse(raw);
     console.log(`[graph-streaming] Parsed: ${parsed.nodes?.length || 0} nodes, ${parsed.edges?.length || 0} edges`);
     const validated = validateSvelteFlowGraph(parsed);
+    graphSources.set(validated, filePath);
     console.log(`[graph-streaming] Validation PASSED`);
     return validated;
   } catch (error) {

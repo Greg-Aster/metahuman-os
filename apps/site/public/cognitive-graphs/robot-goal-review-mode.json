@@ -1,0 +1,855 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Robot Goal Review",
+  "description": "Reviews the checkpointed objective and its evidence. The LLM may complete, continue, wait, request the user, abandon, or speak. Selected child workflows share this execution; an unfinished objective is reviewed after the child returns.",
+  "cognitiveMode": "environment",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
+  "last_modified": "2026-09-04T20:35:09.000Z",
+  "nodes": [
+    {
+      "id": "observation",
+      "type": "environmentNode",
+      "position": {
+        "x": 80,
+        "y": 1035
+      },
+      "data": {
+        "label": "Current Environment Bridge Observation",
+        "nodeType": "environment_bridge_input",
+        "properties": {
+          "sessionId": ""
+        }
+      }
+    },
+    {
+      "id": "robot-input",
+      "type": "operatorNode",
+      "position": {
+        "x": 80,
+        "y": 646
+      },
+      "data": {
+        "label": "Goal Review Trigger Input",
+        "nodeType": "robot_operator_input",
+        "properties": {}
+      }
+    },
+    {
+      "id": "image-input",
+      "type": "environmentNode",
+      "position": {
+        "x": 660,
+        "y": 1035
+      },
+      "data": {
+        "label": "Select Current Camera Evidence",
+        "nodeType": "environment_image_input",
+        "properties": {}
+      }
+    },
+    {
+      "id": "robot-status",
+      "type": "contextNode",
+      "position": {
+        "x": 80,
+        "y": 2706
+      },
+      "data": {
+        "label": "Current Robot Status",
+        "nodeType": "robot_status",
+        "properties": {
+          "historyLimit": 3
+        }
+      }
+    },
+    {
+      "id": "conversation-history",
+      "type": "contextNode",
+      "position": {
+        "x": 80,
+        "y": 3069
+      },
+      "data": {
+        "label": "Recent Conversation",
+        "nodeType": "conversation_history",
+        "properties": {
+          "mode": "conversation",
+          "limit": 8
+        }
+      }
+    },
+    {
+      "id": "inner-history",
+      "type": "contextNode",
+      "position": {
+        "x": 80,
+        "y": 3480
+      },
+      "data": {
+        "label": "Recent Private Reflection",
+        "nodeType": "conversation_history",
+        "properties": {
+          "mode": "inner",
+          "limit": 3
+        }
+      }
+    },
+    {
+      "id": "robot-history",
+      "type": "contextNode",
+      "position": {
+        "x": 80,
+        "y": 3840
+      },
+      "data": {
+        "label": "Verified Robot Action Outcomes",
+        "nodeType": "conversation_history",
+        "properties": {
+          "mode": "robot",
+          "limit": 8
+        }
+      }
+    },
+    {
+      "id": "persona-loader",
+      "type": "personaNode",
+      "position": {
+        "x": 80,
+        "y": 3337
+      },
+      "data": {
+        "label": "Active Persona",
+        "nodeType": "persona_loader",
+        "properties": {}
+      }
+    },
+    {
+      "id": "persona-formatter",
+      "type": "personaNode",
+      "position": {
+        "x": 660,
+        "y": 105
+      },
+      "data": {
+        "label": "Compact Persona Context",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includeValues": true,
+          "includeGoals": true,
+          "includePersonality": true
+        }
+      }
+    },
+    {
+      "id": "active-desires",
+      "type": "agencyNode",
+      "position": {
+        "x": 660,
+        "y": 3480
+      },
+      "data": {
+        "label": "Current Active Desires",
+        "nodeType": "active_desires",
+        "properties": {
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "policy",
+      "type": "inputNode",
+      "position": {
+        "x": 80,
+        "y": 80
+      },
+      "data": {
+        "label": "Goal Review Task",
+        "nodeType": "text_input",
+        "properties": {
+          "message": "Review the current execution objective as one self-directed decision. Use its latest recorded action outcome together with verified Robot Action Outcomes, Environment Bridge facts, attached robot-camera evidence, recent conversation and private reflection, active persona, and active desires. The visualEvidence fields say whether an image is attached and verified for this decision; absence of an attached image is not evidence about camera health. Do not invent physical facts or completion.\n\nChoose complete only when supplied evidence establishes the objective, and cite that evidence in completionEvidence. Choose continue when another useful attempt exists, wait when progress depends on a changing condition, request_user when specific human information or help is needed, or abandon when the objective is not attainable, no longer worthwhile, or I choose to do something else. response is optional outward speech only: keep it natural, first-person, and concise, and leave it empty rather than exposing outcome tokens, workflow names, agent names, or internal instructions. For continue, write one concrete high-level nextInstruction carrying forward the objective, evidence, and obstacle; Robot Autonomy Executor chooses how to execute it. The execution supplies the objective and ordered user corrections; evaluate that objective, not a new objective inferred from the status display. Return only the requested JSON.",
+          "inputKey": ""
+        }
+      }
+    },
+    {
+      "id": "context",
+      "type": "operatorNode",
+      "position": {
+        "x": 1000,
+        "y": 80
+      },
+      "data": {
+        "label": "Build Goal Review Context",
+        "nodeType": "robot_goal_review_context",
+        "properties": {}
+      }
+    },
+    {
+      "id": "llm",
+      "type": "llmNode",
+      "position": {
+        "x": 1460,
+        "y": 80
+      },
+      "data": {
+        "label": "Choose Goal Outcome, Speech, or Next Intention",
+        "nodeType": "model_router",
+        "properties": {
+          "role": "persona",
+          "maxTokens": 1536,
+          "temperature": 0.7,
+          "repeatPenalty": 1.15,
+          "format": "json"
+        }
+      }
+    },
+    {
+      "id": "parser",
+      "type": "operatorNode",
+      "position": {
+        "x": 1920,
+        "y": 80
+      },
+      "data": {
+        "label": "Validate Goal Review Choice",
+        "nodeType": "robot_goal_review_parser",
+        "properties": {}
+      }
+    },
+    {
+      "id": "status-out",
+      "type": "outputNode",
+      "position": {
+        "x": 2380,
+        "y": 80
+      },
+      "data": {
+        "label": "Save Goal Outcome to Robot Status",
+        "nodeType": "robot_status_out",
+        "properties": {}
+      }
+    },
+    {
+      "id": "prompt-out",
+      "type": "operatorNode",
+      "position": {
+        "x": 2380,
+        "y": 509
+      },
+      "data": {
+        "label": "Send Next Instruction to Robot Autonomy Executor",
+        "nodeType": "robot_operator_environment_dispatch",
+        "properties": {
+          "graph": "boredom-autonomy"
+        },
+        "comment": "Queues one autonomy execution only when the Goal Review LLM chose continue and supplied a validated high-level intention. Every other outcome ends without dispatch."
+      }
+    },
+    {
+      "id": "conversation",
+      "type": "outputNode",
+      "position": {
+        "x": 2380,
+        "y": 832
+      },
+      "data": {
+        "label": "Save Optional Goal Review Response",
+        "nodeType": "conversation_buffer",
+        "properties": {}
+      }
+    },
+    {
+      "id": "conversation-memory",
+      "type": "outputNode",
+      "position": {
+        "x": 2840,
+        "y": 80
+      },
+      "data": {
+        "label": "Save Goal Review Response Memory",
+        "nodeType": "memory_capture",
+        "properties": {}
+      }
+    },
+    {
+      "id": "tts",
+      "type": "outputNode",
+      "position": {
+        "x": 2840,
+        "y": 409
+      },
+      "data": {
+        "label": "Speak Optional Goal Review Response",
+        "nodeType": "tts",
+        "properties": {
+          "source": "boredom-autonomy",
+          "defaultMode": "conversation"
+        }
+      }
+    },
+    {
+      "id": "execution",
+      "type": "utilityNode",
+      "position": {
+        "x": 20,
+        "y": -380
+      },
+      "data": {
+        "label": "Current Execution",
+        "nodeType": "execution_context",
+        "properties": {
+          "eventLimit": 16
+        }
+      }
+    },
+    {
+      "id": "remaining-objective",
+      "type": "utilityNode",
+      "position": {
+        "x": 2800,
+        "y": 140
+      },
+      "data": {
+        "label": "Read Objective After Activity",
+        "nodeType": "execution_context",
+        "properties": {
+          "eventLimit": 16
+        }
+      }
+    },
+    {
+      "id": "review-remaining-objective",
+      "type": "utilityNode",
+      "position": {
+        "x": 3100,
+        "y": 140
+      },
+      "data": {
+        "label": "Review Unfinished Objective",
+        "nodeType": "workflow_call",
+        "properties": {
+          "graph": "robot-goal-review"
+        }
+      }
+    },
+    {
+      "id": "selected-workflow",
+      "type": "utilityNode",
+      "position": {
+        "x": 2500,
+        "y": 140
+      },
+      "data": {
+        "label": "Run Selected Workflow",
+        "nodeType": "workflow_call",
+        "properties": {}
+      }
+    },
+    {
+      "id": "authorize-continuation",
+      "type": "utilityNode",
+      "position": {
+        "x": 1800,
+        "y": 1020
+      },
+      "data": {
+        "label": "Authorize Next Workflow",
+        "nodeType": "execution_event_wait",
+        "properties": {
+          "waitForEvent": false,
+          "userGraph": "environment",
+          "autonomyGraph": "robot-autonomy-controller"
+        }
+      }
+    },
+    {
+      "id": "await-context",
+      "type": "utilityNode",
+      "position": {
+        "x": 1800,
+        "y": 1040
+      },
+      "data": {
+        "label": "Await User or Autonomy Event",
+        "nodeType": "execution_event_wait",
+        "properties": {
+          "waitForEvent": true,
+          "userGraph": "environment",
+          "autonomyGraph": "robot-autonomy-controller"
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "parser",
+              "output": "awaitContinuation",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "selected-activity-objective-state",
+      "source": "selected-workflow",
+      "sourceHandle": "completed",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "control",
+        "type": "boolean",
+        "when": {
+          "output": "completed",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "unfinished-objective-review",
+      "source": "remaining-objective",
+      "sourceHandle": "hasActiveTask",
+      "target": "review-remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "control",
+        "type": "boolean",
+        "when": {
+          "output": "hasActiveTask",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-robot-cycle-context",
+      "source": "robot-input",
+      "target": "context",
+      "sourceHandle": "robotObserver",
+      "targetHandle": "robotObserver",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-source-time-context",
+      "source": "robot-input",
+      "target": "context",
+      "sourceHandle": "sourceObservationAt",
+      "targetHandle": "sourceObservationAt",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-policy-context",
+      "source": "policy",
+      "target": "context",
+      "sourceHandle": "text",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-observation-context",
+      "source": "observation",
+      "target": "context",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-observation-visual-image",
+      "source": "observation",
+      "target": "image-input",
+      "sourceHandle": "visual",
+      "targetHandle": "visual",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-observation-visuals-image",
+      "source": "observation",
+      "target": "image-input",
+      "sourceHandle": "visuals",
+      "targetHandle": "visuals",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-observation-current-image",
+      "source": "observation",
+      "target": "image-input",
+      "sourceHandle": "isTriggeringObservation",
+      "targetHandle": "observationCurrent",
+      "type": "default",
+      "data": {
+        "type": "boolean"
+      }
+    },
+    {
+      "id": "e-status-image",
+      "source": "execution",
+      "target": "image-input",
+      "sourceHandle": "context",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-image-content-context",
+      "source": "image-input",
+      "target": "context",
+      "sourceHandle": "images",
+      "targetHandle": "images",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-image-frames-context",
+      "source": "image-input",
+      "target": "context",
+      "sourceHandle": "frames",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-image-current-context",
+      "source": "image-input",
+      "target": "context",
+      "sourceHandle": "verified",
+      "targetHandle": "currentVisualEvidence",
+      "type": "default",
+      "data": {
+        "type": "boolean"
+      }
+    },
+    {
+      "id": "e-status-context",
+      "source": "robot-status",
+      "target": "context",
+      "sourceHandle": "context",
+      "targetHandle": "robotStatus",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-conversation-context",
+      "source": "conversation-history",
+      "target": "context",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-inner-context",
+      "source": "inner-history",
+      "target": "context",
+      "sourceHandle": "history",
+      "targetHandle": "innerHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-robot-history-context",
+      "source": "robot-history",
+      "target": "context",
+      "sourceHandle": "history",
+      "targetHandle": "actionHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-persona-formatter",
+      "source": "persona-loader",
+      "target": "persona-formatter",
+      "sourceHandle": "persona",
+      "targetHandle": "persona",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-persona-context",
+      "source": "persona-formatter",
+      "target": "context",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaText",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-desires-context",
+      "source": "active-desires",
+      "target": "context",
+      "sourceHandle": "desires",
+      "targetHandle": "activeDesires",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-context-llm",
+      "source": "context",
+      "target": "llm",
+      "sourceHandle": "messages",
+      "targetHandle": "messages",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-schema-llm",
+      "source": "context",
+      "target": "llm",
+      "sourceHandle": "jsonSchema",
+      "targetHandle": "jsonSchema",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-llm-parser",
+      "source": "llm",
+      "target": "parser",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "llm_response"
+      }
+    },
+    {
+      "id": "e-observation-status",
+      "source": "observation",
+      "target": "status-out",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-decision-status",
+      "source": "parser",
+      "target": "status-out",
+      "sourceHandle": "taskDecision",
+      "targetHandle": "taskDecision",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-response-status",
+      "source": "parser",
+      "target": "status-out",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-decision-prompt",
+      "source": "parser",
+      "target": "prompt-out",
+      "sourceHandle": "executorDecision",
+      "targetHandle": "decision",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-observation-prompt",
+      "source": "observation",
+      "target": "prompt-out",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-cycle-prompt",
+      "source": "robot-input",
+      "target": "prompt-out",
+      "sourceHandle": "robotObserver",
+      "targetHandle": "robotObserver",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-response-conversation",
+      "source": "parser",
+      "target": "conversation",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-conversation-memory",
+      "source": "conversation",
+      "target": "conversation-memory",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-conversation-tts",
+      "source": "conversation",
+      "target": "tts",
+      "sourceHandle": "response",
+      "targetHandle": "conversation",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "durable-execution-context-context-execution",
+      "source": "execution",
+      "target": "context",
+      "sourceHandle": "context",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "durable-execution-context-parser-execution",
+      "source": "execution",
+      "target": "parser",
+      "sourceHandle": "context",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "durable-prompt-out-invocation-selected-workflow-invocation",
+      "source": "prompt-out",
+      "target": "authorize-continuation",
+      "sourceHandle": "invocation",
+      "targetHandle": "invocation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "execution-authorize-continuation-invocation-selected-workflow-invocation",
+      "source": "authorize-continuation",
+      "target": "selected-workflow",
+      "sourceHandle": "invocation",
+      "targetHandle": "invocation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "execution-parser-awaitContinuation-await-context-control",
+      "source": "parser",
+      "target": "await-context",
+      "sourceHandle": "awaitContinuation",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "awaitContinuation",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "execution-status-out-persisted-await-context-control",
+      "source": "status-out",
+      "target": "await-context",
+      "sourceHandle": "persisted",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "persisted",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "execution-await-context-invocation-selected-workflow-invocation",
+      "source": "await-context",
+      "target": "selected-workflow",
+      "sourceHandle": "invocation",
+      "targetHandle": "invocation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    }
+  ],
+  "viewport": {
+    "x": -190.31642757663985,
+    "y": 218.38066470923036,
+    "zoom": 0.49523963966468015
+  }
+}

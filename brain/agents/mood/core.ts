@@ -58,8 +58,10 @@ export function evaluateMoodGraph(
   state: GraphExecutionState,
 ): MoodReviewResult {
   const failed = listFailedNodes(state);
-  if (failed.length > 0) {
-    return { success: false, changed: false, error: failed.map(item => `${item.nodeId}: ${item.error}`).join('; ') };
+  if (state.status !== 'completed' || state.error || failed.length > 0) {
+    return { success: false, changed: false, error: state.error?.message
+      || failed.map(item => `${item.nodeId}: ${item.error}`).join('; ')
+      || `Mood Review graph ended with status ${state.status}` };
   }
   let resultNodeId: string;
   try {

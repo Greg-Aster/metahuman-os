@@ -7,6 +7,7 @@ import {
   TTSDeliveryQueueStore,
   TTS_DELIVERY_LEASE_MS,
   TTS_DELIVERY_RETRY_DELAY_MS,
+  TTS_DELIVERY_MAX_AGE_MS,
 } from './delivery-queue.js';
 
 function createTestStore() {
@@ -30,6 +31,24 @@ function createTestStore() {
     },
   };
 }
+
+test('committed speech admission survives playback and restart without repeating the utterance', () => {
+  const fixture = createTestStore();
+  try {
+    const identity = { id: 'checkpointed-speech', createdAt: fixture.getNow() };
+    const queued = fixture.store.enqueue('One utterance.', 'conversation', 'environment-mode', 0, identity)!;
+    const claim = fixture.store.claimNext('current-client');
+    fixture.store.updateDelivery(queued.id, claim.item!.leaseToken, 'complete');
+    const restarted = new TTSDeliveryQueueStore({ queuePath: path.join(fixture.root, 'tts-queue.json'),
+      notificationPath: path.join(fixture.root, 'notifications', 'test.notify'), now: fixture.getNow });
+    assert.equal(restarted.enqueue('One utterance.', 'conversation', 'environment-mode', 0, identity)?.id, queued.id);
+    assert.deepEqual(restarted.peek(), []);
+    assert.throws(() => restarted.enqueue('Different content.', 'conversation', 'environment-mode', 0, identity), /conflicts/);
+    fixture.setNow(fixture.getNow() + TTS_DELIVERY_MAX_AGE_MS + 1);
+    assert.equal(restarted.enqueue('One utterance.', 'conversation', 'environment-mode', 0, identity), null);
+    assert.deepEqual(restarted.peek(), []);
+  } finally { fs.rmSync(fixture.root, { recursive: true, force: true }); }
+});
 
 test('claimed speech remains durable until its matching lease completes', () => {
   const fixture = createTestStore();

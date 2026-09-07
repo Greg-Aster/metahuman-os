@@ -28,7 +28,7 @@ acceptance claim, not LangGraph as a technology.
 ### Evidence and reproduction
 
 Repository baseline: `8b7809fc485a1d7b2a6da32c16a843b01621e2d7`.
-Current HEAD: `464ecf39befb299bd23dfb67257cdfaf752473c0`.
+Production/source HEAD at review start: `464ecf39befb299bd23dfb67257cdfaf752473c0`.
 At review start, the only tracked dirty file was the autonomy-analysis report:
 50 additions and 35 deletions. No untracked maintained source was present.
 Root AGENTS.md was the only applicable repository instruction file found.
@@ -47,7 +47,7 @@ Evidence aliases:
 - H: E/`generated/history-results.json`.
 
 The complete local path/size/SHA256 inventory is E/`artifact-inventory.md`
-(679 artifact rows; excludes installed dependency internals, which are represented
+(680 artifact rows; excludes installed dependency internals, which are represented
 by the manifests and lockfile). It distinguishes original, preservation-bundle
 and fresh-review artifacts by their root. Generated database/log/ledger files are
 local evidence, not proposed maintained source.
@@ -129,6 +129,11 @@ evidence. Generated .mjs files are comparison bundles; .sqlite/.sqlite-wal/.sqli
 files are checkpoint stores; JSON files contain fixture profiles, IDs, outboxes,
 receipts, fake effects and results; .txt/.ndjson files contain diagnostic output
 and traces. None is production admission wiring.
+
+E/verify-storage.mjs reads the candidate database without modifying it;
+E/storage-results.json records the independently counted inline-image copies.
+Run `node verify-storage.mjs` from E to reproduce that storage finding.
+The inventory itself is reviewer-generated metadata and does not hash itself.
 
 The fresh E directory and A run were created by this reviewer. The preserved F
 bundle and original spike were supplied evidence. No dependencies were installed
@@ -388,3 +393,11 @@ after a sandbox spawnSync git EPERM required an approved read-only rerun.
 No build, live provider, browser, deployed Coordinator/Bridge, firmware or
 physical test was performed. No production code/configuration, dependency,
 existing evidence, commit or remote branch was changed by this reviewer.
+Final tracked diff whitespace checks against both HEAD and the spike baseline passed.
+
+Concurrent-work note: while this report was being finalized, another actor created
+`c57a56ff3fb59f534a20c5773a316f13fccae0e5`, committing the autonomy-analysis edits
+and the initial version of this audit. Its complete diff contains only those two
+documents; production and original spike bytes are unchanged. This reviewer did
+not commit or push. Final inventory-count, storage-reproduction and provenance
+clarifications remain an uncommitted audit-document diff at handoff.

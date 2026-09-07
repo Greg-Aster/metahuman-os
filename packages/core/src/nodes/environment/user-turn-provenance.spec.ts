@@ -77,5 +77,5 @@ test('a standalone action may omit task lifecycle state', async () => {
 
   assert.equal(parsed.actions[0]?.type, 'captureImage')
   assert.equal(parsed.taskDecision, null)
-  assert.equal(parsed.taskDecisionError, '')
+  assert.equal(parsed.error, '')
 })

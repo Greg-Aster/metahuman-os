@@ -79,6 +79,7 @@ export const robotStatusNode = defineNode({
       task: status.task,
       historyContext: {
         updatedAt: status.updatedAt,
+        task: status.task,
         situation: status.situation,
         history: boundedContext.history,
       },

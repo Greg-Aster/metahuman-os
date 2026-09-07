@@ -6,9 +6,6 @@ import {
 } from '../../environment-interface/index.js';
 import type { RobotStatusTask } from '../../robot-status.js';
 
-const MAX_CACHED_FRAMES = 24;
-const frameCache = new Map<string, EnvironmentVisualFrame>();
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -32,23 +29,6 @@ function cleanText(value: unknown): string {
   return typeof value === 'string' ? value.trim().slice(0, 200) : '';
 }
 
-function rememberFrames(frames: EnvironmentVisualFrame[]): void {
-  for (const frame of frames) {
-    if (!frame.id || !validEnvironmentJpegDataUrl(frame.dataUrl)) continue;
-    frameCache.delete(frame.id);
-    frameCache.set(frame.id, frame);
-  }
-  while (frameCache.size > MAX_CACHED_FRAMES) {
-    const oldest = frameCache.keys().next().value;
-    if (typeof oldest !== 'string') break;
-    frameCache.delete(oldest);
-  }
-}
-
-export function clearEnvironmentImageFrameCache(): void {
-  frameCache.clear();
-}
-
 export const environmentImageInputNode = defineNode({
   id: 'environment_image_input',
   name: 'Select Camera Frames for Current Action',
@@ -57,7 +37,7 @@ export const environmentImageInputNode = defineNode({
     { name: 'visual', label: 'Current camera frame', type: 'object', optional: true, description: 'The latest camera frame received from the robot bridge.' },
     { name: 'visuals', label: 'Camera frame list', type: 'array', optional: true, description: 'Other camera frames included in the current robot observation.' },
     { name: 'observationCurrent', label: 'Current-run observation', type: 'boolean', optional: true, description: 'Whether these frames arrived with the observation that triggered this graph run. Omit only in workflows whose input is already current by contract.' },
-    { name: 'robotStatus', label: 'Saved robot status', type: 'object', optional: true, description: 'Robot Status containing the current task and an optional saved before-action frame.' },
+    { name: 'execution', label: 'Current execution', type: 'object', optional: true, description: 'Checkpointed task containing an optional before-action frame reference.' },
     { name: 'terminalFeedback', label: 'Finished robot result', type: 'object', optional: true, description: 'The finished robot report selected for the sent action.' },
     { name: 'actionId', label: 'Sent action ID', type: 'string', optional: true, description: 'The verified ID of the sent action whose camera frame is returning.' },
     { name: 'correlationId', label: 'Action cycle ID', type: 'string', optional: true, description: 'The verified cycle ID used to match a returned camera frame.' },
@@ -81,12 +61,12 @@ export const environmentImageInputNode = defineNode({
     ],
   },
   description: 'Checks camera frames received from the robot. It returns a triggering frame or a saved frame that matches the current Robot Status action result, plus an optional saved before-action frame. It sends no command, changes no status, and calls no model.',
-  async execute(inputs) {
+  async execute(inputs, context) {
     const candidates = framesFromInputs(inputs.visual, inputs.visuals);
     const valid = candidates.filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl));
     const observationCurrent = inputs.observationCurrent !== false;
-    if (observationCurrent) rememberFrames(valid);
-    const status = isRecord(inputs.robotStatus) ? inputs.robotStatus : null;
+    if (observationCurrent && context.graphExecution) context.graphExecution.recordFrames(valid);
+    const status = isRecord(inputs.execution) ? inputs.execution : null;
     const task = isRecord(status?.task)
       ? status.task as unknown as RobotStatusTask
       : null;
@@ -98,7 +78,7 @@ export const environmentImageInputNode = defineNode({
     const taskActionId = cleanText(task?.feedback?.actionId) || cleanText(task?.actionId);
     const taskHasTerminalResult = Boolean(task?.feedback && taskActionId);
     const baseline = terminalFeedback && task?.baselineFrame
-      ? frameCache.get(task.baselineFrame.id)
+      ? context.graphExecution?.frame(task.baselineFrame.id)
       : undefined;
     const current = observationCurrent && terminalFeedback
       ? [...valid].reverse().find(frame => {

@@ -289,13 +289,15 @@ export interface EnvironmentMapData {
 export interface EnvironmentFeedback {
   id: string;
   timestamp: string;
-  type: 'accepted' | 'rejected' | 'completed' | 'cancelled' | 'expired' | 'failed' | 'status';
+  type: 'accepted' | 'rejected' | 'completed' | 'cancelled' | 'expired' | 'failed' | 'status' | 'outcome_unknown';
   message: string;
   actionId?: string;
   data?: Record<string, unknown>;
 }
 
 export interface EnvironmentObservation {
+  /** Stable adapter receipt identity for replay and acknowledgement. */
+  id?: string;
   environmentId: string;
   adapter: string;
   sessionId: string;
@@ -335,6 +337,10 @@ export interface EnvironmentAction {
 }
 
 export interface EnvironmentCommandWork extends EnvironmentAction {
+  bodyLease?: import('../queue/types.js').BodyLease;
+  workItemId?: string;
+  executionId?: string;
+  effectId?: string;
   status: 'pending' | 'dispatched' | 'accepted' | 'cancelled' | 'expired' | 'failed' | 'rejected';
   dispatchedAt?: string;
   completedAt?: string;

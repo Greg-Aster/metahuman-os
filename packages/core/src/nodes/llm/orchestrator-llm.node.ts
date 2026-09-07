@@ -91,13 +91,17 @@ const ENVIRONMENT_INTENT_FIELDS = [
   'needsTaskLifecycle',
 ] as const;
 
-export type EnvironmentIntentRouting = Record<typeof ENVIRONMENT_INTENT_FIELDS[number], boolean>;
+export type EnvironmentIntentRouting = Record<typeof ENVIRONMENT_INTENT_FIELDS[number], boolean> & {
+  executionDisposition?: 'new' | 'steer' | 'cancel';
+  targetExecutionId?: string;
+};
 
 export const ENVIRONMENT_INTENT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: [...ENVIRONMENT_INTENT_FIELDS],
-  properties: Object.fromEntries(ENVIRONMENT_INTENT_FIELDS.map(field => [field, { type: 'boolean' }])),
+  properties: { ...Object.fromEntries(ENVIRONMENT_INTENT_FIELDS.map(field => [field, { type: 'boolean' }])) as Record<typeof ENVIRONMENT_INTENT_FIELDS[number], { type: 'boolean' }>,
+    executionDisposition: { type: 'string', enum: ['new', 'steer', 'cancel'] }, targetExecutionId: { type: 'string' } },
 } as const;
 
 export function parseEnvironmentIntentRouting(value: unknown): EnvironmentIntentRouting {
@@ -116,6 +120,7 @@ export function parseEnvironmentIntentRouting(value: unknown): EnvironmentIntent
   const record = parsed as Record<string, unknown>;
   const unexpected = Object.keys(record).filter(field => (
     !ENVIRONMENT_INTENT_FIELDS.includes(field as typeof ENVIRONMENT_INTENT_FIELDS[number])
+    && field !== 'executionDisposition' && field !== 'targetExecutionId'
   ));
   if (unexpected.length > 0) {
     throw new Error(`Environment intent output contains unsupported field(s): ${unexpected.join(', ')}`);
@@ -125,9 +130,11 @@ export function parseEnvironmentIntentRouting(value: unknown): EnvironmentIntent
       throw new Error(`Environment intent output requires boolean ${field}`);
     }
   }
-  return Object.fromEntries(
+  if (record.executionDisposition !== undefined && !['new', 'steer', 'cancel'].includes(String(record.executionDisposition))) throw new Error('Invalid execution disposition');
+  if (record.targetExecutionId !== undefined && typeof record.targetExecutionId !== 'string') throw new Error('Invalid target execution');
+  return { ...Object.fromEntries(
     ENVIRONMENT_INTENT_FIELDS.map(field => [field, record[field] as boolean]),
-  ) as EnvironmentIntentRouting;
+  ), ...(record.executionDisposition ? { executionDisposition: record.executionDisposition, targetExecutionId: record.targetExecutionId } : {}) } as EnvironmentIntentRouting;
 }
 
 function withAnalysis<T extends Record<string, any>>(result: T): T & { analysis: T } {
@@ -154,12 +161,15 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   category: 'chat',
   inputs: [
     { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
+    { name: 'activeExecutions', type: 'array', optional: true, description: 'Existing objectives the user may steer, cancel, or leave separate from this turn' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
     { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
   ],
   outputs: [
     { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
+    { name: 'executionSelection', type: 'object', optional: true, description: 'Existing execution selected for steering or cancellation' },
+    { name: 'continueHere', type: 'boolean', description: 'Whether this workflow handles the request rather than forwarding it to its existing execution' },
     { name: 'needsResponse', type: 'boolean', description: 'Whether this turn needs a conversational response' },
     { name: 'needsConversationHistory', type: 'boolean', description: 'Whether downstream reasoning needs recent dialogue context' },
     { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },
@@ -310,6 +320,8 @@ Adjust your routing based on this feedback. If memory search already failed, con
         feedbackSection,
         recentMessages,
         recentConversationSection: recentMessages ? `Recent conversation:\n${recentMessages}` : '',
+        activeExecutionSection: Array.isArray(inputs.activeExecutions) && inputs.activeExecutions.length
+          ? `Existing executions: ${JSON.stringify(inputs.activeExecutions)}\nChoose executionDisposition new for a separate request or conversation, steer to update an existing objective, or cancel to end one. For steer/cancel, targetExecutionId must identify that execution. Route the unchanged input; do not rewrite its objective.` : '',
       };
       const systemPrompt = renderPromptTemplate(
         properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
@@ -326,6 +338,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
       ];
 
       const response = await callLLM({
+        signal: context.abortSignal,
         role: 'orchestrator',
         messages,
         cognitiveMode: context.cognitiveMode,
@@ -334,15 +347,23 @@ Adjust your routing based on this feedback. If memory search already failed, con
           repeatPenalty: 1.15,
           temperature: properties?.temperature ?? 0.2,
           format: environmentContract ? 'json' : undefined,
-          jsonSchema: environmentContract ? ENVIRONMENT_INTENT_JSON_SCHEMA : undefined,
+          jsonSchema: environmentContract ? { ...ENVIRONMENT_INTENT_JSON_SCHEMA,
+            required: [...ENVIRONMENT_INTENT_FIELDS, ...(inputs.activeExecutions?.length ? ['executionDisposition', 'targetExecutionId'] : [])] } : undefined,
         },
         onProgress: context.emitProgress,
       });
 
       if (environmentContract) {
         const routing = parseEnvironmentIntentRouting(response.content);
+        const active = Array.isArray(inputs.activeExecutions) ? inputs.activeExecutions : [];
+        if (active.length && !routing.executionDisposition) throw new Error('Intent must select how this input relates to existing executions');
+        const transferred = routing.executionDisposition === 'steer';
+        const target = routing.executionDisposition === 'steer' || routing.executionDisposition === 'cancel';
+        if (target && !active.some(item => item.executionId === routing.targetExecutionId)) throw new Error('Intent selected an unknown execution');
         return {
           ...routing,
+          continueHere: !transferred,
+          ...(target ? { executionSelection: { executionId: routing.targetExecutionId, kind: transferred ? 'user_steering' : 'user_cancelled' } } : {}),
           analysis: routing,
           raw: response.content,
           thinking: response.thinking,

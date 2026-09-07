@@ -109,13 +109,14 @@ export class RunPodServerlessProvider {
       try {
         return await this.executeRequest(messages, options, onProgress, startTime);
       } catch (error) {
+        options.signal?.throwIfAborted();
         lastError = error instanceof Error ? error : new Error(String(error));
 
         // Check if error is retryable
         if (lastError instanceof RunPodError && lastError.retryable && attempt < this.maxRetries) {
           const backoffMs = Math.min(1000 * Math.pow(2, attempt), 10000);
           console.log(`[runpod] Retry ${attempt + 1}/${this.maxRetries} after ${backoffMs}ms`);
-          await this.sleep(backoffMs);
+          await this.sleep(backoffMs, options.signal);
           continue;
         }
 
@@ -152,6 +153,7 @@ export class RunPodServerlessProvider {
     onProgress?: RunPodProgressCallback,
     startTime: number = Date.now()
   ): Promise<ProviderResponse> {
+    options.signal?.throwIfAborted();
     // Build request input
     const input: RunPodJobInput = {
       messages,
@@ -180,6 +182,7 @@ export class RunPodServerlessProvider {
     const url = `${this.baseUrl}/${this.endpointId}/runsync`;
 
     const response = await this.fetchWithTimeout(url, {
+      signal: options.signal,
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
@@ -222,7 +225,7 @@ export class RunPodServerlessProvider {
       });
 
       // If we get IN_QUEUE/IN_PROGRESS on runsync, poll for completion
-      return this.pollForCompletion(result.id, options.model, onProgress, startTime);
+      return this.pollForCompletion(result.id, options.model, onProgress, startTime, options.signal);
     }
 
     if (!result.output) {
@@ -256,16 +259,18 @@ export class RunPodServerlessProvider {
     jobId: string,
     model: string | undefined,
     onProgress?: RunPodProgressCallback,
-    startTime: number = Date.now()
+    startTime: number = Date.now(),
+    signal?: AbortSignal,
   ): Promise<ProviderResponse> {
     const statusUrl = `${this.baseUrl}/${this.endpointId}/status/${jobId}`;
     const pollInterval = 1000;
     const maxPollTime = this.timeout;
 
     while (Date.now() - startTime < maxPollTime) {
-      await this.sleep(pollInterval);
+      await this.sleep(pollInterval, signal);
 
       const response = await this.fetchWithTimeout(statusUrl, {
+        signal,
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
         },
@@ -338,16 +343,18 @@ export class RunPodServerlessProvider {
    * Fetch with timeout
    */
   private async fetchWithTimeout(url: string, options: RequestInit = {}): Promise<Response> {
+    options.signal?.throwIfAborted();
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
       const response = await fetch(url, {
         ...options,
-        signal: controller.signal,
+        signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
       });
       return response;
     } catch (error) {
+      options.signal?.throwIfAborted();
       if (error instanceof Error && error.name === 'AbortError') {
         throw new RunPodError(
           `Request timeout after ${this.timeout}ms`,
@@ -413,8 +420,13 @@ export class RunPodServerlessProvider {
     );
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+  private sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    return new Promise((resolve, reject) => {
+      const onAbort = () => { clearTimeout(timer); reject(signal?.reason); };
+      const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
   }
 }
 

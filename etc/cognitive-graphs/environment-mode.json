@@ -60,8 +60,8 @@
         "nodeType": "orchestrator_llm",
         "properties": {
           "outputContract": "environment",
-          "systemPrompt": "You are the Environment Intent Orchestrator. Decide which independent routes are relevant to the current user message.\nYou do not answer the user, rewrite or summarize the message, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes user-visible natural-language expression. Without it, this workflow produces no chat message. It can coexist with every other route.\n- needsConversationHistory exposes earlier dialogue.\n- needsMemory exposes stored long-term experience.\n- needsRobotStatus exposes the canonical current snapshot of the robot's condition, readiness, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection and its advertised capabilities.\n- needsTaskLifecycle exposes durable objective state when this turn creates, advances, completes, or otherwise changes one.\n\nRoutes are independent. Work that must continue across later observations or action results normally needs the relevant perception or action routes together with task lifecycle. When the current message may continue, revise, complete, or interrupt earlier activity, expose the conversation and Robot Status needed to interpret that relationship. Infer which information and capabilities are relevant from the message and recent dialogue. Return exactly the eight JSON booleans and nothing else.",
-          "userPromptTemplate": "{{recentConversationSection}}\nCurrent user message: {{userMessage}}",
+          "systemPrompt": "You are the Environment Intent Orchestrator. Decide which independent routes are relevant to the current user message.\nYou do not answer the user, rewrite or summarize the message, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes user-visible natural-language expression. Without it, this workflow produces no chat message. It can coexist with every other route.\n- needsConversationHistory exposes earlier dialogue.\n- needsMemory exposes stored long-term experience.\n- needsRobotStatus exposes the canonical current snapshot of the robot's condition, readiness, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection and its advertised capabilities.\n- needsTaskLifecycle exposes durable objective state when this turn creates, advances, completes, or otherwise changes one.\n\nRoutes are independent. Work that must continue across later observations or action results normally needs the relevant perception or action routes together with task lifecycle. When the current message may continue, revise, complete, or interrupt earlier activity, expose the conversation and Robot Status needed to interpret that relationship. Infer which information and capabilities are relevant from the message and recent dialogue. Return the requested JSON routing fields and, when other executions are supplied, the execution disposition.",
+          "userPromptTemplate": "{{activeExecutionSection}}\n{{recentConversationSection}}\nCurrent user message: {{userMessage}}",
           "temperature": 0.1,
           "maxTokens": 768
         },
@@ -207,7 +207,16 @@
           "systemPrompt": "ENVIRONMENT ACTION SELECTOR\nselectedRoutes is the Intent Orchestrator's decision about which capabilities and context are relevant to currentInstruction. Use those selected capabilities without deciding the routes again. The original instruction is authoritative; persona, selected history, selected memory, Robot Status, and bridge data are supporting context. A saved environment observation supplies last-known state and capabilities, not current vision or current-turn action feedback.\n\nReturn strict JSON with response, actions, movementRequest, and taskDecision. The response field carries the user-visible natural-language expression selected by needsResponse and can accompany any action. Do not add filler motion.\n\nPhysical and sensing capabilities are available through actions. If current visual evidence is useful but absent, captureImage may be selected when advertised; an attached current frame can be analyzed without another capture. Never describe a saved frame as current.\n\nAdvertised actions are proven capabilities described in currentEnvironment. movementRequest is available for a novel movement not covered by an advertised action. Preserve relevant body part, direction, timing, and holds. actions and movementRequest are exclusive.\n\ntaskDecision is null for conversation or a standalone action that does not create, change, or resolve a durable objective. Use a taskDecision object only when this turn starts, continues, completes, or otherwise changes an objective that must survive this workflow. Its objective names that durable objective, while currentInstruction and the selected action remain the current step. When a new instruction advances an unfinished Robot Status objective, preserve that objective rather than replacing it with the step. For goal-directed physical work, outcome act means that actions or movementRequest is non-empty and objectiveComplete is false; only later correlated action feedback can establish completion. An action result proves execution; a visual observation proves only visible facts. Never claim completion beyond supplied evidence.",
           "recentHistoryLimit": 4
         },
-        "comment": "Packages the original input plus only the context routes selected by Intent Orchestrator."
+        "comment": "Packages the original input plus only the context routes selected by Intent Orchestrator.",
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "continueHere",
+              "truthy": true
+            }
+          ]
+        }
       }
     },
     {
@@ -298,8 +307,7 @@
             "sendText"
           ],
           "maxDurationMs": 5000,
-          "defaultDurationMs": 750,
-          "feedbackGraph": "robot-action-result"
+          "defaultDurationMs": 750
         },
         "comment": "Dispatches actions and returns transport facts only. It does not create or replace conversation.",
         "activation": {
@@ -400,7 +408,85 @@
         "label": "Update Robot Status",
         "nodeType": "robot_status_out",
         "properties": {},
-        "comment": "Updates the canonical profile Robot Status after this Environment pass. It performs no model call and makes no action decision."
+        "comment": "Commits the validated selector's task decision and projects its status, with or without physical work. It performs no model call and makes no action decision.",
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": ["response"]
+        }
+      }
+    },
+    {
+      "id": "execution",
+      "type": "utilityNode",
+      "position": {
+        "x": 20,
+        "y": -380
+      },
+      "data": {
+        "label": "Current Execution",
+        "nodeType": "execution_context",
+        "properties": {
+          "eventLimit": 16
+        }
+      }
+    },
+    {
+      "id": "action-results",
+      "type": "utilityNode",
+      "position": {
+        "x": 2800,
+        "y": 160
+      },
+      "data": {
+        "label": "Wait for Robot Results",
+        "nodeType": "environment_result_wait",
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "8",
+              "output": "count",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "review-action",
+      "type": "utilityNode",
+      "position": {
+        "x": 3100,
+        "y": 160
+      },
+      "data": {
+        "label": "Evaluate Robot Action Result",
+        "nodeType": "workflow_call",
+        "properties": {
+          "graph": "robot-action-result"
+        }
+      }
+    },
+    {
+      "id": "execution-input-out",
+      "type": "utilityNode",
+      "position": {
+        "x": 1800,
+        "y": 1060
+      },
+      "data": {
+        "label": "Send Input to Selected Execution",
+        "nodeType": "execution_event_out",
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "executionSelection",
+              "truthy": true
+            }
+          ]
+        }
       }
     }
   ],
@@ -1009,6 +1095,115 @@
       "type": "default",
       "data": {
         "type": "array"
+      }
+    },
+    {
+      "id": "durable-execution-context-3-execution",
+      "source": "execution",
+      "target": "3",
+      "sourceHandle": "context",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "durable-8-commands-action-results-commands",
+      "source": "8",
+      "target": "action-results",
+      "sourceHandle": "commands",
+      "targetHandle": "commands",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "durable-8-count-action-results-control",
+      "source": "8",
+      "target": "action-results",
+      "sourceHandle": "count",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "count",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "durable-robot-status-out-persisted-action-results-control",
+      "source": "robot-status-out",
+      "target": "action-results",
+      "sourceHandle": "persisted",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "persisted",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "durable-action-results-context-review-action-context",
+      "source": "action-results",
+      "target": "review-action",
+      "sourceHandle": "context",
+      "targetHandle": "context",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "durable-execution-11",
+      "source": "execution",
+      "sourceHandle": "context",
+      "target": "11",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "execution-execution-activeExecutions-intent-orchestrator-activeExecutions",
+      "source": "execution",
+      "target": "intent-orchestrator",
+      "sourceHandle": "activeExecutions",
+      "targetHandle": "activeExecutions",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "execution-intent-orchestrator-executionSelection-execution-input-out-selection",
+      "source": "intent-orchestrator",
+      "target": "execution-input-out",
+      "sourceHandle": "executionSelection",
+      "targetHandle": "selection",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "execution-user-input-message-execution-input-out-message",
+      "source": "user-input",
+      "target": "execution-input-out",
+      "sourceHandle": "message",
+      "targetHandle": "message",
+      "type": "default",
+      "data": {
+        "type": "string"
       }
     }
   ],

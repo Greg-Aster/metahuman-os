@@ -243,6 +243,41 @@ export function resolvePath(request: StorageRequest): StorageResponse {
 }
 
 /**
+ * Row-oriented stores use the same profile encryption policy as file storage.
+ * Resolve the key on each operation so locking a profile also locks open stores.
+ */
+export function profileDataCodec(username: string): {
+  encode(value: unknown): string
+  decode(value: string): unknown
+} {
+  const keyForOperation = () => {
+    const ready = isProfileReady(username)
+    if (!ready.ready) throw new Error(ready.error)
+    if (!isAesEncryptionEnabled(username)) return null
+    const key = getCachedKey(username)
+    if (!key) throw new Error('Profile is locked. Please unlock first.')
+    return key
+  }
+  return {
+    encode(value) {
+      const key = keyForOperation()
+      const json = JSON.stringify(value)
+      return key ? JSON.stringify({ encrypted: encrypt(json, key) }) : json
+    },
+    decode(value) {
+      const key = keyForOperation()
+      const parsed = JSON.parse(value)
+      if (key) {
+        if (!parsed?.encrypted) throw new Error('Encrypted profile contains unencrypted execution data')
+        return JSON.parse(decrypt(parsed.encrypted, key).toString('utf8'))
+      }
+      if (parsed?.encrypted) throw new Error('Encrypted execution data requires the profile key')
+      return parsed
+    },
+  }
+}
+
+/**
  * Write data to storage.
  */
 export function writeFileSync(request: WriteRequest): WriteResult {

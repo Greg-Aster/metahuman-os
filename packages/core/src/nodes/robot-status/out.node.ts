@@ -6,7 +6,7 @@ import type {
 import {
   loadRobotStatus,
   robotStatusPath,
-  saveRobotStatus,
+  buildRobotStatusProjection,
   type RobotStatusAction,
   type RobotStatusBody,
   type RobotStatusSnapshot,
@@ -14,6 +14,8 @@ import {
   type RobotStatusTaskAction,
 } from '../../robot-status.js'
 import { defineNode } from '../types.js'
+import { randomUUID } from 'node:crypto'
+import type { ExecutionObjective } from '../../durable-execution/types.js'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -133,23 +135,18 @@ function selectedFrame(value: unknown): EnvironmentVisualFrame | null {
 
 function statusTask(
   inputs: Record<string, unknown>,
-  previous: RobotStatusSnapshot | null,
+  previousTask: ExecutionObjective | null,
   now: string,
-): RobotStatusTask | undefined {
+  executionId: string,
+): ExecutionObjective | undefined {
   const decision = isRecord(inputs.taskDecision) ? inputs.taskDecision : null
   if (!decision) return undefined
-  const previousTask = previous?.task
   const userInstruction = cleanText(inputs.userInstruction, 4_000)
   const objective = cleanText(decision.objective, 1_000)
   if (!objective) return undefined
-  const sameObjective = previousTask?.objective === objective
   const suppliedInstruction = cleanText(inputs.instruction, 4_000) || userInstruction
-  const newUserTurn = Boolean(userInstruction)
-  const instruction = newUserTurn
-    ? suppliedInstruction || objective
-    : sameObjective
-      ? previousTask?.instruction || suppliedInstruction || objective
-      : suppliedInstruction || objective
+  const newUserTurn = !previousTask
+  const instruction = previousTask?.instruction || suppliedInstruction || objective
   const selected = taskAction(currentAction(inputs))
   const id = actionId(inputs)
   const terminal = isRecord(inputs.terminalFeedback)
@@ -159,15 +156,12 @@ function statusTask(
   const frame = selectedFrame(inputs.frames)
   const previousBaseline = !newUserTurn ? previousTask?.baselineFrame ?? null : null
   return {
+    objectiveId: previousTask?.objectiveId ?? randomUUID(),
+    executionId,
+    completionCriteria: cleanText(decision.completionCriteria, 2_000) || previousTask?.completionCriteria || objective,
     objective,
     instruction: instruction || objective,
-    source: newUserTurn
-      ? 'user'
-      : sameObjective
-        ? previousTask.source
-        : inputs.inputSource === 'autonomy'
-          ? 'autonomy'
-          : previousTask?.source || 'user',
+    source: previousTask?.source || (inputs.inputSource === 'autonomy' ? 'autonomy' : 'user'),
     decision: {
       outcome: cleanText(decision.outcome, 80),
       reason: cleanText(decision.reason, 1_000),
@@ -241,12 +235,14 @@ export const robotStatusOutNode = defineNode({
   async execute(inputs, context) {
     const username = cleanText(context.username, 160)
     if (!username) throw new Error('Robot Status Out requires an authenticated username')
+    if (!context.graphExecution) throw new Error('Robot Status Out requires checkpointed execution')
     const previous = loadRobotStatus(username)
     const observation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
       : null
-    const now = observation?.timestamp || new Date().toISOString()
-    const task = statusTask(inputs, previous, now)
+    const now = new Date().toISOString()
+    const task = statusTask(inputs, context.graphExecution.task(), now, context.graphExecution.executionId)
+    if (task) context.graphExecution.recordTask(task)
     const action = lastAction(inputs, previous, now)
     const decision = isRecord(inputs.taskDecision) ? inputs.taskDecision : null
     const response = cleanText(inputs.response, 1_000)
@@ -258,7 +254,6 @@ export const robotStatusOutNode = defineNode({
       || userInstruction
       || previous?.situation.situationalSummary
       || ''
-    if (!semanticSummary) throw new Error('Robot Status Out requires a model decision, response, feedback, or prior status')
     const previousSituation = previous?.situation
     const nextSituation = {
       situationalSummary: semanticSummary,
@@ -282,22 +277,25 @@ export const robotStatusOutNode = defineNode({
       robotHistory: '',
       agency: '',
     }
-    const status = saveRobotStatus(username, situation, {
+    const sources = {
+      generatedAt: now,
       sourceUpdatedAt: {
         ...sourceUpdatedAt,
         environment: observation?.timestamp || sourceUpdatedAt.environment,
         conversation: userInstruction || response ? now : sourceUpdatedAt.conversation,
-        robotHistory: isRecord(inputs.terminalFeedback) ? now : sourceUpdatedAt.robotHistory,
+        robotHistory: isRecord(inputs.terminalFeedback) || isRecord(inputs.bridgeRecord) ? now : sourceUpdatedAt.robotHistory,
       },
       body: bodyFromObservation(observation, previous),
       lastAction: action,
       task,
       activeDesires: previous?.agency.activeDesires ?? [],
-    })
+    }
+    context.graphExecution.dispatch({ kind: 'robot_status', payload: { situation, sources } })
+    const status = buildRobotStatusProjection(previous, task ?? context.graphExecution.task(), situation, sources)
     return {
       status,
       context: status,
-      task: status.task,
+      task: task ?? context.graphExecution.task(),
       lastAction: status.lastAction,
       path: robotStatusPath(username),
       persisted: true,

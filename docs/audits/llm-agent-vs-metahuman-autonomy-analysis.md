@@ -1,8 +1,10 @@
 # MetaHuman Robot Autonomy Compared with Long-Running LLM Agent Loops
 
-Status: research and architecture audit, 2026-09-06. Updated with the durable
-graph-execution recommendation and compatibility-spike plan. No production code
-was changed for this report.
+Status: historical research and spike record, 2026-09-06. The Installation Owner
+subsequently authorized end-to-end production implementation, superseding the
+spike-only approval boundaries below. Implementation and verification are tracked
+in [the progress review](./durable-execution-progress-review.md); historical spike
+results are not production-completion evidence.
 
 ## Scope and evidence boundary
 
@@ -35,6 +37,12 @@ content is not reproduced here.
 
 ## Rolling decision record
 
+- **Implementation authorization, 2026-09-07:** Replace the canonical graph runtime,
+  integrate the real workflows and existing model router, migrate Coordinator and
+  Bridge handoffs, and make Robot Status a projection. Independent review and
+  corrections continue within that goal. No second active runtime or firmware
+  migration is part of the implementation. Deployment and physical results remain
+  separate from isolated software verification.
 - **Initial finding, 2026-09-06:** MetaHuman reconstructs one objective across
   several bounded graph invocations instead of continuing one ordered run.
 - **Existing-system correction, 2026-09-06:** Agency Desire is already a
@@ -1898,10 +1906,11 @@ Coordinator, Environment Bridge, Robot Status, buffers, memory, and optional
 Agency Desire then retain their specialized roles around that execution rather
 than competing to define it.
 
-The bounded LangGraph JS compatibility spike succeeded within its stated
-isolated evidence boundary, and Step 3 now provides the replacement/deletion
-map. The next decision is separate Installation Owner approval for the proposed
-production cutover. No production dependency or runtime migration has begun.
+Historical spike conclusion: the bounded experiment demonstrated selected
+checkpoint and handoff cases, not production readiness. Independent review
+subsequently reproduced continuity and dispatch defects. The Installation Owner
+has since authorized end-to-end implementation; the production runtime and
+workflow migration are now tracked in the [progress review](./durable-execution-progress-review.md).
 The design keeps LLM action selection free while making continuity, event
 ordering, result delivery, restart recovery, and physical idempotency properties
 of the runtime instead of prompt-dependent guesses.

@@ -240,6 +240,7 @@ export function projectRobotCommandDescriptions(
 }
 
 export interface EnvironmentSelectorEnvelopeInput {
+  execution?: unknown;
   instruction: string;
   observation?: EnvironmentObservation | null;
   recentConversation?: Array<{ role: string; content: string }>;
@@ -373,6 +374,7 @@ export function buildEnvironmentSelectorEnvelope(
     capabilityRules: observation ? selectorCapabilityRules(observation.capabilities) : [],
     activePersona: input.personaText?.trim().slice(0, 2_000) || null,
     robotStatus: projectRobotStatusContext(input.robotStatus),
+    execution: input.execution ?? null,
     ...(input.replyToContent?.trim()
       ? { replyToContext: input.replyToContent.trim().slice(0, 500) }
       : {}),

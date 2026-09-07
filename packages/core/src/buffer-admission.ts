@@ -102,8 +102,8 @@ async function runBufferAdmission(
 
     const state = await runGraph({ graph: loaded.graph, context });
     const failures = listFailedNodes(state);
-    if (failures.length > 0) {
-      throw new Error(`${mode} buffer admission failed: ${failures[0].error}`);
+    if (state.status !== 'completed' || state.error || failures.length > 0) {
+      throw new Error(`${mode} buffer admission failed: ${state.error?.message || failures[0]?.error || state.status}`, { cause: state.error });
     }
 
     const bufferNodeType = mode === 'system' ? 'system_buffer' : 'robot_buffer';

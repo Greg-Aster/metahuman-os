@@ -1,8 +1,8 @@
 import { getAgentCatalogSnapshot } from '../../agent-catalog.js'
 import { agentTaskType } from '../../queue/agent-work-catalog.js'
 import { getTriggerConfigService } from '../../queue/trigger-config-service.js'
-import { submitCoordinatorWork, type TaskInput } from '../../queue/index.js'
-import { parseRobotObserverCycle } from '../../robot-operator.js'
+import type { TaskInput } from '../../queue/types.js'
+import { loadRobotOperatorConfig, parseRobotObserverCycle, robotOperatorChildGraph, type RobotOperatorStimulusAgent } from '../../robot-operator.js'
 import { defineNode } from '../types.js'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -23,12 +23,15 @@ export const robotAutonomyTaskDispatchNode = defineNode({
     { name: 'decision', type: 'object', description: 'Validated Agent Catalog task selected by the controller' },
     { name: 'robotObserver', type: 'object', description: 'Robot Operator cycle that owns this Full-mode decision' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Current Environment Bridge session, when available' },
+    { name: 'observation', type: 'object', optional: true, description: 'Bridge evidence already loaded by this workflow' },
   ],
   outputs: [
     { name: 'queued', type: 'boolean', description: 'Whether the selected task was admitted' },
     { name: 'taskId', type: 'string', description: 'Work Coordinator task ID' },
     { name: 'selectedTaskId', type: 'string', description: 'Selected Agent Catalog task ID' },
     { name: 'status', type: 'string', description: 'Dispatch result' },
+    { name: 'invocation', type: 'object', description: 'Selected editable Robot Operator child workflow' },
+    { name: 'work', type: 'object', description: 'Checkpointed finite-agent dispatch to await' },
   ],
   properties: {},
   propertySchemas: {},
@@ -40,7 +43,7 @@ export const robotAutonomyTaskDispatchNode = defineNode({
     const reason = cleanText(decision?.reason, 500)
     const observationSummary = cleanText(decision?.observationSummary, 500)
     const instruction = cleanText(decision?.instruction, 1_000)
-    const reject = (status: string) => ({ queued: false, taskId: '', selectedTaskId, status })
+    const reject = (status: string) => ({ queued: false, taskId: '', selectedTaskId, status, invocation: null, work: null })
     if (!selectedTaskId) return reject('no_decision')
     if (!reason || !observationSummary || selected?.kind !== 'agent') return reject('invalid_decision')
 
@@ -63,6 +66,20 @@ export const robotAutonomyTaskDispatchNode = defineNode({
     const taskType = agentTaskType(selectedTaskId)
     const cycleId = robotObserver.cycleId
     const sessionId = cleanText(inputs.sessionId, 200)
+    if (currentAgent.owner === 'robot-operator') {
+      const graph = robotOperatorChildGraph(loadRobotOperatorConfig(), selectedTaskId as RobotOperatorStimulusAgent)
+      return {
+        queued: false, taskId: '', selectedTaskId, status: 'prepared', work: null,
+        invocation: { graph, context: {
+          userMessage: '', environmentObservation: inputs.observation,
+          robotOperatorContext: {
+            ...context.robotOperatorContext, robotObserver: { ...robotObserver, graph, requestedBy: selectedTaskId },
+            stimulusAgent: selectedTaskId, sessionId,
+            controllerDecision: { instruction, reason, observationSummary },
+          },
+        } },
+      }
+    }
     const taskInput: TaskInput = {
       type: taskType,
       handler: currentAgent.handler,
@@ -70,7 +87,6 @@ export const robotAutonomyTaskDispatchNode = defineNode({
       source: 'autonomy',
       priority: currentAgent.priority,
       username,
-      ...(currentAgent.owner === 'robot-operator' ? { cognitiveMode: 'environment' as const } : {}),
       input: {
         agentId: selectedTaskId,
         args: [],
@@ -98,12 +114,8 @@ export const robotAutonomyTaskDispatchNode = defineNode({
         observationSummary,
       },
     }
-    const injectedEnqueue = context.enqueueRobotAutonomyTask
-    const queuedTask = await (typeof injectedEnqueue === 'function'
-      ? injectedEnqueue(taskInput)
-      : submitCoordinatorWork(taskInput))
-    const taskId = isRecord(queuedTask) ? cleanText(queuedTask.id, 200) : ''
-    if (!taskId) return reject('queue_rejected')
-    return { queued: true, taskId, selectedTaskId, status: 'queued' }
+    if (!context.graphExecution) throw new Error('Autonomy dispatch requires durable execution')
+    const work = context.graphExecution.dispatch({ kind: 'coordinator_work', payload: taskInput })
+    return { queued: false, taskId: '', selectedTaskId, status: 'staged', work, invocation: null }
   },
 })

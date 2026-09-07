@@ -35,7 +35,7 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
       type: 'slider',
       default: 20,
       label: 'Entry Limit',
-      description: 'Maximum entries to retrieve; 0 uses the canonical buffer retention without an additional graph-local cutoff',
+      description: 'Maximum recent entries; conversation windows retain the latest user turn. 0 uses canonical buffer retention without another cutoff.',
       min: 0,
       max: 50,
       step: 1,
@@ -119,6 +119,12 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
       );
 
       const recentConversation = conversationMessages.slice(-maxMessages);
+      if (mode === 'conversation') {
+        const latestUser = [...conversationMessages].reverse().find((msg: any) => msg.role === 'user');
+        if (latestUser && !recentConversation.includes(latestUser)) {
+          recentConversation[0] = latestUser;
+        }
+      }
       messages = [...systemAndMarkers, ...recentConversation];
       pruned = true;
     }

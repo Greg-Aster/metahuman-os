@@ -149,6 +149,30 @@ export interface WorkError {
   retryable: boolean;
 }
 
+/** Identity of a checkpointed dispatch, retained beyond the dashboard history. */
+export interface DurableWorkReference {
+  executionId: string;
+  effectId: string;
+  recovery: 'resume' | 'reconcile';
+}
+
+/** Monotonic ownership checked again by the physical accepting adapter. */
+export interface BodyLease {
+  bodyId: string;
+  executionId: string;
+  generation: number;
+}
+
+/** The file was atomically published, but its durability could not be confirmed. */
+export class WorkCommitUncertainError extends Error {
+  constructor(message: string) { super(message); this.name = 'WorkCommitUncertainError'; }
+}
+
+/** The worker disappeared without reporting whether its external effect finished. */
+export class WorkOutcomeUnknownError extends Error {
+  constructor(message: string) { super(message); this.name = 'WorkOutcomeUnknownError'; }
+}
+
 export interface TaskInput {
   type: TaskType;
   handler?: string;
@@ -166,6 +190,7 @@ export interface TaskInput {
   maxAttempts?: number;
   callbackHandler?: string;
   metadata?: Record<string, any>;
+  durable?: DurableWorkReference;
 }
 
 export interface QueuedTask {
@@ -184,7 +209,13 @@ export interface QueuedTask {
   parentTaskId?: string;
   correlationId?: string;
   idempotencyKey?: string;
+  durable?: DurableWorkReference;
   attempt: number;
+  /** Immutable normalized admission identity, not the evolving execution result. */
+  admissionIdentity?: string;
+  /** Graph checkpoints entered by this finite work item, in call order. */
+  graphExecutions?: string[];
+  bodyLease?: BodyLease;
   maxAttempts: number;
   input: Record<string, any>;
   result?: Record<string, any>;
@@ -240,13 +271,16 @@ export interface QueueConfig {
   lanes: Record<ResourceLaneId, LaneConfig>;
   execution?: {
     staleTaskTimeoutMs?: number;
+    terminalExecutionRetentionDays?: number;
     maxAttempts?: number;
   };
 }
 
 export interface QueueState {
+  bodyOwners?: Record<string, BodyLease>;
   items?: QueuedTask[];
   history?: QueuedTask[];
+  durableReceipts?: QueuedTask[];
   inFlightRemote: RemoteTaskHandle[];
   lastUpdated: string;
 }

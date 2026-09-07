@@ -1,26 +1,14 @@
-import { randomUUID } from 'node:crypto';
 import { defineNode } from '../types.js';
 import {
-  enqueueEnvironmentAction,
+  prepareEnvironmentCommand,
   getEnvironmentActionSubscriberCount,
   summarizeEnvironmentBridgeState,
   type EnvironmentActionType,
 } from '../../environment-interface/index.js';
-import {
-  beginEnvironmentPerceptionCycle,
-  nextRobotObserverCycle,
-  parseRobotObserverCycle,
-} from '../../robot-operator.js';
 
 const ACTION_OPTIONS: EnvironmentActionType[] = ['move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'sendText'];
 const BODY_ACTIONS = new Set<EnvironmentActionType>(ACTION_OPTIONS.filter(action => action !== 'sendText'));
 type SendStatus = 'coordinated_for_adapter' | 'waiting_for_adapter' | 'bridge_disabled' | 'no_actions' | 'partial' | 'rejected';
-
-function configuredGraph(value: unknown): string | null {
-  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim())
-    ? value.trim()
-    : null;
-}
 
 function selectedActions(value: unknown): EnvironmentActionType[] {
   if (!Array.isArray(value)) {
@@ -45,7 +33,6 @@ export const environmentSendActionNode = defineNode({
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
     { name: 'instruction', type: 'string', optional: true, description: 'Current resolved instruction' },
     { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
-    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from Robot Operator Input or the matched sent-action record' },
   ],
   outputs: [
     { name: 'commands', type: 'array', description: 'Coordinator work created for the environment adapter' },
@@ -69,7 +56,6 @@ export const environmentSendActionNode = defineNode({
     allowedActions: ACTION_OPTIONS,
     maxDurationMs: 1500,
     defaultDurationMs: 0,
-    feedbackGraph: '',
   },
   propertySchemas: {
     allowedActions: {
@@ -95,13 +81,6 @@ export const environmentSendActionNode = defineNode({
       step: 50,
       description: 'Optional fallback duration for move/look actions. Leave 0 to require explicit durationMs.',
     },
-    feedbackGraph: {
-      type: 'text',
-      default: '',
-      label: 'Feedback Workflow',
-      description: 'Optional one-pass workflow that receives the correlated action result. Empty means record transport feedback without running another graph.',
-      placeholder: 'For example: robot-action-result',
-    },
   },
   description: 'Queues selected actions for Environment Bridge and returns transport facts only; it never authors or replaces conversation.',
   async execute(inputs, context, properties) {
@@ -110,7 +89,6 @@ export const environmentSendActionNode = defineNode({
       ...(Array.isArray(inputs.generatedActions) ? inputs.generatedActions : []),
       ...(inputs.action ? [inputs.action] : []),
     ];
-    const existingCycle = parseRobotObserverCycle(inputs.robotObserver);
     const hasStop = requestedActions.some(action => action && typeof action === 'object' && action.type === 'stop');
     const rawActions = hasStop
       ? requestedActions.filter(action => action && typeof action === 'object' && action.type === 'stop')
@@ -124,27 +102,6 @@ export const environmentSendActionNode = defineNode({
     const currentInstruction = typeof inputs.instruction === 'string'
       ? inputs.instruction.trim()
       : contextInstruction;
-    const feedbackGraph = configuredGraph(properties?.feedbackGraph);
-    const shouldStartCycle = (
-      !existingCycle
-      && Boolean(feedbackGraph)
-      && currentUserInstruction
-      && rawActions.length > 0
-    );
-    const startedCycle = shouldStartCycle && feedbackGraph
-      ? beginEnvironmentPerceptionCycle(
-          `environment-task-${randomUUID()}`,
-          feedbackGraph,
-        )
-      : null;
-    const actionCycle = existingCycle ?? startedCycle;
-    const continuedCycle = actionCycle ? nextRobotObserverCycle(actionCycle) : null;
-    const nextObserverStep = continuedCycle && feedbackGraph
-      ? {
-          ...continuedCycle,
-          graph: feedbackGraph,
-        }
-      : null;
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
     const commands = [];
     const rejectedActions = [];
@@ -215,22 +172,25 @@ export const environmentSendActionNode = defineNode({
     if (status === 'coordinated_for_adapter') {
       for (const action of rawActions) {
         try {
-          commands.push(enqueueEnvironmentAction(
+          if (!context.graphExecution) throw new Error('Environment Bridge Out requires the durable graph runtime');
+          const prepared = prepareEnvironmentCommand(
             {
               ...action,
               sessionId: action.sessionId ?? targetSessionId,
-              metadata: nextObserverStep
-                ? { ...(action.metadata ?? {}), robotObserver: nextObserverStep }
-                : action.metadata,
+              metadata: action.metadata,
             },
             {
               ...options,
               username: context.username,
-              correlationId: actionCycle?.cycleId ?? context.sessionId,
-              source: actionCycle?.triggerSource ?? 'user',
+              correlationId: context.graphExecution.executionId,
+              source: currentUserInstruction ? 'user' : 'autonomy',
               originatingInstruction: currentInstruction,
             },
-          ));
+          );
+          const dispatch = context.graphExecution.dispatch({
+            kind: 'coordinator_work', actionId: prepared.input.id, payload: prepared,
+          });
+          commands.push({ ...prepared.input, executionId: context.graphExecution.executionId, effectId: dispatch.effectId, status: 'pending' });
         } catch (error) {
           rejectedActions.push({
             action,
@@ -290,8 +250,8 @@ export const environmentSendActionNode = defineNode({
       bodyAuthenticated,
       streamSubscriberCount,
       activeSessionCount,
-      source: actionCycle?.triggerSource ?? 'user',
-      correlationId: actionCycle?.cycleId ?? context.sessionId ?? null,
+      source: currentUserInstruction ? 'user' : 'autonomy',
+      correlationId: context.graphExecution?.executionId ?? null,
     };
     return {
       commands,

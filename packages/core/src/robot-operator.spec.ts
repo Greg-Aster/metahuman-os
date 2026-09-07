@@ -13,10 +13,8 @@ import {
   isBoredomMovementEnabled,
   nextRobotObserverCycle,
   isRobotAutonomyWorkItem,
-  nextFullRobotOperatorChild,
   randomizedRobotOperatorIdleMs,
   readRobotObserverCycle,
-  robotGoalNeedsReview,
   robotObserverSourceAllowed,
   robotOperatorChildGraph,
   loadRobotOperatorConfig,
@@ -48,27 +46,9 @@ test('manual observer cycles remain available while autonomous cycles require se
 test('full autonomy admits the controller instead of rotating child workflows', () => {
   const serviceSource = fs.readFileSync(path.join(ROOT, 'brain/services/robot-operator.ts'), 'utf8')
   assert.match(serviceSource, /FULL_CONTROLLER[^\n]+robot-autonomy-controller/)
-  assert.match(serviceSource, /nextFullRobotOperatorChild/)
-  assert.doesNotMatch(serviceSource, /nextRobotOperatorFullChild|fullCursor/)
-})
-
-test('goal review admission follows unresolved action results rather than reviewing its own decision again', () => {
-  const task = (outcome: string, objectiveComplete = false) => ({
-    objective: 'Find the cat.',
-    decision: { outcome, reason: 'Evidence assessment.', objectiveComplete },
-  }) as any
-
-  assert.equal(robotGoalNeedsReview(task('incomplete')), true)
-  assert.equal(robotGoalNeedsReview(task('failed')), true)
-  assert.equal(robotGoalNeedsReview(task('continue')), false)
-  assert.equal(robotGoalNeedsReview(task('wait')), false)
-  assert.equal(robotGoalNeedsReview(task('request_user')), false)
-  assert.equal(robotGoalNeedsReview(task('abandon')), false)
-  assert.equal(robotGoalNeedsReview(task('complete', true)), false)
-  assert.equal(nextFullRobotOperatorChild(task('incomplete')), 'robot-goal-review')
-  assert.equal(nextFullRobotOperatorChild(task('failed')), 'robot-goal-review')
-  assert.equal(nextFullRobotOperatorChild(task('continue')), 'robot-autonomy-controller')
-  assert.equal(nextFullRobotOperatorChild(task('incomplete'), false), 'robot-autonomy-controller')
+  assert.match(serviceSource, /activeRobotExecutions/)
+  assert.match(serviceSource, /handler: 'graph.signal'/)
+  assert.doesNotMatch(serviceSource, /nextRobotOperatorFullChild|fullCursor|FULL_CYCLE_POLL_MS|nextFullRobotOperatorChild|loadRobotStatus/)
 })
 
 test('robot autonomy activity follows the canonical correlated work chain', () => {
@@ -535,8 +515,9 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   assert.match(observerHandler, /graph: robotOperatorChildGraph\(config, agentId\)/)
   assert.doesNotMatch(observerHandler, /enqueueEnvironmentAction|type: 'captureImage'/)
   assert.match(observerHandler, /triggerSource: 'autonomy'/)
-  assert.match(observerHandler, /priority: manual \? 'high' : 'background'/)
-  assert.match(observerHandler, /observation,\s+observationCurrent: false,\s+graph: cycle\.graph,\s+robotOperatorContext:/)
+  assert.match(observerHandler, /runGraph\(\{/)
+  assert.match(observerHandler, /environmentObservation: observation, environmentObservationCurrent: false/)
+  assert.doesNotMatch(observerHandler, /enqueueEnvironmentObservation|enqueueRobotOperatorEnvironment/)
   assert.doesNotMatch(observerHandler, /type: 'robotCommand'|chooseBoredomMovementCommand/)
   assert.match(controller, /isSleepRuntimeActive\(\)/)
   assert.match(controller, /loadQueueState\(\)\?\.items/)

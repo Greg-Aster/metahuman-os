@@ -1,10 +1,12 @@
 import {
   parseRobotStatusSituation,
   robotStatusPath,
-  saveRobotStatus,
+  loadRobotStatus,
+  buildRobotStatusProjection,
   type RobotStatusSnapshot,
   type RobotStatusSourceFacts,
 } from '../../robot-status.js'
+import { openExecutionStore } from '../../durable-execution/storage.js'
 import { defineNode } from '../types.js'
 
 function modelContent(value: unknown): string {
@@ -81,11 +83,17 @@ export const robotStatusWriterNode = defineNode({
       throw new Error('Robot Status model response was not valid JSON')
     }
     const situation = parseRobotStatusSituation(parsed)
-    const sources = inputs.sourceFacts as RobotStatusSourceFacts | undefined
+    const supplied = inputs.sourceFacts as RobotStatusSourceFacts | undefined
+    const sources = supplied && { ...supplied, generatedAt: new Date().toISOString() }
     if (!sources?.sourceUpdatedAt || !Array.isArray(sources.activeDesires)) {
       throw new Error('Robot Status Writer requires deterministic source facts')
     }
-    const status = saveRobotStatus(username, situation, sources)
+    if (!context.graphExecution) throw new Error('Robot Status Writer requires checkpointed execution')
+    context.graphExecution.dispatch({ kind: 'robot_status', payload: { situation, sources } })
+    const store = openExecutionStore(username)
+    let status: RobotStatusSnapshot
+    try { status = buildRobotStatusProjection(loadRobotStatus(username), store.projectedTask(username), situation, sources) }
+    finally { store.close() }
     return {
       status,
       context: status,

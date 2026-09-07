@@ -19,6 +19,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from './path-builder.js';
 import { getNode, getNodeExecutor, materializeNodeProperties } from './nodes/index.js';
+import { Annotation, Command, END, START, StateGraph, interrupt, isGraphInterrupt } from '@langchain/langgraph';
+import { ExecutionCheckpointer } from './durable-execution/checkpointer.js';
+import { executionDefinition, graphContextSnapshot, type DurableGraphOptions, type GraphNodeExecution } from './durable-execution/graph-contract.js';
+import type { CheckpointTransition, DispatchIntent } from './durable-execution/types.js';
 
 const log = createLogger('graph-pipeline');
 
@@ -59,7 +63,7 @@ function writeGraphTrace(trace: {
   }
 }
 
-export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'skipped' | 'failed';
+export type ExecutionStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'skipped' | 'failed';
 
 export interface NodeExecutionState {
   nodeId: string;
@@ -84,6 +88,10 @@ export interface GraphExecutionState {
   endTime?: number;
   currentNodeId?: string;
   status: ExecutionStatus;
+  executionId?: string;
+  checkpointId?: string;
+  pending?: unknown[];
+  error?: Error;
 }
 
 export interface ExecutionEvent {
@@ -358,6 +366,7 @@ async function executeNode(
       }
     }
   } catch (error) {
+    if (isGraphInterrupt(error)) throw error;
     console.error(`[GraphExecutor] Node ${nodeId} (${nodeType}) FAILED:`, error);
     state.status = 'failed';
     state.error = error as Error;
@@ -480,28 +489,47 @@ async function executeNodeByType(
       // Big Brother nodes and desire executor have no timeout - cloud LLM/research takes as long as needed
       const neverTimeout = nodeType === 'claude_full_task' || nodeType === 'big_brother_executor' || nodeType === 'desire_executor';
 
-      if (neverTimeout) {
-        if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, no timeout (Big Brother)`);
-        const result = await executor(inputs, context, effectiveProperties);
-        const duration = Date.now() - startTime;
-        if (process.env.DEBUG_GRAPH) console.log(`[EXEC_END] Node ${node.id} (${nodeType}) completed in ${duration}ms`);
-        return result as Record<string, any>;
-      }
-
       if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, timeout: ${timeoutMs}ms`);
 
+      const controller = new AbortController();
+      const signal = context.abortSignal
+        ? AbortSignal.any([context.abortSignal, controller.signal])
+        : controller.signal;
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-      const timeoutPromise = new Promise((_, reject) => {
+      if (!neverTimeout && nodeDefinition?.execution.timeoutOwner !== 'children') {
         timeoutHandle = setTimeout(() => {
-          reject(new Error(`TIMEOUT: Node ${node.id} (${nodeType}) exceeded ${timeoutMs / 1000} second execution limit`));
+          controller.abort(new Error(`TIMEOUT: Node ${node.id} (${nodeType}) exceeded ${timeoutMs / 1000} second execution limit`));
         }, timeoutMs);
-      });
+      }
+      const execution = context.graphExecution as GraphNodeExecution | undefined;
+      const scopedContext = {
+        ...context, abortSignal: signal,
+        ...(execution ? { graphExecution: {
+          ...execution,
+          dispatch: (...args: Parameters<GraphNodeExecution['dispatch']>) => { signal.throwIfAborted(); return execution.dispatch(...args); },
+          recordTask: (...args: Parameters<GraphNodeExecution['recordTask']>) => { signal.throwIfAborted(); return execution.recordTask(...args); },
+          recordFrames: (...args: Parameters<GraphNodeExecution['recordFrames']>) => { signal.throwIfAborted(); return execution.recordFrames(...args); },
+          waitForEvent: (reason?: string) => { signal.throwIfAborted(); return execution.waitForEvent(reason); },
+          callGraph: (graph: SvelteFlowGraph, childContext: Record<string, any>) => {
+            signal.throwIfAborted();
+            return execution.callGraph(graph, { ...childContext, abortSignal: signal });
+          },
+        } } : {}),
+      };
 
-      const executionPromise = executor(inputs, context, effectiveProperties);
+      let onAbort: () => void = () => {};
+      const cancelled = new Promise<never>((_, reject) => {
+        onAbort = () => reject(signal.reason ?? new DOMException('Node execution cancelled', 'AbortError'));
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      });
       let result: unknown;
       try {
-        result = await Promise.race([executionPromise, timeoutPromise]);
+        signal.throwIfAborted();
+        result = await Promise.race([executor(inputs, scopedContext, effectiveProperties), cancelled]);
+        signal.throwIfAborted();
       } finally {
+        signal.removeEventListener('abort', onAbort);
         if (timeoutHandle) clearTimeout(timeoutHandle);
       }
 
@@ -510,6 +538,7 @@ async function executeNodeByType(
 
       return result as Record<string, any>;
     } catch (error) {
+      if (isGraphInterrupt(error)) throw error;
       console.error(`[Node:${nodeType}] EXECUTION FAILED:`, error);
       throw error;
     }
@@ -642,13 +671,20 @@ export async function executeGraph(
   contextData: Record<string, any>,
   eventHandler?: ExecutionEventHandler,
   signal?: AbortSignal,
+  durable?: DurableGraphOptions,
 ): Promise<GraphExecutionState> {
   validateSvelteFlowGraph(graph);
+  if (durable) {
+    if (durable.invocationId) durable.store.pinGraph(durable.lease, durable.invocationId, executionDefinition(graph));
+    else durable.store.assertDefinition(durable.lease.executionId, executionDefinition(graph));
+    durable.store.assertLease(durable.lease);
+  }
   const executionState = new Map<string, NodeExecutionState>();
   const graphState: GraphExecutionState = {
     nodes: executionState,
     startTime: Date.now(),
     status: 'running',
+    executionId: durable?.lease.executionId,
   };
 
   log.info(`Starting execution: ${graph.name} v${graph.version}`);
@@ -689,13 +725,27 @@ export async function executeGraph(
     log.debug(`   Execution Order: ${executionOrder.length} nodes`);
     console.log(`[GraphExecutor] Topological order: ${executionOrder.join(' → ')}`);
 
-    // Dynamic execution queue (supports re-execution for loops)
-    const executionQueue: string[] = [...executionOrder];
-    const executedCount = new Map<string, number>();
+    // The same LangGraph program drives direct and durable graph invocations.
+    // SvelteFlow scheduling remains data in the checkpoint: no second executor.
+    const Schedule = Annotation.Root({
+      queue: Annotation<string[]>(),
+      counts: Annotation<Record<string, number>>(),
+      nodeEntries: Annotation<Array<[string, NodeExecutionState]>>(),
+      contextSnapshot: Annotation<Record<string, any>>(),
+      executionTransition: Annotation<CheckpointTransition | undefined>(),
+      startedAt: Annotation<number>(),
+    });
     const maxLoopIterations = graph.scheduler.maxLoopIterations;
-
-    while (executionQueue.length > 0) {
+    const program = new StateGraph(Schedule).addNode('execute', async (schedule, runtimeConfig) => {
       if (signal?.aborted) throw new DOMException('Graph execution cancelled', 'AbortError');
+      if (durable) {
+        durable.store.assertLease(durable.lease);
+        if (durable.store.get(durable.lease.executionId).cancelledAt !== null) throw new DOMException('Graph execution cancelled', 'AbortError');
+      }
+      const executionQueue = [...schedule.queue];
+      const executedCount = new Map(Object.entries(schedule.counts));
+      executionState.clear();
+      schedule.nodeEntries.forEach(([id, state]) => executionState.set(id, state));
       const nodeId = executionQueue.shift()!;
       const node = graph.nodes.find(n => n.id === nodeId);
       if (!node) throw new Error(`Node ${nodeId} not found in graph`);
@@ -711,16 +761,61 @@ export async function executeGraph(
           node.data.muted ? 'Muted by graph configuration' : readiness.reason || 'Node was not activated',
           eventHandler,
         );
-        continue;
+        return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState] };
       }
 
       const iterCount = (executedCount.get(nodeId) || 0) + 1;
       executedCount.set(nodeId, iterCount);
+      const dispatches: DispatchIntent[] = [];
+      const processedEventIds: string[] = [];
+      let taskUpdate: import('./durable-execution/types.js').ExecutionObjective | undefined;
+      const frames: import('./environment-interface/types.js').EnvironmentVisualFrame[] = [];
+      let childIndex = 0;
+      const occurrenceId = `${durable?.lease.executionId ?? requestId}:${durable?.invocationId ?? ''}:${nodeId}:${iterCount}`;
+      const nodeExecution: GraphNodeExecution | undefined = durable ? {
+        executionId: durable.lease.executionId,
+        occurrenceId,
+        activeExecutions: () => durable.store.list(durable.store.get(durable.lease.executionId).username)
+          .filter(record => record.executionId !== durable.lease.executionId && ['running', 'waiting'].includes(record.status))
+          .flatMap(record => { const task = durable.store.task(record.executionId); return task ? [{ executionId: record.executionId, status: record.status, task }] : []; }),
+        task: () => taskUpdate ?? durable.store.task(durable.lease.executionId),
+        recordTask: task => { taskUpdate = task; },
+        events: () => durable.store.events(durable.lease.executionId),
+        frame: id => frames.find(frame => frame.id === id) ?? durable.store.frame(durable.lease.executionId, id),
+        recordFrames: supplied => { frames.push(...supplied); },
+        dispatch: intent => {
+          const dispatch = { ...intent, effectId: `${occurrenceId}:effect:${dispatches.length}` };
+          dispatches.push(dispatch);
+          return dispatch;
+        },
+        callGraph: async (childGraph, childContext) => {
+          const child = await executeGraph(childGraph, childContext, eventHandler, childContext.abortSignal ?? signal, {
+            store: durable.store, lease: durable.lease, afterCheckpoint: durable.afterCheckpoint,
+            checkpointNamespace: durable.checkpointNamespace,
+            config: runtimeConfig, invocationId: `${occurrenceId}:child:${childIndex++}`,
+          });
+          if (child.status === 'failed') throw [...child.nodes.values()].find(node => node.error)?.error
+            ?? new Error(`Child graph ${childGraph.name} failed`);
+          return child;
+        },
+        waitForEvent: (reason = 'external_event') => {
+          const owner = durable.store.get(durable.lease.executionId);
+          const next = durable.store.events(owner.executionId, owner.lastProcessedSequence)[processedEventIds.length];
+          const eventId: string = next?.eventId ?? interrupt({ executionId: owner.executionId, occurrenceId, reason });
+          const event = durable.store.event(owner.executionId, eventId);
+          if (event.sequence !== owner.lastProcessedSequence + processedEventIds.length + 1) throw new Error('Resume event is not the next admitted execution event');
+          processedEventIds.push(event.eventId);
+          return event;
+        },
+      } : undefined;
 
       // Inject iteration count into context for feedback_router and other loop-aware nodes
       // Also add emitEvent for nodes to emit arbitrary events (e.g., Claude CLI streaming)
       const nodeContext = {
-        ...contextData,
+        ...(durable ? schedule.contextSnapshot : contextData),
+        ...Object.fromEntries(Object.entries(contextData).filter(([, value]) => typeof value === 'function')),
+        abortSignal: signal,
+        graphExecution: nodeExecution,
         _graphExecutorIteration: iterCount,
         emitEvent: eventHandler
           ? (type: ExecutionEvent['type'], data: any) => eventHandler({ type, data, nodeId, timestamp: Date.now() })
@@ -730,12 +825,17 @@ export async function executeGraph(
       // Execute the node
       await executeNode(nodeId, graph, executionState, readiness.inputs, nodeContext, eventHandler);
       if (signal?.aborted) throw new DOMException('Graph execution cancelled', 'AbortError');
+      const transition: CheckpointTransition | undefined = durable ? {
+        transitionId: occurrenceId, dispatches, processedEventIds, frames, ...(taskUpdate ? { task: taskUpdate } : {}),
+      } : undefined;
 
       const outgoingLoopEdges = graph.edges.filter(edge => (
         edge.source === nodeId
         && edge.data?.loop === true
       ));
-      if (outgoingLoopEdges.length === 0) continue;
+      if (outgoingLoopEdges.length === 0) {
+        return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState], executionTransition: transition };
+      }
 
       const activeLoopEdges = outgoingLoopEdges.filter(edge => isEdgeActive(edge, executionState));
       if (activeLoopEdges.length > 0) {
@@ -770,7 +870,34 @@ export async function executeGraph(
         executionQueue.length = 0;
         executionQueue.push(...scheduledQueue);
       }
+      return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState], executionTransition: transition };
+    }).addConditionalEdges(START, schedule => schedule.queue.length ? 'execute' : END)
+      .addConditionalEdges('execute', schedule => schedule.queue.length ? 'execute' : END)
+      .compile({ checkpointer: durable ? new ExecutionCheckpointer(durable.store, durable.lease, durable.afterCheckpoint, durable.checkpointNamespace) : undefined });
+    const config = {
+      ...durable?.config,
+      configurable: { ...durable?.config?.configurable, ...(durable ? { thread_id: durable.lease.executionId } : {}) },
+      durability: 'sync' as const,
+      // This is the existing saved graph loop bound, not an additional behavior limit.
+      recursionLimit: graph.nodes.length * (maxLoopIterations + 1) + 2,
+    };
+    const finished = await program.invoke(durable?.resumeEventId ? new Command({ resume: durable.resumeEventId }) : durable?.resume ? null : {
+      queue: executionOrder, counts: {}, nodeEntries: [], contextSnapshot: durable ? graphContextSnapshot(contextData) : {},
+      startedAt: graphState.startTime, executionTransition: durable?.initialTransition,
+    }, config);
+    executionState.clear();
+    finished.nodeEntries.forEach(([id, state]) => executionState.set(id, state));
+    graphState.startTime = finished.startedAt;
+    if (durable && (!durable.invocationId || durable.externalChild)) {
+      const saved = await program.getState(config);
+      graphState.checkpointId = saved.config.configurable?.checkpoint_id;
+      if (saved.next.length > 0) {
+        graphState.status = 'waiting';
+        graphState.pending = saved.tasks.flatMap(task => task.interrupts ?? []);
+        return graphState;
+      }
     }
+    const executedCount = new Map(Object.entries(finished.counts));
 
     graphState.status = 'completed';
     graphState.endTime = Date.now();
@@ -818,6 +945,8 @@ export async function executeGraph(
     return graphState;
 
   } catch (error) {
+    if (isGraphInterrupt(error)) throw error;
+    graphState.error = error as Error;
     graphState.status = 'failed';
     graphState.endTime = Date.now();
     const duration = graphState.endTime - graphState.startTime;

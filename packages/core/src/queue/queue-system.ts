@@ -26,13 +26,13 @@ import { eventBus } from '../infrastructure/event-bus/client.js';
 import {
   auditRecovery,
   clearQueueState,
-  createDebouncedSaver,
   createImmediateSaver,
   loadQueueState,
   persistQueueState,
   shouldRestoreState,
 } from './queue-persister.js';
 import { isWorkCoordinatorOwner } from './work-coordinator-ownership.js';
+import { recoverDurableExecutions } from '../durable-execution/recovery.js';
 import { agentHandlerId, agentTaskType } from './agent-work-catalog.js';
 import { SLEEP_WORKFLOW_HANDLERS } from './sleep-workflow.js';
 import {
@@ -68,6 +68,10 @@ function parseQueueConfig(value: unknown): QueueConfig {
   if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
     throw new Error('queue.json execution.maxAttempts must be a positive integer');
   }
+  const terminalExecutionRetentionDays = raw.execution?.terminalExecutionRetentionDays ?? 30;
+  if (!Number.isInteger(terminalExecutionRetentionDays) || terminalExecutionRetentionDays < 1) {
+    throw new Error('queue.json execution.terminalExecutionRetentionDays must be a positive integer');
+  }
   return {
     enabled: raw.enabled ?? true,
     lanes: {
@@ -75,7 +79,7 @@ function parseQueueConfig(value: unknown): QueueConfig {
       'vector-index': { ...raw.lanes['vector-index'], id: 'vector-index' },
       'remote-llm': { ...raw.lanes['remote-llm'], id: 'remote-llm' },
     },
-    execution: { staleTaskTimeoutMs, maxAttempts },
+    execution: { staleTaskTimeoutMs, maxAttempts, terminalExecutionRetentionDays },
   };
 }
 
@@ -129,7 +133,9 @@ export class QueueSystem extends EventEmitter {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.queueManager = getQueueManager();
-    this.executionEngine = new ExecutionEngine({ wakeFallbackMs: 1_000 }, this.queueManager);
+    this.executionEngine = new ExecutionEngine({ wakeFallbackMs: 1_000,
+      maintain: () => recoverDurableExecutions(this.queueManager, this.queueConfig?.execution?.terminalExecutionRetentionDays ?? 30),
+    }, this.queueManager);
     this.triggerManager = new TriggerManager(this.queueManager);
     this.remoteDispatcher = new RemoteDispatcher(this.queueManager);
     this.triggerManager.setHandlerInspector(config => ({
@@ -240,19 +246,16 @@ export class QueueSystem extends EventEmitter {
       if (shouldRestoreState()) persistQueueState(this.queueManager.exportState());
       reconcileSleepRuntime(this.queueManager.getAllTasks());
 
-      const onPersistenceError = (error: Error) => {
-        this.setLifecycle('degraded', error.message);
-        this.emit('error', { error });
-      };
-      const debouncedSave = createDebouncedSaver(
-        () => this.queueManager.exportState(),
-        onPersistenceError,
-      );
+      this.immediateSave = createImmediateSaver(() => this.queueManager.exportState());
       this.queueManager.setOnQueueChange(() => {
-        debouncedSave();
+        try {
+          this.immediateSave!();
+        } catch (error) {
+          this.setLifecycle('degraded', (error as Error).message);
+          throw error;
+        }
         this.emit('stateChange', this.getState());
       });
-      this.immediateSave = createImmediateSaver(() => this.queueManager.exportState());
       this.initialized = true;
       audit({ level: 'info', category: 'system', event: 'queue_system_initialized', actor: 'queue_system' });
       return true;
@@ -282,6 +285,9 @@ export class QueueSystem extends EventEmitter {
       return false;
     }
     try {
+      // The engine performs recovery before its first dispatch and on later
+      // wakes. A locked profile is reported there without preventing unrelated
+      // profiles from starting the Coordinator.
       this.executionEngine.start();
       this.triggerManager.start();
       this.setLifecycle('running');

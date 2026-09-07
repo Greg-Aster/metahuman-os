@@ -60,6 +60,7 @@ export const environmentContextBuilderNode = defineNode({
   name: 'Environment Context Builder',
   category: 'environment',
   inputs: [
+    { name: 'execution', type: 'object', optional: true, description: 'Checkpointed objective and execution events' },
     { name: 'observation', type: 'object', optional: true, description: 'Environment observation selected for this turn' },
     { name: 'observationCurrent', type: 'boolean', optional: true, description: 'Whether the observation directly triggered this graph execution' },
     { name: 'instruction', type: 'string', optional: true, description: 'Additional task instruction' },
@@ -183,6 +184,7 @@ export const environmentContextBuilderNode = defineNode({
         }, ...selectedImages]
       : content;
     const message = buildEnvironmentSelectorEnvelope({
+      execution: inputs.execution ?? null,
       instruction: rawInstruction,
       observation: promptObservation,
       recentConversation: history,

@@ -105,8 +105,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
       return { response: '', skipped: true };
     }
 
-    try {
-      const response = await callLLM({
+    const response = await callLLM({
         role,
         messages,
         userId: username,
@@ -123,16 +122,9 @@ export const ModelRouterNode: NodeDefinition = defineNode({
             : undefined,
         },
         onProgress: context.emitProgress,
+        signal: context.abortSignal,
       });
 
-      return { response: response.content };
-    } catch (error) {
-      console.error('[ModelRouter] Error:', error);
-      const message = error instanceof Error ? error.message : 'Unknown model routing error';
-      return {
-        response: `Model routing failed: ${message}`,
-        error: message,
-      };
-    }
+    return { response: response.content };
   },
 });

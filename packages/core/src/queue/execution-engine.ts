@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { UnifiedQueueManager, getQueueManager } from './unified-queue-manager.js';
 import { RemoteDispatcher } from './remote-dispatcher.js';
-import type { QueueEvent, QueuedTask } from './types.js';
+import { WorkOutcomeUnknownError, type QueueEvent, type QueuedTask } from './types.js';
 import { audit } from '../audit.js';
 import { ROOT } from '../paths.js';
 import { systemPaths } from '../path-builder.js';
@@ -22,6 +22,7 @@ import { wakeSleepSession } from '../sleep-runtime.js';
 import {
   beginEnvironmentPerceptionCycle,
   loadRobotOperatorConfig,
+  robotAutonomyControllerContext,
   parseRobotObserverCycle,
 } from '../robot-operator.js';
 import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js';
@@ -33,6 +34,10 @@ import {
 import { agentFailureMessage } from '../agent-process-runner.js';
 import { getUserByUsername, getUsers } from '../users.js';
 import { withUserContext } from '../context.js';
+import { deliverDurableWorkReceipt } from '../durable-execution/work-results.js';
+import { ExecutionBusyError, ExecutionCancelledError } from '../durable-execution/types.js';
+import { openExecutionStore } from '../durable-execution/storage.js';
+import { executionWorkInput, relayExecutionOutbox } from '../durable-execution/coordinator-outbox.js';
 import { canWriteMemory } from '../cognitive-mode.js';
 import type { GraphExecutionState } from '../graph-executor.js';
 
@@ -159,11 +164,13 @@ export type WorkHandler = (
 
 export interface ExecutionEngineOptions {
   wakeFallbackMs?: number;
+  maintain?: () => Promise<void>;
   onTaskComplete?: (task: QueuedTask, success: boolean, result: any) => void;
   onError?: (error: Error, task?: QueuedTask) => void;
 }
 
 export class ExecutionEngine {
+  private maintenanceError?: string;
   private readonly queueManager: UnifiedQueueManager;
   private readonly remoteDispatcher: RemoteDispatcher;
   private readonly handlers = new Map<string, WorkHandler>();
@@ -214,6 +221,42 @@ export class ExecutionEngine {
   }
 
   private registerDefaultHandlers(): void {
+    this.registerHandler('graph.signal', async (task, context) => {
+      const store = openExecutionStore(task.username);
+      try {
+        const execution = store.get(String(task.input.executionId));
+        if (execution.username !== task.username) throw new Error('Execution belongs to another profile');
+        if (['completed', 'failed', 'cancelled'].includes(execution.status)) return { terminal: true };
+        store.deliverEvent(execution.executionId, {
+          eventId: String(task.input.eventId), kind: 'autonomy_trigger',
+          payload: {
+            source: task.source, requestedAgent: task.input.agentId,
+            userMessage: '', mode: 'system', dialogueType: 'system',
+            robotOperatorContext: robotAutonomyControllerContext(String(task.input.eventId),
+              loadRobotOperatorConfig().robotAutonomyControllerGraph),
+          },
+        });
+        await relayExecutionOutbox(store, execution.executionId, async input => context.enqueue(input));
+        return { executionId: execution.executionId, signalled: true };
+      } finally { store.close(); }
+    });
+    this.registerHandler('graph.resume', async (task, context) => {
+      const { openExecutionStore } = await import('../durable-execution/storage.js');
+      const { runGraph } = await import('../graph-runtime.js');
+      const executionId = String(task.input.executionId || '');
+      const store = openExecutionStore(task.username);
+      let entry;
+      try { entry = store.entry(executionId); } finally { store.close(); }
+      return withTaskUserContext(task, async () => {
+        const state = await runGraph({
+          graph: entry.graph, context: entry.context, executionId,
+          resumeEventId: typeof task.input.eventId === 'string' ? task.input.eventId : undefined,
+          signal: context.signal,
+        });
+        if (state.status === 'failed') throw state.error ?? new Error('Resumed workflow failed');
+        return { executionId, status: state.status, effect: summarizeEnvironmentGraphEffect(state) };
+      });
+    });
     this.registerHandler('vector.index-build', async (task) => {
       const { refreshMemoryIndex } = await import('../vector-index.js');
       return withTaskUserContext(task, () => refreshMemoryIndex({
@@ -389,11 +432,13 @@ export class ExecutionEngine {
           },
         }),
       );
-      if (graphState.status !== 'completed') throw new Error('Environment graph execution failed');
+      if (graphState.status === 'failed') throw graphState.error ?? new Error('Environment graph execution failed');
       return {
         recorded: true,
         sessionId: observation.sessionId,
         graphExecuted: true,
+        executionId: graphState.executionId,
+        executionStatus: graphState.status,
         graph: graphName,
         robotObserver,
         effect: summarizeEnvironmentGraphEffect(graphState),
@@ -509,6 +554,17 @@ export class ExecutionEngine {
 
   private async runLoop(): Promise<void> {
     while (this.running) {
+      try { await this.options.maintain?.(); this.maintenanceError = undefined; }
+      catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        if (this.maintenanceError !== failure.message) {
+          this.options.onError?.(failure);
+          console.error('[Work Coordinator] Durable receipt recovery failed:', failure);
+          this.maintenanceError = failure.message;
+        }
+        // Admission and accepting owners still validate the affected execution.
+        // An inaccessible profile must not stop unrelated Coordinator work.
+      }
       this.queueManager.releaseWaiting();
       let dispatched = false;
 
@@ -539,11 +595,32 @@ export class ExecutionEngine {
     markSleepStageRunning(task);
 
     try {
-      const result = await handler(task, {
+      if (task.durable) {
+        const store = openExecutionStore(task.username);
+        try {
+          const effect = store.dispatch(task.durable.effectId);
+          if (store.get(effect.executionId).cancelledAt !== null) throw new ExecutionCancelledError(effect.executionId);
+          // The Coordinator may wake before the relay attaches its receipt.
+          // Re-admission verifies the identical immutable input at its owner.
+          if (!effect.workItemId) {
+            if (this.queueManager.enqueue(executionWorkInput(store, effect)).id !== task.id) throw new Error('Conflicting work receipt');
+            store.acknowledgeAdmission(effect.effectId, task.id);
+          } else if (effect.workItemId !== task.id) throw new Error('Work does not match its durable admission receipt');
+          if (effect.status === 'completed') {
+            this.queueManager.complete(task.id, true, { alreadyCommitted: true });
+            return;
+          }
+          // This check is at the accepting owner, after asynchronous admission.
+          // Recovered resumable jobs may already have an acceptance receipt.
+          store.acceptAction(effect.effectId);
+        } finally { store.close(); }
+      }
+      const { withGraphWork } = await import('../durable-execution/runtime.js');
+      const result = await withGraphWork(task, id => this.queueManager.attachExecution(task.id, id), () => handler(task, {
         signal: controller.signal,
         emit: chunk => this.queueManager.appendOutput(task.id, chunk),
         enqueue: this.queueManager.enqueue.bind(this.queueManager),
-      });
+      }), async input => this.queueManager.enqueue(input));
       if (result === DEFERRED) return;
       if (controller.signal.aborted || task.cancellationRequestedAt) {
         this.queueManager.acknowledgeCancellation(task.id);
@@ -552,6 +629,7 @@ export class ExecutionEngine {
 
       const normalizedResult = result && typeof result === 'object' ? result : {};
       this.queueManager.complete(task.id, true, normalizedResult);
+      await deliverDurableWorkReceipt(this.queueManager.getTask(task.id)!, async input => this.queueManager.enqueue(input));
       try {
         advanceSleepWorkflow(this.queueManager, task, 'completed');
       } catch (sleepError) {
@@ -572,17 +650,37 @@ export class ExecutionEngine {
         },
       });
     } catch (error) {
+      if (error instanceof ExecutionCancelledError) {
+        this.queueManager.cancel(task.id, error.message);
+        this.queueManager.acknowledgeCancellation(task.id);
+        return;
+      }
+      if (error instanceof ExecutionBusyError) {
+        this.queueManager.wait(task.id, error.message, new Date(error.retryAt).toISOString());
+        return;
+      }
       if (controller.signal.aborted || task.cancellationRequestedAt) {
         this.queueManager.acknowledgeCancellation(task.id);
         return;
       }
       const normalized = error instanceof Error ? error : new Error(String(error));
+      if (this.queueManager.getTask(task.id)?.state === 'completed') {
+        // Work succeeded; a failed cross-store receipt handoff is recovered from
+        // its persisted terminal receipt, never by executing the work again.
+        this.options.onError?.(normalized, task);
+        return;
+      }
       const retried = this.queueManager.requeue(task, {
-        code: 'handler_failed',
+        code: normalized instanceof WorkOutcomeUnknownError ? 'outcome_unknown' : 'handler_failed',
         message: normalized.message,
-        retryable: true,
+        retryable: !(normalized instanceof WorkOutcomeUnknownError),
       });
+      if (this.queueManager.getTask(task.id)?.state === 'waiting') {
+        this.options.onError?.(normalized, task);
+        return;
+      }
       if (!retried) {
+        await deliverDurableWorkReceipt(this.queueManager.getTask(task.id)!, async input => this.queueManager.enqueue(input));
         try {
           advanceSleepWorkflow(this.queueManager, task, 'failed', normalized.message);
         } catch (sleepError) {
@@ -637,6 +735,7 @@ export class ExecutionEngine {
           MH_TASK_ID: task.id,
           MH_TASK_CREATED_AT: task.createdAt,
           MH_TASK_PAYLOAD: JSON.stringify(task.input),
+          ...(task.durable ? { MH_PARENT_EXECUTION: JSON.stringify(task.durable) } : {}),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -647,12 +746,14 @@ export class ExecutionEngine {
       child.stdout?.on('data', data => { stdout += data.toString(); });
       child.stderr?.on('data', data => { stderr += data.toString(); });
       child.on('error', reject);
-      child.on('close', code => {
+      child.on('close', (code, exitSignal) => {
         signal.removeEventListener('abort', abort);
         if (signal.aborted) {
           reject(new DOMException('Work cancelled', 'AbortError'));
         } else if (code === 0) {
           resolve({ stdout, stderr });
+        } else if (exitSignal) {
+          reject(new WorkOutcomeUnknownError(`Agent ${agentId} exited on ${exitSignal} without a terminal result`));
         } else {
           reject(new Error(agentFailureMessage(agentId, code, stderr || stdout)));
         }

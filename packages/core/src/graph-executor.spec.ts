@@ -1,10 +1,25 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import test, { after } from 'node:test'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
 import type { SvelteFlowGraph } from './cognitive-graph-schema.js'
-import { executeGraph } from './graph-executor.js'
-import { nodeExecutors, nodeRegistry } from './nodes/index.js'
-import { defineNode, type NodeDefinition } from './nodes/types.js'
+import type { NodeDefinition } from './nodes/types.js'
+
+const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-executor-contracts-'))
+process.env.METAHUMAN_ROOT = isolatedRoot
+globalThis.fetch = async () => { throw new Error('Network access is forbidden in executor contract tests') }
+const { ROOT } = await import('./path-builder.js')
+assert.equal(ROOT, isolatedRoot)
+const { eventBus } = await import('./infrastructure/event-bus/client.js')
+eventBus.disconnect()
+const { executeGraph } = await import('./graph-executor.js')
+const { nodeExecutors, nodeRegistry } = await import('./nodes/index.js')
+const { defineNode } = await import('./nodes/types.js')
+const { ExecutionStore } = await import('./durable-execution/store.js')
+const { executionDefinition } = await import('./durable-execution/graph-contract.js')
+after(() => eventBus.disconnect())
 
 function testNode(
   id: string,
@@ -68,6 +83,106 @@ function graph(
     edges,
   }
 }
+
+test('the canonical executor resumes saved nodes with their persisted properties and original inputs', async () => {
+  let plans = 0
+  let fail = true
+  const plan = defineNode({
+    id: 'test_durable_plan', name: 'durable plan', category: 'utility', description: 'Durable owner fixture',
+    inputs: [], outputs: [{ name: 'value', type: 'number' }],
+    propertySchemas: { value: { type: 'number', default: 1 } },
+    execute: async (_inputs, context, properties) => {
+      plans++
+      context.graphExecution.dispatch({ kind: 'test-effect', actionId: 'durable-test-action', payload: { value: properties?.value } })
+      return { value: properties?.value }
+    },
+  })
+  const review = testNode('test_durable_review', [{ name: 'value', type: 'number' }], [{ name: 'response', type: 'string' }], async (inputs, context) => {
+    if (fail) throw new Error('Injected interruption before review succeeds')
+    return { response: `${context.userMessage}:${inputs.value}` }
+  })
+  await withTestNodes([plan, review], async () => {
+    const workflow = graph([{ id: 'plan', nodeType: plan.id }, { id: 'review', nodeType: review.id }], [
+      { id: 'value', source: 'plan', sourceHandle: 'value', target: 'review', targetHandle: 'value' },
+    ])
+    workflow.nodes[0].data.properties = { value: 7 }
+    const filename = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-durable-graph-')), 'execution.sqlite')
+    let store = new ExecutionStore(filename)
+    const definition = executionDefinition(workflow)
+    const execution = store.create('test-user', definition)
+    let lease = store.claim(execution.executionId, definition)
+    const first = await executeGraph(workflow, { userMessage: 'original input' }, undefined, undefined, { store, lease })
+    assert.equal(first.status, 'failed')
+    assert.equal(plans, 1)
+    assert.equal(store.pendingDispatches().length, 1)
+    store.release(lease)
+    store.close()
+
+    fail = false
+    store = new ExecutionStore(filename)
+    lease = store.claim(execution.executionId, definition)
+    const second = await executeGraph(workflow, { userMessage: 'unrelated new context' }, undefined, undefined, { store, lease, resume: true })
+    assert.equal(second.status, 'completed')
+    assert.equal(second.nodes.get('review')?.outputs?.response, 'original input:7')
+    assert.equal(plans, 1, 'checkpointed successful node is not executed again')
+    assert.equal(store.pendingDispatches().length, 1, 'dispatch intent is not duplicated')
+    store.release(lease)
+    store.close()
+  })
+})
+
+test('actual child graphs wait and recover in the same parent thread without repeating a dispatch', async () => {
+  let plans = 0
+  let reviews = 0
+  const plan = testNode('test_child_plan', [], [{ name: 'action', type: 'object' }], async (_inputs, context) => {
+    plans++
+    const action = context.graphExecution.dispatch({ kind: 'test-action', payload: { objective: context.userMessage }, actionId: 'child-action' })
+    return { action }
+  })
+  const wait = testNode('test_child_wait', [{ name: 'action', type: 'object' }], [{ name: 'result', type: 'object' }], async (_inputs, context) => ({ result: context.graphExecution.waitForEvent() }))
+  const review = testNode('test_child_result', [{ name: 'result', type: 'object' }], [{ name: 'response', type: 'string' }], async (inputs, context) => {
+    reviews++
+    return { response: `${context.userMessage}:${inputs.result.payload.evidence}` }
+  })
+  const child = graph([{ id: 'plan', nodeType: plan.id }, { id: 'wait', nodeType: wait.id }, { id: 'review', nodeType: review.id }], [
+    { id: 'plan-wait', source: 'plan', sourceHandle: 'action', target: 'wait', targetHandle: 'action' },
+    { id: 'wait-review', source: 'wait', sourceHandle: 'result', target: 'review', targetHandle: 'result' },
+  ])
+  child.name = 'child-workflow'
+  const call = testNode('test_parent_call', [], [{ name: 'response', type: 'string' }], async (_inputs, context) => {
+    const result = await context.graphExecution.callGraph(child, { userMessage: context.userMessage })
+    return result.nodes.get('review').outputs
+  })
+  await withTestNodes([plan, wait, review, call], async () => {
+    const parent = graph([{ id: 'call', nodeType: call.id }], [])
+    parent.name = 'parent-workflow'
+    const filename = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-child-workflows-')), 'execution.sqlite')
+    let store = new ExecutionStore(filename)
+    const definition = executionDefinition(parent)
+    const execution = store.create('fixture', definition)
+    let lease = store.claim(execution.executionId, definition)
+    const paused = await executeGraph(parent, { userMessage: 'locate object' }, undefined, undefined, { store, lease })
+    assert.equal(paused.status, 'waiting')
+    assert.equal(plans, 1)
+    assert.equal(reviews, 0)
+    assert.equal(store.pendingDispatches().length, 1)
+    const namespaces = store.db.prepare('SELECT DISTINCT checkpoint_ns FROM checkpoints').all() as any[]
+    assert.ok(namespaces.some(row => row.checkpoint_ns !== ''))
+    store.release(lease)
+    store.close()
+    store = new ExecutionStore(filename)
+    lease = store.claim(execution.executionId, definition)
+    store.appendEvent(execution.executionId, { eventId: 'physical-result', kind: 'physical_result', actionId: 'child-action', payload: { evidence: 'observed' } })
+    const resumed = await executeGraph(parent, { userMessage: 'unrelated replacement' }, undefined, undefined, { store, lease, resumeEventId: 'physical-result' })
+    assert.equal(resumed.status, 'completed')
+    assert.equal(resumed.nodes.get('call')?.outputs?.response, 'locate object:observed')
+    assert.equal(plans, 1)
+    assert.equal(reviews, 1)
+    assert.equal(store.get(execution.executionId).lastProcessedSequence, 1)
+    store.release(lease)
+    store.close()
+  })
+})
 
 test('scheduler invokes only the selected branch and reports the other branch as skipped', async () => {
   const calls: string[] = []

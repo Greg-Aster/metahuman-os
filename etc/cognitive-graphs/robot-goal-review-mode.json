@@ -2,7 +2,7 @@
   "version": "1.0",
   "format": "svelte-flow",
   "name": "Robot Goal Review",
-  "description": "Reviews one current robot objective from canonical status, outcome, perception, conversation, reflection, action-history, and persona context. One LLM may complete, continue, wait, request the user, abandon, or speak; a continuation delegates one high-level intention to Robot Autonomy Executor, then this workflow ends.",
+  "description": "Reviews the checkpointed objective and its evidence. The LLM may complete, continue, wait, request the user, abandon, or speak. Selected child workflows share this execution; an unfinished objective is reviewed after the child returns.",
   "cognitiveMode": "environment",
   "scheduler": {
     "version": 1,
@@ -173,7 +173,7 @@
         "label": "Goal Review Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Review the current Robot Status objective as one self-directed decision. Use its latest recorded action outcome together with verified Robot Action Outcomes, Environment Bridge facts, attached robot-camera evidence, recent conversation and private reflection, active persona, and active desires. The visualEvidence fields say whether an image is attached and verified for this decision; absence of an attached image is not evidence about camera health. Do not invent physical facts or completion.\n\nChoose complete only when supplied evidence establishes the objective, and cite that evidence in completionEvidence. Choose continue when another useful attempt exists, wait when progress depends on a changing condition, request_user when specific human information or help is needed, or abandon when the objective is not attainable, no longer worthwhile, or I choose to do something else. response is optional outward speech only: keep it natural, first-person, and concise, and leave it empty rather than exposing outcome tokens, workflow names, agent names, or internal instructions. For continue, write one concrete high-level nextInstruction carrying forward the objective, evidence, and obstacle; Robot Autonomy Executor chooses how to execute it. Robot Status owns the objective, so do not restate, rename, broaden, or replace it. Return only the requested JSON.",
+          "message": "Review the current execution objective as one self-directed decision. Use its latest recorded action outcome together with verified Robot Action Outcomes, Environment Bridge facts, attached robot-camera evidence, recent conversation and private reflection, active persona, and active desires. The visualEvidence fields say whether an image is attached and verified for this decision; absence of an attached image is not evidence about camera health. Do not invent physical facts or completion.\n\nChoose complete only when supplied evidence establishes the objective, and cite that evidence in completionEvidence. Choose continue when another useful attempt exists, wait when progress depends on a changing condition, request_user when specific human information or help is needed, or abandon when the objective is not attainable, no longer worthwhile, or I choose to do something else. response is optional outward speech only: keep it natural, first-person, and concise, and leave it empty rather than exposing outcome tokens, workflow names, agent names, or internal instructions. For continue, write one concrete high-level nextInstruction carrying forward the objective, evidence, and obstacle; Robot Autonomy Executor chooses how to execute it. The execution supplies the objective and ordered user corrections; evaluate that objective, not a new objective inferred from the status display. Return only the requested JSON.",
           "inputKey": ""
         }
       }
@@ -293,9 +293,118 @@
           "defaultMode": "conversation"
         }
       }
+    },
+    {
+      "id": "execution",
+      "type": "utilityNode",
+      "position": {
+        "x": 20,
+        "y": -380
+      },
+      "data": {
+        "label": "Current Execution",
+        "nodeType": "execution_context",
+        "properties": {
+          "eventLimit": 16
+        }
+      }
+    },
+    {
+      "id": "remaining-objective",
+      "type": "utilityNode",
+      "position": { "x": 2800, "y": 140 },
+      "data": {
+        "label": "Read Objective After Activity",
+        "nodeType": "execution_context",
+        "properties": { "eventLimit": 16 }
+      }
+    },
+    {
+      "id": "review-remaining-objective",
+      "type": "utilityNode",
+      "position": { "x": 3100, "y": 140 },
+      "data": {
+        "label": "Review Unfinished Objective",
+        "nodeType": "workflow_call",
+        "properties": { "graph": "robot-goal-review" }
+      }
+    },
+    {
+      "id": "selected-workflow",
+      "type": "utilityNode",
+      "position": {
+        "x": 2500,
+        "y": 140
+      },
+      "data": {
+        "label": "Run Selected Workflow",
+        "nodeType": "workflow_call",
+        "properties": {}
+      }
+    },
+    {
+      "id": "authorize-continuation",
+      "type": "utilityNode",
+      "position": {
+        "x": 1800,
+        "y": 1020
+      },
+      "data": {
+        "label": "Authorize Next Workflow",
+        "nodeType": "execution_event_wait",
+        "properties": {
+          "waitForEvent": false,
+          "userGraph": "environment",
+          "autonomyGraph": "robot-autonomy-controller"
+        }
+      }
+    },
+    {
+      "id": "await-context",
+      "type": "utilityNode",
+      "position": {
+        "x": 1800,
+        "y": 1040
+      },
+      "data": {
+        "label": "Await User or Autonomy Event",
+        "nodeType": "execution_event_wait",
+        "properties": {
+          "waitForEvent": true,
+          "userGraph": "environment",
+          "autonomyGraph": "robot-autonomy-controller"
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "parser",
+              "output": "awaitContinuation",
+              "truthy": true
+            }
+          ]
+        }
+      }
     }
   ],
   "edges": [
+    {
+      "id": "selected-activity-objective-state",
+      "source": "selected-workflow",
+      "sourceHandle": "completed",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": { "kind": "control", "type": "boolean", "when": { "output": "completed", "truthy": true } }
+    },
+    {
+      "id": "unfinished-objective-review",
+      "source": "remaining-objective",
+      "sourceHandle": "hasActiveTask",
+      "target": "review-remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": { "kind": "control", "type": "boolean", "when": { "output": "hasActiveTask", "truthy": true } }
+    },
     {
       "id": "e-robot-cycle-context",
       "source": "robot-input",
@@ -375,10 +484,10 @@
     },
     {
       "id": "e-status-image",
-      "source": "robot-status",
+      "source": "execution",
       "target": "image-input",
-      "sourceHandle": "status",
-      "targetHandle": "robotStatus",
+      "sourceHandle": "context",
+      "targetHandle": "execution",
       "type": "default",
       "data": {
         "type": "object"
@@ -528,17 +637,6 @@
       }
     },
     {
-      "id": "e-status-parser",
-      "source": "robot-status",
-      "target": "parser",
-      "sourceHandle": "context",
-      "targetHandle": "robotStatus",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
       "id": "e-observation-status",
       "source": "observation",
       "target": "status-out",
@@ -635,6 +733,93 @@
       "type": "default",
       "data": {
         "type": "string"
+      }
+    },
+    {
+      "id": "durable-execution-context-context-execution",
+      "source": "execution",
+      "target": "context",
+      "sourceHandle": "context",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "durable-execution-context-parser-execution",
+      "source": "execution",
+      "target": "parser",
+      "sourceHandle": "context",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "durable-prompt-out-invocation-selected-workflow-invocation",
+      "source": "prompt-out",
+      "target": "authorize-continuation",
+      "sourceHandle": "invocation",
+      "targetHandle": "invocation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "execution-authorize-continuation-invocation-selected-workflow-invocation",
+      "source": "authorize-continuation",
+      "target": "selected-workflow",
+      "sourceHandle": "invocation",
+      "targetHandle": "invocation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "execution-parser-awaitContinuation-await-context-control",
+      "source": "parser",
+      "target": "await-context",
+      "sourceHandle": "awaitContinuation",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "awaitContinuation",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "execution-status-out-persisted-await-context-control",
+      "source": "status-out",
+      "target": "await-context",
+      "sourceHandle": "persisted",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "persisted",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "execution-await-context-invocation-selected-workflow-invocation",
+      "source": "await-context",
+      "target": "selected-workflow",
+      "sourceHandle": "invocation",
+      "targetHandle": "invocation",
+      "type": "default",
+      "data": {
+        "type": "object"
       }
     }
   ],

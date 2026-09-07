@@ -37,18 +37,15 @@ test('an advertised standalone command is admitted without creating a durable ta
   assert.equal(result.actionAdmission?.admitted, true);
   assert.equal(result.taskDecision, null);
 
-  const malformed = await environmentActionParserNode.execute({
+  await assert.rejects(environmentActionParserNode.execute({
     response: 'status=complete',
     observation,
     sessionId: observation.sessionId,
-  }, {}, {});
-  assert.deepEqual(malformed.actions, []);
-  assert.equal(malformed.taskDecision, null);
-  assert.match(malformed.taskDecisionError, /strict JSON/i);
+  }, {}, {}), /strict JSON/i);
 });
 
 test('an empty selector result is rejected while a conversational result remains valid', async () => {
-  const empty = await environmentActionParserNode.execute({
+  await assert.rejects(environmentActionParserNode.execute({
     response: JSON.stringify({
       response: '',
       actions: [],
@@ -57,15 +54,7 @@ test('an empty selector result is rejected while a conversational result remains
     }),
     observation,
     sessionId: observation.sessionId,
-  }, {}, {});
-
-  assert.equal(empty.hasResponse, false);
-  assert.deepEqual(empty.actions, []);
-  assert.equal(empty.taskDecision, null);
-  assert.match(
-    empty.taskDecisionError,
-    /must include a non-empty response, action, movementRequest, or taskDecision/i,
-  );
+  }, {}, {}), /must include a non-empty response, action, movementRequest, or taskDecision/i);
 
   const conversation = await environmentActionParserNode.execute({
     response: JSON.stringify({
@@ -80,7 +69,7 @@ test('an empty selector result is rejected while a conversational result remains
 
   assert.equal(conversation.hasResponse, true);
   assert.equal(conversation.response, 'I am here with you.');
-  assert.equal(conversation.taskDecisionError, '');
+  assert.equal(conversation.error, '');
 });
 
 test('punctuation-only advertised commands are admitted unchanged', async () => {
@@ -110,7 +99,7 @@ test('punctuation-only advertised commands are admitted unchanged', async () => 
 });
 
 test('the parser rejects physical work that contradicts the LLM decision contract', async () => {
-  const result = await environmentActionParserNode.execute({
+  await assert.rejects(environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I am standing now.',
       actions: [{ type: 'robotCommand', command: 'stand' }],
@@ -128,11 +117,7 @@ test('the parser rejects physical work that contradicts the LLM decision contrac
     }),
     observation,
     sessionId: observation.sessionId,
-  }, {}, {});
-
-  assert.deepEqual(result.actions, []);
-  assert.equal(result.taskDecision, null);
-  assert.match(result.taskDecisionError, /physical work requires taskDecision outcome=act/i);
+  }, {}, {}), /physical work requires taskDecision outcome=act/i);
 });
 
 test('a task decision must author its durable objective', async () => {
@@ -149,7 +134,7 @@ test('a task decision must author its durable objective', async () => {
       },
     },
   };
-  const result = await environmentActionParserNode.execute({
+  await assert.rejects(environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will stand.',
       actions: [{ type: 'robotCommand', command: 'stand' }],
@@ -167,10 +152,7 @@ test('a task decision must author its durable objective', async () => {
     observation: autonomousObservation,
     sessionId: autonomousObservation.sessionId,
     robotObserver: autonomousObservation.metadata?.robotObserver,
-  }, {}, {});
-
-  assert.deepEqual(result.actions, []);
-  assert.match(result.taskDecisionError, /objective must be a non-empty string/i);
+  }, {}, {}), /objective must be a non-empty string/i);
 });
 
 test('the repaired 9B selector contract preserves capture and bounded visual lifecycle decisions', async () => {
@@ -206,7 +188,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
   assert.equal(capture.taskDecision?.continuationPolicy, 'bounded');
   assert.equal(capture.taskDecision?.requiredCompletionBasis, 'visual_observation');
 
-  const malformedCapture = await environmentActionParserNode.execute({
+  await assert.rejects(environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will take a picture.',
       actions: [{ type: 'captureImage', command: 'neutral' }],
@@ -223,9 +205,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
     }),
     observation: visualObservation,
     sessionId: visualObservation.sessionId,
-  }, {}, {});
-  assert.deepEqual(malformedCapture.actions, []);
-  assert.match(malformedCapture.taskDecisionError, /valid typed Environment action/i);
+  }, {}, {}), /valid typed Environment action/i);
 
   const boundedWave = await environmentActionParserNode.execute({
     response: JSON.stringify({
@@ -253,7 +233,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
   assert.equal(boundedWave.taskDecision?.continuationPolicy, 'bounded');
   assert.equal(boundedWave.taskDecision?.requiredCompletionBasis, 'visual_observation');
 
-  const conflictingRoutes = await environmentActionParserNode.execute({
+  await assert.rejects(environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will continue waving because no hand is visible.',
       actions: [{ type: 'robotCommand', command: 'wave' }],
@@ -272,13 +252,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
     }),
     observation: visualObservation,
     sessionId: visualObservation.sessionId,
-  }, {}, {});
-  assert.deepEqual(conflictingRoutes.actions, []);
-  assert.equal(conflictingRoutes.movementRequest, null);
-  assert.match(
-    conflictingRoutes.taskDecisionError,
-    /either actions or movementRequest, not both/i,
-  );
+  }, {}, {}), /either actions or movementRequest, not both/i);
 });
 
 test('action purpose and evidence remain on the validated LLM decision', async () => {
@@ -311,7 +285,7 @@ test('action purpose and evidence remain on the validated LLM decision', async (
   }, {}, {});
 
   assert.equal(result.movementRequest?.description, 'Shift into one bounded expressive posture.');
-  assert.equal(result.taskDecisionError, '');
+  assert.equal(result.error, '');
   assert.equal(result.taskDecision?.actionPurpose, 'expression');
   assert.equal(result.taskDecision?.requiredCompletionBasis, 'visual_observation');
 });
@@ -357,11 +331,11 @@ test('the spiky-friend head-tilt case requires a structured advertised action ra
     sessionId: autonomyObservation.sessionId,
   }, {}, {});
 
-  assert.equal(admitted.taskDecisionError, '');
+  assert.equal(admitted.error, '');
   assert.equal(admitted.actions[0]?.command, 'curious');
   assert.equal(admitted.taskDecision?.objectiveComplete, false);
 
-  const proseOnly = await environmentActionParserNode.execute({
+  await assert.rejects(environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I tilt my head at the spiky friend.',
       actions: [],
@@ -379,15 +353,11 @@ test('the spiky-friend head-tilt case requires a structured advertised action ra
     }),
     observation: autonomyObservation,
     sessionId: autonomyObservation.sessionId,
-  }, {}, {});
-
-  assert.deepEqual(proseOnly.actions, []);
-  assert.equal(proseOnly.taskDecision, null);
-  assert.match(proseOnly.taskDecisionError, /outcome=act requires an action or movementRequest/i);
+  }, {}, {}), /outcome=act requires an action or movementRequest/i);
 });
 
 test('the Environment selector contract has no unconsumed escalation output', async () => {
-  const result = await environmentActionParserNode.execute({
+  await assert.rejects(environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will keep this as a reflection.',
       actions: [],
@@ -404,10 +374,7 @@ test('the Environment selector contract has no unconsumed escalation output', as
     }),
     observation,
     sessionId: observation.sessionId,
-  }, {}, {});
-
-  assert.equal(result.taskDecision, null);
-  assert.match(result.taskDecisionError, /taskDecision\.escalation is not supported/);
+  }, {}, {}), /taskDecision\.escalation is not supported/);
 });
 
 test('autonomy responses remain on the parser single response path', async () => {

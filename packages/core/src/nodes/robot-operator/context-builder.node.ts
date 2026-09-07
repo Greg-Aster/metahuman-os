@@ -316,6 +316,7 @@ const CONTEXT_OUTPUTS: NodeSlot[] = [
 ];
 
 const COMMON_CONTEXT_INPUTS: Record<string, NodeSlot> = {
+  execution: { name: 'execution', type: 'object', optional: true, description: 'Checkpointed task and ordered events from Current Execution' },
   instruction: { name: 'instruction', type: 'string', description: 'Graph-owned instructions for this one LLM task' },
   observation: { name: 'observation', type: 'object', optional: true, description: 'Environment Bridge observation supplied to this workflow' },
   bridgeSummary: { name: 'bridgeSummary', type: 'object', optional: true, description: 'Current Environment Bridge connection and session summary' },
@@ -341,7 +342,7 @@ const COMMON_CONTEXT_INPUTS: Record<string, NodeSlot> = {
 };
 
 function contextInputs(...names: string[]): NodeSlot[] {
-  return names.map(name => COMMON_CONTEXT_INPUTS[name]);
+  return ['execution', ...names].map(name => COMMON_CONTEXT_INPUTS[name]);
 }
 
 async function buildRobotOperatorContext(
@@ -527,6 +528,7 @@ async function buildRobotOperatorContext(
     };
     const supportingMemoryContext = reflectionTrigger ? [] : memoryContext;
     const contextEnvelope = {
+      execution: inputs.execution ?? null,
       robotOperatorContext: {
         activePersona: personaText || null,
         ...(routingAnalysis ? { selectedRoutes: routingAnalysis } : {}),

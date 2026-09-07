@@ -11,6 +11,7 @@ import {
   isRobotOperatorChildEnabled,
   hasActiveRobotAutonomyCycle,
   loadRobotOperatorConfig,
+  robotAutonomyControllerContext,
   robotObserverSourceAllowed,
   robotOperatorChildGraph,
   type RobotObserverCycleMetadata,
@@ -84,8 +85,8 @@ async function executeRobotStatusGraph(
     }),
   )
   const failures = listFailedNodes(graphState)
-  if (graphState.status !== 'completed' || failures.length > 0) {
-    throw new Error(`Robot Status graph failed: ${failures[0]?.error ?? graphState.status}`)
+  if (graphState.status === 'failed' || graphState.error || failures.length > 0) {
+    throw new Error(`Robot Status graph failed: ${graphState.error?.message || failures[0]?.error || graphState.status}`, { cause: graphState.error })
   }
   const outputs = collectNodeOutputs(graphState)
   const persisted = Object.values(outputs).some(output => output?.persisted === true)
@@ -113,13 +114,8 @@ async function executeRobotAutonomyControllerGraph(
     : task.correlationId?.trim()
       ? task.correlationId.trim()
       : randomUUID()
-  const robotObserver: RobotObserverCycleMetadata = {
-    cycleId,
-    step: 1,
-    triggerSource: 'autonomy',
-    graph: graphName,
-    requestedBy: 'robot-autonomy-controller',
-  }
+  const operatorContext = robotAutonomyControllerContext(cycleId, graphName, sessionId)
+  const robotObserver = operatorContext.robotObserver
   const graphState = await withUserContext(
     { userId: user.id, username: user.username, role: user.role },
     () => runGraph({
@@ -133,20 +129,15 @@ async function executeRobotAutonomyControllerGraph(
         dialogueType: 'system',
         allowMemoryWrites: canWriteMemory('environment'),
         environment: 'server',
-        robotOperatorContext: {
-          robotObserver,
-          stimulusAgent: 'robot-autonomy-controller',
-          currentVisualEvidence: false,
-          ...(sessionId ? { sessionId } : {}),
-        },
+        robotOperatorContext: operatorContext,
         robotOperatorEnvironmentGraph: autonomyGraph,
         abortSignal: signal,
       },
     }),
   )
   const failures = listFailedNodes(graphState)
-  if (graphState.status !== 'completed' || failures.length > 0) {
-    throw new Error(`Robot Autonomy Controller graph failed: ${failures[0]?.error ?? graphState.status}`)
+  if (graphState.status === 'failed' || graphState.error || failures.length > 0) {
+    throw new Error(`Robot Autonomy Controller graph failed: ${graphState.error?.message || failures[0]?.error || graphState.status}`, { cause: graphState.error })
   }
   const parsed = requireGraphNodeOutput(graphState, 'robot_autonomy_controller_parser')
   const decision = isRecord(parsed.decisionReceipt) ? parsed.decisionReceipt : null
@@ -159,6 +150,8 @@ async function executeRobotAutonomyControllerGraph(
       : requireGraphNodeOutput(graphState, 'robot_autonomy_task_dispatch')
   return {
     graphExecuted: true,
+    executionId: graphState.executionId,
+    executionStatus: graphState.status,
     graph: graphName,
     agentId: 'robot-autonomy-controller',
     cycle: robotObserver,
@@ -271,41 +264,36 @@ export async function executeRobotAutonomyTriggerWork(
   }
 
   const observation = session.latestObservation
-  const cognitionTask = context.enqueue({
-    type: 'environment_observation',
-    handler: 'environment.observation',
-    resource: 'local-llm',
-    source: cycle.triggerSource,
-    priority: manual ? 'high' : 'background',
-    input: {
-      observation,
-      observationCurrent: false,
-      graph: cycle.graph,
-      robotOperatorContext: {
-        robotObserver: cycle,
-        stimulusAgent: agentId,
-        sourceObservationAt: observation.timestamp,
-        currentVisualEvidence: false,
-      },
+  const [{ loadGraphForMode }, { runGraph }] = await Promise.all([
+    import('../graph-streaming.js'), import('../graph-runtime.js'),
+  ])
+  const user = getUserByUsername(task.username)
+  if (!user) throw new Error(`Robot workflow user not found: ${task.username}`)
+  const loaded = await loadGraphForMode(cycle.graph, user.username)
+  if (!loaded) throw new Error(`Robot workflow not found: ${cycle.graph}`)
+  const graphState = await withUserContext({ userId: user.id, username: user.username, role: user.role }, () => runGraph({
+    graph: loaded.graph, signal: context.signal,
+    context: { userId: user.id, username: user.username, cognitiveMode: 'environment',
+      mode: 'system', dialogueType: 'system', environment: 'server',
+      allowMemoryWrites: canWriteMemory('environment'),
+      environmentObservation: observation, environmentObservationCurrent: false,
+      robotOperatorEnvironmentGraph: config.autonomyGraph,
+      robotOperatorContext: { robotObserver: cycle, stimulusAgent: agentId,
+        sourceObservationAt: observation.timestamp, currentVisualEvidence: false },
     },
-    username: task.username,
-    cognitiveMode: 'environment',
-    parentTaskId: task.id,
-    correlationId: cycleId,
-    idempotencyKey: `${agentId}:${session.sessionId}:${cycleId}:stimulus`,
-    maxAttempts: 1,
-    metadata: { producer: agentId, robotOperatorChild: agentId },
-  })
+  }))
+  if (graphState.status === 'failed') throw graphState.error ?? new Error(`Robot workflow failed: ${cycle.graph}`)
   audit({
     level: 'info',
     category: 'action',
-    event: 'robot_operator_autonomy_stimulus_queued',
+    event: 'robot_operator_autonomy_stimulus_executed',
     actor: agentId,
-    details: { taskId: task.id, cognitionTaskId: cognitionTask.id, sessionId: session.sessionId, cycleId, mode },
+    details: { taskId: task.id, executionId: graphState.executionId, sessionId: session.sessionId, cycleId, mode },
   })
   return {
-    queued: true,
-    cognitionTaskId: cognitionTask.id,
+    graphExecuted: true,
+    executionId: graphState.executionId,
+    executionStatus: graphState.status,
     sessionId: session.sessionId,
     agentId,
     cycle,

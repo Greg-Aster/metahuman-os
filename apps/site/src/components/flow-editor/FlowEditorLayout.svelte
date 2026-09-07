@@ -65,6 +65,7 @@
   let currentGraph = $state<SvelteFlowGraph | null>(null);
   let lastNodeOutputs = $state<Record<string, unknown>>({});
   let lastRunDurationMs = $state<number | null>(null);
+  let waitingExecutionId = $state<string | null>(null);
   let showPropertyInspector = $state(true);
   let showExecutionPanel = $state(false);
   let executionTimeline = $state<ExecutionTimelineEntry[]>([]);
@@ -175,6 +176,7 @@
     selectedEdge = null;
     lastNodeOutputs = {};
     lastRunDurationMs = null;
+    waitingExecutionId = null;
     executionTimeline = [];
     if (currentGraph) markGraphClean(currentGraph);
   }
@@ -274,6 +276,7 @@
           selectedEdge = null;
           lastNodeOutputs = {};
           lastRunDurationMs = null;
+          waitingExecutionId = null;
           executionTimeline = [];
           markGraphClean(sfGraph);
         }
@@ -310,6 +313,7 @@
     executionError = '';
     lastNodeOutputs = {};
     lastRunDurationMs = null;
+    waitingExecutionId = null;
     executionTimeline = [];
     showExecutionPanel = true;
 
@@ -362,7 +366,7 @@
               handleStreamEvent(eventType, data);
 
               // Capture final response and node outputs
-              if (eventType === 'graph_complete') {
+              if (eventType === 'graph_complete' || eventType === 'graph_waiting') {
                 if (data.response) {
                   finalResponse = data.response;
                 }
@@ -451,7 +455,12 @@
         break;
 
       case 'graph_complete':
+        waitingExecutionId = null;
         console.log('[FlowEditorLayout] Graph complete:', data.durationMs + 'ms');
+        break;
+
+      case 'graph_waiting':
+        waitingExecutionId = data.executionId;
         break;
     }
   }
@@ -690,6 +699,12 @@
     <div class="flex items-center justify-between px-6 py-3 bg-red-900 border-b border-red-800 text-red-200">
       <span>Execution failed: {executionError}</span>
       <button class="px-3 py-1 bg-transparent border border-red-200 text-red-200 rounded cursor-pointer" onclick={() => (executionError = '')}>Dismiss</button>
+    </div>
+  {/if}
+
+  {#if waitingExecutionId}
+    <div class="px-6 py-3 bg-amber-950 border-b border-amber-800 text-amber-200">
+      Execution saved and waiting: <code>{waitingExecutionId}</code>
     </div>
   {/if}
 

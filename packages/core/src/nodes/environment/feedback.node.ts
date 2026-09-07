@@ -7,6 +7,7 @@ const TERMINAL_TYPES = new Set<EnvironmentFeedback['type']>([
   'cancelled',
   'expired',
   'failed',
+  'outcome_unknown',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {

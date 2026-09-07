@@ -1,0 +1,1217 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Environment Mode",
+  "description": "Environment workflow with LLM-owned intent routing, selected context branches, one response/action selector, optional novel movement generation, one action dispatch, and Robot Status persistence.",
+  "cognitiveMode": "environment",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
+  "last_modified": "2026-09-04T00:21:26.063Z",
+  "nodes": [
+    {
+      "id": "user-input",
+      "type": "inputNode",
+      "position": {
+        "x": 80,
+        "y": 80
+      },
+      "width": 240,
+      "data": {
+        "label": "User Input",
+        "nodeType": "user_input",
+        "properties": {
+          "message": "",
+          "prioritizeChatInterface": true
+        }
+      }
+    },
+    {
+      "id": "conversation-history",
+      "type": "contextNode",
+      "position": {
+        "x": 80,
+        "y": 462
+      },
+      "width": 240,
+      "data": {
+        "label": "Conversation History",
+        "nodeType": "conversation_history",
+        "properties": {
+          "mode": "conversation",
+          "limit": 20
+        }
+      }
+    },
+    {
+      "id": "intent-orchestrator",
+      "type": "llmNode",
+      "position": {
+        "x": 540,
+        "y": 80
+      },
+      "width": 300,
+      "data": {
+        "label": "Choose Required Routes",
+        "nodeType": "orchestrator_llm",
+        "properties": {
+          "outputContract": "environment",
+          "systemPrompt": "You are the Environment Intent Orchestrator. Decide which independent routes are relevant to the current user message.\nYou do not answer the user, rewrite or summarize the message, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes user-visible natural-language expression. Without it, this workflow produces no chat message. It can coexist with every other route.\n- needsConversationHistory exposes earlier dialogue.\n- needsMemory exposes stored long-term experience.\n- needsRobotStatus exposes the canonical current snapshot of the robot's condition, readiness, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection and its advertised capabilities.\n- needsTaskLifecycle exposes durable objective state when this turn creates, advances, completes, or otherwise changes one.\n\nRoutes are independent. Work that must continue across later observations or action results normally needs the relevant perception or action routes together with task lifecycle. When the current message may continue, revise, complete, or interrupt earlier activity, expose the conversation and Robot Status needed to interpret that relationship. Infer which information and capabilities are relevant from the message and recent dialogue. Return the requested JSON routing fields and, when other executions are supplied, the execution disposition.",
+          "userPromptTemplate": "{{activeExecutionSection}}\n{{recentConversationSection}}\nCurrent user message: {{userMessage}}",
+          "temperature": 0.1,
+          "maxTokens": 768
+        },
+        "comment": "One LLM call classifies intent into independent route switches. It does not rewrite the input, answer, or select an action."
+      }
+    },
+    {
+      "id": "memory-router",
+      "type": "memoryNode",
+      "position": {
+        "x": 1000,
+        "y": 80
+      },
+      "width": 250,
+      "data": {
+        "label": "Relevant Long-Term Memory",
+        "nodeType": "memory_router",
+        "properties": {
+          "topK": 3,
+          "threshold": 0.65
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsMemory",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "robot-status",
+      "type": "contextNode",
+      "position": {
+        "x": 1000,
+        "y": 422
+      },
+      "width": 250,
+      "data": {
+        "label": "Robot Status",
+        "nodeType": "robot_status",
+        "properties": {
+          "historyLimit": 3
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsRobotStatus",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "type": "environmentNode",
+      "position": {
+        "x": 1000,
+        "y": 799
+      },
+      "width": 240,
+      "data": {
+        "label": "Load Selected Environment Bridge Data",
+        "nodeType": "environment_bridge_input",
+        "properties": {
+          "sessionId": ""
+        },
+        "comment": "Reads only Environment Bridge observations and diagnostics. It runs only when intent selected environment, vision, or action context."
+      }
+    },
+    {
+      "id": "persona-loader",
+      "type": "personaNode",
+      "position": {
+        "x": 80,
+        "y": 744
+      },
+      "width": 240,
+      "data": {
+        "label": "Active Persona",
+        "nodeType": "persona_loader",
+        "properties": {}
+      }
+    },
+    {
+      "id": "persona-formatter",
+      "type": "personaNode",
+      "position": {
+        "x": 540,
+        "y": 795
+      },
+      "width": 250,
+      "data": {
+        "label": "Compact Persona Context",
+        "nodeType": "persona_formatter",
+        "properties": {
+          "includeValues": true,
+          "includeGoals": true,
+          "includePersonality": true
+        }
+      }
+    },
+    {
+      "id": "11",
+      "type": "environmentNode",
+      "position": {
+        "x": 1460,
+        "y": 80
+      },
+      "width": 260,
+      "data": {
+        "label": "Use Current-Run Camera Evidence",
+        "nodeType": "environment_image_input",
+        "properties": {},
+        "comment": "Validates camera data and admits it as current evidence only when that observation triggered this graph run.",
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsVision",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3",
+      "type": "environmentNode",
+      "position": {
+        "x": 1920,
+        "y": 80
+      },
+      "width": 530,
+      "data": {
+        "label": "Build Selected Environment Context",
+        "nodeType": "environment_context_builder",
+        "properties": {
+          "systemPrompt": "ENVIRONMENT ACTION SELECTOR\nselectedRoutes is the Intent Orchestrator's decision about which capabilities and context are relevant to currentInstruction. Use those selected capabilities without deciding the routes again. The original instruction is authoritative; persona, selected history, selected memory, Robot Status, and bridge data are supporting context. A saved environment observation supplies last-known state and capabilities, not current vision or current-turn action feedback.\n\nReturn strict JSON with response, actions, movementRequest, and taskDecision. The response field carries the user-visible natural-language expression selected by needsResponse and can accompany any action. Do not add filler motion.\n\nPhysical and sensing capabilities are available through actions. If current visual evidence is useful but absent, captureImage may be selected when advertised; an attached current frame can be analyzed without another capture. Never describe a saved frame as current.\n\nAdvertised actions are proven capabilities described in currentEnvironment. movementRequest is available for a novel movement not covered by an advertised action. Preserve relevant body part, direction, timing, and holds. actions and movementRequest are exclusive.\n\ntaskDecision is null for conversation or a standalone action that does not create, change, or resolve a durable objective. Use a taskDecision object only when this turn starts, continues, completes, or otherwise changes an objective that must survive this workflow. Its objective names that durable objective, while currentInstruction and the selected action remain the current step. When a new instruction advances an unfinished Robot Status objective, preserve that objective rather than replacing it with the step. For goal-directed physical work, outcome act means that actions or movementRequest is non-empty and objectiveComplete is false; only later correlated action feedback can establish completion. An action result proves execution; a visual observation proves only visible facts. Never claim completion beyond supplied evidence.",
+          "recentHistoryLimit": 4
+        },
+        "comment": "Packages the original input plus only the context routes selected by Intent Orchestrator.",
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "continueHere",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4",
+      "type": "llmNode",
+      "position": {
+        "x": 2380,
+        "y": 80
+      },
+      "width": 220,
+      "data": {
+        "label": "Choose Response and/or One Action",
+        "nodeType": "model_router",
+        "properties": {
+          "role": "environmentActionSelector",
+          "maxTokens": 2048,
+          "temperature": 0.1,
+          "repeatPenalty": 1.15,
+          "format": "json"
+        },
+        "comment": "The Environment Action Selector executes the chosen routes. It may answer, choose one advertised action, or request one novel movement; it does not decide which context branches run."
+      }
+    },
+    {
+      "id": "6",
+      "type": "environmentNode",
+      "position": {
+        "x": 2840,
+        "y": 80
+      },
+      "width": 240,
+      "data": {
+        "label": "Validate Selector Output",
+        "nodeType": "environment_action_parser",
+        "properties": {}
+      }
+    },
+    {
+      "id": "movement-generator",
+      "type": "environmentNode",
+      "position": {
+        "x": 3300,
+        "y": 463
+      },
+      "width": 250,
+      "data": {
+        "label": "Generate Novel Movement When Requested",
+        "nodeType": "movement_generator",
+        "properties": {
+          "role": "orchestrator",
+          "maxTokens": 4096,
+          "temperature": 0.2
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "6",
+              "output": "movementRequest",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "8",
+      "type": "environmentNode",
+      "position": {
+        "x": 3760,
+        "y": 994
+      },
+      "width": 240,
+      "data": {
+        "label": "Send Selected Action",
+        "nodeType": "environment_send_action",
+        "properties": {
+          "allowedActions": [
+            "move",
+            "look",
+            "jump",
+            "interact",
+            "stop",
+            "captureImage",
+            "robotCommand",
+            "robotMotionPlan",
+            "inspect",
+            "visualApproach",
+            "sendText"
+          ],
+          "maxDurationMs": 5000,
+          "defaultDurationMs": 750
+        },
+        "comment": "Dispatches actions and returns transport facts only. It does not create or replace conversation.",
+        "activation": {
+          "when": [
+            {
+              "nodeId": "6",
+              "output": "valid",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "robot-buffer",
+      "type": "outputNode",
+      "position": {
+        "x": 4220,
+        "y": 80
+      },
+      "width": 250,
+      "data": {
+        "label": "Robot Buffer",
+        "nodeType": "robot_buffer",
+        "properties": {
+          "recordNoAction": false
+        }
+      }
+    },
+    {
+      "id": "conversation-buffer",
+      "type": "outputNode",
+      "position": {
+        "x": 3300,
+        "y": 80
+      },
+      "width": 250,
+      "data": {
+        "label": "Save User and Optional Response",
+        "nodeType": "conversation_buffer",
+        "properties": {}
+      }
+    },
+    {
+      "id": "memory-capture",
+      "type": "outputNode",
+      "position": {
+        "x": 3760,
+        "y": 80
+      },
+      "width": 250,
+      "data": {
+        "label": "Conversation Memory Saver",
+        "nodeType": "memory_capture",
+        "properties": {}
+      }
+    },
+    {
+      "id": "tts-out",
+      "type": "outputNode",
+      "position": {
+        "x": 3760,
+        "y": 423
+      },
+      "width": 240,
+      "data": {
+        "label": "Speak Optional Response",
+        "nodeType": "tts",
+        "properties": {
+          "source": "environment-mode",
+          "defaultMode": "conversation"
+        }
+      }
+    },
+    {
+      "id": "12",
+      "type": "outputNode",
+      "position": {
+        "x": 3760,
+        "y": 745
+      },
+      "width": 180,
+      "data": {
+        "label": "Return Optional Response",
+        "nodeType": "stream_writer",
+        "properties": {}
+      }
+    },
+    {
+      "id": "robot-status-out",
+      "type": "outputNode",
+      "position": {
+        "x": 4220,
+        "y": 397
+      },
+      "width": 280,
+      "data": {
+        "label": "Update Robot Status",
+        "nodeType": "robot_status_out",
+        "properties": {},
+        "comment": "Commits the validated selector's task decision and projects its status, with or without physical work. It performs no model call and makes no action decision.",
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "response"
+          ]
+        }
+      }
+    },
+    {
+      "id": "execution",
+      "type": "utilityNode",
+      "position": {
+        "x": 20,
+        "y": -380
+      },
+      "data": {
+        "label": "Current Execution",
+        "nodeType": "execution_context",
+        "properties": {
+          "eventLimit": 16
+        }
+      }
+    },
+    {
+      "id": "action-results",
+      "type": "utilityNode",
+      "position": {
+        "x": 2800,
+        "y": 160
+      },
+      "data": {
+        "label": "Wait for Robot Results",
+        "nodeType": "environment_result_wait",
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "8",
+              "output": "count",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "review-action",
+      "type": "utilityNode",
+      "position": {
+        "x": 3100,
+        "y": 160
+      },
+      "data": {
+        "label": "Evaluate Robot Action Result",
+        "nodeType": "workflow_call",
+        "properties": {
+          "graph": "robot-action-result"
+        }
+      }
+    },
+    {
+      "id": "execution-input-out",
+      "type": "utilityNode",
+      "position": {
+        "x": 1800,
+        "y": 1060
+      },
+      "data": {
+        "label": "Send Input to Selected Execution",
+        "nodeType": "execution_event_out",
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "executionSelection",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-user-intent",
+      "source": "user-input",
+      "target": "intent-orchestrator",
+      "sourceHandle": "message",
+      "targetHandle": "message",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-history-intent",
+      "source": "conversation-history",
+      "target": "intent-orchestrator",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-intent-context",
+      "source": "intent-orchestrator",
+      "target": "3",
+      "sourceHandle": "analysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-user-instruction-context",
+      "source": "user-input",
+      "target": "3",
+      "sourceHandle": "message",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-user-provenance-context",
+      "source": "user-input",
+      "target": "3",
+      "sourceHandle": "message",
+      "targetHandle": "userInstruction",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-history-context",
+      "source": "conversation-history",
+      "target": "3",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-intent-memory",
+      "source": "intent-orchestrator",
+      "target": "memory-router",
+      "sourceHandle": "analysis",
+      "targetHandle": "orchestratorHints",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-user-memory",
+      "source": "user-input",
+      "target": "memory-router",
+      "sourceHandle": "message",
+      "targetHandle": "userMessage",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-memory-context",
+      "source": "memory-router",
+      "target": "3",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-status-context",
+      "source": "robot-status",
+      "target": "3",
+      "sourceHandle": "context",
+      "targetHandle": "robotStatus",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-route-status",
+      "source": "intent-orchestrator",
+      "target": "robot-status",
+      "sourceHandle": "needsRobotStatus",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsRobotStatus",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-memory",
+      "source": "intent-orchestrator",
+      "target": "memory-router",
+      "sourceHandle": "needsMemory",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsMemory",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-environment",
+      "source": "intent-orchestrator",
+      "target": "2",
+      "sourceHandle": "needsEnvironment",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsEnvironment",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-vision",
+      "source": "intent-orchestrator",
+      "target": "2",
+      "sourceHandle": "needsVision",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsVision",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-route-action",
+      "source": "intent-orchestrator",
+      "target": "2",
+      "sourceHandle": "needsAction",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsAction",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-persona-format",
+      "source": "persona-loader",
+      "target": "persona-formatter",
+      "sourceHandle": "persona",
+      "targetHandle": "persona",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-persona-context",
+      "source": "persona-formatter",
+      "target": "3",
+      "sourceHandle": "formatted",
+      "targetHandle": "personaText",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-observation-context",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-observation-current-context",
+      "source": "2",
+      "target": "3",
+      "sourceHandle": "isTriggeringObservation",
+      "targetHandle": "observationCurrent",
+      "type": "default",
+      "data": {
+        "type": "boolean"
+      }
+    },
+    {
+      "id": "e-bridge-visual-image",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "visual",
+      "targetHandle": "visual",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-bridge-visuals-image",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "visuals",
+      "targetHandle": "visuals",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-bridge-current-image",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "isTriggeringObservation",
+      "targetHandle": "observationCurrent",
+      "type": "default",
+      "data": {
+        "type": "boolean"
+      }
+    },
+    {
+      "id": "e-images-context",
+      "source": "11",
+      "target": "3",
+      "sourceHandle": "images",
+      "targetHandle": "images",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-context-model",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "messages",
+      "targetHandle": "messages",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-schema-model",
+      "source": "3",
+      "target": "4",
+      "sourceHandle": "jsonSchema",
+      "targetHandle": "jsonSchema",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-model-parser",
+      "source": "4",
+      "target": "6",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "llm_response"
+      }
+    },
+    {
+      "id": "e-session-parser",
+      "source": "2",
+      "target": "6",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-observation-parser",
+      "source": "2",
+      "target": "6",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-current-image-parser",
+      "source": "11",
+      "target": "6",
+      "sourceHandle": "current",
+      "targetHandle": "currentVisualEvidence",
+      "type": "default",
+      "data": {
+        "type": "boolean"
+      }
+    },
+    {
+      "id": "e-movement-request-generator",
+      "source": "6",
+      "target": "movement-generator",
+      "sourceHandle": "movementRequest",
+      "targetHandle": "movementRequest",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-instruction-generator",
+      "source": "3",
+      "target": "movement-generator",
+      "sourceHandle": "currentInstruction",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-observation-generator",
+      "source": "2",
+      "target": "movement-generator",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-session-generator",
+      "source": "2",
+      "target": "movement-generator",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-actions-bridge",
+      "source": "6",
+      "target": "8",
+      "sourceHandle": "actions",
+      "targetHandle": "actions",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "when": {
+          "output": "hasActions",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-generated-actions-bridge",
+      "source": "movement-generator",
+      "target": "8",
+      "sourceHandle": "actions",
+      "targetHandle": "generatedActions",
+      "type": "default",
+      "data": {
+        "type": "array",
+        "when": {
+          "output": "valid",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-bridge-robot-buffer",
+      "source": "8",
+      "target": "robot-buffer",
+      "sourceHandle": "bridgeRecord",
+      "targetHandle": "bridgeRecord",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-user-conversation-buffer",
+      "source": "user-input",
+      "target": "conversation-buffer",
+      "sourceHandle": "message",
+      "targetHandle": "userMessage",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-response-conversation-buffer",
+      "source": "6",
+      "target": "conversation-buffer",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "when": {
+          "output": "hasResponse",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "e-conversation-memory",
+      "source": "conversation-buffer",
+      "target": "memory-capture",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-conversation-tts",
+      "source": "conversation-buffer",
+      "target": "tts-out",
+      "sourceHandle": "response",
+      "targetHandle": "conversation",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "when": {
+          "output": "response",
+          "notEquals": ""
+        }
+      }
+    },
+    {
+      "id": "e-conversation-stream",
+      "source": "conversation-buffer",
+      "target": "12",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "when": {
+          "output": "response",
+          "notEquals": ""
+        }
+      }
+    },
+    {
+      "id": "e-observation-status-out",
+      "source": "2",
+      "target": "robot-status-out",
+      "sourceHandle": "observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-instruction-status-out",
+      "source": "3",
+      "target": "robot-status-out",
+      "sourceHandle": "currentInstruction",
+      "targetHandle": "instruction",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-user-status-out",
+      "source": "user-input",
+      "target": "robot-status-out",
+      "sourceHandle": "message",
+      "targetHandle": "userInstruction",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-source-status-out",
+      "source": "3",
+      "target": "robot-status-out",
+      "sourceHandle": "instructionSource",
+      "targetHandle": "inputSource",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-decision-status-out",
+      "source": "6",
+      "target": "robot-status-out",
+      "sourceHandle": "taskDecision",
+      "targetHandle": "taskDecision",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-actions-status-out",
+      "source": "6",
+      "target": "robot-status-out",
+      "sourceHandle": "actions",
+      "targetHandle": "actions",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-generated-actions-status-out",
+      "source": "movement-generator",
+      "target": "robot-status-out",
+      "sourceHandle": "actions",
+      "targetHandle": "generatedActions",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-response-status-out",
+      "source": "6",
+      "target": "robot-status-out",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "e-bridge-status-out",
+      "source": "8",
+      "target": "robot-status-out",
+      "sourceHandle": "bridgeRecord",
+      "targetHandle": "bridgeRecord",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "e-frames-status-out",
+      "source": "11",
+      "target": "robot-status-out",
+      "sourceHandle": "frames",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "durable-execution-context-3-execution",
+      "source": "execution",
+      "target": "3",
+      "sourceHandle": "context",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "durable-8-commands-action-results-commands",
+      "source": "8",
+      "target": "action-results",
+      "sourceHandle": "commands",
+      "targetHandle": "commands",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "durable-8-count-action-results-control",
+      "source": "8",
+      "target": "action-results",
+      "sourceHandle": "count",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "count",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "durable-robot-status-out-persisted-action-results-control",
+      "source": "robot-status-out",
+      "target": "action-results",
+      "sourceHandle": "persisted",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "persisted",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "durable-action-results-context-review-action-context",
+      "source": "action-results",
+      "target": "review-action",
+      "sourceHandle": "context",
+      "targetHandle": "context",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "durable-execution-11",
+      "source": "execution",
+      "sourceHandle": "context",
+      "target": "11",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "execution-execution-activeExecutions-intent-orchestrator-activeExecutions",
+      "source": "execution",
+      "target": "intent-orchestrator",
+      "sourceHandle": "activeExecutions",
+      "targetHandle": "activeExecutions",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "execution-intent-orchestrator-executionSelection-execution-input-out-selection",
+      "source": "intent-orchestrator",
+      "target": "execution-input-out",
+      "sourceHandle": "executionSelection",
+      "targetHandle": "selection",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "execution-user-input-message-execution-input-out-message",
+      "source": "user-input",
+      "target": "execution-input-out",
+      "sourceHandle": "message",
+      "targetHandle": "message",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    }
+  ],
+  "viewport": {
+    "x": 20,
+    "y": 80,
+    "zoom": 0.35
+  }
+}

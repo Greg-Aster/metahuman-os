@@ -7,11 +7,11 @@ import path from 'node:path';
 import { systemPaths } from '../path-builder.js';
 import { audit } from '../audit.js';
 import type { PersistedQueueState, QueueState } from './types.js';
+import { WorkCommitUncertainError } from './types.js';
 
 const STATE_DIR = path.join(systemPaths.logs, 'run', 'queue');
 const WORK_FILE = path.join(STATE_DIR, 'work-items.json');
 const STATE_VERSION = 2;
-const SAVE_DEBOUNCE_MS = 250;
 
 function ensureStateDir(): void {
   fs.mkdirSync(STATE_DIR, { recursive: true });
@@ -33,10 +33,15 @@ export function createPersistedState(state: QueueState): PersistedQueueState {
 export function saveQueueState(state: PersistedQueueState): void {
   ensureStateDir();
   const tempFile = `${WORK_FILE}.tmp`;
+  let published = false;
   try {
-    fs.writeFileSync(tempFile, JSON.stringify({ ...state, version: STATE_VERSION }, null, 2));
+    fs.writeFileSync(tempFile, JSON.stringify({ ...state, version: STATE_VERSION }, null, 2), { mode: 0o600, flush: true });
     fs.renameSync(tempFile, WORK_FILE);
+    published = true;
+    const directory = fs.openSync(STATE_DIR, 'r');
+    try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
   } catch (error) {
+    if (published) throw new WorkCommitUncertainError(`Coordinator commit published but durability is uncertain: ${(error as Error).message}`);
     try {
       if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile);
     } catch {
@@ -56,20 +61,11 @@ function parseState(file: string): PersistedQueueState | null {
 }
 
 export function loadQueueState(): PersistedQueueState | null {
-  try {
-    const current = parseState(WORK_FILE);
-    if (current) {
-      if (current.version !== STATE_VERSION) {
-        console.warn(`[queue-persister] Unsupported coordinator state version ${current.version}`);
-        return null;
-      }
-      return current;
-    }
-    return null;
-  } catch (error) {
-    console.error('[queue-persister] Failed to load coordinator state:', error);
-    return null;
+  const current = parseState(WORK_FILE);
+  if (current && current.version !== STATE_VERSION) {
+    throw new Error(`Unsupported coordinator state version ${current.version}`);
   }
+  return current;
 }
 
 export function clearQueueState(): void {
@@ -83,30 +79,6 @@ export function clearQueueState(): void {
       console.error(`[queue-persister] Failed to remove ${path.basename(file)}:`, error);
     }
   }
-}
-
-export function createDebouncedSaver(
-  getState: () => QueueState,
-  onError?: (error: Error) => void,
-  debounceMs = SAVE_DEBOUNCE_MS,
-): () => void {
-  let timeoutId: NodeJS.Timeout | null = null;
-  let pending = false;
-  return () => {
-    pending = true;
-    if (timeoutId) return;
-    timeoutId = setTimeout(() => {
-      timeoutId = null;
-      if (!pending) return;
-      pending = false;
-      try {
-        persistQueueState(getState());
-      } catch (error) {
-        onError?.(error as Error);
-      }
-    }, debounceMs);
-    timeoutId.unref?.();
-  };
 }
 
 export function createImmediateSaver(getState: () => QueueState): () => void {

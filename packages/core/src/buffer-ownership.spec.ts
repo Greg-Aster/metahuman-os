@@ -40,9 +40,12 @@ const entryPrimitiveCallers = files
   .sort();
 assert.deepEqual(
   entryPrimitiveCallers,
-  [storageOwner, ...designatedNodes].sort(),
-  'Only the canonical storage owner and four designated nodes may reference writeBufferEntry',
+  [storageOwner, 'packages/core/src/durable-execution/coordinator-outbox.ts'].sort(),
+  'Only the storage owner and committed-output relay may reference the physical buffer write primitive',
 );
+assert.deepEqual(files.filter(file => fs.readFileSync(file, 'utf8').includes('admitBufferEntry')).map(relative).sort(),
+  [storageOwner, ...designatedNodes].sort(),
+  'Only the four designated nodes admit buffer entries through the shared owner');
 
 const retiredNames = [
   'appendToUserBuffer',
@@ -186,6 +189,7 @@ assert.deepEqual(conversationGraphFiles.sort(), [
   'environment-mode.json',
   'response-pipeline.json',
   'robot-action-result-mode.json',
+  'robot-autonomy-controller-mode.json',
   'robot-goal-review-mode.json',
 ]);
 

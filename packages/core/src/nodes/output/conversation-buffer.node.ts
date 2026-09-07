@@ -6,8 +6,7 @@
 
 import {
   getBufferPathForUser,
-  loadBufferForUser,
-  writeBufferEntry,
+  admitBufferEntry,
   type ConversationMessage,
 } from '../../conversation-buffer.js';
 import { defineNode, type NodeExecutor } from '../types.js';
@@ -28,7 +27,8 @@ function normalizeEntryIdentity(
 ): ConversationMessage {
   const meta = entry.meta && typeof entry.meta === 'object' ? { ...entry.meta } : {};
   const explicitKey = typeof meta.idempotencyKey === 'string' ? meta.idempotencyKey.trim() : '';
-  const executionKey = typeof context.idempotencyKey === 'string' ? context.idempotencyKey.trim() : '';
+  const executionKey = context.graphExecution?.occurrenceId
+    || (typeof context.idempotencyKey === 'string' ? context.idempotencyKey.trim() : '');
   const idempotencyKey = explicitKey || (executionKey ? `${executionKey}:${entry.role}` : '');
   return {
     ...entry,
@@ -165,25 +165,7 @@ const execute: NodeExecutor = async (inputs, context) => {
       continue;
     }
     const entry = normalizeEntryIdentity(rawEntry, context);
-    if (await writeBufferEntry(username, 'conversation', {
-      role: entry.role,
-      content: entry.content.trim(),
-      meta: entry.meta,
-      timestamp: entry.timestamp,
-    })) {
-      const idempotencyKey = typeof entry.meta?.idempotencyKey === 'string'
-        ? entry.meta.idempotencyKey
-        : '';
-      const durableEntry = idempotencyKey
-        ? [...loadBufferForUser(username, 'conversation').messages]
-            .reverse()
-            .find(message => message.meta?.idempotencyKey === idempotencyKey)
-        : entry;
-      if (!durableEntry) {
-        throw new Error('Conversation Buffer did not retain the admitted idempotent entry');
-      }
-      admittedEntries.push(durableEntry);
-    }
+    admittedEntries.push(await admitBufferEntry(username, 'conversation', entry, context.graphExecution));
   }
 
   return {

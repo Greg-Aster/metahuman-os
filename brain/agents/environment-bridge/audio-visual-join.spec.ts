@@ -98,8 +98,8 @@ test('publishes text without a stale image after the bounded visual deadline', a
   assert.equal(published.length, 1);
   assert.equal(published[0]?.visual, undefined);
   assert.equal(published[0]?.metadata?.visualStatus, 'unavailable');
-  assert.equal(await join.submitVisual(visual()), true, 'late correlated image is consumed');
-  assert.equal(published.length, 1, 'late image cannot create a second cognition run');
+  assert.equal(await join.submitVisual(visual()), false, 'late image is not claimed by an already published join');
+  assert.equal(published.length, 1, 'the transcript cannot be published twice');
   join.close();
 });
 
@@ -123,4 +123,3 @@ test('rejects a correlated image from the wrong robot', async () => {
   assert.equal(published[0]?.visual, undefined);
   join.close();
 });
-

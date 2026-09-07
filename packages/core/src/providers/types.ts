@@ -177,6 +177,7 @@ export function inspectProviderMessages(
 }
 
 export interface ProviderOptions {
+  signal?: AbortSignal;
   model?: string;
   temperature?: number;
   maxTokens?: number;

@@ -159,6 +159,7 @@ export interface OllamaChatResponse {
 }
 
 export interface OllamaChatOptions {
+  signal?: AbortSignal;
   temperature?: number
   stream?: boolean
   top_p?: number
@@ -382,7 +383,7 @@ export class OllamaClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(120000),
+      signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
     });
 
     if (!response.ok) {

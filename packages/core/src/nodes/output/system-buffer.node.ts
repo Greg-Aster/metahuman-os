@@ -1,6 +1,6 @@
 /** System Buffer Node: the only node allowed to persist durable system events. */
 
-import { getBufferPathForUser, writeBufferEntry } from '../../conversation-buffer.js';
+import { getBufferPathForUser, admitBufferEntry } from '../../conversation-buffer.js';
 import { defineNode, type NodeExecutor } from '../types.js';
 
 const execute: NodeExecutor = async (inputs, context) => {
@@ -23,7 +23,7 @@ const execute: NodeExecutor = async (inputs, context) => {
     };
   }
 
-  const persisted = await writeBufferEntry(username, 'system', {
+  await admitBufferEntry(username, 'system', {
     role: 'system',
     content: event.content.trim(),
     meta: {
@@ -32,10 +32,10 @@ const execute: NodeExecutor = async (inputs, context) => {
       severity: 'info',
       ...(event.meta && typeof event.meta === 'object' ? event.meta : {}),
     },
-  });
+  }, context.graphExecution);
 
   return {
-    persisted,
+    persisted: true,
     skipped: false,
     bufferPath: getBufferPathForUser(username, 'system'),
   };

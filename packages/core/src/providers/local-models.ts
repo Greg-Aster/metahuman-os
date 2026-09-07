@@ -103,6 +103,7 @@ export async function generateWithLocalService(
   const startTime = Date.now();
 
   const response = await fetch(`${endpoint}/generate`, {
+    signal: options.signal,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

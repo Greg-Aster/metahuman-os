@@ -55,6 +55,7 @@ export class HuggingFaceProvider {
   }
 
   async generate(messages: ProviderMessage[], options: ProviderOptions = {}): Promise<ProviderResponse> {
+    options.signal?.throwIfAborted();
     // Build request payload (Text Generation Inference format)
     const systemMessage = messages.find(m => m.role === 'system');
 
@@ -89,7 +90,7 @@ export class HuggingFaceProvider {
             return_full_text: false,
           },
         }),
-        signal: controller.signal,
+        signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
       });
 
       if (!response.ok) {

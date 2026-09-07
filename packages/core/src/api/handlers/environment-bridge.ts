@@ -11,6 +11,7 @@ import {
 } from '../types.js';
 import {
   dispatchEnvironmentActions,
+  pendingEnvironmentCancellations,
   attachEnvironmentObservationTiming,
   getEnvironmentBridgeDiagnosticMedia,
   getEnvironmentBridgeDiagnosticsSnapshot,
@@ -36,11 +37,14 @@ import {
 } from '../../environment-interface/index.js';
 import { submitRobotBridgeRecord } from '../../buffer-admission.js';
 import { getCurrentlyActiveUser } from '../../sessions.js';
+import { openExecutionStore } from '../../durable-execution/storage.js';
+import { relayExecutionOutbox } from '../../durable-execution/coordinator-outbox.js';
 import { beginTTSUserTurn, getTTSQueueState } from '../../tts/delivery-queue.js';
 
 const STREAM_HEARTBEAT_MS = 15_000;
 const BRIDGE_TOKEN_ENV = 'MH_ENVIRONMENT_BRIDGE_TOKEN';
 const FEEDBACK_TYPES = new Set<EnvironmentFeedback['type']>([
+  'outcome_unknown',
   'accepted',
   'rejected',
   'completed',
@@ -97,6 +101,10 @@ export function environmentObservationNeedsCognition(
   const hasText = observation.text?.some(event => event.text.trim().length > 0) === true;
   const hasVisual = Boolean(observation.visual) || Boolean(observation.visuals?.length);
   const hasFeedback = Boolean(observation.feedback?.length);
+  // A capture paired with a spoken turn can arrive after transcription has
+  // already been admitted. Retain that image as context, not a second turn.
+  const actionId = observation.metadata?.actionId ?? observation.visual?.metadata?.actionId;
+  if (observation.metadata?.audioUtteranceId && !hasText && !hasFeedback && !actionId) return false;
   const hasPerceptionMetadata = Boolean(
     observation.metadata?.perceptionEvent,
   );
@@ -212,7 +220,12 @@ export async function handleEnvironmentBridgeObservation(
       username,
       graph,
       ttsGeneration,
+      sourceObservation: body as unknown as EnvironmentObservation,
     });
+    if (published.executionId) {
+      const store = openExecutionStore(username);
+      try { await relayExecutionOutbox(store, published.executionId); } finally { store.close(); }
+    }
     return successResponse({ success: true, bridge: published.summary, graphQueued: true, workId: published.workId });
   } catch (error) {
     return errorResponse((error as Error).message);
@@ -377,22 +390,16 @@ export async function handleEnvironmentBridgeActionResult(
     return badRequestResponse('Invalid action result payload');
   }
 
-  const actionTiming = mergeEnvironmentActionTiming(
-    feedback.data?.actionTiming,
-    { coreFeedbackReceivedAt: new Date().toISOString() },
-  );
-  feedback.data = {
-    ...(feedback.data ?? {}),
-    actionTiming,
-    actionStageDurations: environmentActionStageDurations(actionTiming),
-  };
-
-  const result = recordEnvironmentActionResult(feedback);
+  const result = await recordEnvironmentActionResult(feedback);
   if (!result) {
     return successResponse({ success: true, action: undefined, robotBufferPersisted: false });
   }
   if (feedback.type === 'accepted') {
     return successResponse({ success: true, action: result.action, robotBufferPersisted: false });
+  }
+  if (result.action.executionId) {
+    const store = openExecutionStore(result.username);
+    try { await relayExecutionOutbox(store, result.action.executionId); } finally { store.close(); }
   }
 
   const bridgeRecord = {
@@ -469,6 +476,8 @@ async function* streamEnvironmentActions(
       return;
     }
 
+    const cancellations = pendingEnvironmentCancellations(sessionId);
+    if (cancellations.length) push('cancellations', { cancellations });
     const state = readEnvironmentBridgeState();
     if (!state.enabled) {
       push('status', { enabled: false, actions: [] });

@@ -142,7 +142,6 @@ export const environmentActionParserNode = defineNode({
     { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
     { name: 'movementRequested', type: 'boolean', description: 'Whether the model deliberately requested off-script movement generation' },
     { name: 'taskDecision', type: 'object', description: 'Validated task decision authored by the Environment LLM' },
-    { name: 'taskDecisionError', type: 'string', description: 'Structured task-decision parsing error' },
     { name: 'actionAdmission', type: 'object', description: 'Typed capability-admission result for diagnostics' },
     { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
     { name: 'hasActions', type: 'boolean', description: 'Whether an admitted preset action is ready for Environment Bridge Out' },
@@ -152,152 +151,122 @@ export const environmentActionParserNode = defineNode({
   ],
   description: 'Separates a structured model response into conversational text and validated semantic actions.',
   async execute(inputs, _context) {
-    try {
-      const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
-      const observation = inputs.observation && typeof inputs.observation === 'object'
-        ? inputs.observation as EnvironmentObservation
-        : undefined;
-      const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
-      const currentVisualEvidence = typeof inputs.currentVisualEvidence === 'boolean'
-        ? inputs.currentVisualEvidence
-        : null;
-      const validation = validateEnvironmentSelectorOutput(
-        inputs.response,
-        sessionId,
-      );
-      const validated = validation.value;
-      const parsed = validated
-        ? {
-            response: validated.response,
-            actions: validated.actions,
-            movementRequest: validated.movementRequest
-              ? { ...validated.movementRequest, motionClass: 'body_local' as const }
-              : null,
-            movementRequestError: '',
-            taskDecision: validated.taskDecision,
-            taskDecisionError: '',
-          }
-        : {
-            response: '',
-            actions: [],
-            movementRequest: null,
-            movementRequestError: '',
-            taskDecision: null,
-            taskDecisionError: validation.errors.join('; '),
-          };
-      const motionClass = normalizedEnvironmentMotionClass(parsed.taskDecision?.motionClass)
-        ?? (parsed.movementRequest ? 'body_local' : null);
-      const connectedSession = Boolean(sessionId || observation?.sessionId);
-      const unsupportedCommand = unsupportedRobotCommand(
-        parsed.actions,
-        observation?.capabilities?.robotCommands,
-      );
-      const movementSupported = observation?.capabilities?.actions?.includes('robotMotionPlan') === true;
-      const unavailableAction = parsed.actions.find(action => !actionIsAdvertised(action, observation));
-      const supportedParsedActions = parsed.actions.filter(action => (
-        actionIsAdvertised(action, observation)
-        && !unsupportedRobotCommand([action], observation?.capabilities?.robotCommands)
-      ));
-      const hasNonMotionAlternative = supportedParsedActions.some(action => !isPhysicalMotionAction(action));
-      const targetFeedbackActionSelected = supportedParsedActions.some(action => (
-        action.type === 'inspect' || action.type === 'visualApproach'
-      ));
-      const targetFeedbackActionAvailable = supportedParsedActions.some(action => (
-        (action.type === 'inspect' || action.type === 'visualApproach')
-          && visualFeedbackCapabilityAvailable(action, observation)
-      ));
-      const targetFrameAvailable = supportedParsedActions.some(action => (
-        (action.type === 'inspect' || action.type === 'visualApproach')
-          && activeViewTargetIsCurrent(action, observation, robotObserver, currentVisualEvidence)
-      ));
-      let admissionBlockedReason = '';
-      if (targetFeedbackActionSelected && !hasNonMotionAlternative) {
-        if (!targetFeedbackActionAvailable) {
-          admissionBlockedReason = 'target_relative_feedback_action_unavailable';
-        } else if (
-          !targetFrameAvailable
-        ) {
-          admissionBlockedReason = 'target_relative_frame_unavailable';
-        }
+    const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
+    const observation = inputs.observation && typeof inputs.observation === 'object'
+      ? inputs.observation as EnvironmentObservation
+      : undefined;
+    const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
+    const currentVisualEvidence = typeof inputs.currentVisualEvidence === 'boolean'
+      ? inputs.currentVisualEvidence
+      : null;
+    const validation = validateEnvironmentSelectorOutput(
+      inputs.response,
+      sessionId,
+    );
+    if (!validation.value) throw new Error(
+      `Environment Action Selector output is invalid: ${validation.errors.join('; ')}`,
+    );
+    const validated = validation.value;
+    const parsed = {
+      ...validated,
+      movementRequest: validated.movementRequest
+        ? { ...validated.movementRequest, motionClass: 'body_local' as const }
+        : null,
+    };
+    const motionClass = normalizedEnvironmentMotionClass(parsed.taskDecision?.motionClass)
+      ?? (parsed.movementRequest ? 'body_local' : null);
+    const connectedSession = Boolean(sessionId || observation?.sessionId);
+    const unsupportedCommand = unsupportedRobotCommand(
+      parsed.actions,
+      observation?.capabilities?.robotCommands,
+    );
+    const movementSupported = observation?.capabilities?.actions?.includes('robotMotionPlan') === true;
+    const unavailableAction = parsed.actions.find(action => !actionIsAdvertised(action, observation));
+    const supportedParsedActions = parsed.actions.filter(action => (
+      actionIsAdvertised(action, observation)
+      && !unsupportedRobotCommand([action], observation?.capabilities?.robotCommands)
+    ));
+    const hasNonMotionAlternative = supportedParsedActions.some(action => !isPhysicalMotionAction(action));
+    const targetFeedbackActionSelected = supportedParsedActions.some(action => (
+      action.type === 'inspect' || action.type === 'visualApproach'
+    ));
+    const targetFeedbackActionAvailable = supportedParsedActions.some(action => (
+      (action.type === 'inspect' || action.type === 'visualApproach')
+        && visualFeedbackCapabilityAvailable(action, observation)
+    ));
+    const targetFrameAvailable = supportedParsedActions.some(action => (
+      (action.type === 'inspect' || action.type === 'visualApproach')
+        && activeViewTargetIsCurrent(action, observation, robotObserver, currentVisualEvidence)
+    ));
+    let admissionBlockedReason = '';
+    if (targetFeedbackActionSelected && !hasNonMotionAlternative) {
+      if (!targetFeedbackActionAvailable) {
+        admissionBlockedReason = 'target_relative_feedback_action_unavailable';
+      } else if (
+        !targetFrameAvailable
+      ) {
+        admissionBlockedReason = 'target_relative_frame_unavailable';
       }
-      if (!admissionBlockedReason && unsupportedCommand) {
-        admissionBlockedReason = 'robot_command_unavailable';
-      } else if (!admissionBlockedReason && unavailableAction?.type === 'captureImage') {
-        admissionBlockedReason = 'camera_unavailable';
-      } else if (!admissionBlockedReason && unavailableAction) {
-        admissionBlockedReason = 'action_capability_unavailable';
-      }
-      const admissionBlocked = Boolean(admissionBlockedReason);
-      const requiresGeneratedMovement = !admissionBlocked
-        && motionClass === 'body_local'
-        && Boolean(parsed.movementRequest);
-      const movementRequestError = parsed.movementRequestError;
-      const movementRequested = Boolean(movementRequestError || requiresGeneratedMovement);
-      const movementRequest = requiresGeneratedMovement && movementSupported
-        ? {
-            ...parsed.movementRequest!,
-            motionClass: 'body_local' as const,
-          }
-        : null;
-      const actions = movementRequest
-        ? []
-        : !admissionBlocked
-          ? supportedParsedActions
-          : [];
-      const movementError = motionAdmissionMessage(admissionBlockedReason)
-        || movementRequestError
-        || (requiresGeneratedMovement && !connectedSession
-          ? 'The requested robot movement cannot run because no robot session is connected.'
-          : requiresGeneratedMovement && !movementSupported
-            ? 'Off-script movement is unavailable because this robot does not advertise robotMotionPlan.'
-            : '');
-      // A response coupled to a rejected action cannot be presented as a
-      // truthful result. The transport error remains available through error
-      // and actionAdmission; this node does not replace model speech with a
-      // hard-coded conversational message.
-      const response = admissionBlocked ? '' : parsed.response || '';
-      const valid = actions.length > 0 || movementRequest !== null;
-      const actionAdmission = supportedParsedActions.some(isPhysicalMotionAction) || admissionBlocked
-        ? {
-            kind: 'environment_action_admission',
-            admitted: !admissionBlocked,
-            motionClass,
-            reason: admissionBlockedReason,
-            requiredCapability: null,
-          }
-        : null;
-      const taskDecision = parsed.taskDecision;
-      return {
-        actions,
-        firstAction: actions[0] ?? null,
-        movementRequest,
-        movementRequested,
-        taskDecision,
-        taskDecisionError: parsed.taskDecisionError,
-        actionAdmission,
-        valid,
-        hasActions: actions.length > 0,
-        hasResponse: Boolean(response.trim()),
-        error: valid
-          ? ''
-          : parsed.taskDecisionError || movementError,
-        response,
-      };
-    } catch (error) {
-      return {
-        actions: [],
-        firstAction: null,
-        movementRequest: null,
-        movementRequested: false,
-        taskDecision: null,
-        taskDecisionError: '',
-        actionAdmission: null,
-        valid: false,
-        hasActions: false,
-        hasResponse: false,
-        error: (error as Error).message,
-        response: '',
-      };
     }
+    if (!admissionBlockedReason && unsupportedCommand) {
+      admissionBlockedReason = 'robot_command_unavailable';
+    } else if (!admissionBlockedReason && unavailableAction?.type === 'captureImage') {
+      admissionBlockedReason = 'camera_unavailable';
+    } else if (!admissionBlockedReason && unavailableAction) {
+      admissionBlockedReason = 'action_capability_unavailable';
+    }
+    const admissionBlocked = Boolean(admissionBlockedReason);
+    const requiresGeneratedMovement = !admissionBlocked
+      && motionClass === 'body_local'
+      && Boolean(parsed.movementRequest);
+    const movementRequested = Boolean(requiresGeneratedMovement);
+    const movementRequest = requiresGeneratedMovement && movementSupported
+      ? {
+          ...parsed.movementRequest!,
+          motionClass: 'body_local' as const,
+        }
+      : null;
+    const actions = movementRequest
+      ? []
+      : !admissionBlocked
+        ? supportedParsedActions
+        : [];
+    const movementError = motionAdmissionMessage(admissionBlockedReason)
+      || (requiresGeneratedMovement && !connectedSession
+        ? 'The requested robot movement cannot run because no robot session is connected.'
+        : requiresGeneratedMovement && !movementSupported
+          ? 'Off-script movement is unavailable because this robot does not advertise robotMotionPlan.'
+          : '');
+    // A response coupled to a rejected action cannot be presented as a
+    // truthful result. The transport error remains available through error
+    // and actionAdmission; this node does not replace model speech with a
+    // hard-coded conversational message.
+    const response = admissionBlocked ? '' : parsed.response || '';
+    const valid = actions.length > 0 || movementRequest !== null;
+    const actionAdmission = supportedParsedActions.some(isPhysicalMotionAction) || admissionBlocked
+      ? {
+          kind: 'environment_action_admission',
+          admitted: !admissionBlocked,
+          motionClass,
+          reason: admissionBlockedReason,
+          requiredCapability: null,
+        }
+      : null;
+    const taskDecision = parsed.taskDecision;
+    return {
+      actions,
+      firstAction: actions[0] ?? null,
+      movementRequest,
+      movementRequested,
+      taskDecision,
+      actionAdmission,
+      valid,
+      hasActions: actions.length > 0,
+      hasResponse: Boolean(response.trim()),
+      error: valid
+        ? ''
+        : movementError,
+      response,
+    };
   },
 });

@@ -1,11 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import { getOperatorMode } from '../../active-operator/mode-controller.js';
 import {
   sanitizeEnvironmentBridgeObservation,
   type EnvironmentObservation,
 } from '../../environment-interface/index.js';
-import { submitCoordinatorWork, type AutonomyMode, type TaskInput } from '../../queue/index.js';
+import type { AutonomyMode } from '../../queue/types.js';
 import {
   parseRobotObserverCycle,
   type RobotObserverCycleMetadata,
@@ -91,6 +91,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
     { name: 'status', type: 'string', description: 'Dispatch result' },
     { name: 'instruction', type: 'string', description: 'Delegated high-level intention' },
     { name: 'result', type: 'object', description: 'Inspectable dispatch metadata' },
+    { name: 'invocation', type: 'object', description: 'Selected child workflow and its unchanged intention/evidence inputs' },
   ],
   properties: {
     graph: 'boredom-autonomy',
@@ -103,7 +104,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       description: 'Graph that decides how to execute the delegated high-level intention.',
     },
   },
-  description: 'Delegates one planner-authored intention and optional historical inspiration to the one configured autonomy execution graph.',
+  description: 'Prepares the planner-authored intention and evidence for Run Child Workflow. It does not enqueue a separate execution.',
   async execute(inputs, context, properties) {
     const decision = isRecord(inputs.decision)
       ? inputs.decision as unknown as RobotOperatorDecision
@@ -118,6 +119,7 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       status,
       instruction,
       result: { queued: false, status },
+      invocation: null,
     });
     if (!decision) return reject('no_decision');
     const observed = cleanText(decision.observed, 500);
@@ -136,36 +138,25 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
       context.robotOperatorEnvironmentGraph,
       validGraph(properties?.graph, 'boredom-autonomy'),
     );
-    if (graph === robotObserver?.graph) {
-      return reject('recursive_graph', instruction);
-    }
     const cycle = delegatedCycle(observation, robotObserver, source, graph);
     const timestamp = new Date().toISOString();
     const delegatedMemories = sampledMemoryContent(inputs.memories);
     const nextObservation: EnvironmentObservation = sanitizeEnvironmentBridgeObservation({
       ...observation,
-      text: [],
       feedback: observation.feedback ?? [],
       metadata: { ...(observation.metadata ?? {}), correlationId: cycle.cycleId },
     });
-    delete nextObservation.metadata?.actionId;
-    delete nextObservation.metadata?.feedbackId;
-
-    const hash = createHash('sha256').update(instruction).digest('hex').slice(0, 16);
-    const taskInput: TaskInput = {
-      type: 'environment_observation',
-      handler: 'environment.observation',
-      resource: 'local-llm',
-      source,
-      priority: source === 'user' ? 'high' : 'background',
-      input: {
-        observation: nextObservation,
-        observationCurrent: false,
-        graph,
+    const invocation = {
+      graph,
+      context: {
+        environmentObservation: nextObservation,
+        environmentObservationCurrent: context.environmentObservationCurrent === true,
+        userMessage: '',
         robotOperatorContext: {
           robotObserver: cycle,
           sourceObservationAt: observation.timestamp,
-          currentVisualEvidence: false,
+          currentVisualEvidence: context.environmentObservationCurrent === true,
+          sessionId: observation.sessionId,
           plannerDecision: {
             observed,
             instruction,
@@ -175,35 +166,16 @@ export const robotOperatorEnvironmentDispatchNode = defineNode({
           ...(delegatedMemories.length > 0 ? { memories: delegatedMemories } : {}),
         },
       },
-      username,
-      cognitiveMode: 'environment',
-      correlationId: cycle.cycleId,
-      idempotencyKey: `robot-operator:${cycle.cycleId}:${cycle.step}:${hash}`,
-      maxAttempts: 1,
-      metadata: {
-        producer: cycle.requestedBy,
-        sessionId: observation.sessionId,
-        observed,
-        decisionReason: reason,
-      },
     };
-    const injectedEnqueue = context.enqueueRobotOperatorEnvironment;
-    const queuedTask = await (typeof injectedEnqueue === 'function'
-      ? injectedEnqueue(taskInput)
-      : submitCoordinatorWork(taskInput));
-    const taskId = isRecord(queuedTask) && typeof queuedTask.id === 'string'
-      ? queuedTask.id
-      : '';
-    if (!taskId) return reject('queue_rejected', instruction);
 
     return {
-      queued: true,
-      taskId,
-      status: 'queued',
+      queued: false,
+      taskId: '',
+      status: 'prepared',
       instruction,
+      invocation,
       result: {
-        queued: true,
-        taskId,
+        prepared: true,
         graph,
         source,
         mode,

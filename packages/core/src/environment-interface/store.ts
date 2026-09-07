@@ -3,6 +3,10 @@ import path from 'node:path';
 import { systemPaths } from '../paths.js';
 import { getQueueManager } from '../queue/index.js';
 import type { QueuedTask } from '../queue/types.js';
+import type { TaskInput } from '../queue/types.js';
+import { randomUUID } from 'node:crypto';
+import { openExecutionStore } from '../durable-execution/storage.js';
+import { executionWorkInput } from '../durable-execution/coordinator-outbox.js';
 import type {
   EnvironmentAction,
   EnvironmentActionQueueOptions,
@@ -169,7 +173,7 @@ function commandStatus(task: QueuedTask): EnvironmentCommandWork['status'] {
   return 'rejected';
 }
 
-function commandView(task: QueuedTask): EnvironmentCommandWork {
+export function commandView(task: QueuedTask): EnvironmentCommandWork {
   const action = task.input as Omit<EnvironmentAction, 'id' | 'createdAt'>;
   const feedback = task.result?.feedback as EnvironmentFeedback | undefined;
   const timing = mergeEnvironmentActionTiming(
@@ -179,8 +183,11 @@ function commandView(task: QueuedTask): EnvironmentCommandWork {
   );
   return {
     id: task.id,
+    workItemId: task.id,
+    bodyLease: task.bodyLease,
     createdAt: task.createdAt,
     ...action,
+    ...(task.durable ? { executionId: task.durable.executionId, effectId: task.durable.effectId } : {}),
     status: commandStatus(task),
     dispatchedAt: task.startedAt,
     completedAt: task.completedAt,
@@ -270,7 +277,8 @@ export function getEnvironmentActionContext(
 ): EnvironmentActionContext | null {
   const actionId = bridgeObservationActionId(observation);
   if (!actionId) return null;
-  const task = getQueueManager().getTask(actionId);
+  const task = getQueueManager().findTask(candidate => candidate.type === 'environment_command'
+    && (candidate.input.id === actionId || (!candidate.input.id && candidate.id === actionId)));
   if (!task || task.type !== 'environment_command') return null;
   const requested = task.input as Partial<EnvironmentAction>;
   const taskInputMetadata = isRecord(task.input?.metadata)
@@ -290,10 +298,11 @@ export function getEnvironmentActionContext(
     task.input?.timing,
     { queueEnteredAt: task.createdAt, leaseGrantedAt: task.startedAt },
     taskFeedbackData?.actionTiming,
+    task.result?.actionTiming,
     ...(observationFeedbackData?.map(data => data.actionTiming) ?? []),
   );
   return {
-    actionId: task.id,
+    actionId,
     status: typeof resultFeedback?.type === 'string'
       ? resultFeedback.type
       : commandStatus(task),
@@ -441,11 +450,33 @@ export function recordEnvironmentRobotStatus(
 
 export function publishEnvironmentObservation(
   observation: EnvironmentObservation,
-  options: { username: string; graph?: string; ttsGeneration?: number },
-): { summary: EnvironmentBridgeSummary; workId: string } {
+  options: { username: string; graph?: string; ttsGeneration?: number; sourceObservation?: EnvironmentObservation },
+): { summary: EnvironmentBridgeSummary; workId: string; executionId?: string } {
+  const actionId = bridgeObservationActionId(observation);
+  const parentWork = actionId ? getQueueManager().findTask(task => task.type === 'environment_command'
+    && task.input.id === actionId) : null;
+  if (parentWork && parentWork.input.sessionId !== observation.sessionId) {
+    throw new Error('Observation belongs to a different robot session');
+  }
   const recorded = persistEnvironmentObservation(observation);
   const bridgeObservation = recorded.observation;
   const actionContext = getEnvironmentActionContext(bridgeObservation);
+  const hasUserInput = observation.text?.some(event => event.source === 'player' && event.text?.trim());
+  if (parentWork?.durable && !hasUserInput) {
+    if (parentWork.username !== options.username) throw new Error('Robot result belongs to a different profile');
+    const store = openExecutionStore(parentWork.username);
+    try {
+      const effect = store.dispatch(parentWork.durable.effectId);
+      if (effect.actionId !== actionId) throw new Error('Observation does not match the dispatched action');
+      const event = store.deliverEvent(parentWork.durable.executionId, {
+        eventId: `observation:${bridgeObservation.sessionId}:${bridgeObservation.id || bridgeObservation.timestamp}`,
+        kind: 'observation_received', actionId, workItemId: parentWork.id,
+        payload: { environmentObservation: environmentBridgeObservation(options.sourceObservation ?? observation), environmentObservationCurrent: true },
+      });
+      return { summary: recorded.summary, workId: `${parentWork.durable.executionId}:resume:${event.eventId}`,
+        executionId: parentWork.durable.executionId };
+    } finally { store.close(); }
+  }
   const work = getQueueManager().enqueue({
     type: 'environment_observation',
     handler: 'environment.observation',
@@ -465,7 +496,7 @@ export function publishEnvironmentObservation(
       ?? (typeof bridgeObservation.metadata?.correlationId === 'string'
         ? bridgeObservation.metadata.correlationId
         : bridgeObservation.feedback?.find(item => item.actionId)?.actionId),
-    idempotencyKey: `environment-observation:${bridgeObservation.sessionId}:${bridgeObservation.timestamp}`,
+    idempotencyKey: `environment-observation:${bridgeObservation.sessionId}:${bridgeObservation.id || bridgeObservation.timestamp}`,
     maxAttempts: 1,
     metadata: {
       producer: 'environment-bridge',
@@ -577,13 +608,17 @@ function normalizeAction(
 
   const sessionId = action.sessionId || options.sessionId || getLatestEnvironmentObservation()?.sessionId;
   if (!sessionId) throw new Error('Environment action requires a connected target session');
+  const command = action.command?.trim();
+  // Both advertised forms describe the same transport operation and must use
+  // the same stop admission, ownership and acknowledgement contract.
+  const type = action.type === 'robotCommand' && command?.toLowerCase() === 'stop' ? 'stop' : action.type;
   return {
-    type: action.type,
+    type,
     sessionId,
     text: action.text?.trim(),
     vector: action.vector,
     direction: action.direction,
-    command: action.command?.trim(),
+    command: type === 'robotCommand' ? command : undefined,
     units: typeof action.units === 'number' ? Math.max(0, Math.floor(action.units)) : undefined,
     amount: typeof action.amount === 'number' ? Math.max(0, Math.min(1, action.amount)) : undefined,
     durationMs,
@@ -598,35 +633,24 @@ function normalizeAction(
   };
 }
 
-export function enqueueEnvironmentAction(
+/** Normalize and describe work without admitting or dispatching it. */
+export function prepareEnvironmentCommand(
   action: Partial<EnvironmentAction>,
   options: EnvironmentActionQueueOptions = {},
-): EnvironmentCommandWork {
+): TaskInput {
   const normalized = normalizeAction(action, options);
   const sessionId = normalized.sessionId!;
-  const manager = getQueueManager();
-  if (normalized.type === 'stop') {
-    for (const task of manager.getAllTasks()) {
-      if (
-        task.type === 'environment_command'
-        && task.input.sessionId === sessionId
-        && task.input.type !== 'stop'
-        && (task.state === 'queued' || task.state === 'waiting')
-      ) manager.cancel(task.id, 'Superseded by semantic stop');
-    }
-  }
-
   const sourceCreatedAt = action.createdAt ? Date.parse(action.createdAt) : Date.now();
   const deadline = EXPIRING_CONTROL_ACTION_TYPES.has(normalized.type)
     ? new Date((Number.isFinite(sourceCreatedAt) ? sourceCreatedAt : Date.now()) + MAX_CONTROL_ACTION_AGE_MS).toISOString()
     : undefined;
-  const task = manager.enqueue({
+  return {
     type: 'environment_command',
     handler: 'environment.command',
     resource: normalized.type === 'stop' ? `environment-stop:${sessionId}` : `environment:${sessionId}`,
     source: options.source || 'system',
     priority: normalized.type === 'stop' ? 'critical' : 'normal',
-    input: normalized,
+    input: { ...normalized, id: action.id || randomUUID() },
     username: options.username || 'system',
     cognitiveMode: 'environment',
     deadline,
@@ -638,7 +662,17 @@ export function enqueueEnvironmentAction(
       sessionId,
       originatingInstruction: boundedOriginatingInstruction(options.originatingInstruction),
     },
-  });
+  };
+}
+
+export function enqueueEnvironmentAction(
+  action: Partial<EnvironmentAction>,
+  options: EnvironmentActionQueueOptions = {},
+): EnvironmentCommandWork {
+  const prepared = prepareEnvironmentCommand(action, options);
+  const manager = getQueueManager();
+  const sessionId = String(prepared.input.sessionId);
+  const task = manager.enqueue(prepared);
   notifyEnvironmentActionSubscribers(sessionId);
   return commandView(task);
 }
@@ -667,6 +701,14 @@ export function enqueueConnectedEnvironmentStops(
     ));
 }
 
+export function pendingEnvironmentCancellations(sessionId: string): Record<string, unknown>[] {
+  return getQueueManager().getAllTasks().filter(task => task.type === 'environment_command'
+    && task.input.sessionId === sessionId && task.cancellationRequestedAt && ['leased', 'waiting'].includes(task.state))
+    .map(task => ({ cancellationId: `${task.id}:cancel:${task.cancellationRequestedAt}`,
+      actionId: task.input.id, bodyLease: task.bodyLease, executionId: task.durable?.executionId,
+      reason: task.cancellationReason }));
+}
+
 export function dispatchEnvironmentActions(sessionId: string, limit = 10): EnvironmentCommandWork[] {
   const state = readEnvironmentBridgeState();
   if (!state.enabled || !state.sessions[sessionId]) return [];
@@ -678,8 +720,26 @@ export function dispatchEnvironmentActions(sessionId: string, limit = 10): Envir
       && task.handler === 'environment.command'
       && task.input.sessionId === sessionId);
     if (!next) break;
+    if (next.durable) {
+      const store = openExecutionStore(next.username);
+      try {
+        const effect = store.assertDispatchable(next.durable.effectId);
+        if (!effect.workItemId) {
+          if (manager.enqueue(executionWorkInput(store, effect)).id !== next.id) throw new Error('Conflicting body work receipt');
+          store.acknowledgeAdmission(effect.effectId, next.id);
+        } else if (effect.workItemId !== next.id) throw new Error('Body work does not match its admission receipt');
+      }
+      catch (error) {
+        if (store.get(next.durable.executionId).status === 'cancelled') {
+          manager.cancel(next.id, 'Parent execution cancelled');
+          continue;
+        }
+        throw error;
+      } finally { store.close(); }
+    }
     const task = manager.claim(next.id, `environment-adapter:${sessionId}`);
     if (!task) break;
+    manager.assertBodyLease(task.id);
     claimed.push(commandView(task));
   }
   return claimed;
@@ -734,21 +794,43 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
   if (!feedback.actionId) return undefined;
 
   const manager = getQueueManager();
-  const task = manager.getTask(feedback.actionId);
+  const task = manager.findTask(candidate => candidate.type === 'environment_command'
+    && (candidate.input.id === feedback.actionId || (!candidate.input.id && candidate.id === feedback.actionId)));
   if (!task || task.type !== 'environment_command') return undefined;
-  if (feedback.type === 'accepted' && task.state !== 'leased') return undefined;
-  if (task.state === 'leased') {
+  if (feedback.type === 'accepted' && !['leased', 'waiting'].includes(task.state)) return undefined;
+  if (task.durable) {
+    const store = openExecutionStore(task.username);
+    try {
+      const effect = store.dispatch(task.durable.effectId);
+      if (effect.executionId !== task.durable.executionId || effect.actionId !== feedback.actionId || effect.workItemId !== task.id) {
+        throw new Error('Robot report does not match its admitted action');
+      }
+      if (feedback.type === 'accepted') {
+        store.recordActionAcceptance(effect.effectId, task);
+      } else if (feedback.type !== 'status') {
+        store.deliverActionResult(effect.executionId, feedback.actionId, {
+          eventId: feedback.id, kind: 'physical_result', actionId: feedback.actionId, workItemId: task.id,
+          payload: { feedback, action: task.input },
+        }, feedback.type === 'outcome_unknown', ['rejected', 'expired', 'cancelled'].includes(feedback.type),
+        task.startedAt || task.bodyLease ? task : undefined);
+      }
+    } finally { store.close(); }
+  }
+  if (task.state === 'leased' || task.state === 'waiting') {
     if (feedback.type === 'completed') {
-      manager.complete(task.id, true, { deliveryStatus: feedback.type, feedback });
+      manager.complete(task.id, true, { deliveryStatus: feedback.type, feedback,
+        actionTiming: { coreFeedbackReceivedAt: new Date().toISOString() } });
     } else if (feedback.type === 'cancelled') {
       manager.cancel(task.id, feedback.message);
       manager.acknowledgeCancellation(task.id);
     } else if (feedback.type === 'expired') {
       manager.complete(task.id, false, { code: 'adapter_expired', message: feedback.message, retryable: false });
+    } else if (feedback.type === 'outcome_unknown') {
+      manager.wait(task.id, `outcome_unknown: ${feedback.message}`);
     } else if (feedback.type === 'failed' || feedback.type === 'rejected') {
       manager.complete(task.id, false, { code: `adapter_${feedback.type}`, message: feedback.message, retryable: false });
     }
-  } else if (task.state === 'queued' || task.state === 'waiting') {
+  } else if (task.state === 'queued') {
     if (feedback.type === 'cancelled') manager.cancel(task.id, feedback.message);
     if (feedback.type === 'expired') manager.expire(task.id);
   }

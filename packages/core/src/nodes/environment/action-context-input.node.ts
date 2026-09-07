@@ -17,6 +17,7 @@ export const environmentActionContextInputNode = defineNode({
   name: 'Verify Matched Sent Action',
   category: 'environment',
   inputs: [
+    { name: 'record', type: 'object', optional: true, description: 'Correlated sent-action record from the durable result wait' },
     {
       name: 'actionId',
       label: 'Robot-reported action ID',
@@ -73,8 +74,8 @@ export const environmentActionContextInputNode = defineNode({
   description: 'Verifies that the action ID reported by the robot matches the trusted sent-action record Core resolved before graph execution. A match exposes the sent command and its result details. This node performs no lookup, sends no command, changes no status, and calls no model.',
   async execute(inputs, context) {
     const expectedActionId = cleanText(inputs.actionId, 200);
-    const supplied = isRecord(context.environmentActionContext)
-      ? context.environmentActionContext as unknown as EnvironmentActionContext
+    const supplied = isRecord(inputs.record ?? context.environmentActionContext)
+      ? (inputs.record ?? context.environmentActionContext) as unknown as EnvironmentActionContext
       : null;
     const actionId = cleanText(supplied?.actionId, 200);
     const matching = Boolean(expectedActionId && actionId === expectedActionId);

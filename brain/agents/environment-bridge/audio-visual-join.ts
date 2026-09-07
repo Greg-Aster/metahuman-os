@@ -114,7 +114,7 @@ export class AudioVisualObservationJoin {
     const utteranceId = correlatedUtteranceId(observation);
     if (!utteranceId) return false;
     const entry = this.pending.get(utteranceId);
-    if (!entry) return true;
+    if (!entry) return false;
     if (visualMatchesUtterance(observation, entry.metadata)) {
       entry.visual = observation;
       await this.flush(entry);
@@ -151,8 +151,9 @@ export class AudioVisualObservationJoin {
     }
     entry.publishing = true;
     clearTimeout(entry.timer);
-    this.pending.delete(entry.metadata.utteranceId);
-    await this.publish(mergeObservation(entry));
+    try {
+      await this.publish(mergeObservation(entry));
+      this.pending.delete(entry.metadata.utteranceId);
+    } finally { entry.publishing = false; }
   }
 }
-

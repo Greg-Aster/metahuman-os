@@ -459,6 +459,7 @@ export interface VLLMChatResponse {
 }
 
 export interface VLLMChatOptions {
+  signal?: AbortSignal;
   model?: string;
   seed?: number;
   temperature?: number;
@@ -1365,7 +1366,7 @@ export class VLLMClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120000),
+      signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(120000)]) : AbortSignal.timeout(120000),
     });
 
     if (!response.ok) {

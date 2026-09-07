@@ -10,6 +10,7 @@ import {
   stageRobotSpeech,
 } from './robot-audio.js';
 import { createKokoroTTSService } from '../tts.js';
+import type { EnvironmentAction } from '../environment-interface/types.js';
 
 const MAX_ROBOT_KOKORO_STREAM_BYTES = 3 * 1024 * 1024;
 const MAX_ROBOT_WAV_CHUNKS = 64;
@@ -127,9 +128,10 @@ async function collectKokoroWavChunks(
   return wavChunks;
 }
 
-export async function renderRobotSpeech(
+/** Rendering creates an audio artifact, not a physical send. */
+export async function prepareRobotSpeech(
   options: KokoroRobotSpeechOptions,
-): Promise<RobotSpeechDelivery> {
+): Promise<{ action: Partial<EnvironmentAction>; totalChunks: number }> {
   const text = normalizeRobotSpeechText(options.text);
   if (!text) throw new Error('Robot speech contains no speakable text');
   const sessionId = options.sessionId || getRobotSpeakerSession();
@@ -138,21 +140,17 @@ export async function renderRobotSpeech(
   const service = createKokoroTTSService(options.username);
   const robotVolumePercent = getRobotVolumePercent(options.username);
 
-  let artifactId: string | undefined;
+  const wavChunks = await collectKokoroWavChunks(service, text, options);
+  const artifact = stageRobotSpeech(combineRobotSpeechWavChunks(wavChunks, robotVolumePercent));
+  return { action: { type: 'speak', sessionId, speechArtifactId: artifact.id,
+    speechDurationMs: artifact.durationMs, metadata: { owner: 'tts-out' } }, totalChunks: wavChunks.length };
+}
+
+export async function renderRobotSpeech(options: KokoroRobotSpeechOptions): Promise<RobotSpeechDelivery> {
+  const prepared = await prepareRobotSpeech(options);
   try {
-    const wavChunks = await collectKokoroWavChunks(service, text, options);
-    const artifact = stageRobotSpeech(
-      combineRobotSpeechWavChunks(wavChunks, robotVolumePercent),
-    );
-    artifactId = artifact.id;
     const action = enqueueEnvironmentAction(
-      {
-        type: 'speak',
-        sessionId,
-        speechArtifactId: artifact.id,
-        speechDurationMs: artifact.durationMs,
-        metadata: { owner: 'tts-out' },
-      },
+      prepared.action,
       {
         allowedActions: ['speak'],
         username: options.username,
@@ -161,14 +159,13 @@ export async function renderRobotSpeech(
         idempotencyKey: `tts-render:${options.requestId}`,
       },
     );
-    artifactId = undefined;
     return {
       actionId: action.id,
       requestId: options.requestId,
-      totalChunks: wavChunks.length,
+      totalChunks: prepared.totalChunks,
     };
   } catch (error) {
-    if (artifactId) discardRobotSpeech(artifactId);
+    if (prepared.action.speechArtifactId) discardRobotSpeech(prepared.action.speechArtifactId);
     throw error;
   }
 }

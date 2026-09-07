@@ -192,7 +192,8 @@ export async function callProvider(
     onProgress?.({ phase: 'running', message: `${backendName}: Processing...` });
 
     // Execute through the configured backend (provider-agnostic)
-    const result = await escalate(prompt, {
+      const result = await escalate(prompt, {
+        signal: options.signal,
       username,
       preferredBackend,
       timeout: 300000,
@@ -412,6 +413,7 @@ async function callRemoteProvider(
   }
 
   const response = await callDirectRemoteProvider(credentials, messages, {
+    signal: options.signal,
     model: options.model,
     temperature: options.temperature,
     maxTokens: options.maxTokens,
@@ -470,6 +472,7 @@ async function callRemoteServerProvider(
     const llmUrl = `${serverUrl}/api/llm/chat`;
 
     const response = await fetch(llmUrl, {
+      signal: options.signal,
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -643,6 +646,7 @@ async function callOllamaProvider(
   try {
     const ollamaMessages = buildOllamaChatMessages(messages, imagePolicy)
     response = await ollama.chat(model, ollamaMessages, {
+      signal: options.signal,
       ...ollamaOptions,
       num_ctx: options.contextWindow ?? ollamaConfig.contextWindow,
       think: resolveOllamaThinkingMode(options.enableThinking ?? ollamaConfig.enableThinking),
@@ -812,6 +816,7 @@ async function callVLLMProvider(
     const response = await vllm.chat(
       mappedMessages,
       {
+        signal: options.signal,
         model,
         temperature: options.temperature,
         // Don't fall back to default maxTokens if explicitly undefined (for Big Brother mode)

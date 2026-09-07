@@ -93,7 +93,7 @@ export const robotActionResultParserNode = defineNode({
   category: 'operator',
   inputs: [
     { name: 'response', type: 'any', description: 'Strict JSON from the Robot Action Result LLM' },
-    { name: 'robotStatus', type: 'object', description: 'Canonical Robot Status whose current objective may be affected by this result' },
+    { name: 'execution', type: 'object', description: 'Checkpointed execution whose objective may be affected by this result' },
   ],
   outputs: [
     { name: 'taskDecision', type: 'object', description: 'Validated task effect, or null when the returned action was standalone' },
@@ -119,7 +119,7 @@ export const robotActionResultParserNode = defineNode({
 
     const overallObjectiveState = cleanText(decision.overallObjectiveState, 40)
     const reason = cleanText(decision.reason, 500)
-    const objective = currentObjective(inputs.robotStatus)
+    const objective = currentObjective(inputs.execution)
     const requiredCompletionBasis = cleanText(decision.requiredCompletionBasis, 80)
     const observationSummary = cleanText(decision.observationSummary, 500)
     const completionEvidence = cleanText(decision.completionEvidence, 1_000)
@@ -134,7 +134,7 @@ export const robotActionResultParserNode = defineNode({
           ? 'failed'
           : 'wait'
     const objectiveComplete = overallObjectiveState === 'achieved'
-    if (!objective) return invalid('Robot action result requires one current Robot Status objective.')
+    if (!objective) return invalid('Robot action result requires one current execution objective.')
     if (!reason || !observationSummary) return invalid('Robot action result requires a reason and observation summary.')
     if (!COMPLETION_BASES.includes(requiredCompletionBasis as typeof COMPLETION_BASES[number])) {
       return invalid('Robot action result completion basis is not supported.')

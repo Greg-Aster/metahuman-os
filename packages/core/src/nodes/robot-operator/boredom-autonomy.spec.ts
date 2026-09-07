@@ -1,24 +1,46 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
-import { ROOT } from '../../path-builder.js';
-import { ConversationHistoryNode } from '../context/conversation-history.node.js';
-import { TextInputNode } from '../input/text-input.node.js';
-import { ModelRouterNode } from '../llm/model-router.node.js';
-import {
+const ROOT = path.resolve(import.meta.dirname, '../../../../..');
+const originalRoot = process.env.METAHUMAN_ROOT;
+const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-boredom-contracts-'));
+process.env.METAHUMAN_ROOT = testRoot;
+fs.mkdirSync(path.join(testRoot, 'etc'), { recursive: true });
+for (const name of ['agents.json', 'services.json']) {
+  fs.copyFileSync(path.join(ROOT, 'etc', name), path.join(testRoot, 'etc', name));
+}
+fs.mkdirSync(path.join(testRoot, 'brain'), { recursive: true });
+// The catalog checks maintained source availability; it never executes these agents.
+fs.symlinkSync(path.join(ROOT, 'brain/agents'), path.join(testRoot, 'brain/agents'), 'dir');
+globalThis.fetch = async () => { throw new Error('Network access is forbidden in the autonomy contract fixture'); };
+const { eventBus } = await import('../../infrastructure/event-bus/client.js');
+eventBus.disconnect();
+const { setAuditEnabled } = await import('../../audit.js');
+setAuditEnabled(false);
+after(() => {
+  fs.rmSync(testRoot, { recursive: true, force: true });
+  if (originalRoot === undefined) delete process.env.METAHUMAN_ROOT;
+  else process.env.METAHUMAN_ROOT = originalRoot;
+});
+
+const { ConversationHistoryNode } = await import('../context/conversation-history.node.js');
+const { TextInputNode } = await import('../input/text-input.node.js');
+const { ModelRouterNode } = await import('../llm/model-router.node.js');
+const {
   robotActionResultContextNode,
   robotAutonomyControllerContextNode,
   robotAutonomyExecutorContextNode,
   robotAutonomyPlannerContextNode,
   robotGoalReviewContextNode,
-} from './context-builder.node.js';
-import { robotOperatorDecisionParserNode } from './decision-parser.node.js';
-import { robotOperatorEnvironmentDispatchNode } from './environment-dispatch.node.js';
-import { robotAutonomyTaskDispatchNode } from './task-dispatch.node.js';
-import { robotAutonomyControllerParserNode } from './autonomy-controller-parser.node.js';
-import { robotAutonomyTaskCatalogNode } from './task-catalog.node.js';
+} = await import('./context-builder.node.js');
+const { robotOperatorDecisionParserNode } = await import('./decision-parser.node.js');
+const { robotOperatorEnvironmentDispatchNode } = await import('./environment-dispatch.node.js');
+const { robotAutonomyTaskDispatchNode } = await import('./task-dispatch.node.js');
+const { robotAutonomyControllerParserNode } = await import('./autonomy-controller-parser.node.js');
+const { robotAutonomyTaskCatalogNode } = await import('./task-catalog.node.js');
 
 const ALL_AUTONOMY_ROUTES = {
   needsResponse: true,
@@ -110,6 +132,25 @@ test('configured Inner Buffer history does not fall back to conversation context
   assert.equal(result.mode, 'inner');
   assert.deepEqual(result.history, []);
   assert.equal(result.loadedFromBuffer, false);
+});
+
+test('the configured History-to-Controller path keeps the latest user turn after autonomous replies', async () => {
+  const graph = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc/cognitive-graphs/robot-autonomy-controller-mode.json'), 'utf8'));
+  const historyProperties = graph.nodes.find((node: any) => node.id === 'conversation-history').data.properties;
+  const user = { role: 'user', content: 'Keep track of this request while considering the results.' };
+  const history = await ConversationHistoryNode.execute({}, {
+    conversationHistory: [user, ...Array.from({ length: 8 }, (_, index) => ({ role: 'assistant', content: `Autonomous reply ${index}.` }))],
+  }, historyProperties);
+  assert.equal(history.history.length, historyProperties.limit);
+  assert.equal(history.history[0].content, user.content);
+  assert.equal(history.history.at(-1).content, 'Autonomous reply 7.');
+  const result = await robotAutonomyControllerContextNode.execute({
+    instruction: 'Choose an activity from current context.',
+    conversationHistory: history.history,
+    availableTasks: [],
+  }, {}, {});
+  assert.equal(result.valid, true);
+  assert.ok(JSON.stringify(result.messages).includes(user.content));
 });
 
 test('Robot Operator policy input uses the editable graph message', async () => {
@@ -711,27 +752,20 @@ test('Robot Operator parser accepts only complete grounded observation decisions
   assert.equal(delegated.instruction, 'I want to understand why the red ball is here.');
   assert.deepEqual(Object.keys(delegated.decision), ['observed', 'instruction', 'reason']);
 
-  const wrapped = await robotOperatorDecisionParserNode.execute({
+  await assert.rejects(robotOperatorDecisionParserNode.execute({
     response: '<think>private reasoning</think>{"observed":"The room is dark.","instruction":"I want to understand the room.","reason":"The image prompted this interest."}',
-  }, {});
-  assert.equal(wrapped.valid, false);
-  assert.equal(wrapped.decision, null);
+  }, {}), /not a JSON object/i);
 
-  const extraField = await robotOperatorDecisionParserNode.execute({
+  await assert.rejects(robotOperatorDecisionParserNode.execute({
     response: '{"observed":"The room is dark.","instruction":"I want to understand the room.","reason":"The image prompted this interest.","category":"model-authored"}',
-  }, {});
-  assert.equal(extraField.valid, false);
-  assert.match(extraField.error, /exactly observed, instruction, and reason/i);
+  }, {}), /exactly observed, instruction, and reason/i);
 
-  const incomplete = await robotOperatorDecisionParserNode.execute({
+  await assert.rejects(robotOperatorDecisionParserNode.execute({
     response: '{"observed":"A doorway is visible.","instruction":"I have chosen a next intention."}',
-  }, {});
-  assert.equal(incomplete.valid, false);
-  assert.equal(incomplete.decision, null);
+  }, {}), /exactly observed, instruction, and reason/i);
 });
 
-test('Robot Operator dispatch accepts only a planner decision and preserves correlated context', async () => {
-  const queued: any[] = [];
+test('Robot Operator prepares only a planner-selected child invocation and preserves correlated context', async () => {
   const observation: any = robotObservation();
   observation.metadata.robotObserver.graph = 'boredom-observer';
   observation.metadata.robotObserver.requestedBy = 'boredom-observer';
@@ -748,43 +782,36 @@ test('Robot Operator dispatch accepts only a planner decision and preserves corr
     username: 'owner',
     operatorMode: 'semi',
     robotOperatorEnvironmentGraph: 'boredom-autonomy',
-    enqueueRobotOperatorEnvironment: async (input: unknown) => {
-      queued.push(input);
-      return { id: 'environment-task-1' };
-    },
   }, { graph: 'boredom-autonomy' });
 
-  assert.equal(result.queued, true);
-  assert.equal(result.taskId, 'environment-task-1');
-  assert.equal(queued.length, 1);
-  assert.equal(queued[0].input.graph, 'boredom-autonomy');
-  assert.equal(queued[0].input.observationCurrent, false);
-  assert.equal(queued[0].input.observation.visual.id, observation.visual.id);
-  assert.equal(queued[0].input.observation.timestamp, observation.timestamp);
-  assert.equal(queued[0].input.observation.metadata.robotObserver, undefined);
-  assert.equal(queued[0].input.robotOperatorContext.robotObserver.graph, 'boredom-autonomy');
-  assert.equal(queued[0].input.robotOperatorContext.robotObserver.requestedBy, 'boredom-observer');
-  assert.equal(queued[0].input.robotOperatorContext.sourceObservationAt, observation.timestamp);
-  assert.equal(queued[0].input.robotOperatorContext.currentVisualEvidence, false);
-  assert.equal(queued[0].input.robotOperatorContext.plannerDecision.instruction, 'I want to understand why the red ball is here.');
-  assert.equal('requiresAction' in queued[0].input.robotOperatorContext.plannerDecision, false);
-  assert.equal('lifecycleContract' in queued[0].input.robotOperatorContext.plannerDecision, false);
-  assert.deepEqual(queued[0].input.observation.text, []);
-  assert.deepEqual(queued[0].input.observation.feedback, observation.feedback);
+  assert.equal(result.queued, false);
+  assert.equal(result.status, 'prepared');
+  assert.equal(result.taskId, '');
+  assert.equal(result.invocation.graph, 'boredom-autonomy');
+  const delegated = result.invocation.context;
+  assert.equal(delegated.environmentObservationCurrent, false);
+  assert.equal(delegated.environmentObservation.visual.id, observation.visual.id);
+  assert.equal(delegated.environmentObservation.timestamp, observation.timestamp);
+  assert.equal(delegated.environmentObservation.metadata.robotObserver, undefined);
+  assert.equal(delegated.robotOperatorContext.robotObserver.graph, 'boredom-autonomy');
+  assert.equal(delegated.robotOperatorContext.robotObserver.requestedBy, 'boredom-observer');
+  assert.equal(delegated.robotOperatorContext.sourceObservationAt, observation.timestamp);
+  assert.equal(delegated.robotOperatorContext.currentVisualEvidence, false);
+  assert.equal(delegated.robotOperatorContext.plannerDecision.instruction, 'I want to understand why the red ball is here.');
+  assert.equal('requiresAction' in delegated.robotOperatorContext.plannerDecision, false);
+  assert.equal('lifecycleContract' in delegated.robotOperatorContext.plannerDecision, false);
+  assert.deepEqual(delegated.environmentObservation.text, observation.text);
+  assert.deepEqual(delegated.environmentObservation.feedback, observation.feedback);
 
   const directInstruction = await robotOperatorEnvironmentDispatchNode.execute({
     instruction: 'This bypass must not create a second planning path.',
     observation,
   }, {
     username: 'owner',
-    enqueueRobotOperatorEnvironment: async (input: unknown) => {
-      queued.push(input);
-      return { id: 'unexpected' };
-    },
   }, { graph: 'boredom-autonomy' });
   assert.equal(directInstruction.queued, false);
   assert.equal(directInstruction.status, 'no_decision');
-  assert.equal(queued.length, 1);
+  assert.equal(directInstruction.invocation, null);
 
   const malformed = await robotOperatorEnvironmentDispatchNode.execute({
     decision: {
@@ -796,17 +823,13 @@ test('Robot Operator dispatch accepts only a planner decision and preserves corr
   }, {
     username: 'owner',
     operatorMode: 'semi',
-    enqueueRobotOperatorEnvironment: async (input: unknown) => {
-      queued.push(input);
-      return { id: 'unexpected' };
-    },
   }, { graph: 'boredom-autonomy' });
   assert.equal(malformed.queued, false);
   assert.equal(malformed.status, 'invalid_decision');
-  assert.equal(queued.length, 1);
+  assert.equal(malformed.invocation, null);
 });
 
-test('Robot Autonomy Controller selects one catalog-backed task through Work Coordinator', async () => {
+test('Robot Autonomy Controller prepares the selected catalog-backed robot child without a separate job', async () => {
   const availableTasks = [{
     id: 'boredom-observer',
     name: 'Boredom Observer',
@@ -835,7 +858,6 @@ test('Robot Autonomy Controller selects one catalog-backed task through Work Coo
   });
   assert.equal(parsed.executorDecision, null);
 
-  const queued: any[] = [];
   const dispatched = await robotAutonomyTaskDispatchNode.execute({
     decision: parsed.taskDecision,
     robotObserver: {
@@ -848,19 +870,15 @@ test('Robot Autonomy Controller selects one catalog-backed task through Work Coo
     sessionId: 'robot-1',
   }, {
     username: 'owner',
-    enqueueRobotAutonomyTask: async (input: unknown) => {
-      queued.push(input);
-      return { id: 'selected-agent-task' };
-    },
   }, {});
-  assert.equal(dispatched.queued, true);
+  assert.equal(dispatched.queued, false);
+  assert.equal(dispatched.status, 'prepared');
+  assert.equal(dispatched.work, null);
   assert.equal(dispatched.selectedTaskId, 'boredom-observer');
-  assert.equal(queued.length, 1);
-  assert.equal(queued[0].handler, 'workflow.boredom-observer');
-  assert.equal(queued[0].source, 'autonomy');
-  assert.equal(queued[0].input.robotOperatorContext.robotObserver.cycleId, 'controller-cycle');
+  assert.equal(dispatched.invocation.graph, 'boredom-observer');
+  assert.equal(dispatched.invocation.context.robotOperatorContext.robotObserver.cycleId, 'controller-cycle');
   assert.equal(
-    queued[0].input.robotOperatorContext.controllerDecision.instruction,
+    dispatched.invocation.context.robotOperatorContext.controllerDecision.instruction,
     'Capture and consider a current view for the unresolved objective.',
   );
 });
@@ -1058,7 +1076,6 @@ test('Full autonomy graph visibly loads the decision context and routes one cata
 });
 
 test('Boredom Reflection delegates sampled memory once through the same planner contract', async () => {
-  const queued: any[] = [];
   const observation: any = robotObservation();
   observation.metadata.robotObserver.graph = 'boredom-reflection';
   observation.metadata.robotObserver.requestedBy = 'boredom-reflection';
@@ -1077,21 +1094,17 @@ test('Boredom Reflection delegates sampled memory once through the same planner 
     robotObserver: observation.metadata.robotObserver,
   }, {
     username: 'owner',
-    enqueueRobotOperatorEnvironment: async (input: unknown) => {
-      queued.push(input);
-      return { id: 'reflection-task' };
-    },
   }, { graph: 'boredom-autonomy' });
 
-  assert.equal(result.queued, true);
-  assert.deepEqual(queued[0].input.robotOperatorContext.memories, [
+  assert.equal(result.status, 'prepared');
+  assert.equal(result.queued, false);
+  assert.deepEqual(result.invocation.context.robotOperatorContext.memories, [
     'A bright leaf once prompted a playful bow.',
     'A familiar melody made the room feel calm.',
   ]);
 });
 
 test('Robot Operator dispatch does not reapply trigger mode after the graph decides to delegate', async () => {
-  let queued = false;
   const result = await robotOperatorEnvironmentDispatchNode.execute({
     decision: {
       observed: 'The room contains an object that may need attention.',
@@ -1102,15 +1115,11 @@ test('Robot Operator dispatch does not reapply trigger mode after the graph deci
   }, {
     username: 'owner',
     operatorMode: 'reactive',
-    enqueueRobotOperatorEnvironment: async () => {
-      queued = true;
-      return { id: 'environment-task' };
-    },
   }, { graph: 'boredom-autonomy' });
-  assert.equal(result.queued, true);
-  assert.equal(result.status, 'queued');
-  assert.equal(result.taskId, 'environment-task');
-  assert.equal(queued, true);
+  assert.equal(result.queued, false);
+  assert.equal(result.status, 'prepared');
+  assert.equal(result.taskId, '');
+  assert.equal(result.invocation.graph, 'boredom-autonomy');
 });
 
 test('three boredom planners feed one editable one-pass executor with reusable Robot Status', () => {
@@ -1171,8 +1180,9 @@ test('three boredom planners feed one editable one-pass executor with reusable R
     'Observer needs sent-action correlation for its one camera-result pass',
   );
   assert.deepEqual(observerBridge?.data?.properties?.allowedActions, ['captureImage']);
-  assert.equal(observerBridge?.data?.properties?.feedbackGraph, 'boredom-observer');
-  assert.equal(observer.nodes.filter((node: any) => node.data?.nodeType === 'gateway').length, 2);
+  assert.equal('feedbackGraph' in observerBridge.data.properties, false);
+  assert.equal(observer.nodes.filter((node: any) => node.data?.nodeType === 'gateway').length, 0);
+  assert.equal(observer.nodes.filter((node: any) => node.data?.nodeType === 'environment_result_wait').length, 1);
   assert.ok(observer.edges.some((edge: any) => (
     edge.source === 'image-input'
     && edge.sourceHandle === 'current'
@@ -1185,21 +1195,19 @@ test('three boredom planners feed one editable one-pass executor with reusable R
     && edge.target === 'planner-context'
   )), false);
   assert.ok(observer.edges.some((edge: any) => (
-    edge.source === 'planner-context'
-    && edge.sourceHandle === 'stimulusReady'
-    && edge.target === 'planner-gate'
-    && edge.targetHandle === 'open'
+    edge.source === 'capture-image'
+    && edge.sourceHandle === 'commands'
+    && edge.target === 'capture-result'
+    && edge.targetHandle === 'commands'
   )));
   assert.ok(observer.edges.some((edge: any) => (
-    edge.source === 'planner-context'
-    && edge.sourceHandle === 'stimulusReady'
-    && edge.target === 'capture-gate'
-    && edge.targetHandle === 'open'
+    edge.source === 'capture-result'
+    && edge.sourceHandle === 'observation'
+    && edge.target === 'captured-observation'
+    && edge.targetHandle === 'observation'
   )));
-  assert.equal(
-    observer.nodes.find((node: any) => node.id === 'capture-gate')?.data?.properties?.invertCondition,
-    true,
-  );
+  assert.ok(observer.edges.some((edge: any) => edge.source === 'captured-observation'
+    && edge.target === 'planner-context' && edge.targetHandle === 'observation'));
   assert.match(observerPrompt, /missing evidence, not evidence of hidden activity/i);
   assert.match(observerPrompt, /claim only sensing modalities explicitly present/i);
   assert.doesNotMatch(observerPrompt, /do not reopen the same physical search/i);
@@ -1277,6 +1285,9 @@ test('three boredom planners feed one editable one-pass executor with reusable R
     'conversation_buffer',
     'tts',
     'robot_status_out',
+    'execution_context',
+    'environment_result_wait',
+    'workflow_call',
   ]) {
     assert.ok(autonomyTypes.includes(required), `Robot Autonomy Executor requires ${required}`);
   }
@@ -1390,10 +1401,10 @@ test('three boredom planners feed one editable one-pass executor with reusable R
     && edge.targetHandle === 'response'
   )));
   assert.ok(autonomy.edges.some((edge: any) => (
-    edge.source === 'robot-status'
-    && edge.sourceHandle === 'status'
+    edge.source === 'execution'
+    && edge.sourceHandle === 'context'
     && edge.target === 'image-input'
-    && edge.targetHandle === 'robotStatus'
+    && edge.targetHandle === 'execution'
   )));
   assert.ok(autonomy.edges.some((edge: any) => (
     edge.source === 'action-parser'
@@ -1408,7 +1419,10 @@ test('three boredom planners feed one editable one-pass executor with reusable R
     && edge.targetHandle === 'bridgeRecord'
   )));
   const autonomyBridge = autonomy.nodes.find((node: any) => node.id === 'bridge-out');
-  assert.equal(autonomyBridge?.data?.properties?.feedbackGraph, 'robot-action-result');
+  assert.equal('feedbackGraph' in autonomyBridge.data.properties, false);
+  assert.ok(autonomy.edges.some((edge: any) => edge.source === 'bridge-out' && edge.sourceHandle === 'commands'
+    && edge.target === 'action-results' && edge.targetHandle === 'commands'));
+  assert.equal(autonomy.nodes.find((node: any) => node.id === 'review-action')?.data?.properties?.graph, 'robot-action-result');
   assert.ok(autonomy.edges.some((edge: any) => (
     edge.source === 'robot-operator-input'
     && edge.sourceHandle === 'responseMetadata'
@@ -1426,7 +1440,7 @@ test('three boredom planners feed one editable one-pass executor with reusable R
   assert.doesNotMatch(handler, /actions\.filter\(action => action === 'robotCommand'\)/);
   assert.doesNotMatch(handler, /latest\.feedback|actionContext/);
   assert.doesNotMatch(handler, /enqueueEnvironmentAction|type: 'captureImage'|chooseBoredomMovementCommand/);
-  assert.match(handler, /observation,\s+observationCurrent: false,\s+graph: cycle\.graph,\s+robotOperatorContext:/);
+  assert.match(handler, /runGraph\(/);
 
   const engine = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/execution-engine.ts'), 'utf8');
   assert.doesNotMatch(engine, /automatic_step_limit|recentSessionRuns/);

@@ -224,10 +224,10 @@ function failedNodeType(graphState: GraphExecutionState, nodeId: string | null):
 export function extractResponsePipelineResult(
   graphState: GraphExecutionState,
 ): Omit<ResponsePipelineResult, 'success' | 'executionTimeMs'> {
-  if (graphState.status !== 'completed') {
+  if (graphState.status !== 'completed' || graphState.error) {
     const failed = listFailedNodes(graphState);
     const detail = failed.map(node => `${node.nodeId}: ${node.error}`).join('; ');
-    throw new Error(detail || `Response pipeline graph ended with status ${graphState.status}`);
+    throw graphState.error ?? new Error(detail || `Response pipeline graph ended with status ${graphState.status}`);
   }
 
   const action = requireGraphNodeOutput(graphState, 'response_action_router');
@@ -359,20 +359,20 @@ export async function handleResponsePipeline(
     // Step 5.5: Validate graph execution status
     logStep(5.5, 'Validating graph execution status', { status: graphState.status });
 
-    if (graphState.status === 'failed') {
+    if (graphState.status === 'failed' || graphState.error) {
       console.error(`${LOG} FAILED: Graph execution failed`);
 
       // Find which node(s) failed and collect error details
       const failedNodes = listFailedNodes(graphState);
       const firstFailedNode = getFirstFailedNode(graphState);
       const failedNode = failedNodeType(graphState, firstFailedNode?.nodeId ?? null);
-      const failedNodeError = firstFailedNode?.error ?? null;
+      const failedNodeError = graphState.error?.message || firstFailedNode?.error || null;
 
       logStep(5.5, 'Graph failed - nodes with errors', { failedNodes });
 
       return {
         success: false,
-        error: `Pipeline failed at node: ${failedNode || 'unknown'}`,
+        error: failedNode ? `Pipeline failed at node: ${failedNode}` : failedNodeError || 'Response pipeline failed',
         errorDetails: failedNodeError || 'No error details available',
         suggestion: getErrorSuggestion(failedNodeError || '', failedNode),
         failedNode,
@@ -512,11 +512,11 @@ export function streamResponsePipeline(
         // Execute
         const graphState = await runGraph({ graph, context: executionContext, eventHandler, signal });
         const duration = Date.now() - startedAt;
-        if (graphState.status !== 'completed') {
+        if (graphState.status !== 'completed' || graphState.error) {
           const failedNodes = listFailedNodes(graphState);
           const firstFailedNode = getFirstFailedNode(graphState);
           const failedNode = failedNodeType(graphState, firstFailedNode?.nodeId ?? null);
-          const message = firstFailedNode?.error
+          const message = graphState.error?.message || firstFailedNode?.error
             || (signal?.aborted ? 'Response pipeline cancelled' : `Pipeline ended with status ${graphState.status}`);
           push('error', {
             message,

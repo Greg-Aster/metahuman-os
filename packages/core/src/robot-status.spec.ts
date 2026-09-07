@@ -3,10 +3,17 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test, { after } from 'node:test'
+import { randomUUID } from 'node:crypto'
+import type { SvelteFlowGraph } from './cognitive-graph-schema.js'
 
 const originalRoot = process.env.METAHUMAN_ROOT
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-robot-status-'))
 process.env.METAHUMAN_ROOT = testRoot
+globalThis.fetch = async () => { throw new Error('Network access is forbidden in the Robot Status fixture') }
+const { eventBus } = await import('./infrastructure/event-bus/client.js')
+eventBus.disconnect()
+const { setAuditEnabled } = await import('./audit.js')
+setAuditEnabled(false)
 
 const {
   loadRobotStatus,
@@ -21,6 +28,52 @@ const { robotStatusWriterNode } = await import('./nodes/robot-status/writer.node
 const { buildEnvironmentSelectorEnvelope } = await import('./nodes/environment/helpers.js')
 const { robotActionResultParserNode } = await import('./nodes/robot-operator/action-result-parser.node.js')
 const { robotGoalReviewParserNode } = await import('./nodes/robot-operator/goal-review-parser.node.js')
+const { runDurableGraph } = await import('./durable-execution/runtime.js')
+const { openExecutionStore } = await import('./durable-execution/storage.js')
+const { validateSvelteFlowGraph, DEFAULT_GRAPH_SCHEDULER } = await import('./cognitive-graph-schema.js')
+
+// Literal fixture inputs use the existing Text Input/JSON Parser contracts. The
+// real output nodes commit through the canonical graph saver and projection relay.
+async function statusGraph(username: string, steps: Array<{ type?: 'robot_status_out' | 'robot_status_writer'; inputs: Record<string, unknown> }>) {
+  const graph: SvelteFlowGraph = { name: 'Robot Status owner fixture', version: '1.0', format: 'svelte-flow',
+    scheduler: DEFAULT_GRAPH_SCHEDULER, nodes: [], edges: [] }
+  const addNode = (id: string, nodeType: string, properties: Record<string, unknown> = {}) => {
+    graph.nodes.push({ id, type: 'genericNode', position: { x: graph.nodes.length * 100, y: 0 },
+      data: { label: id, nodeType, properties } })
+  }
+  for (const [index, step] of steps.entries()) {
+    const id = `status-${index}`
+    addNode(id, step.type ?? 'robot_status_out')
+    for (const [field, value] of Object.entries(step.inputs)) {
+      const input = `${id}-${field}`
+      const parsed = `${input}-json`
+      const isText = typeof value === 'string'
+      addNode(input, 'text_input', { message: isText ? value : JSON.stringify(value) })
+      if (!isText) {
+        addNode(parsed, 'json_parser')
+        graph.edges.push({ id: `${input}-parse`, source: input, sourceHandle: 'text', target: parsed, targetHandle: 'text' })
+      }
+      graph.edges.push({ id: `${input}-out`, source: isText ? input : parsed,
+        sourceHandle: isText ? 'text' : 'data', target: id, targetHandle: field })
+    }
+    if (index) graph.edges.push({ id: `${id}-ordered`, source: `status-${index - 1}`, sourceHandle: 'status',
+      target: id, targetHandle: '', data: { kind: 'control' } })
+  }
+  const result = await runDurableGraph({ graph: validateSvelteFlowGraph(graph),
+    context: { username, userId: username, requestId: randomUUID(), environment: 'server' } })
+  assert.equal(result.status, 'completed', result.error?.stack)
+  const outputs = steps.map((_, index) => {
+    const node = result.nodes.get(`status-${index}`)
+    assert.equal(node?.status, 'completed')
+    return node!.outputs!
+  })
+  const store = openExecutionStore(username)
+  try {
+    assert.equal(store.pendingDispatches().filter(dispatch => dispatch.executionId === result.executionId).length, 0,
+      'Every status projection must have a committed delivery receipt')
+  } finally { store.close() }
+  return { executionId: result.executionId!, outputs }
+}
 
 after(() => {
   fs.rmSync(testRoot, { recursive: true, force: true })
@@ -96,6 +149,14 @@ test('Robot Status strictly validates semantic model output', () => {
   )
 })
 
+test('Robot Status output nodes require the checkpoint owner rather than writing tasks independently', async () => {
+  await assert.rejects(robotStatusOutNode.execute!({ taskDecision: { objective: 'An unowned task.' } },
+    { username: 'unowned-status-output' }), /requires checkpointed execution/)
+  await assert.rejects(robotStatusWriterNode.execute!({ response: JSON.stringify(situation), sourceFacts: sources },
+    { username: 'unowned-status-output' }), /requires checkpointed execution/)
+  assert.equal(loadRobotStatus('unowned-status-output'), null)
+})
+
 test('Robot Status storage keeps deterministic facts and bounded history in one profile snapshot', () => {
   const username = 'robot-status-owner'
   const first = saveRobotStatus(username, situation, sources)
@@ -123,6 +184,50 @@ test('Robot Status storage keeps deterministic facts and bounded history in one 
   assert.equal(loaded?.history.length, 8)
   assert.equal(loaded?.history.at(-1)?.situationalSummary, 'Status update 8')
   assert.equal(robotStatusPath(username), path.join(testRoot, 'profiles', username, 'state', 'robot-status.json'))
+})
+
+test('out-of-order projections retain facts together with their independent source timestamps', () => {
+  const username = 'robot-status-out-of-order'
+  const time = (second: number) => `2026-08-27T18:00:${String(second).padStart(2, '0')}.000Z`
+  const latest = structuredClone(sources)
+  latest.sourceUpdatedAt = { environment: time(10), telemetry: time(20), conversation: time(10), robotHistory: time(10), agency: time(10) }
+  latest.lastAction = { ...latest.lastAction, actionId: 'newest-action', completedAt: time(10) }
+  latest.body = { ...latest.body, observationAt: time(10), telemetryAt: time(20),
+    battery: { voltage: 7.4, observedAt: time(20) }, motion: { available: true, activity: 'idle', observedAt: time(10) } }
+  saveRobotStatus(username, situation, latest)
+
+  for (const second of [8, 9, 10]) {
+    const older = structuredClone(latest)
+    older.sourceUpdatedAt.environment = time(second)
+    older.sourceUpdatedAt.telemetry = time(15)
+    older.sourceUpdatedAt.robotHistory = time(Math.min(second, 9))
+    older.lastAction = { ...older.lastAction, actionId: `older-action-${second}`, completedAt: time(Math.min(second, 9)) }
+    older.body = { ...older.body, observationAt: time(second), telemetryAt: time(15), telemetry: { vbat: 6.2 },
+      battery: { voltage: 6.2, observedAt: time(15) }, motion: { available: false, activity: 'old-state', observedAt: time(8) } }
+    const snapshot = saveRobotStatus(username, situation, older)
+    assert.equal(snapshot.lastAction?.actionId, 'newest-action')
+    assert.equal(snapshot.sourceUpdatedAt.robotHistory, time(10))
+    assert.equal(snapshot.body?.observationAt, time(10))
+    assert.equal(snapshot.sourceUpdatedAt.environment, time(10))
+    assert.equal(snapshot.body?.telemetryAt, time(20))
+    assert.equal(snapshot.sourceUpdatedAt.telemetry, time(20))
+    assert.deepEqual(snapshot.body?.telemetry, latest.body.telemetry)
+    assert.deepEqual(snapshot.body?.battery, latest.body.battery)
+    assert.deepEqual(snapshot.body?.motion, latest.body.motion)
+  }
+
+  const freshTelemetry = structuredClone(latest)
+  freshTelemetry.body = { ...freshTelemetry.body, observationAt: time(9), telemetryAt: time(25), telemetry: { vbat: 7.1 },
+    battery: { voltage: 7.1, observedAt: time(25) } }
+  freshTelemetry.sourceUpdatedAt.environment = time(9)
+  freshTelemetry.sourceUpdatedAt.telemetry = time(25)
+  const updated = saveRobotStatus(username, situation, freshTelemetry)
+  assert.equal(updated.body?.observationAt, time(10))
+  assert.equal(updated.body?.telemetryAt, time(25))
+  assert.deepEqual(updated.body?.battery, freshTelemetry.body.battery)
+  assert.deepEqual(updated.body?.telemetry, freshTelemetry.body.telemetry)
+  assert.equal(updated.sourceUpdatedAt.environment, time(10))
+  assert.equal(updated.sourceUpdatedAt.telemetry, time(25))
 })
 
 test('Robot Status context separates current facts from bounded narrative context', async () => {
@@ -238,10 +343,14 @@ test('Robot Status retains the semantic description of the last generated moveme
 
 test('Robot Status writer and reusable input node share the same canonical snapshot', async () => {
   const username = 'robot-status-writer-owner'
-  const written = await robotStatusWriterNode.execute!({
-    response: JSON.stringify(situation),
-    sourceFacts: sources,
-  }, { username })
+  const { executionId, outputs: [, written] } = await statusGraph(username, [
+    { inputs: { taskDecision: { objective: situation.currentGoal, outcome: 'act', objectiveComplete: false,
+      reason: 'Inspect the work area.', requiredCompletionBasis: 'visual_observation' } } },
+    { type: 'robot_status_writer', inputs: {
+      response: JSON.stringify({ ...situation, currentGoal: 'A different objective suggested by status prose.' }),
+      sourceFacts: sources,
+    } },
+  ])
   assert.equal(written.persisted, true)
   assert.equal(written.event.meta.type, 'robot_status')
   assert.match(written.event.content, /^Robot Status saved\.\n/)
@@ -269,13 +378,15 @@ test('Robot Status writer and reusable input node share the same canonical snaps
   assert.equal('telemetry' in read.context.body, false)
   assert.equal('capabilities' in read.context.body, false)
   assert.equal(JSON.stringify(read.context).length < 6_000, true)
-  assert.deepEqual(Object.keys(read.historyContext).sort(), ['history', 'situation', 'updatedAt'])
+  assert.equal(read.task.executionId, executionId)
+  assert.equal(read.historyContext.task.objective, situation.currentGoal)
+  assert.deepEqual(Object.keys(read.historyContext).sort(), ['history', 'situation', 'task', 'updatedAt'])
 })
 
 test('Robot Status Out persists the Environment LLM task and correlated action result without another model call', async () => {
   const username = 'robot-status-out-owner'
   const selectedAction = { type: 'robotCommand', command: 'walk_forward' }
-  const initial = await robotStatusOutNode.execute!({
+  const initialInput = {
     observation: {
       sessionId: 'robot-1',
       environmentId: 'ainekio',
@@ -316,16 +427,8 @@ test('Robot Status Out persists the Environment LLM task and correlated action r
       source: 'robot-camera',
       metadata: { correlationId: 'cycle-2' },
     }],
-  }, { username })
-
-  assert.equal(initial.persisted, true)
-  assert.equal(initial.task.objective, 'Inspect the object from closer range.')
-  assert.equal(initial.task.selectedAction.command, 'walk_forward')
-  assert.equal(initial.task.actionId, 'action-2')
-  assert.equal(initial.task.baselineFrame.id, 'before-action-2')
-  assert.equal(initial.lastAction.command, 'walk_forward')
-
-  const completed = await robotStatusOutNode.execute!({
+  }
+  const completedInput = {
     observation: {
       sessionId: 'robot-1',
       environmentId: 'ainekio',
@@ -358,7 +461,16 @@ test('Robot Status Out persists the Environment LLM task and correlated action r
     },
     actionContext: { actionId: 'action-2', requested: selectedAction },
     bridgeRecord: { status: 'no_actions', message: 'No further action selected.' },
-  }, { username })
+  }
+  const { executionId, outputs: [initial, completed] } = await statusGraph(username,
+    [{ inputs: initialInput }, { inputs: completedInput }])
+
+  assert.equal(initial.persisted, true)
+  assert.equal(initial.task.objective, 'Inspect the object from closer range.')
+  assert.equal(initial.task.selectedAction.command, 'walk_forward')
+  assert.equal(initial.task.actionId, 'action-2')
+  assert.equal(initial.task.baselineFrame.id, 'before-action-2')
+  assert.equal(initial.lastAction.command, 'walk_forward')
 
   assert.equal(completed.task.decision.objectiveComplete, true)
   assert.equal(completed.task.actionStatus, 'completed')
@@ -367,11 +479,17 @@ test('Robot Status Out persists the Environment LLM task and correlated action r
   assert.equal(completed.lastAction.status, 'completed')
   assert.equal(completed.status.situation.currentGoal, '')
   assert.equal(loadRobotStatus(username)?.task?.decision.outcome, 'complete')
+  const store = openExecutionStore(username)
+  try {
+    assert.equal(store.task(executionId)?.decision.objectiveComplete, true)
+    assert.equal(store.task(executionId)?.objectiveId, initial.task.objectiveId)
+    assert.equal(completed.task.executionId, executionId)
+  } finally { store.close() }
 })
 
 test('Robot Status Out preserves the originating task instruction while recording an autonomous next step', async () => {
   const username = 'robot-status-goal-continuation-owner'
-  await robotStatusOutNode.execute!({
+  const initialInput = {
     taskDecision: {
       objective: 'Find the cat.',
       outcome: 'continue',
@@ -381,9 +499,8 @@ test('Robot Status Out preserves the originating task instruction while recordin
       observationSummary: 'The latest view is too dark to establish the cat location.',
       nextInstruction: 'Move to a better-lit area and continue looking for the cat.',
     },
-  }, { username })
-
-  const delegatedStep = await robotStatusOutNode.execute!({
+  }
+  const continuationInput = {
     instruction: 'Move to a better-lit area and continue looking for the cat.',
     inputSource: 'autonomy',
     taskDecision: {
@@ -399,7 +516,9 @@ test('Robot Status Out preserves the originating task instruction while recordin
       requestedActions: [{ type: 'robotCommand', command: 'walk_forward' }],
       commands: [{ id: 'continuation-action' }],
     },
-  }, { username })
+  }
+  const { outputs: [, delegatedStep] } = await statusGraph(username,
+    [{ inputs: initialInput }, { inputs: continuationInput }])
 
   assert.equal(delegatedStep.task.objective, 'Find the cat.')
   assert.equal(delegatedStep.task.instruction, 'Find the cat.')
@@ -408,9 +527,9 @@ test('Robot Status Out preserves the originating task instruction while recordin
   assert.equal(delegatedStep.task.selectedAction.command, 'walk_forward')
 })
 
-test('Robot Status Out records a current user restatement as user-owned without changing the objective', async () => {
+test('Robot Status Out preserves the execution origin rather than inferring steering from input prose', async () => {
   const username = 'robot-status-user-restatement-owner'
-  await robotStatusOutNode.execute!({
+  const initialInput = {
     instruction: 'Inspect the keys when useful.',
     inputSource: 'autonomy',
     taskDecision: {
@@ -420,9 +539,8 @@ test('Robot Status Out records a current user restatement as user-owned without 
       objectiveComplete: false,
       requiredCompletionBasis: 'visual_observation',
     },
-  }, { username })
-
-  const restated = await robotStatusOutNode.execute!({
+  }
+  const restatedInput = {
     instruction: 'Please continue helping me find my missing keys.',
     userInstruction: 'Please continue helping me find my missing keys.',
     inputSource: 'user',
@@ -433,16 +551,19 @@ test('Robot Status Out records a current user restatement as user-owned without 
       objectiveComplete: false,
       requiredCompletionBasis: 'visual_observation',
     },
-  }, { username })
+  }
+  const { outputs: [initial, restated] } = await statusGraph(username,
+    [{ inputs: initialInput }, { inputs: restatedInput }])
 
   assert.equal(restated.task.objective, 'Find the missing keys.')
-  assert.equal(restated.task.instruction, 'Please continue helping me find my missing keys.')
-  assert.equal(restated.task.source, 'user')
+  assert.equal(restated.task.instruction, 'Inspect the keys when useful.')
+  assert.equal(restated.task.source, 'autonomy')
+  assert.equal(restated.task.objectiveId, initial.task.objectiveId)
 })
 
 test('Robot Status Out does not replace an unfinished task for a standalone action', async () => {
   const username = 'robot-status-standalone-action-owner'
-  await robotStatusOutNode.execute!({
+  const initialInput = {
     instruction: 'Locate the missing object.',
     userInstruction: 'Locate the missing object.',
     inputSource: 'user',
@@ -459,9 +580,8 @@ test('Robot Status Out does not replace an unfinished task for a standalone acti
       requestedActions: [{ type: 'captureImage', target: 'current_surroundings' }],
       commands: [{ id: 'search-capture' }],
     },
-  }, { username })
-
-  const standalone = await robotStatusOutNode.execute!({
+  }
+  const standaloneInput = {
     instruction: 'Turn right forty-five degrees.',
     userInstruction: 'Turn right forty-five degrees.',
     inputSource: 'user',
@@ -472,14 +592,8 @@ test('Robot Status Out does not replace an unfinished task for a standalone acti
       requestedActions: [{ type: 'robotCommand', command: 'turn_right_45' }],
       commands: [{ id: 'standalone-turn' }],
     },
-  }, { username })
-
-  assert.equal(standalone.task.objective, 'Locate the missing object.')
-  assert.equal(standalone.task.actionId, 'search-capture')
-  assert.equal(standalone.lastAction.command, 'turn_right_45')
-  assert.equal(standalone.lastAction.actionId, 'standalone-turn')
-
-  const returned = await robotStatusOutNode.execute!({
+  }
+  const returnedInput = {
     taskDecision: null,
     terminalFeedback: {
       type: 'completed',
@@ -490,7 +604,14 @@ test('Robot Status Out does not replace an unfinished task for a standalone acti
       actionId: 'standalone-turn',
       requested: { type: 'robotCommand', command: 'turn_right_45' },
     },
-  }, { username })
+  }
+  const { outputs: [, standalone, returned] } = await statusGraph(username,
+    [{ inputs: initialInput }, { inputs: standaloneInput }, { inputs: returnedInput }])
+
+  assert.equal(standalone.task.objective, 'Locate the missing object.')
+  assert.equal(standalone.task.actionId, 'search-capture')
+  assert.equal(standalone.lastAction.command, 'turn_right_45')
+  assert.equal(standalone.lastAction.actionId, 'standalone-turn')
 
   assert.equal(returned.task.objective, 'Locate the missing object.')
   assert.equal(returned.task.actionId, 'search-capture')
@@ -498,9 +619,9 @@ test('Robot Status Out does not replace an unfinished task for a standalone acti
   assert.equal(returned.lastAction.status, 'completed')
 })
 
-test('Robot Status Out applies LLM-assessed current-objective evidence regardless of the triggering action ID', async () => {
+test('Robot Status Out projects the correlated LLM completion decision from the same execution', async () => {
   const username = 'robot-status-overlapping-result-owner'
-  await robotStatusOutNode.execute!({
+  const initialInput = {
     instruction: 'Inspect the work area.',
     userInstruction: 'Inspect the work area.',
     inputSource: 'user',
@@ -517,9 +638,8 @@ test('Robot Status Out applies LLM-assessed current-objective evidence regardles
       requestedActions: [{ type: 'captureImage', target: 'current_surroundings' }],
       commands: [{ id: 'current-capture' }],
     },
-  }, { username })
-
-  const result = await robotStatusOutNode.execute!({
+  }
+  const completedInput = {
     taskDecision: {
       objective: 'Inspect the work area.',
       outcome: 'complete',
@@ -530,28 +650,32 @@ test('Robot Status Out applies LLM-assessed current-objective evidence regardles
     },
     terminalFeedback: {
       type: 'completed',
-      actionId: 'earlier-autonomy-action',
+      actionId: 'current-capture',
       message: 'done',
     },
     actionContext: {
-      actionId: 'earlier-autonomy-action',
-      requested: { type: 'robotCommand', command: 'curious' },
+      actionId: 'current-capture',
+      requested: { type: 'captureImage', target: 'current_surroundings' },
     },
-  }, { username })
+  }
+  const { outputs: [initial, result] } = await statusGraph(username,
+    [{ inputs: initialInput }, { inputs: completedInput }])
 
   assert.equal(result.task.objective, 'Inspect the work area.')
   assert.equal(result.task.decision.objectiveComplete, true)
   assert.equal(result.task.source, 'user')
   assert.equal(result.status.situation.currentGoal, '')
-  assert.equal(result.lastAction.actionId, 'earlier-autonomy-action')
+  assert.equal(result.lastAction.actionId, 'current-capture')
+  assert.equal(result.task.objectiveId, initial.task.objectiveId)
 })
 
 test('Environment selector receives the decision-bearing Robot Status fields', async () => {
   const username = 'robot-status-environment-owner'
-  await robotStatusWriterNode.execute!({
-    response: JSON.stringify(situation),
-    sourceFacts: sources,
-  }, { username })
+  await statusGraph(username, [
+    { inputs: { taskDecision: { objective: situation.currentGoal, outcome: 'act', objectiveComplete: false,
+      reason: 'Inspect the work area.', requiredCompletionBasis: 'visual_observation' } } },
+    { type: 'robot_status_writer', inputs: { response: JSON.stringify(situation), sourceFacts: sources } },
+  ])
   const read = await robotStatusNode.execute!({}, { username }, { historyLimit: 3 })
   const envelope = JSON.parse(buildEnvironmentSelectorEnvelope({
     instruction: 'Continue the current goal.',
@@ -626,7 +750,7 @@ test('Robot Status has one editable refresh graph and is read and written by act
   }
 })
 
-test('Robot task lifecycle persists one result and delegates at most one later instruction', async () => {
+test('Robot task lifecycle waits and reviews as explicit children instead of starting a feedback graph', async () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..')
   const readGraph = (name: string) => JSON.parse(fs.readFileSync(
     path.join(repositoryRoot, `etc/cognitive-graphs/${name}-mode.json`),
@@ -639,8 +763,16 @@ test('Robot task lifecycle persists one result and delegates at most one later i
 
   for (const graph of [environment, autonomy]) {
     const bridge = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_send_action')
-    assert.equal(bridge?.data?.properties?.feedbackGraph, 'robot-action-result')
-    assert.notEqual(bridge?.data?.properties?.feedbackGraph, graph === environment ? 'environment' : 'boredom-autonomy')
+    assert.equal('feedbackGraph' in bridge.data.properties, false)
+    const wait = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_result_wait')
+    const review = graph.nodes.find((node: any) => node.data?.nodeType === 'workflow_call'
+      && node.data.properties.graph === 'robot-action-result')
+    assert.ok(wait)
+    assert.ok(review)
+    assert.ok(graph.edges.some((edge: any) => edge.source === bridge.id && edge.sourceHandle === 'commands'
+      && edge.target === wait.id && edge.targetHandle === 'commands'))
+    assert.ok(graph.edges.some((edge: any) => edge.source === wait.id && edge.sourceHandle === 'context'
+      && edge.target === review.id && edge.targetHandle === 'context'))
   }
 
   const resultTypes = resultGraph.nodes.map((node: any) => node.data?.nodeType)
@@ -706,7 +838,7 @@ test('Robot task lifecycle persists one result and delegates at most one later i
         completionEvidence: '',
       },
     }),
-    robotStatus: { task: { objective: 'Find the cat.' } },
+    execution: { task: { objective: 'Find the cat.' } },
   }, {})
   assert.equal(interpreted.taskDecision.objectiveComplete, false)
   assert.equal('decision' in interpreted, false)
@@ -721,7 +853,7 @@ test('Robot task lifecycle persists one result and delegates at most one later i
       completionEvidence: '',
       nextInstruction: 'Inspect a different open area for the cat.',
     }),
-    robotStatus: { task: { objective: 'Find the cat.' } },
+    execution: { task: { objective: 'Find the cat.' } },
   }, {}, {})
   assert.deepEqual(reviewed.executorDecision, {
     observed: 'The last view did not contain the cat.',

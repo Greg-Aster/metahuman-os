@@ -15,10 +15,13 @@ import { audit } from '../../audit.js';
 import { queueTTS, type TTSQueueItem } from '../../tts/delivery-queue.js';
 import {
   getSpeechOutputSettings,
+  prepareRobotSpeech,
   renderRobotSpeech,
   type RobotSpeechDelivery,
   type SpeechOutputSettings,
 } from '../../tts/robot-speech.js';
+import { prepareEnvironmentCommand } from '../../environment-interface/store.js';
+import type { GraphNodeExecution } from '../../durable-execution/graph-contract.js';
 
 export interface TTSOutputDelivery {
   accepted: boolean;
@@ -57,6 +60,8 @@ export async function deliverTTSOutput(
     mode: 'conversation' | 'inner';
     source: string;
     generation?: number;
+    execution?: GraphNodeExecution;
+    signal?: AbortSignal;
   },
   dependencyOverrides: Partial<TTSOutputDependencies> = {},
 ): Promise<TTSOutputDelivery> {
@@ -95,6 +100,14 @@ export async function deliverTTSOutput(
     }
 
     try {
+      if (request.execution) {
+        const prepared = await prepareRobotSpeech({ username: request.username, text: request.text,
+          requestId: request.execution.occurrenceId, signal: request.signal });
+        request.signal?.throwIfAborted();
+        const command = prepareEnvironmentCommand(prepared.action, { allowedActions: ['speak'], username: request.username, source: 'system' });
+        request.execution.dispatch({ kind: 'coordinator_work', actionId: command.input.id, payload: command });
+        return { accepted: true, deliveryId: command.input.id, route: 'robot' };
+      }
       const delivery = await dependencies.renderRobot({
         username: request.username,
         text: request.text,
@@ -106,6 +119,7 @@ export async function deliverTTSOutput(
         route: 'robot',
       };
     } catch (error) {
+      if (request.execution) throw error;
       return {
         accepted: false,
         deliveryId: '',
@@ -115,6 +129,13 @@ export async function deliverTTSOutput(
     }
   }
 
+  if (request.execution) {
+    const effect = request.execution.dispatch({ kind: 'local_tts', payload: {
+      text: request.text, mode: request.mode, source: request.source,
+      generation: request.generation, createdAt: Date.now(),
+    } });
+    return { accepted: true, deliveryId: effect.effectId, route: 'local' };
+  }
   const item = dependencies.queue(
     request.username,
     request.text,
@@ -236,6 +257,8 @@ export const TTSNode: NodeDefinition = defineNode({
         text,
         mode,
         source,
+        execution: context.graphExecution,
+        signal: context.abortSignal,
         generation: typeof context.ttsGeneration === 'number'
           ? context.ttsGeneration
           : undefined,

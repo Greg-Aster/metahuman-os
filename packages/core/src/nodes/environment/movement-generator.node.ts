@@ -6,9 +6,8 @@ import {
   assertBoundedMotionPlanEncoding,
   normalizeEnvironmentCommandedPose,
   normalizeEnvironmentMotionPlanFields,
-  type EnvironmentAction,
-  type EnvironmentObservation,
-} from '../../environment-interface/index.js';
+} from '../../environment-interface/motion-plan.js';
+import type { EnvironmentAction, EnvironmentObservation } from '../../environment-interface/types.js';
 import { defineNode } from '../types.js';
 import type { EnvironmentMovementRequest } from './helpers.js';
 
@@ -384,6 +383,7 @@ export const movementGeneratorNode = defineNode({
       const instruction = typeof inputs.instruction === 'string' ? inputs.instruction.trim() : '';
       const messages = movementGeneratorPrompt(request, instruction, observation);
       const callGenerator = (generatorMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => callLLM({
+        signal: context.abortSignal,
         role: properties?.role || 'orchestrator',
         messages: generatorMessages,
         userId: context.userId || context.username,

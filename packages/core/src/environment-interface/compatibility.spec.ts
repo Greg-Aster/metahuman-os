@@ -1,12 +1,24 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {
+import os from 'node:os';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+
+const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-environment-compatibility-'));
+process.env.METAHUMAN_ROOT = isolatedRoot;
+globalThis.fetch = async () => { throw new Error('Network is forbidden in this owner fixture'); };
+const { eventBus } = await import('../infrastructure/event-bus/client.js');
+eventBus.disconnect();
+const { setAuditEnabled } = await import('../audit.js');
+setAuditEnabled(false);
+const {
   dispatchEnvironmentActions,
   enqueueConnectedEnvironmentStops,
   enqueueEnvironmentAction,
   getEnvironmentActionContext,
   getEnvironmentBridgeStatePath,
   publishEnvironmentObservation,
+  prepareEnvironmentCommand,
   readEnvironmentBridgeState,
   recordEnvironmentActionResult,
   recordEnvironmentObservation,
@@ -14,23 +26,23 @@ import {
   sanitizeEnvironmentBridgeObservation,
   subscribeEnvironmentActions,
   writeEnvironmentBridgeState,
-} from './index.js';
-import { getQueueManager } from '../queue/index.js';
-import {
+} = await import('./index.js');
+const { getQueueManager } = await import('../queue/index.js');
+const {
   environmentObservationNeedsCognition,
   environmentObservationStartsUserTurn,
   handleEnvironmentBridgeActionResult,
   handleEnvironmentBridgeObservation,
   handleEnvironmentBridgeStream,
-} from '../api/handlers/environment-bridge.js';
+} = await import('../api/handlers/environment-bridge.js');
 import type { UnifiedRequest } from '../api/types.js';
-import { validateEnvironmentSelectorOutput } from '../nodes/environment/helpers.js';
-import { environmentActionParserNode } from '../nodes/environment/action-parser.node.js';
-import { environmentContextBuilderNode } from '../nodes/environment/context-builder.node.js';
-import { environmentImageInputNode } from '../nodes/environment/image-input.node.js';
-import { environmentSendActionNode } from '../nodes/environment/send-action.node.js';
-import { TextInputNode } from '../nodes/input/text-input.node.js';
-import { JSONParserNode } from '../nodes/utility/json-parser.node.js';
+const { validateEnvironmentSelectorOutput } = await import('../nodes/environment/helpers.js');
+const { environmentActionParserNode } = await import('../nodes/environment/action-parser.node.js');
+const { environmentContextBuilderNode } = await import('../nodes/environment/context-builder.node.js');
+const { environmentImageInputNode } = await import('../nodes/environment/image-input.node.js');
+const { environmentSendActionNode } = await import('../nodes/environment/send-action.node.js');
+const { TextInputNode } = await import('../nodes/input/text-input.node.js');
+const { JSONParserNode } = await import('../nodes/utility/json-parser.node.js');
 import type { EnvironmentObservation } from './types.js';
 
 const statePath = getEnvironmentBridgeStatePath();
@@ -39,6 +51,34 @@ const originalState = stateExisted ? fs.readFileSync(statePath) : undefined;
 const originalToken = process.env.MH_ENVIRONMENT_BRIDGE_TOKEN;
 const manager = getQueueManager();
 const originalWork = manager.exportState();
+const { runDurableGraph, withGraphWork } = await import('../durable-execution/runtime.js');
+const { openExecutionStore } = await import('../durable-execution/storage.js');
+const { validateSvelteFlowGraph } = await import('../cognitive-graph-schema.js');
+
+async function sendAction(inputs: Record<string, unknown>, context: Record<string, unknown>, properties: Record<string, unknown>) {
+  const nodes: any[] = [{ id: 'send', type: 'environmentNode', position: { x: 600, y: 0 },
+    data: { label: 'Bridge Out', nodeType: environmentSendActionNode.id, properties } }];
+  const edges: any[] = [];
+  for (const [key, value] of Object.entries(inputs)) {
+    nodes.push({ id: key, type: 'inputNode', position: { x: 0, y: nodes.length * 80 },
+      data: { label: key, nodeType: 'text_input', properties: { inputKey: '', message: JSON.stringify(value) } } },
+    { id: `${key}-parsed`, type: 'utilityNode', position: { x: 300, y: nodes.length * 80 },
+      data: { label: key, nodeType: 'json_parser', properties: {} } });
+    edges.push({ id: `${key}-parse`, source: key, sourceHandle: 'text', target: `${key}-parsed`, targetHandle: 'text' },
+      { id: `${key}-send`, source: `${key}-parsed`, sourceHandle: 'data', target: 'send', targetHandle: key });
+  }
+  const work = manager.enqueue({ type: 'generic', handler: 'graph.resume', source: 'user',
+    username: 'bridge-spec', input: { requestId: randomUUID() } });
+  assert.ok(manager.claim(work.id));
+  const result = await withGraphWork(work, id => manager.attachExecution(work.id, id), () => runDurableGraph({
+    graph: validateSvelteFlowGraph({ name: 'Bridge contract', version: '1.0', format: 'svelte-flow',
+      scheduler: { version: 1, activation: 'demand', skippedState: 'explicit', sideEffectOrder: 'serial-topological', maxLoopIterations: 5 }, nodes, edges }),
+    context: { ...context, username: 'bridge-spec', requestId: randomUUID(), environment: 'server' },
+  }), async input => manager.enqueue(input));
+  manager.complete(work.id, result.status !== 'failed', { status: result.status, executionId: result.executionId });
+  assert.notEqual(result.status, 'failed', result.error?.stack);
+  return result.nodes.get('send')!.outputs!;
+}
 
 function resetState(): void {
   manager.clear();
@@ -71,6 +111,28 @@ function bridgeRequest(headers: Record<string, string> = {}, body: Record<string
 }
 
 try {
+  for (const action of [{ type: 'stop' as const }, { type: 'robotCommand' as const, command: 'stop' }]) {
+    const prepared = prepareEnvironmentCommand({ ...action, sessionId: 'robot-1' });
+    assert.equal(prepared.input.type, 'stop', 'Equivalent advertised commands use one transport operation');
+    assert.equal(prepared.input.command, undefined);
+    assert.equal(prepared.resource, 'environment-stop:robot-1');
+    assert.equal(prepared.priority, 'critical');
+  }
+  resetState();
+  process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'bridge-secret';
+  const lateFrame = {
+    id: 'late-audio-frame', environmentId: 'ainekio', adapter: 'ainekio-gateway', sessionId: 'robot-1',
+    timestamp: new Date().toISOString(), capabilities: { actions: ['captureImage'], visual: true },
+    visual: { id: 'late-image', mimeType: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=' },
+    metadata: { audioUtteranceId: 'already-admitted-turn' },
+  };
+  for (let retry = 0; retry < 2; retry++) {
+    const admitted = await handleEnvironmentBridgeObservation(bridgeRequest({ Authorization: 'Bearer bridge-secret' }, lateFrame), () => 'bridge-spec');
+    assert.equal(admitted.status, 200);
+    assert.equal(admitted.data.graphQueued, false, 'A late/replayed speech capture cannot start another conversation');
+    assert.equal(readEnvironmentBridgeState().sessions['robot-1']?.latestObservation?.visual?.id, 'late-image', 'The frame is persisted before its transport ACK');
+    assert.equal(manager.getAllTasks().length, 0);
+  }
   resetState();
   const readinessTimestamp = new Date().toISOString();
   recordEnvironmentObservation({
@@ -118,7 +180,7 @@ try {
     createdAt: '2000-01-01T00:00:00Z',
   });
   assert.deepEqual(dispatchEnvironmentActions('robot-1'), []);
-  assert.equal(manager.getTask(stale.id)?.state, 'expired');
+  assert.equal(manager.getTask(stale.workItemId!)?.state, 'expired');
 
   resetState();
   const motionPlan = enqueueEnvironmentAction({
@@ -152,15 +214,15 @@ try {
   enqueueEnvironmentAction({ type: 'stop', sessionId: 'robot-1' });
   const dispatched = dispatchEnvironmentActions('robot-1');
   assert.deepEqual(dispatched.map(command => command.type), ['stop']);
-  assert.equal(manager.getTask(movement.id)?.state, 'cancelled');
+  assert.equal(manager.getTask(movement.workItemId!)?.state, 'cancelled');
 
   resetState();
   const emergencyMovement = enqueueEnvironmentAction({ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' });
   const emergencyStops = enqueueConnectedEnvironmentStops('greggles', 'spec emergency stop', Date.parse('2026-07-14T12:00:00Z'));
   assert.equal(emergencyStops.length, 1);
   assert.equal(emergencyStops[0]?.type, 'stop');
-  assert.equal(manager.getTask(emergencyStops[0]!.id)?.priority, 'critical');
-  assert.equal(manager.getTask(emergencyMovement.id)?.state, 'cancelled');
+  assert.equal(manager.getTask(emergencyStops[0]!.workItemId!)?.priority, 'critical');
+  assert.equal(manager.getTask(emergencyMovement.workItemId!)?.state, 'cancelled');
 
   resetState();
   const firstCommand = enqueueEnvironmentAction({ type: 'robotCommand', command: 'stand', sessionId: 'robot-1' });
@@ -179,7 +241,7 @@ try {
     actionId: claimedCommand!.id,
   });
   const remainingCommandId = claimedCommand!.id === firstCommand.id ? secondCommand.id : firstCommand.id;
-  assert.equal(manager.getTask(claimedCommand!.id)?.state, 'leased');
+  assert.equal(manager.getTask(claimedCommand!.workItemId!)?.state, 'leased');
   assert.deepEqual(
     dispatchEnvironmentActions('robot-1'),
     [],
@@ -208,7 +270,7 @@ try {
   const robotOneCommand = enqueueEnvironmentAction({ type: 'robotCommand', command: 'stand', sessionId: 'robot-1' });
   const robotTwoCommand = enqueueEnvironmentAction({ type: 'robotCommand', command: 'wave', sessionId: 'robot-2' });
   assert.equal(dispatchEnvironmentActions('robot-2')[0]?.id, robotTwoCommand.id);
-  assert.equal(manager.getTask(robotOneCommand.id)?.state, 'queued', 'a session must not claim another session\'s work');
+  assert.equal(manager.getTask(robotOneCommand.workItemId!)?.state, 'queued', 'a session must not claim another session\'s work');
 
   resetState();
   const autonomyWork = manager.enqueue({
@@ -247,7 +309,7 @@ try {
   assert.equal(acceptedResponse.status, 200);
   assert.equal(acceptedResponse.data.action.status, 'dispatched');
   assert.equal(acceptedResponse.data.robotBufferPersisted, false);
-  assert.equal(manager.getTask(lifecycle.id)?.state, 'leased');
+  assert.equal(manager.getTask(lifecycle.workItemId!)?.state, 'leased');
   assert.equal(readEnvironmentBridgeState().feedback.length, 0);
 
   publishEnvironmentObservation({
@@ -286,7 +348,7 @@ try {
     actionId: cancellable.id,
   });
   assert.equal(cancelled?.action.status, 'cancelled');
-  assert.equal(manager.getTask(cancellable.id)?.state, 'cancelled');
+  assert.equal(manager.getTask(cancellable.workItemId!)?.state, 'cancelled');
 
   delete process.env.MH_ENVIRONMENT_BRIDGE_TOKEN;
   assert.equal((await handleEnvironmentBridgeObservation(bridgeRequest())).status, 503);
@@ -424,7 +486,7 @@ try {
       correlationId: 'conversation-turn-1',
       originatingInstruction: 'Wave, then use the returned view to tell me what changed.',
       queuedAt: resultAction.createdAt,
-      completedAt: manager.getTask(resultAction.id)?.completedAt,
+      completedAt: manager.getTask(resultAction.workItemId!)?.completedAt,
       result: { type: 'completed', message: 'done' },
     },
     'the separate Work Coordinator input must recover the exact semantic action MetaHuman requested',
@@ -432,7 +494,7 @@ try {
   const contextualTiming = contextualActionContext?.actionTiming;
   assert.ok(contextualTiming);
   assert.equal(contextualTiming.queueEnteredAt, resultAction.createdAt);
-  assert.equal(contextualTiming.leaseGrantedAt, manager.getTask(resultAction.id)?.startedAt);
+  assert.equal(contextualTiming.leaseGrantedAt, manager.getTask(resultAction.workItemId!)?.startedAt);
   assert.equal(
     typeof contextualTiming.coreFeedbackReceivedAt,
     'string',
@@ -671,7 +733,7 @@ try {
     },
   }), 'robot-1').valid, false, 'a robot command cannot masquerade as a generic move');
 
-  const conversationOnly = await environmentSendActionNode.execute({
+  const conversationOnly = await sendAction({
     actions: [],
     sessionId: 'robot-1',
   }, { username: 'bridge-spec', sessionId: 'chat-1' } as never, {});
@@ -681,16 +743,16 @@ try {
   assert.equal(conversationOnly.bridgeRecord.status, 'no_actions');
   assert.equal(conversationOnly.bridgeRecord.commandCount, 0);
   assert.deepEqual(conversationOnly.bridgeRecord.requestedActions, []);
-  assert.equal(conversationOnly.bridgeRecord.correlationId, 'chat-1');
+  assert.match(conversationOnly.bridgeRecord.correlationId, /^[a-f0-9-]{36}$/);
 
-  const emptyConversation = await environmentSendActionNode.execute({
+  const emptyConversation = await sendAction({
     actions: [],
     sessionId: 'robot-1',
   }, { username: 'bridge-spec', sessionId: 'chat-empty' } as never, {});
   assert.equal(emptyConversation.status, 'no_actions');
   assert.match(emptyConversation.message, /no environment action was produced/i);
 
-  const unavailableAction = await environmentSendActionNode.execute({
+  const unavailableAction = await sendAction({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
     sessionId: 'robot-1',
   }, { username: 'bridge-spec', sessionId: 'chat-1' } as never, {});
@@ -712,7 +774,7 @@ try {
   };
   writeEnvironmentBridgeState(bodyOfflineState);
   const unsubscribeOffline = subscribeEnvironmentActions('robot-1', () => {});
-  const bodyOffline = await environmentSendActionNode.execute({
+  const bodyOffline = await sendAction({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
     sessionId: 'robot-1',
   }, { username: 'bridge-spec', sessionId: 'chat-offline' } as never, {});
@@ -736,16 +798,15 @@ try {
   };
   writeEnvironmentBridgeState(bodyOnlineState);
   const unsubscribeOnline = subscribeEnvironmentActions('robot-1', () => {});
-  const bodyQueued = await environmentSendActionNode.execute({
+  const bodyQueued = await sendAction({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
     sessionId: 'robot-1',
     instruction: 'Walk once, then use the returned observation to tell me what changed.',
     userInstruction: 'Walk once, then use the returned observation to tell me what changed.',
-    inputSource: 'user',
   }, {
     username: 'bridge-spec',
     sessionId: 'chat-online',
-  } as never, { feedbackGraph: 'robot-action-result' });
+  } as never, {});
   unsubscribeOnline();
   assert.equal(bodyQueued.status, 'coordinated_for_adapter');
   assert.equal(bodyQueued.count, 1);
@@ -753,23 +814,60 @@ try {
   assert.equal('response' in bodyQueued, false);
   const queuedBodyCommand = bodyQueued.commands[0];
   assert.ok(queuedBodyCommand);
-  const queuedCycle = queuedBodyCommand.metadata?.robotObserver as
-    | { requestedBy?: string; graph?: string }
-    | undefined;
-  assert.equal(
-    queuedCycle?.requestedBy,
-    'environment-perception',
-    'a user-originated asynchronous action must retain its correlation owner',
-  );
-  assert.equal(
-    queuedCycle?.graph,
-    'robot-action-result',
-    'user-owned action feedback must route once to the configured result workflow',
-  );
-  assert.equal(
-    manager.getTask(queuedBodyCommand.id)?.metadata?.originatingInstruction,
-    'Walk once, then use the returned observation to tell me what changed.',
-  );
+  const queuedBodyWork = manager.getAllTasks().find(task => task.input.id === queuedBodyCommand.id)!;
+  assert.equal(queuedBodyWork.correlationId, queuedBodyCommand.executionId);
+  assert.equal(queuedBodyWork.durable?.executionId, queuedBodyCommand.executionId);
+  assert.equal(queuedBodyCommand.metadata?.robotObserver, undefined, 'Action results return to the execution, not a fresh feedback graph');
+  assert.equal(queuedBodyWork.metadata?.originatingInstruction,
+    'Walk once, then use the returned observation to tell me what changed.');
+
+  // A claimed action can finish after its graph fails or is cancelled, even if
+  // the adapter's earlier acceptance message was lost or delayed.
+  for (const terminal of ['failed', 'cancelled'] as const) {
+    for (const accepted of [true, false]) {
+      resetState();
+      writeEnvironmentBridgeState(bodyOnlineState);
+      const unsubscribe = subscribeEnvironmentActions('robot-1', () => {});
+      const output = await sendAction({
+        actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
+        sessionId: 'robot-1',
+      }, {}, {});
+      unsubscribe();
+      const command = dispatchEnvironmentActions('robot-1')[0]!;
+      assert.equal(command.id, output.commands[0].id);
+      const task = manager.getTask(command.workItemId!)!;
+      assert.ok(task.startedAt && task.bodyLease);
+      const store = openExecutionStore(task.username);
+      try {
+        const execution = store.get(task.durable!.executionId);
+        const lease = store.claim(execution.executionId, execution.definition);
+        if (terminal === 'failed') store.settle(lease, 'failed');
+        else {
+          store.cancel(execution.executionId, { eventId: randomUUID(), kind: 'user_cancelled', payload: {} });
+          manager.cancel(task.id, 'Fixture cancellation');
+          assert.ok(manager.getTask(task.id)?.cancellationRequestedAt);
+        }
+        store.release(lease);
+        assert.throws(() => store.assertDispatchable(task.durable!.effectId));
+        assert.throws(() => store.acceptAction(task.durable!.effectId));
+        if (accepted) {
+          assert.ok(recordEnvironmentActionResult({ id: randomUUID(), actionId: command.id,
+            type: 'accepted', timestamp: new Date().toISOString(), message: 'Accepted before graph termination' }));
+        }
+        const feedback = { id: randomUUID(), actionId: command.id, type: 'completed' as const,
+          timestamp: new Date().toISOString(), message: 'Completed previously claimed action' };
+        assert.ok(recordEnvironmentActionResult(feedback));
+        assert.ok(recordEnvironmentActionResult(feedback));
+        assert.equal(manager.getTask(task.id)?.state, 'completed');
+        assert.equal(store.dispatch(task.durable!.effectId).status, 'completed');
+        assert.equal(store.get(execution.executionId).status, terminal, 'Physical evidence does not revive the parent');
+        assert.equal(store.events(execution.executionId).filter(event => event.eventId === feedback.id).length, 1);
+        assert.equal(store.pendingDispatches().filter(effect => effect.executionId === execution.executionId).length, 0);
+        const next = enqueueEnvironmentAction({ type: 'robotCommand', command: 'stand', sessionId: 'robot-1' });
+        assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, next.id, 'Terminal receipt releases the body');
+      } finally { store.close(); }
+    }
+  }
 
   resetState();
   const observerCaptureState = readEnvironmentBridgeState();
@@ -792,36 +890,28 @@ try {
   }, {}, {});
   assert.equal(observerCaptureAction.success, true);
   assert.deepEqual(observerCaptureAction.data, { type: 'captureImage' });
-  const observerWorkflowCapture = await environmentSendActionNode.execute({
+  const observerWorkflowCapture = await sendAction({
     action: observerCaptureAction.data,
     sessionId: 'robot-1',
     instruction: 'Interpret the returned image as one autonomous observation.',
-    inputSource: 'autonomy',
-    robotObserver: {
-      cycleId: 'observer-cycle-1',
-      step: 1,
-      triggerSource: 'autonomy',
-      graph: 'boredom-observer',
-      requestedBy: 'boredom-observer',
-    },
   }, {
     username: 'bridge-spec',
     sessionId: 'observer-capture',
   } as never, {
     allowedActions: ['captureImage'],
-    feedbackGraph: 'environment',
   });
   unsubscribeObserverCapture();
   assert.equal(observerWorkflowCapture.status, 'coordinated_for_adapter');
-  assert.equal(observerWorkflowCapture.commands[0]?.metadata?.robotObserver?.graph, 'environment');
-  assert.equal(observerWorkflowCapture.commands[0]?.metadata?.robotObserver?.requestedBy, 'boredom-observer');
+  const observerWork = manager.getAllTasks().find(task => task.input.id === observerWorkflowCapture.commands[0].id)!;
+  assert.equal(observerWork.durable?.executionId, observerWorkflowCapture.commands[0].executionId);
+  assert.equal(observerWorkflowCapture.commands[0]?.metadata?.robotObserver, undefined);
   assert.equal('responseMetadata' in observerWorkflowCapture, false);
   assert.equal('conversationResponse' in observerWorkflowCapture, false);
   assert.equal(
-    manager.getTask(observerWorkflowCapture.commands[0]?.id)?.metadata?.originatingInstruction,
+    observerWork?.metadata?.originatingInstruction,
     'Interpret the returned image as one autonomous observation.',
   );
-  assert.equal(manager.getTask(observerWorkflowCapture.commands[0]?.id)?.deadline, undefined);
+  assert.equal(observerWork?.deadline, undefined);
 
   const continuationObservation = {
     environmentId: 'ainekio',
@@ -901,18 +991,10 @@ try {
   };
   writeEnvironmentBridgeState(continuationState);
   const unsubscribeContinuation = subscribeEnvironmentActions('robot-1', () => {});
-  const queuedContinuation = await environmentSendActionNode.execute({
+  const queuedContinuation = await sendAction({
     actions: [{ type: 'robotCommand', command: 'walk', sessionId: 'robot-1' }],
     sessionId: 'robot-1',
     instruction: 'Continue the remaining task.',
-    inputSource: 'user',
-    robotObserver: {
-      cycleId: 'continuation-cycle-1',
-      step: 1,
-      triggerSource: 'user',
-      graph: 'environment',
-      requestedBy: 'environment-perception',
-    },
   }, {
     username: 'bridge-spec',
     sessionId: 'chat-continuation',

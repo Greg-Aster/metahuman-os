@@ -9,3 +9,4 @@ export { environmentActionParserNode } from './action-parser.node.js';
 export { movementGeneratorNode } from './movement-generator.node.js';
 export { environmentSendActionNode } from './send-action.node.js';
 export { environmentSendTextNode } from './send-text.node.js';
+export { environmentResultWaitNode } from './result-wait.node.js';
