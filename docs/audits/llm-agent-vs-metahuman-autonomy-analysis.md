@@ -49,15 +49,16 @@ content is not reproduced here.
   parent execution across existing graphs, graph/checkpoint versioning, fenced
   body ownership, explicit uncertain outcomes, bounded private-data retention,
   and preservation of the direct emergency-stop path.
-- **Compatibility result, 2026-09-06:** The isolated LangGraph JS spike passed
-  the checkpoint/outbox, replay-safe dispatch, and single-parent cross-graph
-  hard gates. It did not exercise the deployed Bridge, real model router, or
-  physical robot.
-- **Current planning state, 2026-09-06:** A production cutover is now
-  technically plausible, and the file-by-file migration/deletion map is
-  recorded below. Production dependency, runtime, Robot Status, graph, and
-  Ainekio protocol changes remain unapproved until the Installation Owner
-  reviews that map and explicitly authorizes them.
+- **Compatibility correction, 2026-09-06:** The supplied synthetic matrix
+  passed, but independent probes reproduced cancellation, recovery, ordering,
+  fencing, reconciliation, version-admission, and node-configuration failures.
+  The earlier claim that the hard gates passed is withdrawn. The original
+  spike and independent evidence are preserved unchanged; subsequent comparison
+  work is separate from that original implementation.
+- **Current planning state, 2026-09-06:** Production adoption is blocked.
+  The migration map below is a proposal, not approval or proof of compatibility.
+  The separate actual-graph/model-router comparison now supplies limited mocked
+  integration evidence; it does not resolve the reproduced safety failures.
 
 ## Compatibility spike execution log
 
@@ -178,7 +179,12 @@ acknowledgement.
 
 ### Step 2 - isolated durable-thread and physical-boundary spike - 2026-09-06
 
-Status: **complete in the disposable harness; not integrated into production**.
+Status: **failed independent acceptance review; not integrated into production**.
+
+The results below record the original supplied matrix, not a passing acceptance
+gate. Independent review reproduced failures outside that matrix (F1–F8),
+including dispatch after cancellation and false completion from unrelated
+reconciliation. The preservation bundle retains both sets of evidence.
 
 Harness location:
 `/tmp/metahuman-langgraph-spike-20260906`. The reproducible entrypoints are
@@ -266,7 +272,7 @@ The candidate remained model-adapter-neutral for three disposable adapters
 (`local`, `remote`, and `qwen`), but this is structural evidence only. It did
 not invoke MetaHuman's real model router or claim live provider parity.
 
-Representative scheduler parity also passed against the canonical Core Graph
+The original synthetic scheduler comparison passed against the canonical Core Graph
 Executor for both sides of a conditional branch, including a valid numeric-zero
 data value, explicit skipped nodes, and serial control-edge ordering. The four
 target robot graph files were parsed without mutation and retained their source
@@ -278,7 +284,7 @@ Isolation exception: importing the canonical Core Graph Executor for that
 parity comparison initialized its event-bus client while the local event bus was
 running and flushed ten queued probe execution events. The probe did not invoke
 a production graph route, admit Coordinator work, call Environment Bridge, or
-send a robot command. Future parity runs should stop the local services or use a
+send a robot command. Future parity runs must isolate the test process and use a
 side-effect-free Core import boundary so even trace events remain isolated.
 
 Dependency evidence: the isolated install occupied 104 MB and introduced
@@ -437,7 +443,7 @@ decision. It never silently resumes against edited topology.
 The current Svelte Flow files and editor remain the authoring authority. The
 adapter is one-way at runtime and must preserve saved node properties,
 data/control edges, activation conditions, skipped nodes, and output semantics.
-The spike proved a representative non-looping path only; production cutover must
+The original spike proved two synthetic branch paths only; production cutover must
 run trace parity for every graph in this parent before admission is enabled.
 
 #### File-by-file migration and deletion map
@@ -451,7 +457,7 @@ the smallest placement; the owner boundaries are not provisional.
 | Root `package.json` and `pnpm-lock.yaml` | Add one pinned LangGraph/checkpoint/SQLite dependency set only after approval and native-build verification. | No isolated or duplicate SQLite package version may enter the workspace. |
 | `packages/core/src/graph-runtime.ts` | Remain the public Core facade and expose durable start/admit/resume operations for registered durable graphs. | A durable robot graph must never fall back to a fresh `executeGraph()` invocation. |
 | New Core graph-session compiler/runtime/store modules | Own Svelte Flow compilation, checkpoint/event state, version pins, transactional outbox, recovery, and terminal retention. Their necessity is the missing responsibility proven in Step 1; they are not a second queue or task store. | Remove any temporary adapter, compatibility switch, or alternate persistence path when the robot slice cuts over. |
-| `packages/core/src/graph-executor.ts` | Continue owning only bounded one-shot graphs during the staged repository migration. It may not execute a graph registered to the durable owner. Add an architecture assertion that a graph has exactly one runtime owner. | Remove it from the robot Controller/Executor/result/review path immediately; retire more broadly only after separate parity work covers looped and direct-invocation graphs. |
+| `packages/core/src/graph-executor.ts` | Remains the sole production executor during the experiment. Any approved migration must cover all maintained graph entrypoints, including bounded, looped, and directly invoked graphs. | Final cutover requires parity for every maintained entrypoint and deletion of the old scheduling implementation and its admission wiring. Indefinite coexistence for one-shot graphs is not an accepted end state. |
 | `packages/core/src/queue/types.ts`, `unified-queue-manager.ts`, and `queue-persister.ts` | Add a durable `deliveryId -> workItemId` admission receipt to the canonical Coordinator ledger and preserve it through terminal work for the execution retention window. | Replace active-only idempotency as the graph-outbox delivery guarantee; do not add another ledger. |
 | `packages/core/src/nodes/environment/send-action.node.ts` and its schema/editor contract | Make the node produce a validated typed action request with a preallocated `actionId`; checkpoint commit stages it in the outbox. | Delete direct `enqueueEnvironmentAction()` side effects and the `feedbackGraph` continuation setting from this replayable node. |
 | `etc/cognitive-graphs/environment-mode.json`, `boredom-autonomy-mode.json`, and `boredom-observer-mode.json` | Connect action requests and returned evidence through the durable parent/subgraph contract. | Remove all three `feedbackGraph` re-entry values and Robot Observer cycle metadata used only to launch another graph. |
@@ -498,9 +504,10 @@ one-shot movement.
 8. Rebuild and restart the canonical services. Validate source, queue recovery,
    real model routing, browser behavior, live Bridge transport, emergency stop,
    and physical effects as separate layers.
-9. Migrate other long-running graph families only after their own parity gates.
-   The bounded executor can remain for genuinely one-shot graphs; it is not an
-   alternate owner for a durable graph.
+9. Complete parity for all remaining graph families and direct callers, then
+   remove the old scheduling implementation and wiring. Completion requires
+   one production graph runtime for both one-shot and durable graphs; otherwise
+   migration remains incomplete and must not be described as the final state.
 
 Rollback must also preserve one owner: stop the affected services, restore the
 old code/config/dependency set, and archive or migrate the candidate runtime
@@ -512,28 +519,29 @@ recovery rather than reconstructed from Robot Status.
 
 | Gate | Disposition |
 | --- | --- |
-| SQLite checkpoint/event/outbox atomicity | Passed in isolated crash harness |
-| Coordinator cross-store handoff | Passed with the real `UnifiedQueueManager` class and isolated ledger; deployed owner integration unverified |
-| Interrupted-node replay safety | Passed after moving planning materialization into the checkpoint transaction; result-wait restart is side-effect-free |
-| Physical at-most-once effect under tested crashes | Passed against durable fake-body receipts; Ainekio hardware/protocol unverified |
-| Explicit uncertain physical outcome | Passed in harness; production Bridge contract absent |
-| Fenced body ownership | Passed in harness; production Bridge/adapter contract absent |
-| One parent across Controller, Executor, Observer, and Review | Passed with compiled spike subgraphs |
-| Current Svelte Flow semantic parity | Passed for representative non-looping conditional paths; all participating production graphs still require trace parity |
-| Restart, duplicate result, steering, unrelated conversation, cancellation, disconnect, terminal completion | Passed in harness |
+| SQLite checkpoint/event/outbox atomicity | Selected transaction boundaries passed; stale updates and event ordering failed (F3) |
+| Coordinator cross-store handoff | Selected receipt cases passed; cancellation eligibility failed (F1), deployed integration unverified |
+| Interrupted-node replay safety | Wait contains no physical send; recovery between result checkpoint and review failed (F2) |
+| Physical at-most-once effect under tested crashes | Selected crashes passed; dispatch after cancellation and stale-owner acceptance failed (F1, F4) |
+| Explicit uncertain physical outcome | Uncertainty recorded; unrelated reconciliation falsely completed the objective (F5) |
+| Fenced body ownership | Failed with two owner instances (F4); production contract unverified |
+| One parent across Controller, Executor, Observer, and Review | Original used substitutes. Separate follow-on comparison runs actual saved child graphs in one thread through two mocked action/result cycles; same-process resume only |
+| Current Svelte Flow semantic parity | Original configuration failure (F7) reproduced. Separate follow-on adapter matches 11 paired actual-graph scenarios; explicit-loop/output-path scheduling and editor round-trip remain unproven |
+| Restart, duplicate result, steering, unrelated conversation, cancellation, disconnect, terminal completion | Acceptance failed; intermediate recovery, duplicate steering, cancellation and reconciliation failures (F1–F5) |
 | Robot Status as non-authoritative projection | Passed in harness; production writer remains authoritative-looking and unchanged |
-| Version mismatch parking | Passed in harness |
-| Bounded context and image-reference storage | Passed for the measured scenario; terminal retention duration remains a production decision |
-| Provider neutrality | Interface shape passed with fake adapters; real MetaHuman model-router providers unverified |
+| Version mismatch parking | Failed against a changed executable definition (F6) |
+| Bounded context and image-reference storage | Synthetic context-growth measurement only; terminal retention and representative visual-task growth unproven |
+| Provider neutrality | Original used identical fake adapters. Follow-on comparison exercises unchanged model-router/resolver and profile model settings with mocked provider transport, including a remote-provider selection; no real inference or network proof |
 | Emergency stop | Existing direct source path confirmed; no live transport or hardware stop was triggered |
 
-Therefore the spike goal is complete, while production migration remains a new,
-high-risk implementation authorization. The next decision is whether to approve
-that cutover scope—not whether to patch more identity fields into Robot Status.
+The earlier spike-completion claim is withdrawn. Production migration is blocked
+by the reproduced failures and outstanding evidence; it is not the next approved
+step. The original source, lockfile, reviewer probes, rerun results, and separate
+comparison source/commands are preserved in the independent-review bundle.
 
 ### Step 4 - completion audit - 2026-09-06
 
-Status: **complete**.
+Status: **original source-validation record; not a passing adoption gate**.
 
 Final repository checks after documenting the spike and cutover map:
 
@@ -541,8 +549,7 @@ Final repository checks after documenting the spike and cutover map:
 - `pnpm audit:graph-executors`: passed, 38 graphs, 344 nodes, and no missing
   executors;
 - `pnpm test:environment-graph`: passed all four focused tests;
-- representative canonical-versus-candidate conditional trace parity: passed
-  in the isolated harness;
+- original synthetic canonical-versus-candidate conditional trace parity: passed;
 - durable restart/crash/idempotency matrix: passed in the isolated harness after
   the checkpoint/outbox boundary was corrected;
 - report trailing-whitespace check: no findings;
@@ -554,6 +561,14 @@ three tracked production-file modifications present at baseline remain present
 and were neither edited nor restored by the spike. The disposable code,
 dependencies, databases, ledgers, and fake-body evidence remain under
 `/tmp/metahuman-langgraph-spike-20260906` and are not production runtime state.
+
+Follow-on review reproduced the pushed conversation-window regression through
+the unchanged History node → Controller context → Model Router path: the user
+message remains in the buffer fixture but disappears from controller input
+after eight autonomous replies. Commit `464ecf39` changed the graph limit from
+0 to 8 and removed the helper that retained the latest user turn. This contradicts
+the maintained controller contract; it was investigated, not repaired, in this
+review. No production configuration or code was changed by the follow-on work.
 
 No Site build, production graph admission, real provider, browser, live Bridge,
 Ainekio adapter, or physical robot was exercised because this phase deliberately
