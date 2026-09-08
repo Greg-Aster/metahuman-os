@@ -36,7 +36,7 @@ export const environmentResultWaitNode = defineNode({
         resultContext = { ...resultContext, ...payload }
       }
       for (const id of pending) if (reports.has(id) && (observations.has(id)
-        || ['rejected', 'expired', 'cancelled'].includes(reports.get(id)!.type))) pending.delete(id)
+        || ['failed', 'rejected', 'expired', 'cancelled'].includes(reports.get(id)!.type))) pending.delete(id)
     }
     const supplied = resultContext.environmentObservation as EnvironmentObservation | undefined
     const base = supplied ?? context.environmentObservation

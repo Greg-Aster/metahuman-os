@@ -406,13 +406,16 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       websocket.send(encoded);
     };
 
-    const failUnacceptedAction = async (actionId: string, message: string) => {
+    const reportActionDelivery = async (actionId: string, message: string, stage: 'prepare' | 'send' | 'acceptance') => {
       await postJson(config, '/api/environment-bridge/action-result', {
         id: `delivery-feedback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp: new Date().toISOString(),
-        type: 'failed',
+        type: stage === 'prepare' ? 'failed' : 'outcome_unknown',
         message,
         actionId,
+        data: { producer: 'environment-bridge', delivery: {
+          stage, outcome: stage === 'prepare' ? 'not_sent' : 'unknown',
+        } },
       });
     };
 
@@ -436,7 +439,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           if (actionId) {
             awaitingAdapterAcceptance.delete(actionId);
             actionTimings.delete(actionId);
-            await failUnacceptedAction(actionId, (error as Error).message);
+            await reportActionDelivery(actionId, (error as Error).message, 'send');
           }
         }
         return;
@@ -453,11 +456,12 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
         if (actionId) {
           awaitingAdapterAcceptance.delete(actionId);
           actionTimings.delete(actionId);
-          await failUnacceptedAction(actionId, 'robot speech artifact is unavailable');
+          await reportActionDelivery(actionId, 'robot speech artifact is unavailable', 'prepare');
         }
         return;
       }
 
+      let sending = false;
       try {
         const packet = encodeRobotSpeechMessage({
           sessionId: diagnosticSessionId || String(action.sessionId || ''),
@@ -465,6 +469,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           durationMs,
           artifact,
         });
+        sending = true;
         await new Promise<void>((resolve, reject) => {
           websocket.send(packet, error => error ? reject(error) : resolve());
         });
@@ -480,7 +485,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       } catch (error) {
         awaitingAdapterAcceptance.delete(actionId);
         actionTimings.delete(actionId);
-        await failUnacceptedAction(actionId, (error as Error).message);
+        await reportActionDelivery(actionId, (error as Error).message, sending ? 'send' : 'prepare');
       }
     };
 
@@ -892,7 +897,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
                 version: PROTOCOL_VERSION,
                 feedbackId: receivedFeedback.id,
                 actionId: receivedFeedback.actionId,
-                admitted: Boolean(result?.action),
+                admitted: receivedFeedback.type === 'accepted' ? result?.admitted === true : Boolean(result?.action),
               });
             }
           }
@@ -907,7 +912,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
     localAbort.abort();
     if (!signal.aborted) await inboundMessages?.drain();
     await Promise.allSettled([...awaitingAdapterAcceptance].map(actionId => (
-      failUnacceptedAction(actionId, 'environment adapter disconnected before accepting command')
+      reportActionDelivery(actionId, 'environment adapter disconnected before acceptance was confirmed', 'acceptance')
     )));
     awaitingAdapterAcceptance.clear();
     audioVisualJoin.close();

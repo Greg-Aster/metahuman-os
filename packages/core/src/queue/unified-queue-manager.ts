@@ -65,7 +65,7 @@ function immutableJSON<T>(value: T): T {
 }
 
 function protectAdmission(task: QueuedTask): QueuedTask {
-  for (const key of ['input', 'metadata', 'durable', 'admissionIdentity'] as const) {
+  for (const key of ['input', 'metadata', 'durable', 'admissionIdentity', 'admittedRuntimeId'] as const) {
     Object.defineProperty(task, key, {
       value: task[key] === undefined ? undefined : immutableJSON(task[key]),
       enumerable: true, writable: false, configurable: false,
@@ -113,6 +113,8 @@ export interface QueueManagerOptions extends Partial<QueueConfig> {
 }
 
 export class UnifiedQueueManager {
+  private runtimeId: string = randomUUID();
+  private recoveryUser?: () => string | null;
   private readonly tasks = new Map<string, QueuedTask>();
   private readonly bodyOwners = new Map<string, BodyLease>();
   private readonly terminalOrder: string[] = [];
@@ -138,6 +140,20 @@ export class UnifiedQueueManager {
     if (options.lanes || options.enabled !== undefined) {
       this.configure(options as QueueConfig);
     }
+  }
+
+  /** The server supplies its authenticated session owner; pure ledger users do not own login. */
+  configureRecovery(runtimeId: string, user: () => string | null): void {
+    this.runtimeId = runtimeId;
+    this.recoveryUser = user;
+  }
+
+  private recoveryEligible(task: QueuedTask): boolean {
+    if (!this.recoveryUser) return true;
+    const recovered = task.admittedRuntimeId !== this.runtimeId
+      || (task.durable && task.durable.originRuntimeId !== this.runtimeId)
+      || task.handler === 'graph.signal';
+    return !recovered || this.recoveryUser() === task.username;
   }
 
   private initializeResources(): void {
@@ -269,6 +285,7 @@ export class UnifiedQueueManager {
 
     const task: QueuedTask = {
       id: `task-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      admittedRuntimeId: this.runtimeId,
       type: input.type,
       handler,
       state: cancellationReason !== undefined ? 'cancelled' : 'queued',
@@ -359,7 +376,8 @@ export class UnifiedQueueManager {
       const bodyId = task.input?.sessionId;
       if ([...this.tasks.values()].some(other => other.id !== task.id && !TERMINAL_STATES.has(other.state)
         && (other.bodyLease?.bodyId === bodyId
-          || (other.type === 'environment_command' && other.input?.sessionId === bodyId && other.input?.type === 'stop')))) return false;
+          || (other.type === 'environment_command' && other.input?.sessionId === bodyId && other.input?.type === 'stop'
+            && this.recoveryEligible(other))))) return false;
     }
     if (resource.lastExecutionAt && resource.config.cooldownMs > 0) {
       return now - new Date(resource.lastExecutionAt).getTime() >= resource.config.cooldownMs;
@@ -381,6 +399,7 @@ export class UnifiedQueueManager {
     this.reconcileTimeBounds(now);
     const candidates = this.sortTasks([...this.tasks.values()].filter(task => {
       if (task.state !== 'queued') return false;
+      if (!this.recoveryEligible(task)) return false;
       if (task.cancellationRequestedAt) return false;
       if (task.notBefore && new Date(task.notBefore).getTime() > now) return false;
       if (!this.isResourceAvailable(task, now)) return false;
@@ -393,6 +412,7 @@ export class UnifiedQueueManager {
     if (this.unconfirmedCommit) this.notifyChange();
     const task = this.tasks.get(taskId);
     if (!task || task.state !== 'queued' || task.cancellationRequestedAt || this.paused) return null;
+    if (!this.recoveryEligible(task)) return null;
     const now = Date.now();
     if (task.notBefore && new Date(task.notBefore).getTime() > now) return null;
     if (task.deadline && new Date(task.deadline).getTime() <= now) {
@@ -422,15 +442,19 @@ export class UnifiedQueueManager {
     return task;
   }
 
-  assertBodyLease(taskId: string): BodyLease {
+  hasCurrentBodyLease(taskId: string): boolean {
     const task = this.tasks.get(taskId);
     const lease = task?.bodyLease;
     const current = lease && this.bodyOwners.get(lease.bodyId);
-    if (!lease || !current || lease.generation !== current.generation || lease.executionId !== current.executionId) {
-      throw new Error('Stale body ownership');
-    }
+    return !this.unconfirmedCommit && Boolean(lease && current
+      && lease.generation === current.generation && lease.executionId === current.executionId);
+  }
+
+  assertBodyLease(taskId: string): BodyLease {
+    const task = this.tasks.get(taskId);
+    if (!this.hasCurrentBodyLease(taskId)) throw new Error('Stale body ownership');
     if (task?.cancellationRequestedAt || task?.state === 'cancelled') throw new Error('Body work was cancelled');
-    return lease;
+    return task!.bodyLease!;
   }
 
   private releaseCapacity(task: QueuedTask): void {
@@ -582,11 +606,12 @@ export class UnifiedQueueManager {
     return { type: 'task_cancelled', taskId: task.id, lane: this.laneFor(task.resource, task.type), details: { reason } };
   }
 
-  acknowledgeCancellation(taskId: string): QueuedTask | null {
+  acknowledgeCancellation(taskId: string, result?: Record<string, any>): QueuedTask | null {
     const task = this.tasks.get(taskId);
     if (!task || !['leased', 'waiting'].includes(task.state) || !task.cancellationRequestedAt) return null;
     if (task.state === 'leased') this.releaseCapacity(task);
     task.state = 'cancelled';
+    if (result) task.result = result;
     task.completedAt = new Date().toISOString();
     this.addTerminal(task);
     this.notifyChange();
@@ -651,14 +676,6 @@ export class UnifiedQueueManager {
 
   getHistory(): QueuedTask[] {
     return this.terminalOrder.map(id => this.tasks.get(id)).filter((task): task is QueuedTask => Boolean(task));
-  }
-
-  clearQueued(): number {
-    const candidates = [...this.tasks.values()].filter(task =>
-      task.state === 'queued' || task.state === 'waiting');
-    for (const task of candidates) this.cancel(task.id, 'Cancelled by clear queued');
-    this.emit({ type: 'lane_cleared', details: { cancelled: candidates.length, runningPreserved: true } });
-    return candidates.length;
   }
 
   pause(): void {
@@ -818,7 +835,7 @@ export class UnifiedQueueManager {
         continue;
       }
       if (task.state === 'leased') {
-        task.startedAt = undefined;
+        if (!task.bodyLease) task.startedAt = undefined;
         task.leaseOwner = undefined;
         if (task.bodyLease) {
           task.state = 'waiting';

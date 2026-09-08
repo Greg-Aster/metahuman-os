@@ -14,8 +14,8 @@ import {
 } from '../environment/helpers.js';
 import type { NodeSlot } from '../types.js';
 import { ROBOT_OPERATOR_DECISION_JSON_SCHEMA } from './decision-parser.node.js';
-import { ROBOT_ACTION_RESULT_JSON_SCHEMA } from './action-result-parser.node.js';
-import { ROBOT_GOAL_REVIEW_JSON_SCHEMA } from './goal-review-parser.node.js';
+import { buildRobotActionResultJsonSchema } from './action-result-parser.node.js';
+import { buildRobotGoalReviewJsonSchema } from './goal-review-parser.node.js';
 import { buildRobotAutonomyControllerJsonSchema } from './autonomy-controller-parser.node.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -43,6 +43,7 @@ function frameSummary(frame: EnvironmentVisualFrame): Record<string, unknown> {
     mimeType: frame.mimeType,
     width: frame.width,
     height: frame.height,
+    actionId: cleanText(frame.metadata?.actionId, 200) || undefined,
     correlationId: cleanText(frame.metadata?.correlationId, 200) || undefined,
   };
 }
@@ -88,7 +89,7 @@ function consolidatedHistory(value: unknown): Array<Record<string, unknown>> {
               dialogueSource: cleanText(meta.dialogueSource, 100) || null,
               correlationId: cleanText(meta.correlationId, 200) || null,
               tags: normalizedTags(meta.tags),
-              taskLifecycle: boundedObject(meta.taskLifecycle, 2_000),
+              taskLifecycle: meta.taskLifecycle ?? null,
             },
           }
         : {}),
@@ -122,17 +123,6 @@ function consolidatedInnerHistory(value: unknown): Array<Record<string, unknown>
       },
     }];
   });
-}
-
-function boundedObject(value: unknown, maxLength = 8_000): unknown {
-  if (!isRecord(value) && !Array.isArray(value)) return value ?? null;
-  try {
-    const encoded = JSON.stringify(value);
-    if (encoded.length <= maxLength) return value;
-    return { truncatedJson: encoded.slice(0, maxLength) };
-  } catch {
-    return null;
-  }
 }
 
 function selectedImageParts(
@@ -188,7 +178,7 @@ function compactFeedback(observation: EnvironmentObservation): Array<Record<stri
     type: feedback.type,
     message: cleanText(feedback.message, 1_000),
     actionId: feedback.actionId ?? null,
-    data: boundedObject(feedback.data, 2_000),
+    data: feedback.data ?? null,
   }));
 }
 
@@ -416,7 +406,6 @@ async function buildRobotOperatorContext(
       : [];
     const seenMemories = new Set<string>();
     const memoryContext = [...suppliedMemories, ...delegatedMemories].flatMap(memory => {
-      const bounded = boundedObject(memory, 4_000);
       const key = typeof memory === 'string'
         ? cleanText(memory, 4_000)
         : isRecord(memory)
@@ -424,7 +413,7 @@ async function buildRobotOperatorContext(
           : '';
       if (!key || seenMemories.has(key)) return [];
       seenMemories.add(key);
-      return [bounded];
+      return [memory];
     }).slice(0, 5);
     const images = visionSelected && inputs.currentVisualEvidence === true
       ? selectedImageParts(inputs.images, inputs.frames)
@@ -438,10 +427,10 @@ async function buildRobotOperatorContext(
     const latestActionContext = isRecord(inputs.actionContext)
       ? inputs.actionContext
       : null;
-    const latestActionCorrelationId = cleanText(latestActionContext?.correlationId, 200);
+    const reportedActionId = cleanText(observation?.metadata?.actionId, 200);
     const currentActionContext = latestActionContext
-      && cycleId
-      && latestActionCorrelationId === cycleId
+      && reportedActionId
+      && cleanText(latestActionContext.actionId, 200) === reportedActionId
       ? latestActionContext
       : null;
     const currentActionId = cleanText(currentActionContext?.actionId, 200);
@@ -456,7 +445,7 @@ async function buildRobotOperatorContext(
     const historicalLatestAction = latestActionContext
       && !currentActionContext
       && !latestActionAlreadyInHistory
-      ? boundedObject(latestActionContext, 2_000)
+      ? latestActionContext
       : null;
     const projectedRobotStatus = robotStatusSelected && isRecord(inputs.robotStatus)
       ? projectRobotStatusContext(inputs.robotStatus)
@@ -470,12 +459,12 @@ async function buildRobotOperatorContext(
       : null;
     const activeDesires = (outputContract === 'autonomy_controller' || outputContract === 'goal_review')
       && Array.isArray(inputs.activeDesires)
-      ? inputs.activeDesires.map(desire => boundedObject(desire, 1_500))
+      ? inputs.activeDesires
       : [];
-    const availableTasks = outputContract === 'autonomy_controller' && Array.isArray(inputs.availableTasks)
-      ? inputs.availableTasks.filter(isRecord).map(task => boundedObject(task, 2_000))
+    const availableTasks = (outputContract === 'autonomy_controller' || outputContract === 'goal_review') && Array.isArray(inputs.availableTasks)
+      ? inputs.availableTasks.filter(isRecord).map(({ id, name, description, kind }) => ({ id, name, description, kind }))
       : [];
-    const autonomyActivityHistory = outputContract === 'autonomy_controller'
+    const autonomyActivityHistory = (outputContract === 'autonomy_controller' || outputContract === 'goal_review')
       && Array.isArray(inputs.autonomyActivityHistory)
       ? inputs.autonomyActivityHistory.filter(isRecord)
       : [];
@@ -501,15 +490,15 @@ async function buildRobotOperatorContext(
         ? {
             observedAt: observation.timestamp,
             stateObservedAt: cleanText(inputs.sourceObservationAt, 100) || observation.timestamp,
-            state: boundedObject(observation.state, 8_000),
-            location: boundedObject(observation.location, 4_000),
-            map: boundedObject(observation.map, 4_000),
-            capabilities: boundedObject({
+            state: observation.state ?? null,
+            location: observation.location ?? null,
+            map: observation.map ?? null,
+            capabilities: {
               ...baseCapabilities,
               ...(Object.keys(robotCommandDescriptions).length > 0
                 ? { robotCommandDescriptions }
                 : {}),
-            }, 8_000),
+            },
             text: (observation.text ?? []).slice(-8).map(event => ({
               source: event.source,
               sender: event.senderName ?? event.senderId ?? null,
@@ -519,7 +508,7 @@ async function buildRobotOperatorContext(
           }
         : {}),
       feedback,
-      verifiedCurrentAction: boundedObject(currentActionContext, 2_000),
+      verifiedCurrentAction: currentActionContext,
       visualEvidence: {
         attached: images.length > 0,
         verifiedForDecision: visualEvidenceVerified,
@@ -529,6 +518,7 @@ async function buildRobotOperatorContext(
     const supportingMemoryContext = reflectionTrigger ? [] : memoryContext;
     const contextEnvelope = {
       execution: inputs.execution ?? null,
+      ...(availableTasks.length ? { availableTasks } : {}),
       robotOperatorContext: {
         activePersona: personaText || null,
         ...(routingAnalysis ? { selectedRoutes: routingAnalysis } : {}),
@@ -631,11 +621,11 @@ async function buildRobotOperatorContext(
       jsonSchema: outputContract === 'delegation'
         ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA
         : outputContract === 'action_result'
-          ? ROBOT_ACTION_RESULT_JSON_SCHEMA
+          ? buildRobotActionResultJsonSchema(inputs.execution)
           : outputContract === 'goal_review'
-            ? ROBOT_GOAL_REVIEW_JSON_SCHEMA
+            ? buildRobotGoalReviewJsonSchema(inputs.availableTasks)
             : outputContract === 'autonomy_controller'
-              ? buildRobotAutonomyControllerJsonSchema(availableTasks)
+              ? buildRobotAutonomyControllerJsonSchema(inputs.availableTasks)
             : autonomySelectorSchema(
                 observation,
                 robotObserver,
@@ -738,7 +728,7 @@ export const robotGoalReviewContextNode = fixedContextNode(
   contextInputs(
     'instruction', 'observation', 'images', 'frames', 'conversationHistory', 'innerHistory',
     'actionHistory', 'personaText', 'robotStatus', 'activeDesires', 'robotObserver',
-    'sourceObservationAt', 'currentVisualEvidence',
+    'sourceObservationAt', 'currentVisualEvidence', 'availableTasks', 'autonomyActivityHistory',
   ),
   'goal_review',
 );

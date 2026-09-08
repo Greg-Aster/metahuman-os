@@ -31,7 +31,7 @@ function cleanText(value: unknown): string {
 
 export const environmentImageInputNode = defineNode({
   id: 'environment_image_input',
-  name: 'Select Camera Frames for Current Action',
+  name: 'Select Available Camera Evidence',
   category: 'environment',
   inputs: [
     { name: 'visual', label: 'Current camera frame', type: 'object', optional: true, description: 'The latest camera frame received from the robot bridge.' },
@@ -47,7 +47,7 @@ export const environmentImageInputNode = defineNode({
     { name: 'frames', label: 'Selected camera frames', type: 'array', description: 'Metadata for the camera frames this node selected.' },
     { name: 'rejectedCount', label: 'Rejected frames', type: 'number', description: 'Number of frames rejected because they were not valid supported JPEG data.' },
     { name: 'current', label: 'Current evidence available', type: 'boolean', description: 'Whether at least one selected frame belongs to this graph run.' },
-    { name: 'verified', label: 'Verified evidence available', type: 'boolean', description: 'Whether a selected frame either belongs to this graph run or matches the current Robot Status action result.' },
+    { name: 'verified', label: 'Camera evidence available', type: 'boolean', description: 'Whether valid Bridge camera evidence is available. Its timestamp and action identity describe what it can establish; current separately identifies a triggering frame.' },
   ],
   presentation: {
     badges: [
@@ -60,12 +60,11 @@ export const environmentImageInputNode = defineNode({
       { output: 'rejectedCount', label: 'Rejected' },
     ],
   },
-  description: 'Checks camera frames received from the robot. It returns a triggering frame or a saved frame that matches the current Robot Status action result, plus an optional saved before-action frame. It sends no command, changes no status, and calls no model.',
+  description: 'Selects the latest available Bridge camera image for observation, or matches images to a specific returned action for result review. Retains recorded timestamps and action IDs, and sends no capture command.',
   async execute(inputs, context) {
     const candidates = framesFromInputs(inputs.visual, inputs.visuals);
     const valid = candidates.filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl));
     const observationCurrent = inputs.observationCurrent !== false;
-    if (observationCurrent && context.graphExecution) context.graphExecution.recordFrames(valid);
     const status = isRecord(inputs.execution) ? inputs.execution : null;
     const task = isRecord(status?.task)
       ? status.task as unknown as RobotStatusTask
@@ -75,29 +74,25 @@ export const environmentImageInputNode = defineNode({
       : null;
     const actionId = cleanText(inputs.actionId);
     const correlationId = cleanText(inputs.correlationId);
-    const taskActionId = cleanText(task?.feedback?.actionId) || cleanText(task?.actionId);
-    const taskHasTerminalResult = Boolean(task?.feedback && taskActionId);
     const baseline = terminalFeedback && task?.baselineFrame
       ? context.graphExecution?.frame(task.baselineFrame.id)
       : undefined;
-    const current = observationCurrent && terminalFeedback
-      ? [...valid].reverse().find(frame => {
+    const latest = [...valid].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    const resultFrame = terminalFeedback
+      ? latest.find(frame => {
           const frameActionId = cleanText(frame.metadata?.actionId);
           const frameCorrelationId = cleanText(frame.metadata?.correlationId);
-          return Boolean(
-            (actionId && frameActionId === actionId)
-            || (correlationId && frameCorrelationId === correlationId)
-          );
+          const reportedActionId = actionId || cleanText(terminalFeedback.actionId);
+          return frameActionId
+            ? frameActionId === reportedActionId
+            : Boolean(correlationId && frameCorrelationId === correlationId);
         })
-      : observationCurrent ? valid[0] : undefined;
-    const correlatedActionResult = !observationCurrent && taskHasTerminalResult
-      ? [...valid].reverse().find(frame => (
-          cleanText(frame.metadata?.actionId) === taskActionId
-        ))
       : undefined;
-    const accepted = [baseline, current, correlatedActionResult]
+    const selected = terminalFeedback ? resultFrame : latest[0];
+    const accepted = [baseline, selected]
       .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
       .filter((frame, index, frames) => frames.findIndex(candidate => candidate.id === frame.id) === index);
+    if (context.graphExecution) context.graphExecution.recordFrames(accepted);
     return {
       images: accepted.map(frame => ({
         type: 'image_url',
@@ -105,8 +100,8 @@ export const environmentImageInputNode = defineNode({
       })),
       frames: accepted,
       rejectedCount: candidates.length - valid.length,
-      current: Boolean(current),
-      verified: Boolean(current || correlatedActionResult),
+      current: Boolean(observationCurrent && selected),
+      verified: Boolean(selected),
     };
   },
 });

@@ -9,6 +9,14 @@ import { executableHash } from './executable-version.js'
 export const GRAPH_RUNTIME_VERSION = 'langgraph-svelteflow-1'
 export const CHECKPOINT_SCHEMA_VERSION = 1
 
+/** AbortSignal permits arbitrary reasons; graph errors must carry an Error object. */
+export function executionAbortError(reason: unknown): Error {
+  if (reason instanceof Error) return reason
+  const error = new Error(typeof reason === 'string' ? reason : 'Execution cancelled', { cause: reason })
+  error.name = 'AbortError'
+  return error
+}
+
 /** Resolve against current executable definitions, never against a saved expected hash. */
 export function executionDefinition(graph: SvelteFlowGraph): ExecutionDefinition {
   const nodeVersions: Record<string, string> = {}

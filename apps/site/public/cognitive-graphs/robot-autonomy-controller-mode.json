@@ -376,6 +376,36 @@
         "nodeType": "work_result_wait",
         "properties": {}
       }
+    },
+    {
+      "id": "remaining-objective",
+      "type": "default",
+      "position": {
+        "x": 1550,
+        "y": 1900
+      },
+      "data": {
+        "nodeType": "execution_context",
+        "label": "remaining-objective",
+        "properties": {
+          "eventLimit": 16
+        }
+      }
+    },
+    {
+      "id": "review-remaining-objective",
+      "type": "default",
+      "position": {
+        "x": 1800,
+        "y": 1900
+      },
+      "data": {
+        "nodeType": "workflow_call",
+        "label": "review-remaining-objective",
+        "properties": {
+          "graph": "robot-goal-review"
+        }
+      }
     }
   ],
   "edges": [
@@ -828,6 +858,54 @@
       "type": "default",
       "data": {
         "type": "object"
+      }
+    },
+    {
+      "id": "contextual-agent-result-result-remaining-objective-control",
+      "source": "agent-result",
+      "sourceHandle": "result",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "kind": "control",
+        "when": {
+          "output": "result",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "contextual-selected-workflow-completed-remaining-objective-control",
+      "source": "selected-workflow",
+      "sourceHandle": "completed",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "completed",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "contextual-remaining-objective-hasActiveTask-review-remaining-objective-control",
+      "source": "remaining-objective",
+      "sourceHandle": "hasActiveTask",
+      "target": "review-remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "hasActiveTask",
+          "truthy": true
+        }
       }
     }
   ],

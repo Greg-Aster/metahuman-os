@@ -561,7 +561,7 @@ test('Robot Status Out preserves the execution origin rather than inferring stee
   assert.equal(restated.task.objectiveId, initial.task.objectiveId)
 })
 
-test('Robot Status Out does not replace an unfinished task for a standalone action', async () => {
+test('Robot Status Out records a new action within the execution without replacing its objective', async () => {
   const username = 'robot-status-standalone-action-owner'
   const initialInput = {
     instruction: 'Locate the missing object.',
@@ -605,18 +605,49 @@ test('Robot Status Out does not replace an unfinished task for a standalone acti
       requested: { type: 'robotCommand', command: 'turn_right_45' },
     },
   }
-  const { outputs: [, standalone, returned] } = await statusGraph(username,
+  const { outputs: [initial, standalone, returned] } = await statusGraph(username,
     [{ inputs: initialInput }, { inputs: standaloneInput }, { inputs: returnedInput }])
 
   assert.equal(standalone.task.objective, 'Locate the missing object.')
-  assert.equal(standalone.task.actionId, 'search-capture')
+  assert.equal(standalone.task.actionId, 'standalone-turn')
+  assert.equal(standalone.task.actionStatus, 'coordinated_for_adapter')
+  assert.equal(standalone.task.feedback, null)
+  assert.deepEqual(standalone.task.decision, initial.task.decision)
+  assert.equal(standalone.task.objectiveId, initial.task.objectiveId)
   assert.equal(standalone.lastAction.command, 'turn_right_45')
   assert.equal(standalone.lastAction.actionId, 'standalone-turn')
 
   assert.equal(returned.task.objective, 'Locate the missing object.')
-  assert.equal(returned.task.actionId, 'search-capture')
+  assert.equal(returned.task.actionId, 'standalone-turn')
+  assert.equal(returned.task.actionStatus, 'completed')
+  assert.equal(returned.task.feedback.actionId, 'standalone-turn')
+  assert.deepEqual(returned.task.decision, initial.task.decision)
   assert.equal(returned.lastAction.command, 'turn_right_45')
   assert.equal(returned.lastAction.status, 'completed')
+
+  // A different execution may share the status file, but must not adopt its goal.
+  const { executionId, outputs: [unrelated] } = await statusGraph(username, [{ inputs: standaloneInput }])
+  assert.notEqual(executionId, initial.task.executionId)
+  assert.equal(unrelated.task, null)
+})
+
+test('correlated terminal facts advance without a semantic objective change', async () => {
+  for (const type of ['completed', 'failed', 'cancelled']) {
+    const { outputs: [sent, returned] } = await statusGraph(`result-facts-${type}`, [
+      { inputs: { taskDecision: { objective: 'Inspect the area.', completionCriteria: 'The target is identified.',
+        outcome: 'act', objectiveComplete: false, reason: 'Obtain evidence.' },
+        actions: [{ type: 'captureImage' }],
+        bridgeRecord: { status: 'coordinated_for_adapter', commands: [{ id: 'current-action' }] } } },
+      { inputs: { taskDecision: null,
+        terminalFeedback: { actionId: 'current-action', type, message: 'Returned physical evidence.' },
+        actionContext: { actionId: 'current-action', requested: { type: 'captureImage' } } } },
+    ])
+    assert.equal(returned.task.actionStatus, type)
+    assert.equal(returned.task.feedback.actionId, 'current-action')
+    assert.deepEqual(returned.task.decision, sent.task.decision)
+    assert.equal(returned.task.objectiveId, sent.task.objectiveId)
+    assert.equal(returned.task.completionCriteria, sent.task.completionCriteria)
+  }
 })
 
 test('Robot Status Out projects the correlated LLM completion decision from the same execution', async () => {
@@ -851,8 +882,12 @@ test('Robot task lifecycle waits and reviews as explicit children instead of sta
       requiredCompletionBasis: 'visual_observation',
       observationSummary: 'The last view did not contain the cat.',
       completionEvidence: '',
-      nextInstruction: 'Inspect a different open area for the cat.',
+      taskId: 'robot-autonomy-executor',
+      instruction: 'Inspect a different open area for the cat.',
     }),
+    availableTasks: [{ id: 'robot-autonomy-executor', name: 'Robot Autonomy Executor', kind: 'environment-executor',
+      description: 'Execute one high-level embodied intention.', handler: 'workflow.boredom-autonomy',
+      taskType: 'generic', priority: 'normal', tags: [] }],
     execution: { task: { objective: 'Find the cat.' } },
   }, {}, {})
   assert.deepEqual(reviewed.executorDecision, {

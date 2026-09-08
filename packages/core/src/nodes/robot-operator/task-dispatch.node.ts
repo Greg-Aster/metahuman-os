@@ -21,7 +21,7 @@ export const robotAutonomyTaskDispatchNode = defineNode({
   category: 'operator',
   inputs: [
     { name: 'decision', type: 'object', description: 'Validated Agent Catalog task selected by the controller' },
-    { name: 'robotObserver', type: 'object', description: 'Robot Operator cycle that owns this Full-mode decision' },
+    { name: 'robotObserver', type: 'object', optional: true, description: 'Originating robot cycle, when this execution was started by Robot Operator' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Current Environment Bridge session, when available' },
     { name: 'observation', type: 'object', optional: true, description: 'Bridge evidence already loaded by this workflow' },
   ],
@@ -58,13 +58,10 @@ export const robotAutonomyTaskDispatchNode = defineNode({
     const username = cleanText(context.username, 100)
     if (!username || username === 'system') return reject('missing_user_owner')
     const robotObserver = parseRobotObserverCycle(inputs.robotObserver)
-    if (!robotObserver || robotObserver.requestedBy !== 'robot-autonomy-controller') {
-      return reject('missing_controller_cycle')
-    }
-
     const triggerConfig = getTriggerConfigService().load(false).config.agents[selectedTaskId]
     const taskType = agentTaskType(selectedTaskId)
-    const cycleId = robotObserver.cycleId
+    const cycleId = robotObserver?.cycleId || context.graphExecution?.executionId
+    if (!cycleId) throw new Error('Autonomy dispatch requires an owning execution or robot cycle')
     const sessionId = cleanText(inputs.sessionId, 200)
     if (currentAgent.owner === 'robot-operator') {
       const graph = robotOperatorChildGraph(loadRobotOperatorConfig(), selectedTaskId as RobotOperatorStimulusAgent)
@@ -73,9 +70,12 @@ export const robotAutonomyTaskDispatchNode = defineNode({
         invocation: { graph, context: {
           userMessage: '', environmentObservation: inputs.observation,
           robotOperatorContext: {
-            ...context.robotOperatorContext, robotObserver: { ...robotObserver, graph, requestedBy: selectedTaskId },
+            ...context.robotOperatorContext, robotObserver: {
+              cycleId, step: robotObserver?.step ?? 1, triggerSource: robotObserver?.triggerSource ?? 'autonomy',
+              graph, requestedBy: selectedTaskId,
+            },
             stimulusAgent: selectedTaskId, sessionId,
-            controllerDecision: { instruction, reason, observationSummary },
+            plannerDecision: { instruction, reason, observed: observationSummary },
           },
         } },
       }
@@ -93,15 +93,8 @@ export const robotAutonomyTaskDispatchNode = defineNode({
         triggeredBy: 'robot-autonomy-controller',
         usesLLM: currentAgent.usesLLM,
         cycleId,
+        graphContext: { taskBrief: JSON.stringify({ instruction, reason, observationSummary }) },
         ...(sessionId ? { sessionId } : {}),
-        robotOperatorContext: {
-          robotObserver,
-          controllerDecision: {
-            ...(instruction ? { instruction } : {}),
-            reason,
-            observationSummary,
-          },
-        },
       },
       correlationId: cycleId,
       idempotencyKey: `robot-autonomy-controller:${cycleId}:${selectedTaskId}`,

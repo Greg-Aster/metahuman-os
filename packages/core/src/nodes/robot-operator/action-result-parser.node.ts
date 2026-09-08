@@ -87,6 +87,14 @@ function currentObjective(value: unknown): string {
   return cleanText(task?.objective, 1_000)
 }
 
+/** Result review may update an existing objective; it does not create one. */
+export function buildRobotActionResultJsonSchema(execution: unknown) {
+  return currentObjective(execution) ? ROBOT_ACTION_RESULT_JSON_SCHEMA : {
+    ...ROBOT_ACTION_RESULT_JSON_SCHEMA,
+    properties: { ...ROBOT_ACTION_RESULT_JSON_SCHEMA.properties, taskDecision: { type: 'null' } },
+  }
+}
+
 export const robotActionResultParserNode = defineNode({
   id: 'robot_action_result_parser',
   name: 'Interpret Robot Action Result',

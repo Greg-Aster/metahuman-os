@@ -111,6 +111,9 @@
           "temperature": 0.7,
           "maxTokens": 768,
           "timeout": 300000
+        },
+        "schema": {
+          "isOutputNode": true
         }
       }
     },
@@ -196,6 +199,22 @@
         "label": "Complete Durable Cycle",
         "nodeType": "inner_curiosity_complete",
         "properties": {}
+      }
+    },
+    {
+      "id": "task-brief",
+      "type": "default",
+      "position": {
+        "x": -400,
+        "y": 0
+      },
+      "data": {
+        "nodeType": "text_input",
+        "label": "Delegated Task Context",
+        "properties": {
+          "inputKey": "taskBrief",
+          "message": ""
+        }
       }
     }
   ],
@@ -463,6 +482,17 @@
       "sourceHandle": "roll",
       "targetHandle": "followOnRoll",
       "data": { "type": "number", "comment": "Retain the deterministic decision roll" }
+    },
+    {
+      "id": "delegated-task-context",
+      "source": "task-brief",
+      "sourceHandle": "text",
+      "target": "question",
+      "targetHandle": "taskBrief",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
     }
   ]
 }

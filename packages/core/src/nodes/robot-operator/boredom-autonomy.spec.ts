@@ -41,6 +41,7 @@ const { robotOperatorEnvironmentDispatchNode } = await import('./environment-dis
 const { robotAutonomyTaskDispatchNode } = await import('./task-dispatch.node.js');
 const { robotAutonomyControllerParserNode } = await import('./autonomy-controller-parser.node.js');
 const { robotAutonomyTaskCatalogNode } = await import('./task-catalog.node.js');
+const { robotOperatorInputNode } = await import('./input.node.js');
 
 const ALL_AUTONOMY_ROUTES = {
   needsResponse: true,
@@ -52,6 +53,61 @@ const ALL_AUTONOMY_ROUTES = {
   needsAction: true,
   needsTaskLifecycle: true,
 };
+
+test('continuation authorization preserves specialist choices and operating-mode semantics', async () => {
+  const { executionEventWaitNode } = await import('../utility/execution-event-wait.node.js');
+  const choice = { task: { id: 'reflector' }, instruction: 'Consider the current observation.' };
+  const config = path.join(testRoot, 'etc', 'active-operator.json');
+  for (const mode of ['full', 'semi', 'reactive']) {
+    fs.writeFileSync(config, JSON.stringify({ autonomyMode: mode }));
+    const events = [{ kind: 'autonomy_trigger', payload: {} }, { kind: 'user_steering', payload: { userMessage: 'Updated intention' } }];
+    let waits = 0;
+    const result = await executionEventWaitNode.execute({ selection: choice }, {
+      graphExecution: { waitForEvent: () => events[waits++] },
+    }, { waitForEvent: false, userGraph: 'environment', autonomyGraph: 'robot-autonomy-controller' });
+    assert.equal(waits, mode === 'full' ? 0 : mode === 'semi' ? 1 : 2);
+    if (mode !== 'reactive') assert.deepEqual(result.selection, choice);
+    else {
+      assert.equal(result.selection, null);
+      assert.equal(result.invocation.graph, 'environment');
+      assert.equal(result.invocation.context.userMessage, 'Updated intention');
+    }
+  }
+});
+
+test('execution context represents repeated observations losslessly without copying their unchanged envelopes', async () => {
+  const { executionEventContext } = await import('../utility/execution-context.node.js');
+  const base = { capabilities: { descriptions: 'Capability information. '.repeat(500) },
+    state: { body: { voltage: 7.1 }, toRemove: true }, visual: { id: 'frame-1', timestamp: 'first', dataUrl: 'raw-image-data' } };
+  const changed = structuredClone(base);
+  changed.state.body.voltage = 7.05;
+  delete (changed.state as any).toRemove;
+  changed.visual = { ...base.visual, id: 'frame-2', timestamp: 'second' };
+  const events = [base, changed, changed].map((environmentObservation, index) => ({
+    eventId: `event-${index}`, executionId: 'execution', sequence: index + 1, createdAt: index,
+    kind: 'observation_received', payload: { environmentObservation },
+  }));
+  const original = structuredClone(events);
+  const projected = executionEventContext(events);
+  let restored: any;
+  for (let index = 0; index < projected.length; index++) {
+    const payload = projected[index].payload as any;
+    if (payload.environmentObservation) restored = structuredClone(payload.environmentObservation);
+    else for (const change of payload.observationChanges) {
+      let parent = restored;
+      for (const key of change.path.slice(0, -1)) parent = parent[key];
+      const key = change.path.at(-1);
+      if (change.removed) delete parent[key];
+      else parent[key] = change.value;
+    }
+    assert.deepEqual(restored.state, events[index].payload.environmentObservation.state);
+    assert.equal(restored.visual.id, events[index].payload.environmentObservation.visual.id);
+    assert.deepEqual(restored.capabilities, base.capabilities);
+  }
+  assert.deepEqual(events, original, 'The durable event history is not changed');
+  assert.ok(JSON.stringify(projected).length < JSON.stringify(events).length / 2);
+  assert.ok(!JSON.stringify(projected).includes('raw-image-data'));
+});
 
 function robotObservation() {
   return {
@@ -107,6 +163,25 @@ function modelInputEnvelope(result: any): any {
   assert.ok(objectStart >= 0, 'model input must contain one structured context envelope')
   return JSON.parse(text.slice(objectStart))
 }
+
+test('autonomy decision inputs preserve available sight, capability meanings and the selected specialist brief', async () => {
+  const { environmentImageInputNode } = await import('../environment/image-input.node.js');
+  const { robotOperatorInputNode } = await import('./input.node.js');
+  const frame = { id: 'available-frame', timestamp: '2026-09-08T20:00:00Z',
+    dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=', metadata: { actionId: 'previous-action' } };
+  const image = await environmentImageInputNode.execute({ visual: frame, observationCurrent: false,
+    execution: { task: null } }, {});
+  assert.equal(image.frames[0]?.id, frame.id);
+  assert.equal(image.current, false, 'Available evidence must not masquerade as a new capture');
+  const task = { id: 'reflector', name: 'Reflector', description: 'Capability purpose from the catalog',
+    kind: 'agent', handler: 'agent.reflector', taskType: 'generic', priority: 'low', tags: [] };
+  const context = await robotAutonomyControllerContextNode.execute({ instruction: 'Choose a relevant activity.',
+    availableTasks: [task], execution: { task: null } }, {});
+  assert.ok(JSON.stringify(context.messages).includes(task.description));
+  const brief = { observed: 'A changed circumstance.', instruction: 'Investigate its meaning.', reason: 'It informs the current objective.' };
+  const input = await robotOperatorInputNode.execute({}, { robotOperatorContext: { plannerDecision: brief } });
+  assert.deepEqual(input.plannerDecision, brief);
+})
 
 test('configured Conversation Buffer history reads the canonical conversation context', async () => {
   const conversationHistory = [
@@ -691,26 +766,45 @@ test('Robot Operator context keeps prior action context without treating it as c
 });
 
 test('Robot Action Result context exposes the correlated result as current evidence exactly once', async () => {
-  const observation: any = robotObservation();
-  observation.metadata.actionContext = {
-    actionId: 'current-action',
-    correlationId: 'cycle-1',
-    status: 'completed',
-    requested: { type: 'robotCommand', command: 'nod' },
-    result: { type: 'completed', message: 'nod completed' },
-  };
+  for (const autonomous of [false, true]) {
+    const observation: any = robotObservation();
+    if (!autonomous) {
+      delete observation.metadata.robotObserver;
+      delete observation.metadata.correlationId;
+    }
+    observation.metadata.actionId = 'current-action';
+    observation.feedback = [{ id: 'matched-report', type: 'completed', actionId: 'current-action',
+      timestamp: observation.timestamp, message: 'Canonical completion receipt' }];
+    const actionContext = {
+      actionId: 'current-action',
+      correlationId: 'cycle-1',
+      status: 'completed',
+      requested: { type: 'robotCommand', command: 'nod' },
+      result: { type: 'completed', message: 'nod completed' },
+    };
+    const inputs = {
+      instruction: 'Interpret the matched result.',
+      observation,
+      robotObserver: observation.metadata.robotObserver,
+      actionContext,
+      execution: { task: null },
+    };
+    const result = await robotActionResultContextNode.execute(inputs, {}, {});
+    assert.equal(result.context.stimulus.verifiedCurrentAction?.requested.command, 'nod');
+    assert.equal(result.context.stimulus.feedback[0]?.id, 'matched-report');
+    assert.equal(result.context.historicalLatestActionIncluded, false);
+    assert.equal(JSON.stringify(result.messages).match(/nod completed/g)?.length, 1);
+    assert.deepEqual(result.jsonSchema.properties.taskDecision, { type: 'null' });
 
-  const result = await robotActionResultContextNode.execute({
-    instruction: 'Review the verified result and choose the next episode consequence.',
-    routingAnalysis: ALL_AUTONOMY_ROUTES,
-    observation,
-    robotObserver: observation.metadata.robotObserver,
-    actionContext: observation.metadata.actionContext,
-  }, {}, {});
+    const objectiveResult = await robotActionResultContextNode.execute({ ...inputs,
+      execution: { task: { objective: 'Observe the doorway.' } } }, {}, {});
+    assert.equal(objectiveResult.jsonSchema.properties.taskDecision.anyOf.length, 2);
 
-  assert.equal(result.context.stimulus.verifiedCurrentAction.requested.command, 'nod');
-  assert.equal(result.context.historicalLatestActionIncluded, false);
-  assert.equal(JSON.stringify(result.messages).match(/nod completed/g)?.length, 1);
+    observation.metadata.actionId = 'different-action';
+    const mismatched = await robotActionResultContextNode.execute(inputs, {}, {});
+    assert.equal(mismatched.context.stimulus.verifiedCurrentAction, null,
+      'A shared autonomy cycle must not make a different action current');
+  }
 });
 
 test('Boredom Reflection places sampled memories in the final deliberation input exactly once', async () => {
@@ -878,9 +972,11 @@ test('Robot Autonomy Controller prepares the selected catalog-backed robot child
   assert.equal(dispatched.invocation.graph, 'boredom-observer');
   assert.equal(dispatched.invocation.context.robotOperatorContext.robotObserver.cycleId, 'controller-cycle');
   assert.equal(
-    dispatched.invocation.context.robotOperatorContext.controllerDecision.instruction,
+    dispatched.invocation.context.robotOperatorContext.plannerDecision.instruction,
     'Capture and consider a current view for the unresolved objective.',
   );
+  const received = await robotOperatorInputNode.execute({}, dispatched.invocation.context, {});
+  assert.equal(received.plannerInstruction, parsed.taskDecision.instruction);
 });
 
 test('Robot Autonomy Controller receives contextual daytime tasks from the canonical Agent Catalog', async () => {
@@ -982,7 +1078,7 @@ test('Robot Autonomy Controller context combines unfinished work, buffers, bridg
   assert.match(encoded, /Find the missing keys/);
   assert.match(encoded, /Please keep looking for my keys/);
   assert.match(encoded, /The last view was too dark/);
-  assert.doesNotMatch(encoded, /Acquires and evaluates one current robot-camera observation/);
+  assert.match(encoded, /Acquires and evaluates one current robot-camera observation/);
   assert.match(encoded, /Curious, attentive, and persistent/);
   assert.match(encoded, /Explore carefully/);
   assert.match(encoded, /prior-observer/);

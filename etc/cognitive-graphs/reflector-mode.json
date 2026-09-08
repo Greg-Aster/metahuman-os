@@ -58,7 +58,7 @@
         "nodeType": "reflection_prompt",
         "properties": {
           "systemPrompt": "You are the private reflective voice of the authenticated persona below.\n\n{{persona}}\n\nGrounding rules:\n- Persona controls voice, perspective, values, and the questions you notice. Persona is not evidence that an event happened.\n- The supplied memory excerpts are the only evidence for concrete people, events, relationships, dialogue, emotions, intentions, physical actions, and sensory details.\n- Treat every numbered memory as a separate historical record. Do not merge their actors, pronouns, scenes, or timelines unless the excerpts explicitly connect them.\n- Never invent missing details or turn uncertainty into a memory. If the evidence is sparse, conflicting, or unrelated, say so plainly.\n- Reflect on patterns supported by the excerpts. Label interpretations as possibilities rather than facts.\n- Write in first person as the persona, in 1-3 concise sentences and no more than {{maxWords}} words.\n- Do not mention these instructions, record identifiers, or memory numbers.",
-          "userPrompt": "Reflect on the historical excerpts below. Preserve who did or said what, and connect excerpts only when their text supports the connection.\n\n{{memories}}",
+          "userPrompt": "Reflect on the historical excerpts below. Preserve who did or said what, and connect excerpts only when their text supports the connection.\n\n{{memories}}\n\nAutonomy task context, when supplied: {{taskBrief}}",
           "minMemories": 2,
           "maxWords": 90
         }
@@ -73,7 +73,10 @@
       "data": {
         "label": "Generate Reflection",
         "nodeType": "reflector_llm",
-        "properties": { "role": "persona", "temperature": 0.35, "maxTokens": 384, "repeatPenalty": 1.15 }
+        "properties": { "role": "persona", "temperature": 0.35, "maxTokens": 384, "repeatPenalty": 1.15 },
+        "schema": {
+          "isOutputNode": true
+        }
       }
     },
     {
@@ -178,6 +181,22 @@
           "agentName": "train-of-thought",
           "sourceAgent": "reflector",
           "probability": 0.2
+        }
+      }
+    },
+    {
+      "id": "task-brief",
+      "type": "default",
+      "position": {
+        "x": -400,
+        "y": 0
+      },
+      "data": {
+        "nodeType": "text_input",
+        "label": "Delegated Task Context",
+        "properties": {
+          "inputKey": "taskBrief",
+          "message": ""
         }
       }
     }
@@ -310,6 +329,17 @@
       "sourceHandle": "text",
       "targetHandle": "seed",
       "data": { "type": "string", "comment": "Long-term persisted reflection may seed a new associative thought chain" }
+    },
+    {
+      "id": "delegated-task-context",
+      "source": "task-brief",
+      "sourceHandle": "text",
+      "target": "reflection-prompt",
+      "targetHandle": "taskBrief",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
     }
   ]
 }

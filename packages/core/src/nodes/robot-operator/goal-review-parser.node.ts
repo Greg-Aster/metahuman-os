@@ -1,5 +1,5 @@
 import { defineNode } from '../types.js'
-import type { RobotOperatorDecision } from './decision-parser.node.js'
+import { buildRobotAutonomyControllerJsonSchema, parseRobotAutonomyChoice } from './autonomy-controller-parser.node.js'
 
 const OUTCOMES = ['complete', 'continue', 'wait', 'request_user', 'abandon'] as const
 const COMPLETION_BASES = [
@@ -9,38 +9,42 @@ const COMPLETION_BASES = [
   'user_input',
 ] as const
 
-export const ROBOT_GOAL_REVIEW_JSON_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: [
-    'response',
-    'outcome',
-    'reason',
-    'requiredCompletionBasis',
-    'observationSummary',
-    'completionEvidence',
-    'nextInstruction',
-  ],
-  properties: {
-    response: {
-      type: 'string',
-      maxLength: 500,
-      description: 'Optional natural language addressed to the user. Leave empty when there is nothing useful to say; never place an outcome token, workflow name, agent name, or internal next instruction here.',
+export function buildRobotGoalReviewJsonSchema(tasks: unknown) {
+  const choice = buildRobotAutonomyControllerJsonSchema(tasks)
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'response',
+      'outcome',
+      'reason',
+      'requiredCompletionBasis',
+      'observationSummary',
+      'completionEvidence',
+      'taskId',
+      'instruction',
+    ],
+    properties: {
+      ...choice.properties,
+      response: {
+        type: 'string',
+        maxLength: 500,
+        description: 'Optional natural language addressed to the user. Leave empty when there is nothing useful to say; never place an outcome token, workflow name, agent name, or internal next instruction here.',
+      },
+      outcome: {
+        type: 'string',
+        enum: [...OUTCOMES],
+        description: 'Internal objective-lifecycle decision. This field controls routing and is not spoken.',
+      },
+      reason: { type: 'string', minLength: 1, maxLength: 500 },
+      requiredCompletionBasis: { type: 'string', enum: [...COMPLETION_BASES] },
+      observationSummary: { type: 'string', minLength: 1, maxLength: 500 },
+      completionEvidence: { type: 'string', maxLength: 1_000, description: 'Concrete supplied evidence establishing completion; required to be non-empty only for outcome complete.' },
     },
-    outcome: {
-      type: 'string',
-      enum: [...OUTCOMES],
-      description: 'Internal objective-lifecycle decision. This field controls routing and is not spoken.',
-    },
-    reason: { type: 'string', minLength: 1, maxLength: 500 },
-    requiredCompletionBasis: { type: 'string', enum: [...COMPLETION_BASES] },
-    observationSummary: { type: 'string', minLength: 1, maxLength: 500 },
-    completionEvidence: { type: 'string', maxLength: 1_000, description: 'Concrete supplied evidence establishing completion; required to be non-empty only for outcome complete.' },
-    nextInstruction: { type: 'string', maxLength: 1_000, description: 'Internal high-level instruction for Robot Autonomy Executor when outcome is continue; otherwise leave empty.' },
-  },
-} as const
+  } as const
+}
 
-const FIELDS: ReadonlySet<string> = new Set(ROBOT_GOAL_REVIEW_JSON_SCHEMA.required)
+const FIELDS: ReadonlySet<string> = new Set(buildRobotGoalReviewJsonSchema([]).required)
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -78,16 +82,19 @@ export const robotGoalReviewParserNode = defineNode({
   inputs: [
     { name: 'response', type: 'any', description: 'Strict JSON from the Robot Goal Review LLM' },
     { name: 'execution', type: 'object', description: 'Checkpointed execution whose objective is being reviewed' },
+    { name: 'availableTasks', type: 'array', description: 'Same capability catalog used for the initial autonomy decision' },
   ],
   outputs: [
+    { name: 'hasSelection', type: 'boolean', description: 'The LLM selected a capability to authorize before dispatch' },
     { name: 'awaitContinuation', type: 'boolean', description: 'The LLM chose to wait for a new event or user input' },
-    { name: 'executorDecision', type: 'object', description: 'High-level next instruction only when the LLM chose to continue through Robot Autonomy Executor' },
+    { name: 'executorDecision', type: 'object', description: 'High-level instruction when the LLM selected Robot Autonomy Executor' },
+    { name: 'agentDecision', type: 'object', description: 'Selected specialist and its LLM-authored purpose, or null' },
     { name: 'taskDecision', type: 'object', description: 'Validated LLM assessment persisted to Robot Status' },
     { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
   ],
   properties: {},
   propertySchemas: {},
-  description: 'Validates one LLM goal review and exposes a next instruction only when the LLM chose continuation.',
+  description: 'Validates the objective assessment and optional next capability chosen by the LLM; neither choice is inferred from the other.',
   async execute(inputs) {
     const parsed = parseJson(inputs.response)
     const invalid = (error: string): never => { throw new Error(error) }
@@ -102,7 +109,6 @@ export const robotGoalReviewParserNode = defineNode({
     const requiredCompletionBasis = cleanText(parsed.requiredCompletionBasis, 80)
     const observationSummary = cleanText(parsed.observationSummary, 500)
     const completionEvidence = cleanText(parsed.completionEvidence, 1_000)
-    const nextInstruction = cleanText(parsed.nextInstruction, 1_000)
     if (!OUTCOMES.includes(outcome as typeof OUTCOMES[number])) return invalid('Robot goal review outcome is not supported.')
     const objectiveComplete = outcome === 'complete'
     if (!objective) return invalid('Robot goal review requires one current execution objective.')
@@ -110,18 +116,19 @@ export const robotGoalReviewParserNode = defineNode({
     if (!COMPLETION_BASES.includes(requiredCompletionBasis as typeof COMPLETION_BASES[number])) {
       return invalid('Robot goal review completion basis is not supported.')
     }
-    if (outcome === 'continue' && !nextInstruction) {
-      return invalid('A continuing goal review requires one next instruction.')
-    }
     if (outcome === 'complete' && !completionEvidence) {
       return invalid('A completed goal review requires supplied completion evidence.')
     }
-    const executorDecision: RobotOperatorDecision | null = outcome === 'continue'
-      ? { observed: observationSummary, instruction: nextInstruction, reason }
-      : null
+    const choice = parseRobotAutonomyChoice(JSON.stringify({
+      response: parsed.response, taskId: parsed.taskId, instruction: parsed.instruction,
+      reason: parsed.reason, observationSummary: parsed.observationSummary,
+    }), inputs.availableTasks)
     return {
-      awaitContinuation: outcome === 'wait' || outcome === 'request_user',
-      executorDecision,
+      hasSelection: Boolean(choice.taskDecision || choice.executorDecision),
+      awaitContinuation: !choice.taskDecision && !choice.executorDecision
+        && ['continue', 'wait', 'request_user'].includes(outcome),
+      executorDecision: choice.executorDecision,
+      agentDecision: choice.taskDecision,
       taskDecision: {
         outcome,
         reason,
@@ -130,7 +137,6 @@ export const robotGoalReviewParserNode = defineNode({
         requiredCompletionBasis,
         observationSummary,
         completionEvidence,
-        ...(outcome === 'continue' ? { nextInstruction } : {}),
       },
       response: cleanText(parsed.response, 500),
     }

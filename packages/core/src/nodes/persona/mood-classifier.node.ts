@@ -19,6 +19,7 @@ export const MoodClassifierNode: NodeDefinition = defineNode({
   name: 'Mood Persona Classifier',
   category: 'persona',
   inputs: [
+    { name: 'taskBrief', type: 'string', optional: true, description: 'Purpose and observations supplied by the delegating autonomy decision' },
     { name: 'reviewContext', type: 'object', description: 'Context and persona choices from Mood Context Loader' },
   ],
   outputs: [
@@ -80,6 +81,7 @@ export const MoodClassifierNode: NodeDefinition = defineNode({
           currentFacet: review.activeFacet,
           candidates: review.candidates,
           buffers: review.buffers,
+          taskBrief: inputs.taskBrief,
         }) },
       ],
       options: {

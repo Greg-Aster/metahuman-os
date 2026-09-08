@@ -17,6 +17,7 @@ import {
   isSleepRuntimeActive,
   loadQueueState,
   loadRobotOperatorConfig,
+  onAuthenticatedSessionChange,
   randomizedRobotOperatorIdleMs,
   readSystemActivityTimestamp,
   robotOperatorChildGraph,
@@ -285,7 +286,8 @@ async function onDeadline(
   const config = loadRobotOperatorConfig()
   try {
     const executions = activeRobotExecutions(activeUser.username)
-    const continuation = executions.find(execution => ['operator_authorization', 'user_or_autonomy'].includes(execution.waitingReason ?? ''))
+    const continuation = executions.find(execution => !execution.resumePending
+      && ['operator_authorization', 'user_or_autonomy'].includes(execution.waitingReason ?? ''))
     if (continuation && (expectedMode === 'full' || child === 'robot-goal-review')) {
       const eventId = `autonomy:${continuation.executionId}:${continuation.checkpointVersion}`
       const task = await submitCoordinatorWork({ type: 'generic', handler: 'graph.signal', resource: 'io',
@@ -400,6 +402,7 @@ export async function run(): Promise<void> {
       armForMode('active-operator-mode')
     }),
   ].filter((watcher): watcher is fs.FSWatcher => watcher !== null)
+  const unsubscribeSession = onAuthenticatedSessionChange(() => armForMode('authenticated-profile-changed'))
 
   armForMode('startup')
   let finishShutdown: (() => void) | undefined
@@ -416,6 +419,7 @@ export async function run(): Promise<void> {
   try {
     await new Promise<void>(resolve => { finishShutdown = resolve })
   } finally {
+    unsubscribeSession()
     for (const watcher of watchers) watcher.close()
     process.removeListener('SIGINT', shutdown)
     process.removeListener('SIGTERM', shutdown)

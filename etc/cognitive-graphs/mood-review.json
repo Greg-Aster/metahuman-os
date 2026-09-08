@@ -1,7 +1,13 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
-  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
   "name": "Mood Persona Review",
   "description": "Reviews configured conversation buffers and selects an enabled per-user persona facet. Idle resets use the same graph with a forced baseline decision.",
   "cognitiveMode": "agent",
@@ -10,7 +16,10 @@
     {
       "id": "1",
       "type": "personaNode",
-      "position": { "x": 80, "y": 120 },
+      "position": {
+        "x": 80,
+        "y": 120
+      },
       "data": {
         "label": "Load Mood Context",
         "nodeType": "mood_context_loader",
@@ -22,7 +31,10 @@
     {
       "id": "2",
       "type": "personaNode",
-      "position": { "x": 420, "y": 120 },
+      "position": {
+        "x": 420,
+        "y": 120
+      },
       "data": {
         "label": "Classify Mood Persona",
         "nodeType": "mood_classifier",
@@ -38,14 +50,36 @@
     {
       "id": "3",
       "type": "personaNode",
-      "position": { "x": 800, "y": 120 },
+      "position": {
+        "x": 800,
+        "y": 120
+      },
       "data": {
         "label": "Apply Persona Facet",
         "nodeType": "mood_persona_switch",
-        "properties": {}
+        "properties": {},
+        "schema": {
+          "isOutputNode": true
+        }
       },
       "width": 250,
       "height": 110
+    },
+    {
+      "id": "task-brief",
+      "type": "default",
+      "position": {
+        "x": -400,
+        "y": 0
+      },
+      "data": {
+        "nodeType": "text_input",
+        "label": "Delegated Task Context",
+        "properties": {
+          "inputKey": "taskBrief",
+          "message": ""
+        }
+      }
     }
   ],
   "edges": [
@@ -55,7 +89,10 @@
       "target": "2",
       "sourceHandle": "reviewContext",
       "targetHandle": "reviewContext",
-      "data": { "type": "object", "comment": "Buffers, persona choices, and safety settings" }
+      "data": {
+        "type": "object",
+        "comment": "Buffers, persona choices, and safety settings"
+      }
     },
     {
       "id": "e-2-decision-3-decision",
@@ -63,7 +100,10 @@
       "target": "3",
       "sourceHandle": "decision",
       "targetHandle": "decision",
-      "data": { "type": "decision", "comment": "Validated persona decision" }
+      "data": {
+        "type": "decision",
+        "comment": "Validated persona decision"
+      }
     },
     {
       "id": "e-1-reviewContext-3-reviewContext",
@@ -71,7 +111,21 @@
       "target": "3",
       "sourceHandle": "reviewContext",
       "targetHandle": "reviewContext",
-      "data": { "type": "object", "comment": "Safety policy and available facets" }
+      "data": {
+        "type": "object",
+        "comment": "Safety policy and available facets"
+      }
+    },
+    {
+      "id": "delegated-task-context",
+      "source": "task-brief",
+      "sourceHandle": "text",
+      "target": "2",
+      "targetHandle": "taskBrief",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
     }
   ]
 }

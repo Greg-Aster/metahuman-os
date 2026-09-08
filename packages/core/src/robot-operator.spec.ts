@@ -131,16 +131,14 @@ test('robot autonomy activity follows the canonical correlated work chain', () =
       createdAt: '2026-09-05T00:01:00.000Z',
       completedAt: '2026-09-05T00:01:02.000Z',
       correlationId: 'cycle-5',
+      metadata: {
+        decisionInstruction: 'Consider whether a new desire is useful.',
+        decisionReason: 'No objective is active.',
+        observationSummary: 'The robot is idle.',
+      },
       input: {
         agentId: 'desire-agent',
         triggeredBy: 'robot-autonomy-controller',
-        robotOperatorContext: {
-          controllerDecision: {
-            instruction: 'Consider whether a new desire is useful.',
-            reason: 'No objective is active.',
-            observationSummary: 'The robot is idle.',
-          },
-        },
       },
       error: { code: 'handler_failed', message: 'Typed output was invalid', retryable: true },
     },

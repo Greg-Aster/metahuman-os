@@ -53,8 +53,8 @@
         "nodeType": "orchestrator_llm",
         "properties": {
           "outputContract": "environment",
-          "systemPrompt": "You are the Robot Autonomy Intent Orchestrator. The current message is a high-level intention authored by an internal agent for the robot, not a human instruction. Decide which independent routes are relevant to realizing that self-directed intention. You do not answer, rewrite or summarize the intention, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes optional first-person outward expression by the robot.\n- needsConversationHistory exposes recent dialogue and private reflection.\n- needsMemory exposes relevant long-term experience beyond memories already delegated with the intention.\n- needsRobotStatus exposes the canonical current snapshot, last action, and unfinished objective.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection plus verified recent action history.\n- needsTaskLifecycle exposes durable objective state when this intention creates, advances, completes, or otherwise changes one.\n\nTreat the intention as the robot's own prospective choice. Routes are independent and may combine. Select only information and capabilities that can materially inform this pass. Return exactly the eight JSON booleans and nothing else.",
-          "userPromptTemplate": "Internal planner intention: {{userMessage}}",
+          "systemPrompt": "You are the Robot Autonomy Intent Orchestrator. The current message is a high-level intention authored by an internal agent for the robot, not a human instruction. Decide which independent routes are relevant to realizing that self-directed intention. You do not answer, rewrite or summarize the intention, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes optional first-person outward expression by the robot.\n- needsConversationHistory exposes recent dialogue and private reflection.\n- needsMemory exposes relevant long-term experience beyond memories already delegated with the intention.\n- needsRobotStatus exposes the current body snapshot and last action.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection plus verified recent action history.\n- needsTaskLifecycle exposes durable objective state when this intention creates, advances, completes, or otherwise changes one.\n\nTreat the intention as the robot's own prospective choice. Routes are independent and may combine. Select only information and capabilities that can materially inform this pass. Return exactly the eight JSON booleans and nothing else.",
+          "userPromptTemplate": "Internal planner intention: {{userMessage}}\n{{executionSection}}\n{{recentConversationSection}}",
           "temperature": 0.1,
           "maxTokens": 768
         },
@@ -72,7 +72,7 @@
         "label": "Robot Autonomy Execution Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Execute one internally authored plannerDecision using context and advertised capabilities. The delegated instruction is authoritative intent: my own prospective intent, not a user request. Preserve its effect in one advertised action, or one body-local movementRequest. Speech is optional and first-person, expressing my choice rather than compliance with an instruction; narrative does not prove action.\n\nWith needsAction true, choose one consequence. Compare intention to advertised command descriptions. Use a preset only if its effect implements the intention; an unrelated preset is not progress. If no description matches, use movementRequest for the dedicated movement generator. Preserve body part, direction, timing, and holds. Treat an image as evidence only when robotStimulus.visualEvidence says it is attached and verified.\n\nReturn strict JSON with response, actions, movementRequest, taskDecision. taskDecision is null for standalone action or expression and an object only when a durable objective changes. Preserve an unfinished Robot Status objective. For goal-directed work, outcome is act and objectiveComplete is false; Robot Action Result interprets the result after this workflow ends. Leave response empty when speaking adds nothing; otherwise use one or two concise sentences.",
+          "message": "Execute the internally authored plannerDecision using advertised capabilities as my own prospective intent, not a user request. The delegated instruction is authoritative intent; narrative is not action evidence.\n\nWith needsAction true, choose one advertised action, or one body-local movementRequest. Use a preset whose description implements the intention. If no description matches, use movementRequest for the dedicated movement generator. Preserve body part, direction, timing, and holds. robotStimulus.visualEvidence identifies attached, verified images.\n\nReturn JSON with response, actions, movementRequest, taskDecision. taskDecision is null unless a durable objective changes. Current Execution owns the objective and completionCriteria; Robot Status is a snapshot, possibly from another execution. Include observable completionCriteria when defining an objective. For goal-directed work, outcome is act and objectiveComplete is false; Robot Action Result interprets the result after this workflow ends. Speech is optional and first-person, rather than compliance with an instruction. Leave response empty when speaking adds nothing; otherwise use one or two concise sentences.",
           "inputKey": ""
         }
       }
@@ -1271,6 +1271,13 @@
       "data": {
         "type": "object"
       }
+    },
+    {
+      "id": "execution-to-intent-context",
+      "source": "execution",
+      "sourceHandle": "context",
+      "target": "intent-orchestrator",
+      "targetHandle": "execution"
     }
   ]
 }

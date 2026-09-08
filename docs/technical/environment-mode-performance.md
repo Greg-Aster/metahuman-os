@@ -6,6 +6,27 @@ This document is the maintained paper trail for Environment Mode response-time w
 
 ## Current Status
 
+Efficiency update: 2026-09-08. The existing model configuration now supports the
+tested 16,384-token context without changing the selected model or removing
+context inputs. The checked-in local-model lane has no timed post-job cooldown;
+its concurrency remains one. Durable recovery retires already-satisfied,
+unstarted resume jobs before they claim model capacity, while accepted runners
+remain recoverable through unfinished result review. Inactive nodes still appear
+as skipped but share the next executed node's checkpoint instead of each causing
+a separate checkpoint cycle.
+
+The actual saved Controller → Executor → Action Result fixture retained four
+model calls and one mocked physical action; checkpoint puts fell from 72 to 64.
+Six isolated comparison runs measured median fixture time of 2.65 versus 2.37
+seconds, with overlapping ranges. This is not a deployed robot speed claim.
+The 193-test durable suite, Core/Brain/tests typechecks, all 38 graph definitions,
+architecture guard, and isolated Site build pass. See the
+[repair record](../audits/consolidation-progress.md#durable-execution-efficiency--2026-09-08)
+for evidence and deployment limits. Current execution ownership is defined by
+`MAINTAINED_SURFACE.md`; the routing snapshot below predates the durable migration.
+
+### Routing snapshot — 2026-09-04
+
 Source reconciled: 2026-09-04. Environment Mode has 20 nodes and 51 edges;
 Robot Autonomy Executor has 22 nodes and 62 edges. Both workflows begin with a
 route-only Intent Orchestrator and conditionally admit memory, Robot Status,
@@ -62,7 +83,7 @@ LLM calls consumed 11,096 ms, or approximately 97.5% of total graph time. The ve
 
 Historical warm Environment Mode turns before the recent task-contract expansion were approximately 2.5-4.0 seconds. A direct minimal Ollama probe measured approximately 3.0 seconds cold and 0.2 seconds immediately warm; approximately 2.9 seconds of the cold call was model loading. The configured Ollama keep-alive is five minutes.
 
-## Current Architecture Findings
+## Routing Findings — 2026-09-04 Snapshot
 
 - Environment Mode currently has 20 nodes and 51 edges.
 - Robot Autonomy Executor currently has 22 nodes and 62 edges. Its route-only
@@ -75,7 +96,10 @@ Historical warm Environment Mode turns before the recent task-contract expansion
 - The graph executor evaluates nodes in deterministic topological order, invokes
   only nodes whose declared branch conditions and required inputs are active,
   reports inactive nodes as skipped, and awaits active nodes serially.
-- The work coordinator also serializes the broad `local-llm` resource lane with `maxConcurrent: 1` and a 2,000 ms cooldown between complete work items.
+- At this snapshot the work coordinator serialized the broad `local-llm`
+  resource lane with `maxConcurrent: 1` and a 2,000 ms post-job cooldown.
+  The 2026-09-08 efficiency repair removes that configured cooldown, retaining
+  the single-capacity lane and all action/result waits.
 - Every interactive turn uses the profile's current Environment `orchestrator`
   assignment for the route-only Intent Orchestrator, then the current
   `environmentActionSelector` assignment for the selected response/action

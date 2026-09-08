@@ -392,10 +392,12 @@ export async function handleEnvironmentBridgeActionResult(
 
   const result = await recordEnvironmentActionResult(feedback);
   if (!result) {
-    return successResponse({ success: true, action: undefined, robotBufferPersisted: false });
+    return successResponse({ success: true, action: undefined, admitted: false, robotBufferPersisted: false });
   }
   if (feedback.type === 'accepted') {
-    return successResponse({ success: true, action: result.action, robotBufferPersisted: false });
+    const admitted = result.admitted === true;
+    return successResponse({ success: true, action: admitted ? result.action : undefined,
+      admitted, receiptRecorded: true, robotBufferPersisted: false });
   }
   if (result.action.executionId) {
     const store = openExecutionStore(result.username);

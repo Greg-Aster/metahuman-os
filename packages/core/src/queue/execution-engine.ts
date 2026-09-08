@@ -35,7 +35,7 @@ import { agentFailureMessage } from '../agent-process-runner.js';
 import { getUserByUsername, getUsers } from '../users.js';
 import { withUserContext } from '../context.js';
 import { deliverDurableWorkReceipt } from '../durable-execution/work-results.js';
-import { ExecutionBusyError, ExecutionCancelledError } from '../durable-execution/types.js';
+import { ExecutionBusyError, ExecutionCancelledError, ExecutionConflictError } from '../durable-execution/types.js';
 import { openExecutionStore } from '../durable-execution/storage.js';
 import { executionWorkInput, relayExecutionOutbox } from '../durable-execution/coordinator-outbox.js';
 import { canWriteMemory } from '../cognitive-mode.js';
@@ -606,13 +606,13 @@ export class ExecutionEngine {
             if (this.queueManager.enqueue(executionWorkInput(store, effect)).id !== task.id) throw new Error('Conflicting work receipt');
             store.acknowledgeAdmission(effect.effectId, task.id);
           } else if (effect.workItemId !== task.id) throw new Error('Work does not match its durable admission receipt');
-          if (effect.status === 'completed') {
+          // Acceptance may discover that a wake's event was already consumed
+          // or its execution ended while this Coordinator job was queued.
+          const accepted = effect.status === 'completed' ? effect : store.acceptAction(effect.effectId);
+          if (accepted.status === 'completed') {
             this.queueManager.complete(task.id, true, { alreadyCommitted: true });
             return;
           }
-          // This check is at the accepting owner, after asynchronous admission.
-          // Recovered resumable jobs may already have an acceptance receipt.
-          store.acceptAction(effect.effectId);
         } finally { store.close(); }
       }
       const { withGraphWork } = await import('../durable-execution/runtime.js');
@@ -670,11 +670,17 @@ export class ExecutionEngine {
         this.options.onError?.(normalized, task);
         return;
       }
-      const retried = this.queueManager.requeue(task, {
-        code: normalized instanceof WorkOutcomeUnknownError ? 'outcome_unknown' : 'handler_failed',
+      const conflict = normalized instanceof ExecutionConflictError;
+      const failure = {
+        code: conflict ? 'execution_conflict' : normalized instanceof WorkOutcomeUnknownError ? 'outcome_unknown' : 'handler_failed',
         message: normalized.message,
-        retryable: !(normalized instanceof WorkOutcomeUnknownError),
-      });
+        retryable: !conflict && !(normalized instanceof WorkOutcomeUnknownError),
+      };
+      // Re-running an unchanged job cannot reconcile an immutable version or
+      // receipt conflict. Preserve its execution and report the failed work.
+      let retried = false;
+      if (conflict) this.queueManager.complete(task.id, false, failure);
+      else retried = this.queueManager.requeue(task, failure);
       if (this.queueManager.getTask(task.id)?.state === 'waiting') {
         this.options.onError?.(normalized, task);
         return;

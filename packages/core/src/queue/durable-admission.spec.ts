@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import fs from 'node:fs'
 import { UnifiedQueueManager } from './unified-queue-manager.js'
 import type { TaskInput } from './types.js'
 import { WorkCommitUncertainError } from './types.js'
@@ -8,6 +9,19 @@ const action = (): TaskInput => ({
   type: 'environment_command', handler: 'environment.command', resource: 'body:test',
   source: 'environment', username: 'fixture', input: { sessionId: 'test-body', type: 'robotCommand', command: 'walk' },
   durable: { executionId: 'execution', effectId: 'effect', recovery: 'reconcile' },
+})
+
+test('configured model capacity becomes available on completion without a timed post-job pause', () => {
+  const config = JSON.parse(fs.readFileSync(new URL('../../../../etc/queue.json', import.meta.url), 'utf8'))
+  const manager = new UnifiedQueueManager(config)
+  const enqueue = () => manager.enqueue({ type: 'generic', handler: 'test.model', resource: 'local-llm',
+    source: 'system', username: 'fixture', input: {} })
+  const first = enqueue()
+  const next = enqueue()
+  assert.ok(manager.claim(first.id))
+  assert.equal(manager.claim(next.id), null, 'The selected model capacity still serializes work')
+  manager.complete(first.id, true)
+  assert.ok(manager.claim(next.id), 'Completion, not an arbitrary extra timeout, releases capacity')
 })
 
 test('durable admission survives terminal-history eviction and process restart', () => {
@@ -114,6 +128,11 @@ test('an uncertain published commit preserves its identity and cannot dispatch u
   manager.setOnQueueChange(() => { published = JSON.parse(JSON.stringify(manager.exportState())) })
   assert.equal(manager.enqueue(action()).id, id)
   assert.equal(manager.claim(id)?.id, id)
+  assert.equal(manager.hasCurrentBodyLease(id), true)
+  manager.setOnQueueChange(() => { throw new WorkCommitUncertainError('receipt sync is uncertain') })
+  assert.throws(() => manager.wait(id, 'Awaiting adapter'), WorkCommitUncertainError)
+  assert.equal(manager.hasCurrentBodyLease(id), false, 'An uncertain Coordinator commit cannot grant a wire handshake')
+  assert.throws(() => manager.assertBodyLease(id), /Stale body ownership/)
 })
 
 test('restart preserves cancellation and parks uncertain physical work instead of resending', () => {
@@ -126,8 +145,12 @@ test('restart preserves cancellation and parks uncertain physical work instead o
   const restarted = new UnifiedQueueManager()
   restarted.importState(JSON.parse(JSON.stringify(manager.exportState())))
   assert.equal(restarted.getTask(cancelled.id)?.state, 'waiting')
+  assert.equal(restarted.getTask(cancelled.id)?.startedAt, manager.getTask(cancelled.id)?.startedAt)
   assert.ok(restarted.getTask(cancelled.id)?.cancellationRequestedAt)
   assert.equal(restarted.getTask(uncertain.id)?.state, 'waiting')
+  assert.equal(restarted.getTask(uncertain.id)?.startedAt, manager.getTask(uncertain.id)?.startedAt,
+    'Physical recovery preserves the historical claim receipt while clearing the process lease')
+  assert.equal(restarted.getTask(uncertain.id)?.leaseOwner, undefined)
   assert.equal(restarted.getTask(uncertain.id)?.error?.code, 'outcome_unknown')
   assert.equal(restarted.getNextExecutable(), null)
 })
@@ -147,6 +170,7 @@ test('physical cancellation retains ownership and stop preempts without being fe
   const stop = manager.enqueue({ ...action(), resource: 'environment-stop:test-body', input: { ...action().input, type: 'stop' }, durable: { ...action().durable!, effectId: 'stop' } })
   manager.claim(stop.id)
   assert.ok(manager.assertBodyLease(stop.id).generation > lease.generation)
+  assert.equal(manager.hasCurrentBodyLease(first.id), false)
   assert.throws(() => manager.assertBodyLease(first.id), /Stale body/)
   assert.equal(manager.claim(next.id), null)
   manager.acknowledgeCancellation(first.id)

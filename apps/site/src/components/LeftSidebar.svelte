@@ -71,7 +71,7 @@
     model?: string;
     capabilities?: string[];
     adapters?: string[];
-    baseModel?: string;
+    baseModel?: string | null;
     temperature?: number;
     error?: string;
     needsConfig?: boolean;
@@ -137,8 +137,10 @@
           inProgress: data?.tasks?.byStatus?.in_progress ?? 0,
         };
         modelInfo = data?.model || null;
-        modelRoles = data?.modelRoles || {};
-        hasModelRegistry = Object.keys(modelRoles).length > 0;
+        if (!modelRegistryReady) {
+          modelRoles = data?.modelRoles || {};
+          hasModelRegistry = Object.keys(modelRoles).length > 0;
+        }
         loading = false;
 
         // Populate cloud models from unified status endpoint (works on mobile too)
@@ -386,6 +388,7 @@
 
   interface AvailableModel {
     id: string;
+    aliases?: string[];
     model: string;
     provider: string;
     roles?: string[];
@@ -424,12 +427,128 @@
   }
 
   type BackendType = 'ollama' | 'vllm' | 'remote' | 'auto';
+  type ModelConfigurationMode = 'dual' | 'agent' | 'emulation' | 'environment';
+
+  type ModelRolePresentation = {
+    role: string;
+    label: string;
+    description: string;
+  };
+
+  type ModelRoleSection = {
+    label?: string;
+    description: string;
+    roles: ModelRolePresentation[];
+  };
+
+  const MODEL_CONFIGURATION_MODES: Array<{
+    id: ModelConfigurationMode;
+    label: string;
+  }> = [
+    { id: 'dual', label: 'Dual' },
+    { id: 'agent', label: 'Agent work' },
+    { id: 'emulation', label: 'Emulation' },
+    { id: 'environment', label: 'Environment' },
+  ];
+
+  // Presentation groups only: each control still reads and writes its existing
+  // runtime role, so this status UI does not redefine model routing.
+  const MODEL_ROLE_SECTIONS: ModelRoleSection[] = [
+    {
+      label: 'Agent',
+      description: 'Higher-accuracy model work for reasoning, organization, and human-context analysis.',
+      roles: [
+        {
+          role: 'curator',
+          label: 'Reasoning',
+          description: 'Accurate analysis, organization, summarization, and knowledge curation.',
+        },
+        {
+          role: 'psychotherapist',
+          label: 'Human insight',
+          description: 'Mood, psychological context, and interpersonal interpretation.',
+        },
+      ],
+    },
+    {
+      description: 'Conversation and personality-based decisions, optionally using a LoRA or merged persona model.',
+      roles: [{
+        role: 'persona',
+        label: 'Persona',
+        description: 'Conversation and personality-based decisions, optionally using a LoRA or merged persona model.',
+      }],
+    },
+    {
+      description: 'Fast bounded decisions such as choosing an environment reply or action.',
+      roles: [{
+        role: 'environmentActionSelector',
+        label: 'Fast decisions',
+        description: 'Fast bounded decisions such as choosing an environment reply or action.',
+      }],
+    },
+    {
+      description: 'Coordinates routing, structured plans, commands, and multi-step work.',
+      roles: [{
+        role: 'orchestrator',
+        label: 'Orchestrator',
+        description: 'Coordinates routing, structured plans, commands, and multi-step work.',
+      }],
+    },
+  ];
+  const CONFIGURABLE_MODEL_ROLES = MODEL_ROLE_SECTIONS.flatMap(section => (
+    section.roles.map(role => role.role)
+  ));
+
+  function isModelConfigurationMode(value: string): value is ModelConfigurationMode {
+    return MODEL_CONFIGURATION_MODES.some(mode => mode.id === value);
+  }
+
+  function modelRolePresentation(role: string): ModelRolePresentation | undefined {
+    return MODEL_ROLE_SECTIONS
+      .flatMap(section => section.roles)
+      .find(presentation => presentation.role === role);
+  }
+
+  function modelRoleLabel(role: string): string {
+    return modelRolePresentation(role)?.label || role;
+  }
+
+  function modelRoleDescription(role: string): string {
+    return modelRolePresentation(role)?.description || role;
+  }
+
+  function modelDisplayName(role: string, info: ModelRoleInfo): string {
+    if (role === 'persona' && info.baseModel) return info.baseModel;
+    return info.model || '—';
+  }
+
+  function modelAdapterNames(role: string, info: ModelRoleInfo): string[] {
+    const names = [...(info.adapters ?? [])];
+    if (role === 'persona' && info.baseModel && info.model && info.model !== info.baseModel) {
+      names.unshift(info.model);
+    }
+    return Array.from(new Set(names.filter(Boolean)));
+  }
+
+  function modelRoleTooltip(role: string, info: ModelRoleInfo): string {
+    const lines = [modelRoleDescription(role), '', `Model: ${modelDisplayName(role, info)}`];
+    const adapters = modelAdapterNames(role, info);
+    if (adapters.length > 0) lines.push(`LoRA: ${adapters.join(', ')}`);
+    lines.push('', 'Click to change this assignment.');
+    return lines.join('\n');
+  }
 
   let availableModels: AvailableModel[] = [];
   let uniqueModels: AvailableModel[] = [];
   let roleAssignments: Record<string, string> = {};
   let modelDropdownOpen: Record<string, boolean> = {};
   let loadingModelRegistry = false;
+  let modelRegistryReady = false;
+  let modelRegistryRequestId = 0;
+  let modelConfigurationMode: ModelConfigurationMode = 'dual';
+  let modelConfigurationError = '';
+  let modelConfigurationNotice = '';
+  let savingModelRole: string | null = null;
   let statusRefreshInFlight = false;
 
   let showRestartModal = false;
@@ -511,19 +630,69 @@
     return `Semantic Search: Configured but not running${ba.embeddingModel ? `\nModel: ${ba.embeddingModel}` : ''}`;
   }
 
-  async function loadModelRegistry() {
-    if (loadingModelRegistry) return;
+  function findAssignedModel(modelId: string): AvailableModel | undefined {
+    return availableModels.find(model => (
+      model.id === modelId || model.aliases?.includes(modelId)
+    ));
+  }
+
+  function syncModelRoleDisplay(assignments: Record<string, string>) {
+    const next: Record<string, ModelRoleInfo> = {};
+    for (const role of CONFIGURABLE_MODEL_ROLES) {
+      const modelId = assignments[role];
+      if (!modelId) {
+        next[role] = {
+          needsConfig: true,
+          unavailableReason: `No ${modelConfigurationMode}-mode model is assigned to ${role}`,
+        };
+        continue;
+      }
+      const selectedModel = findAssignedModel(modelId);
+      if (!selectedModel) {
+        next[role] = {
+          modelId,
+          model: modelId,
+          needsConfig: true,
+          unavailableReason: `Configured model ${modelId} is not present in this profile registry`,
+        };
+        continue;
+      }
+      next[role] = {
+        modelId,
+        provider: selectedModel.provider,
+        model: selectedModel.model,
+        capabilities: selectedModel.capabilities ?? [],
+        adapters: selectedModel.adapters ?? [],
+        baseModel: selectedModel.baseModel ?? undefined,
+        temperature: Number(selectedModel.options?.temperature) || undefined,
+      };
+    }
+    modelRoles = next;
+    hasModelRegistry = Object.keys(next).length > 0;
+  }
+
+  function isModelAssigned(role: string, model: AvailableModel): boolean {
+    const assignedModelId = roleAssignments[role];
+    return assignedModelId === model.id || Boolean(
+      assignedModelId && model.aliases?.includes(assignedModelId)
+    );
+  }
+
+  async function loadModelRegistry(mode: ModelConfigurationMode = modelConfigurationMode) {
+    const requestId = ++modelRegistryRequestId;
     loadingModelRegistry = true;
+    modelConfigurationError = '';
 
     try {
-      const mode = get(currentMode);
-      const queryParams = mode ? `?cognitiveMode=${encodeURIComponent(mode)}` : '';
-      const response = await apiFetch(`/api/model-registry${queryParams}`);
+      const queryParams = `?cognitiveMode=${encodeURIComponent(mode)}&_t=${Date.now()}`;
+      const response = await apiFetch(`/api/model-registry${queryParams}`, { cache: 'no-store' });
       const data = await response.json();
 
-      if (data.success) {
+      if (requestId !== modelRegistryRequestId || mode !== modelConfigurationMode) return;
+
+      if (response.ok && data.success) {
         availableModels = data.availableModels || [];
-        roleAssignments = data.roleAssignments || {};
+        roleAssignments = { ...(data.roleAssignments || {}) };
         activeBackend = data.activeBackend || activeBackend;
         localModel = data.localModel || null;
 
@@ -542,18 +711,32 @@
           if (!seen.has(key)) seen.set(key, model);
         }
         uniqueModels = Array.from(seen.values());
+        syncModelRoleDisplay(roleAssignments);
+        modelRegistryReady = true;
       } else {
-        console.log('Model registry not accessible (expected for non-owner users)');
+        throw new Error(data.error || `Failed to load ${mode}-mode model assignments`);
       }
     } catch (error) {
       console.error('Error loading model registry:', error);
+      if (requestId === modelRegistryRequestId) {
+        modelConfigurationError = (error as Error).message;
+      }
     } finally {
-      loadingModelRegistry = false;
+      if (requestId === modelRegistryRequestId) loadingModelRegistry = false;
     }
   }
 
+  function selectModelConfigurationMode(event: Event) {
+    const mode = (event.currentTarget as HTMLSelectElement).value;
+    if (!isModelConfigurationMode(mode)) return;
+    modelConfigurationMode = mode;
+    modelConfigurationNotice = '';
+    closeAllModelDropdowns();
+    void loadModelRegistry(mode);
+  }
+
   function updateModelRoleLocally(role: string, modelId: string) {
-    const selectedModel = availableModels.find(model => model.id === modelId);
+    const selectedModel = findAssignedModel(modelId);
     if (!selectedModel) {
       return;
     }
@@ -591,32 +774,35 @@
   }
 
   async function assignModelToRole(role: string, modelId: string, cognitiveModeOverride?: string) {
-    console.log(`[LeftSidebar] assignModelToRole called: role=${role}, modelId=${modelId}`);
+    if (savingModelRole) return;
+    const modeCandidate = cognitiveModeOverride || modelConfigurationMode;
+    if (!isModelConfigurationMode(modeCandidate)) {
+      modelConfigurationError = `Unsupported model configuration mode: ${modeCandidate}`;
+      return;
+    }
+    const mode = modeCandidate;
+    savingModelRole = role;
+    modelConfigurationError = '';
+    modelConfigurationNotice = '';
     try {
-      const mode = cognitiveModeOverride || get(currentMode);
-      const payload: Record<string, any> = { role, modelId };
-      if (mode) {
-        payload.cognitiveMode = mode;
-      }
+      const payload: Record<string, any> = { role, modelId, cognitiveMode: mode };
 
-      console.log(`[LeftSidebar] Making POST to /api/model-registry with payload:`, payload);
       const response = await apiFetch('/api/model-registry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
-      console.log(`[LeftSidebar] POST response status: ${response.status}`);
       const result = await response.json();
-      console.log(`[LeftSidebar] POST result:`, result);
 
-      if (result.success) {
-        roleAssignments[role] = modelId;
+      if (response.ok && result.success) {
+        roleAssignments = { ...roleAssignments, [role]: modelId };
         modelDropdownOpen[role] = false;
         modelDropdownOpen = { ...modelDropdownOpen };
         updateModelRoleLocally(role, modelId);
+        modelConfigurationNotice = `${modelRoleLabel(role)} saved for ${MODEL_CONFIGURATION_MODES.find(item => item.id === mode)?.label || mode}.`;
         void refreshStatus('model assignment');
-        void loadModelRegistry();
+        await loadModelRegistry(mode);
 
         if (result.needsRestart && modelId.startsWith('vllm-lora.')) {
           pendingLoraName = modelId.replace('vllm-lora.', '');
@@ -625,7 +811,7 @@
           warmupModel(role, mode).catch(err => {
             console.warn(`Failed to warm up model for role ${role}:`, err);
             const errorMsg = (err as Error).message || 'Unknown error';
-            alert(`Model warmup failed for ${role}:\n\n${errorMsg}\n\nThe model assignment was saved but may not work until the backend is available.`);
+            alert(`Model warmup failed for ${modelRoleLabel(role)}:\n\n${errorMsg}\n\nThe model assignment was saved but may not work until the backend is available.`);
             modelRoles = {
               ...modelRoles,
               [role]: {
@@ -640,11 +826,13 @@
           statusRefreshTrigger.update(n => n + 1);
         }, 200);
       } else {
-        alert('Failed to assign model: ' + (result.error || 'Unknown error'));
+        throw new Error(result.error || 'Failed to save model assignment');
       }
     } catch (error) {
       console.error('Error assigning model:', error);
-      alert('Failed to assign model: ' + (error as Error).message);
+      modelConfigurationError = (error as Error).message;
+    } finally {
+      if (savingModelRole === role) savingModelRole = null;
     }
   }
 
@@ -734,11 +922,13 @@
   }
 
   onMount(() => {
+    const activeMode = get(currentMode);
+    if (isModelConfigurationMode(activeMode)) modelConfigurationMode = activeMode;
     void fetchCurrentUser();
     loadStatus();
     loadFacets();
     loadTrustOptions();
-    loadModelRegistry();
+    void loadModelRegistry(modelConfigurationMode);
     loadApprovals();
 
     const ownerUnsubscribe = isOwner.subscribe(() => {
@@ -881,39 +1071,84 @@
         {/if}
 
         {#if hasModelRegistry}
-          <div
-            class="mt-1 rounded border border-white/10 bg-black/20 px-2 py-1.5 text-[0.6875rem] leading-snug text-gray-400"
-            title="These assignments follow the active conversation mode. Background agents resolve their own cognitive mode through the same model router."
-          >
-            Showing <span class="font-medium text-gray-200">{$currentMode}</span>-mode assignments.
-            Background agents may use separate <span class="font-medium text-gray-200">agent</span>-mode assignments.
+          <div class="mt-1 rounded border border-white/10 bg-black/20 px-2 py-2">
+            <label
+              for="model-configuration-mode"
+              class="flex items-center justify-between gap-2 text-[0.6875rem] text-gray-400"
+              title="Choose which workflow model assignments to view or edit."
+            >
+              <span>LLM routing profile</span>
+              <select
+                id="model-configuration-mode"
+                class="min-w-0 rounded border border-white/15 bg-gray-900 px-1.5 py-1 text-[0.6875rem] font-medium text-gray-100"
+                value={modelConfigurationMode}
+                on:change={selectModelConfigurationMode}
+                disabled={loadingModelRegistry || Boolean(savingModelRole)}
+              >
+                {#each MODEL_CONFIGURATION_MODES as mode}
+                  <option value={mode.id}>{mode.label}</option>
+                {/each}
+              </select>
+            </label>
           </div>
-          {#each Object.entries(modelRoles) as [role, info]}
-            <div class="model-role-row">
-              <span class="activity-indicator">
-                <span class="activity-dot"></span>
-              </span>
-              <span class="role-name">{role}</span>
-              <span class="role-arrow">→</span>
-              {#if info.needsConfig}
+          {#if loadingModelRegistry}
+            <div class="px-2 py-1 text-[0.6875rem] text-gray-400">Loading mappings…</div>
+          {/if}
+          {#if modelConfigurationError}
+            <div class="mt-1 rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-[0.6875rem] text-red-300" role="alert">
+              {modelConfigurationError}
+            </div>
+          {:else if modelConfigurationNotice}
+            <div class="mt-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[0.6875rem] text-emerald-300" role="status">
+              {modelConfigurationNotice}
+            </div>
+          {/if}
+          {#each MODEL_ROLE_SECTIONS as section}
+            <div class="model-role-section">
+              {#if section.label}
+                <div class="model-role-section-heading" title={section.description}>
+                  <span>{section.label}</span>
+                  <span class="model-role-help" aria-hidden="true">?</span>
+                </div>
+              {/if}
+              {#each section.roles as presentation}
+                {@const role = presentation.role}
+                {@const info = modelRoles[role]}
+                {#if info}
+                  <div class="model-role-row">
+                    <span class="activity-indicator">
+                      <span class="activity-dot"></span>
+                    </span>
+                    <span class:agent-subrole={Boolean(section.label)} class="role-name" title={presentation.description}>{presentation.label}</span>
+                    <span class="role-arrow">→</span>
+                    {#if info.needsConfig}
                 <button
                   class="role-model needs-config"
                   title="{info.unavailableReason || 'Model unavailable'} - Click to select an available model"
                   on:click|stopPropagation={() => toggleModelDropdown(role)}
+                  disabled={loadingModelRegistry || savingModelRole === role}
                 >
-                  select
+                  {savingModelRole === role ? 'saving…' : 'select'}
                   <span class="dropdown-arrow">▼</span>
                 </button>
-              {:else if info.error}
+                    {:else if info.error}
                 <span class="role-model error" title={info.error}>error</span>
-              {:else}
+                    {:else}
                 <button
                   class="role-model clickable"
-                  title="Click to change model for {role}\nCurrent: {info.model}{info.adapters && info.adapters.length > 0 ? ' + adapter' : ''}"
+                  title={modelRoleTooltip(role, info)}
                   on:click|stopPropagation={() => toggleModelDropdown(role)}
+                  disabled={loadingModelRegistry || savingModelRole === role}
                 >
-                  {info.model || '—'}
-                  {#if info.adapters && info.adapters.length > 0}
+                  <span class="role-model-copy">
+                    <span class="role-model-primary">
+                      {savingModelRole === role ? 'saving…' : modelDisplayName(role, info)}
+                    </span>
+                    {#if role === 'persona' && modelAdapterNames(role, info).length > 0}
+                      <span class="persona-adapter-line">LoRA · {modelAdapterNames(role, info).join(', ')}</span>
+                    {/if}
+                  </span>
+                  {#if role !== 'persona' && modelAdapterNames(role, info).length > 0}
                     <span class="adapter-indicator">+LoRA</span>
                   {/if}
                   {#if info.capabilities?.includes('image')}
@@ -921,11 +1156,11 @@
                   {/if}
                   <span class="dropdown-arrow">▼</span>
                 </button>
-              {/if}
+                    {/if}
 
-              {#if modelDropdownOpen[role]}
+                    {#if modelDropdownOpen[role]}
                 <div class="model-dropdown categorized">
-                  <div class="dropdown-header">Select model for {role}</div>
+                  <div class="dropdown-header">Choose model for {presentation.label}</div>
 
                   {#if modelCategories.local.length > 0}
                     <div class="dropdown-category">
@@ -933,7 +1168,7 @@
                         {activeBackend === 'vllm' ? '⚡ vLLM' : '🦙 Local'}
                       </span>
                       {#each modelCategories.local as model}
-                        {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
+                        {@const isCurrentlySelected = isModelAssigned(role, model)}
                         <button
                           class="dropdown-item"
                           class:selected={isCurrentlySelected}
@@ -987,7 +1222,7 @@
                     <div class="dropdown-category">
                       <span class="category-label">☁️ Cloud</span>
                       {#each modelCategories.remote as model}
-                        {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
+                        {@const isCurrentlySelected = isModelAssigned(role, model)}
                         <button
                           class="dropdown-item"
                           class:selected={isCurrentlySelected}
@@ -1007,7 +1242,7 @@
                     <div class="dropdown-category">
                       <span class="category-label">🛡️ Escalation</span>
                       {#each modelCategories.bigBrother as model}
-                        {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
+                        {@const isCurrentlySelected = isModelAssigned(role, model)}
                         <button
                           class="dropdown-item"
                           class:selected={isCurrentlySelected}
@@ -1026,7 +1261,7 @@
                   {#if activeBackend === 'ollama' && modelCategories.local.length === 0}
                     {#each uniqueModels as model}
                       {@const isSuggested = !model.roles || model.roles.includes(role)}
-                      {@const isCurrentlySelected = modelRoles[role]?.model === model.model}
+                      {@const isCurrentlySelected = isModelAssigned(role, model)}
                       <button
                         class="dropdown-item"
                         class:selected={isCurrentlySelected}
@@ -1058,7 +1293,10 @@
                     {/each}
                   {/if}
                 </div>
-              {/if}
+                    {/if}
+                  </div>
+                {/if}
+              {/each}
             </div>
           {/each}
         {/if}

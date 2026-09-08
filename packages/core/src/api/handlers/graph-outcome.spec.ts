@@ -159,6 +159,55 @@ test('Robot Autonomy Controller handler reports global delivery failure rather t
   error => error instanceof Error && error.message.includes(failed.error!.message));
 });
 
+test('Controller reports conditional dispatch outcome without choosing or requiring another action', async () => {
+  const { robotAutonomyControllerParserNode } = await import('../../nodes/robot-operator/autonomy-controller-parser.node.js');
+  const availableTasks = [
+    { id: 'robot-autonomy-executor', name: 'Robot Autonomy Executor', description: 'Execute an embodied intention.',
+      kind: 'environment-executor', handler: 'environment.observation', taskType: 'environment_observation', priority: 'low', tags: ['robot'] },
+    { id: 'reflector', name: 'Reflector', description: 'Reflect on available context.',
+      kind: 'agent', handler: 'agent.reflector', taskType: 'generic', priority: 'low', tags: ['reflection'] },
+  ];
+  const invoke = () => executeRobotAutonomyTriggerWork({
+    id: 'fixture-controller-result', username, handler: 'workflow.robot-autonomy-controller', source: 'user',
+    input: { agentId: 'robot-autonomy-controller' },
+  } as never, { signal: new AbortController().signal } as never);
+  for (const scenario of [
+    { taskId: 'robot-autonomy-executor', selectedStatus: 'skipped', response: '', reason: 'Required input(s) inactive: observation' },
+    { taskId: 'none', selectedStatus: 'skipped', response: '', reason: undefined },
+    { taskId: 'none', selectedStatus: 'skipped', response: 'A conversational thought.', reason: undefined },
+    { taskId: 'reflector', selectedStatus: 'completed', response: '', reason: undefined },
+    { taskId: 'robot-autonomy-executor', selectedStatus: 'completed', response: 'I want to explore.', reason: undefined },
+    { taskId: 'reflector', selectedStatus: 'skipped', response: '', reason: 'Required input(s) inactive: robotObserver' },
+  ] as const) {
+    const parsed = await robotAutonomyControllerParserNode.execute({ availableTasks, response: JSON.stringify({
+      taskId: scenario.taskId, response: scenario.response, reason: 'Selected from the supplied context.',
+      observationSummary: 'Current context is available.', instruction: scenario.taskId === 'none' ? '' : 'Investigate the available context.',
+    }) }, {}, {});
+    const selectedType = scenario.taskId === 'robot-autonomy-executor'
+      ? 'robot_operator_environment_dispatch' : 'robot_autonomy_task_dispatch';
+    returnedState = { ...failed, status: 'completed', error: undefined, nodes: new Map([
+      ['editable-parser-id', { nodeId: 'editable-parser-id', status: 'completed', definition: { type: 'robot_autonomy_controller_parser' }, outputs: parsed }],
+      ...['robot_operator_environment_dispatch', 'robot_autonomy_task_dispatch'].map(type => {
+        const selected = scenario.taskId !== 'none' && selectedType === type;
+        return [type, { nodeId: type, definition: { type }, status: selected ? scenario.selectedStatus : 'skipped',
+          ...(selected && scenario.selectedStatus === 'completed'
+            ? { outputs: { queued: false, taskId: '', status: 'prepared' } }
+            : { skipReason: scenario.reason ?? 'Required input(s) inactive: decision' }),
+        }] as [string, import('../../graph-executor.js').NodeExecutionState];
+      }),
+    ]) };
+    const result = await invoke();
+    assert.equal(result.executionStatus, 'completed');
+    assert.deepEqual(result.decision, parsed.decisionReceipt, 'The handler must preserve the validated LLM choice');
+    assert.equal((result.dispatch as any).queued, false);
+    assert.equal((result.dispatch as any).status, scenario.taskId === 'none' ? 'none_selected'
+      : scenario.selectedStatus === 'skipped' ? 'skipped' : 'prepared');
+    if (scenario.reason) assert.equal((result.dispatch as any).reason, scenario.reason);
+  }
+  returnedState.nodes.delete('robot_autonomy_task_dispatch');
+  await assert.rejects(invoke, /requires exactly one robot_autonomy_task_dispatch/);
+});
+
 test('editor waiting response preserves saved execution identity and is not completion', async () => {
   returnedState = { ...failed, status: 'waiting', error: undefined, executionId: 'waiting-fixture' };
   const response = await handleExecuteGraph(request());

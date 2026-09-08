@@ -24,7 +24,9 @@ Grounding rules:
 
 export const DEFAULT_REFLECTION_USER_PROMPT = `Reflect on the historical excerpts below. Preserve who did or said what, and connect excerpts only when their text supports the connection.
 
-{{memories}}`
+{{memories}}
+
+Autonomy task context, when supplied: {{taskBrief}}`
 
 function normalizeMemories(value: unknown): Array<Record<string, any>> {
   return Array.isArray(value)
@@ -85,7 +87,7 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
   ).trim()
   const userPrompt = renderPromptTemplate(
     properties?.userPrompt || DEFAULT_REFLECTION_USER_PROMPT,
-    { memories: memoryText, memoryCount: memories.length },
+    { memories: memoryText, memoryCount: memories.length, taskBrief: inputs.taskBrief || '' },
   ).trim()
 
   return {
@@ -103,6 +105,7 @@ export const ReflectionPromptNode: NodeDefinition = defineNode({
   name: 'Grounded Reflection Prompt',
   category: 'cognitive',
   inputs: [
+    { name: 'taskBrief', type: 'string', optional: true, description: 'Purpose and observations supplied by the delegating autonomy decision' },
     { name: 'personaContext', type: 'string', description: 'Formatted active persona and facet' },
     { name: 'activeFacet', type: 'string', optional: true, description: 'Name of the active persona facet' },
     { name: 'memories', type: 'array', description: 'Separate historical memory excerpts' },
@@ -133,7 +136,7 @@ export const ReflectionPromptNode: NodeDefinition = defineNode({
       type: 'text_multiline',
       default: DEFAULT_REFLECTION_USER_PROMPT,
       label: 'Memory Prompt',
-      description: 'Template variables: {{memories}}, {{memoryCount}}.',
+      description: 'Template variables: {{memories}}, {{memoryCount}}, {{taskBrief}}.',
       rows: 8,
     },
     minMemories: { type: 'number', default: 2, label: 'Minimum Memories' },

@@ -1193,7 +1193,7 @@ export function formatAgencyReview(report: AgencyReviewReport): string {
     for (const call of report.modelCalls) {
       const duration = call.latencyMs === undefined ? '' : `, ${(call.latencyMs / 1_000).toFixed(2)}s`
       const tokens = call.tokens ? `, ${call.tokens.total} tokens` : ''
-      lines.push(`• ${call.operation === 'reinforce' ? 'Reinforcement review' : 'New-desire review'}: ${call.provider}/${call.model} (${call.cognitiveMode ?? 'default'} mode, ${call.role} role${duration}${tokens}).`)
+      lines.push(`• ${call.operation === 'reinforce' ? 'Reinforcement review' : 'New-desire review'}: ${call.provider}/${call.model} (${call.cognitiveMode ?? 'default'} routing, ${call.role} role${duration}${tokens}).`)
     }
   }
 

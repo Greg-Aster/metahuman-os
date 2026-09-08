@@ -6,7 +6,7 @@
     "local-llm": {
       "description": "Local LLM capacity",
       "maxConcurrent": 1,
-      "cooldownMs": 2000
+      "cooldownMs": 0
     },
     "vector-index": {
       "description": "Exclusive vector index read/write capacity",

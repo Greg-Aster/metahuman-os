@@ -21,7 +21,7 @@ import { systemPaths } from './path-builder.js';
 import { getNode, getNodeExecutor, materializeNodeProperties } from './nodes/index.js';
 import { Annotation, Command, END, START, StateGraph, interrupt, isGraphInterrupt } from '@langchain/langgraph';
 import { ExecutionCheckpointer } from './durable-execution/checkpointer.js';
-import { executionDefinition, graphContextSnapshot, type DurableGraphOptions, type GraphNodeExecution } from './durable-execution/graph-contract.js';
+import { executionAbortError, executionDefinition, graphContextSnapshot, type DurableGraphOptions, type GraphNodeExecution } from './durable-execution/graph-contract.js';
 import type { CheckpointTransition, DispatchIntent } from './durable-execution/types.js';
 
 const log = createLogger('graph-pipeline');
@@ -715,7 +715,17 @@ export async function executeGraph(
     cognitiveMode: graph.cognitiveMode,
   }, { requestId, sessionId, userId });
 
+  const sourceSignal = signal;
+  let forwardAbort: (() => void) | undefined;
   try {
+    if (sourceSignal) {
+      const controller = new AbortController();
+      forwardAbort = () => controller.abort(executionAbortError(sourceSignal.reason));
+      sourceSignal.addEventListener('abort', forwardAbort, { once: true });
+      if (sourceSignal.aborted) forwardAbort();
+      signal = controller.signal;
+    }
+    signal?.throwIfAborted();
     // Identify back-edges for conditional loops
     const backEdges = identifyBackEdges(graph);
     if (backEdges.size > 0) log.debug(`   Detected ${backEdges.size} explicit loop edge(s)`);
@@ -737,7 +747,7 @@ export async function executeGraph(
     });
     const maxLoopIterations = graph.scheduler.maxLoopIterations;
     const program = new StateGraph(Schedule).addNode('execute', async (schedule, runtimeConfig) => {
-      if (signal?.aborted) throw new DOMException('Graph execution cancelled', 'AbortError');
+      signal?.throwIfAborted();
       if (durable) {
         durable.store.assertLease(durable.lease);
         if (durable.store.get(durable.lease.executionId).cancelledAt !== null) throw new DOMException('Graph execution cancelled', 'AbortError');
@@ -746,14 +756,21 @@ export async function executeGraph(
       const executedCount = new Map(Object.entries(schedule.counts));
       executionState.clear();
       schedule.nodeEntries.forEach(([id, state]) => executionState.set(id, state));
-      const nodeId = executionQueue.shift()!;
-      const node = graph.nodes.find(n => n.id === nodeId);
-      if (!node) throw new Error(`Node ${nodeId} not found in graph`);
-
-      graphState.currentNodeId = nodeId;
-
-      const readiness = getNodeReadiness(node, graph, executionState);
-      if (node.data.muted || !readiness.ready) {
+      let selected: { node: SvelteFlowGraph['nodes'][number]; inputs: Record<string, any> } | undefined;
+      // Inactive branches perform no node work. Carry their visible skipped
+      // state into the next executed node's checkpoint instead of creating a
+      // LangGraph execution/write/checkpoint cycle for each inactive node.
+      while (executionQueue.length) {
+        signal?.throwIfAborted();
+        const nodeId = executionQueue.shift()!;
+        const node = graph.nodes.find(n => n.id === nodeId);
+        if (!node) throw new Error(`Node ${nodeId} not found in graph`);
+        graphState.currentNodeId = nodeId;
+        const readiness = getNodeReadiness(node, graph, executionState);
+        if (!node.data.muted && readiness.ready) {
+          selected = { node, inputs: readiness.inputs };
+          break;
+        }
         skipNode(
           node,
           executionState,
@@ -761,8 +778,10 @@ export async function executeGraph(
           node.data.muted ? 'Muted by graph configuration' : readiness.reason || 'Node was not activated',
           eventHandler,
         );
-        return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState] };
       }
+      if (!selected) return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState] };
+      const { node, inputs } = selected;
+      const nodeId = node.id;
 
       const iterCount = (executedCount.get(nodeId) || 0) + 1;
       executedCount.set(nodeId, iterCount);
@@ -800,10 +819,13 @@ export async function executeGraph(
         },
         waitForEvent: (reason = 'external_event') => {
           const owner = durable.store.get(durable.lease.executionId);
-          const next = durable.store.events(owner.executionId, owner.lastProcessedSequence)[processedEventIds.length];
-          const eventId: string = next?.eventId ?? interrupt({ executionId: owner.executionId, occurrenceId, reason });
+          const sequence = owner.lastProcessedSequence + processedEventIds.length + 1;
+          // Every wait occupies the same interrupt position on replay, including
+          // events already in the ledger. Skipping an interrupt reuses its old
+          // resume value at the next wait in this node.
+          const eventId: string = interrupt({ executionId: owner.executionId, occurrenceId, reason, sequence });
           const event = durable.store.event(owner.executionId, eventId);
-          if (event.sequence !== owner.lastProcessedSequence + processedEventIds.length + 1) throw new Error('Resume event is not the next admitted execution event');
+          if (event.sequence !== sequence) throw new Error('Resume event is not the next admitted execution event');
           processedEventIds.push(event.eventId);
           return event;
         },
@@ -823,8 +845,8 @@ export async function executeGraph(
       };
 
       // Execute the node
-      await executeNode(nodeId, graph, executionState, readiness.inputs, nodeContext, eventHandler);
-      if (signal?.aborted) throw new DOMException('Graph execution cancelled', 'AbortError');
+      await executeNode(nodeId, graph, executionState, inputs, nodeContext, eventHandler);
+      signal?.throwIfAborted();
       const transition: CheckpointTransition | undefined = durable ? {
         transitionId: occurrenceId, dispatches, processedEventIds, frames, ...(taskUpdate ? { task: taskUpdate } : {}),
       } : undefined;
@@ -881,17 +903,40 @@ export async function executeGraph(
       // This is the existing saved graph loop bound, not an additional behavior limit.
       recursionLimit: graph.nodes.length * (maxLoopIterations + 1) + 2,
     };
-    const finished = await program.invoke(durable?.resumeEventId ? new Command({ resume: durable.resumeEventId }) : durable?.resume ? null : {
+    const ownsInvocation = durable && (!durable.invocationId || durable.externalChild);
+    if (durable?.resumeEventId) durable.store.event(durable.lease.executionId, durable.resumeEventId);
+    const previous = ownsInvocation && (durable.resume || durable.resumeEventId) ? await program.getState(config) : undefined;
+    // A queue receipt wakes an execution; its event may already have been read
+    // by this waiting node. The saved interrupt identifies the next event needed.
+    let finished = previous?.tasks.some(task => task.interrupts?.length)
+      ? previous.values as typeof Schedule.State
+      : await program.invoke(durable?.resume || durable?.resumeEventId ? null : {
       queue: executionOrder, counts: {}, nodeEntries: [], contextSnapshot: durable ? graphContextSnapshot(contextData) : {},
       startedAt: graphState.startTime, executionTransition: durable?.initialTransition,
     }, config);
+    if (ownsInvocation) {
+      for (;;) {
+        const saved = await program.getState(config);
+        const pending = saved.tasks.flatMap(task => task.interrupts ?? []);
+        if (!pending.length) break;
+        const wait = pending[0].value as { executionId: string; sequence: number };
+        if (wait.executionId !== durable.lease.executionId || !Number.isSafeInteger(wait.sequence) || wait.sequence < 1) {
+          throw new Error('Saved event wait does not identify this execution sequence');
+        }
+        const event = durable.store.events(wait.executionId, wait.sequence - 1)[0];
+        if (!event) break;
+        finished = await program.invoke(new Command({ resume: event.eventId }), config);
+      }
+    }
+    signal?.throwIfAborted();
     executionState.clear();
     finished.nodeEntries.forEach(([id, state]) => executionState.set(id, state));
     graphState.startTime = finished.startedAt;
-    if (durable && (!durable.invocationId || durable.externalChild)) {
+    if (ownsInvocation) {
       const saved = await program.getState(config);
+      signal?.throwIfAborted();
       graphState.checkpointId = saved.config.configurable?.checkpoint_id;
-      if (saved.next.length > 0) {
+      if (saved.next.length > 0 || saved.tasks.some(task => task.interrupts?.length)) {
         graphState.status = 'waiting';
         graphState.pending = saved.tasks.flatMap(task => task.interrupts ?? []);
         return graphState;
@@ -977,6 +1022,8 @@ export async function executeGraph(
       });
     }
     return graphState;
+  } finally {
+    if (forwardAbort) sourceSignal?.removeEventListener('abort', forwardAbort);
   }
 }
 

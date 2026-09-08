@@ -9,7 +9,8 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { getUser, getUserByUsername, authenticateUser, listUsers, createUser, hasOwner, updateUserMetadata, getProfileStorageConfig, deleteUser, updatePassword, verifyUserPassword, updateUsername } from '../../users.js';
 import type { ProfileStorageConfig } from '../../users.js';
-import { createSession, deleteSession } from '../../sessions.js';
+import { createSession, deleteSession, selectAuthenticatedSession, clearAuthenticatedUser } from '../../sessions.js';
+import { isWorkCoordinatorOwner } from '../../queue/work-coordinator-ownership.js';
 import { initializeProfile } from '../../profile.js';
 import { unlockProfile, lockProfile, getEncryptionStatus } from '../../encryption-manager.js';
 import { audit } from '../../audit.js';
@@ -121,6 +122,10 @@ export async function handleLogin(req: UnifiedRequest): Promise<UnifiedResponse>
   // Do not create an authenticated session until encrypted profile readiness
   // has succeeded. This prevents a valid login from bypassing a failed unlock.
   const session = createSession(user.id, user.role);
+  if (isWorkCoordinatorOwner()) {
+    const readiness = await getEncryptionStatus(user.id);
+    selectAuthenticatedSession(readiness.unlocked ? session.id : null);
+  }
 
   console.log(`[auth-handler] User ${username} logged in, session: ${session.id.slice(0, 8)}...`);
 
@@ -185,6 +190,8 @@ export async function handleLogout(req: UnifiedRequest): Promise<UnifiedResponse
   if (sessionId) {
     // Get session info before deleting
     const session = getSession(sessionId);
+    // Revoke authentication before asynchronous profile locking or recovery can continue.
+    const deleted = deleteSession(sessionId);
     if (session) {
       userId = session.userId;
       const user = getUser(userId);
@@ -217,8 +224,7 @@ export async function handleLogout(req: UnifiedRequest): Promise<UnifiedResponse
       }
     }
 
-    // Delete session
-    const deleted = deleteSession(sessionId);
+    // Record the completed logout.
     if (deleted) {
       console.log(`[auth-handler] Session destroyed: ${sessionId.slice(0, 8)}...`);
       audit({
@@ -301,9 +307,9 @@ export async function handleGetMe(req: UnifiedRequest): Promise<UnifiedResponse>
   // so this check only applies to users with LUKS/VeraCrypt/AES encryption configured
   const encryptionStatus = await getEncryptionStatus(user.userId);
 
-  // Only block if user HAS encryption AND it's not unlocked
-  // Unencrypted accounts pass through (type === 'none')
-  if (encryptionStatus.type !== 'none' && !encryptionStatus.unlocked) {
+  // Unencrypted accounts report unlocked. Invalid storage must not activate recovery either.
+  if (!encryptionStatus.unlocked) {
+    clearAuthenticatedUser(user.userId);
     console.log(`[auth-handler] User ${fullUser.username} has locked ${encryptionStatus.type} encryption - requiring unlock`);
 
     return {
@@ -316,6 +322,9 @@ export async function handleGetMe(req: UnifiedRequest): Promise<UnifiedResponse>
       },
     };
   }
+
+  const sessionId = req.sessionId || req.metadata?.sessionToken;
+  if (isWorkCoordinatorOwner() && typeof sessionId === 'string') selectAuthenticatedSession(sessionId);
 
   return successResponse({
     success: true,
@@ -488,6 +497,7 @@ export async function handleRegister(req: UnifiedRequest): Promise<UnifiedRespon
 
   // Create session
   const session = createSession(user.id, user.role);
+  if (isWorkCoordinatorOwner()) selectAuthenticatedSession(session.id);
 
   console.log(`[auth-handler] User ${username} registered, session: ${session.id.slice(0, 8)}...`);
 
@@ -607,6 +617,8 @@ export async function handleCreateSyncUser(req: UnifiedRequest): Promise<Unified
 
   // Create session
   const session = createSession(user.id, user.role);
+  // Synced storage may still require an unlock. /auth/me establishes readiness.
+  if (isWorkCoordinatorOwner()) selectAuthenticatedSession(null);
 
   console.log(`[auth-handler] User ${username} synced, session: ${session.id.slice(0, 8)}...`);
 
@@ -661,6 +673,7 @@ export async function handleGuest(_req: UnifiedRequest): Promise<UnifiedResponse
 
   // Create guest session (1 hour expiry via session system)
   const session = createSession(guestUser.id, 'guest');
+  if (isWorkCoordinatorOwner()) selectAuthenticatedSession(session.id);
 
   audit({
     level: 'info',

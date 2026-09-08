@@ -6,6 +6,8 @@ import type { QueuedTask } from '../queue/types.js';
 import type { TaskInput } from '../queue/types.js';
 import { randomUUID } from 'node:crypto';
 import { openExecutionStore } from '../durable-execution/storage.js';
+import { contentHash } from '../durable-execution/store.js';
+import { ExecutionConflictError, type NewExecutionEvent } from '../durable-execution/types.js';
 import { executionWorkInput } from '../durable-execution/coordinator-outbox.js';
 import type {
   EnvironmentAction,
@@ -42,12 +44,8 @@ const MAX_FEEDBACK = 200;
 const MAX_PROCESSED_TEXT_EVENTS = 1_000;
 const MAX_ORIGINATING_INSTRUCTION_CHARS = 4_000;
 const DEFAULT_MAX_ACTION_DURATION_MS = 1_500;
-const MAX_CONTROL_ACTION_AGE_MS = 2_000;
 const ACTION_TYPES = new Set<EnvironmentActionType>([
   'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'speak', 'sendText',
-]);
-const EXPIRING_CONTROL_ACTION_TYPES = new Set<EnvironmentActionType>([
-  'move', 'look', 'jump', 'interact', 'stop', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach',
 ]);
 
 type ActionSubscriber = () => void;
@@ -272,6 +270,25 @@ function environmentBridgeObservation(
   return { ...observation, metadata };
 }
 
+function withoutDeliveryTiming(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  const metadata = { ...value };
+  delete metadata.actionTiming;
+  delete metadata.actionStageDurations;
+  return Object.keys(metadata).length ? metadata : undefined;
+}
+
+/** Observation evidence is immutable; transport diagnostics change on delivery. */
+function immutableObservation(observation: EnvironmentObservation): EnvironmentObservation {
+  const source = environmentBridgeObservation(observation);
+  return {
+    ...source,
+    metadata: withoutDeliveryTiming(source.metadata),
+    ...(source.visual ? { visual: { ...source.visual, metadata: withoutDeliveryTiming(source.visual.metadata) } } : {}),
+    ...(source.visuals ? { visuals: source.visuals.map(frame => ({ ...frame, metadata: withoutDeliveryTiming(frame.metadata) })) } : {}),
+    ...(source.feedback ? { feedback: source.feedback.map(feedback => ({ ...feedback, data: withoutDeliveryTiming(feedback.data) })) } : {}),
+  };
+}
+
 export function getEnvironmentActionContext(
   observation: EnvironmentObservation,
 ): EnvironmentActionContext | null {
@@ -458,9 +475,6 @@ export function publishEnvironmentObservation(
   if (parentWork && parentWork.input.sessionId !== observation.sessionId) {
     throw new Error('Observation belongs to a different robot session');
   }
-  const recorded = persistEnvironmentObservation(observation);
-  const bridgeObservation = recorded.observation;
-  const actionContext = getEnvironmentActionContext(bridgeObservation);
   const hasUserInput = observation.text?.some(event => event.source === 'player' && event.text?.trim());
   if (parentWork?.durable && !hasUserInput) {
     if (parentWork.username !== options.username) throw new Error('Robot result belongs to a different profile');
@@ -468,15 +482,33 @@ export function publishEnvironmentObservation(
     try {
       const effect = store.dispatch(parentWork.durable.effectId);
       if (effect.actionId !== actionId) throw new Error('Observation does not match the dispatched action');
-      const event = store.deliverEvent(parentWork.durable.executionId, {
-        eventId: `observation:${bridgeObservation.sessionId}:${bridgeObservation.id || bridgeObservation.timestamp}`,
+      let incoming: NewExecutionEvent = {
+        eventId: `observation:${observation.sessionId}:${observation.id || observation.timestamp}`,
         kind: 'observation_received', actionId, workItemId: parentWork.id,
-        payload: { environmentObservation: environmentBridgeObservation(options.sourceObservation ?? observation), environmentObservationCurrent: true },
-      });
+        payload: { environmentObservation: immutableObservation(options.sourceObservation ?? observation), environmentObservationCurrent: true },
+      };
+      const previous = store.findEvent(parentWork.durable.executionId, incoming.eventId);
+      if (previous) {
+        const persisted: NewExecutionEvent = { eventId: previous.eventId, kind: previous.kind, payload: previous.payload,
+          actionId: previous.actionId, workItemId: previous.workItemId, parentEventId: previous.parentEventId };
+        if (!isRecord(previous.payload) || !isRecord(previous.payload.environmentObservation)
+          || contentHash({ ...persisted, payload: { ...previous.payload,
+            environmentObservation: immutableObservation(previous.payload.environmentObservation as unknown as EnvironmentObservation) } }) !== contentHash(incoming)) {
+          throw new ExecutionConflictError('Event ID reused with different content');
+        }
+        // Older events included delivery timing. Keep their committed bytes and
+        // receipt; compare their immutable evidence using the current contract.
+        incoming = persisted;
+      }
+      const event = store.deliverEvent(parentWork.durable.executionId, incoming);
+      const recorded = persistEnvironmentObservation(observation);
       return { summary: recorded.summary, workId: `${parentWork.durable.executionId}:resume:${event.eventId}`,
         executionId: parentWork.durable.executionId };
     } finally { store.close(); }
   }
+  const recorded = persistEnvironmentObservation(observation);
+  const bridgeObservation = recorded.observation;
+  const actionContext = getEnvironmentActionContext(bridgeObservation);
   const work = getQueueManager().enqueue({
     type: 'environment_observation',
     handler: 'environment.observation',
@@ -640,10 +672,6 @@ export function prepareEnvironmentCommand(
 ): TaskInput {
   const normalized = normalizeAction(action, options);
   const sessionId = normalized.sessionId!;
-  const sourceCreatedAt = action.createdAt ? Date.parse(action.createdAt) : Date.now();
-  const deadline = EXPIRING_CONTROL_ACTION_TYPES.has(normalized.type)
-    ? new Date((Number.isFinite(sourceCreatedAt) ? sourceCreatedAt : Date.now()) + MAX_CONTROL_ACTION_AGE_MS).toISOString()
-    : undefined;
   return {
     type: 'environment_command',
     handler: 'environment.command',
@@ -653,7 +681,6 @@ export function prepareEnvironmentCommand(
     input: { ...normalized, id: action.id || randomUUID() },
     username: options.username || 'system',
     cognitiveMode: 'environment',
-    deadline,
     correlationId: options.correlationId,
     idempotencyKey: options.idempotencyKey,
     maxAttempts: 1,
@@ -788,6 +815,15 @@ export interface RecordedEnvironmentActionResult {
   action: EnvironmentCommandWork;
   feedback: EnvironmentFeedback;
   username: string;
+  /** Permission for an adapter's pre-wire acceptance handshake, not a historical receipt. */
+  admitted?: boolean;
+}
+
+function isLegacyBridgeDeliveryFailure(feedback: EnvironmentFeedback | undefined): boolean {
+  // Pre-provenance Bridge releases generated this receipt namespace. Remove
+  // this compatibility recognition once those failures are reconciled/retired.
+  return feedback?.type === 'failed' && /^delivery-feedback-\d+-[a-z0-9]{1,6}$/.test(feedback.id)
+    && feedback.data?.producer === undefined && feedback.data?.delivery === undefined;
 }
 
 export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): RecordedEnvironmentActionResult | undefined {
@@ -798,6 +834,9 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
     && (candidate.input.id === feedback.actionId || (!candidate.input.id && candidate.id === feedback.actionId)));
   if (!task || task.type !== 'environment_command') return undefined;
   if (feedback.type === 'accepted' && !['leased', 'waiting'].includes(task.state)) return undefined;
+  let admitted = feedback.type === 'accepted' && manager.hasCurrentBodyLease(task.id)
+    && !task.cancellationRequestedAt && (!task.deadline || Date.parse(task.deadline) > Date.now());
+  let deliveryOnly = false;
   if (task.durable) {
     const store = openExecutionStore(task.username);
     try {
@@ -806,23 +845,41 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
         throw new Error('Robot report does not match its admitted action');
       }
       if (feedback.type === 'accepted') {
-        store.recordActionAcceptance(effect.effectId, task);
+        const accepted = store.recordActionAcceptance(effect.effectId, task);
+        const execution = store.get(effect.executionId);
+        admitted = admitted && execution.cancelledAt === null && ['running', 'waiting'].includes(execution.status)
+          && ['accepted', 'outcome_unknown'].includes(accepted.status);
       } else if (feedback.type !== 'status') {
+        const previous = store.findEvent(effect.executionId, feedback.id);
+        const delivery = isRecord(feedback.data?.delivery) ? feedback.data.delivery : undefined;
+        const transport = feedback.data?.producer === 'environment-bridge' && delivery !== undefined;
+        deliveryOnly = previous?.kind === 'delivery_result' || !previous && effect.status === 'completed'
+          && transport && feedback.type === 'outcome_unknown' && delivery?.outcome === 'unknown';
+        const priorResult = effect.status === 'completed' && !previous && !transport
+          && !isLegacyBridgeDeliveryFailure(feedback) && ['completed', 'failed', 'rejected', 'cancelled', 'expired'].includes(feedback.type)
+          ? store.events(effect.executionId).filter(event => event.actionId === feedback.actionId && event.kind === 'physical_result').at(-1)
+          : undefined;
+        const reconcilesEventId = priorResult && isRecord(priorResult.payload)
+          && (isLegacyBridgeDeliveryFailure(priorResult.payload.feedback as EnvironmentFeedback | undefined)
+            || (priorResult.payload.feedback as EnvironmentFeedback | undefined)?.data?.producer === 'owner_confirmation')
+          ? priorResult.eventId : undefined;
         store.deliverActionResult(effect.executionId, feedback.actionId, {
-          eventId: feedback.id, kind: 'physical_result', actionId: feedback.actionId, workItemId: task.id,
+          eventId: feedback.id, kind: previous?.kind ?? (deliveryOnly ? 'delivery_result' : 'physical_result'),
+          actionId: feedback.actionId, workItemId: task.id,
+          ...(previous?.parentEventId || reconcilesEventId ? { parentEventId: previous?.parentEventId ?? reconcilesEventId } : {}),
           payload: { feedback, action: task.input },
         }, feedback.type === 'outcome_unknown', ['rejected', 'expired', 'cancelled'].includes(feedback.type),
-        task.startedAt || task.bodyLease ? task : undefined);
+        task.startedAt || task.bodyLease ? task : undefined, { deliveryOnly, reconcilesEventId });
       }
     } finally { store.close(); }
   }
-  if (task.state === 'leased' || task.state === 'waiting') {
+  if (!deliveryOnly && (task.state === 'leased' || task.state === 'waiting')) {
     if (feedback.type === 'completed') {
       manager.complete(task.id, true, { deliveryStatus: feedback.type, feedback,
         actionTiming: { coreFeedbackReceivedAt: new Date().toISOString() } });
     } else if (feedback.type === 'cancelled') {
       manager.cancel(task.id, feedback.message);
-      manager.acknowledgeCancellation(task.id);
+      manager.acknowledgeCancellation(task.id, { deliveryStatus: feedback.type, feedback });
     } else if (feedback.type === 'expired') {
       manager.complete(task.id, false, { code: 'adapter_expired', message: feedback.message, retryable: false });
     } else if (feedback.type === 'outcome_unknown') {
@@ -839,6 +896,7 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
     action: commandView(current),
     feedback,
     username: current.username,
+    ...(feedback.type === 'accepted' ? { admitted } : {}),
   };
   updateCommandedPoseFromFeedback(recorded.action, feedback);
   return recorded;

@@ -2855,3 +2855,280 @@ Validation:
 - No live LLM Desire interpretation, autonomous external execution, browser
   interaction, or physical robot action was performed. Those remain runtime,
   external-effect, and physical-hardware evidence rather than source/build proof.
+
+## Durable TTS acknowledgement repair — 2026-09-07
+
+- Owner: `tts/delivery-queue.ts` still owns admission, leases and completion;
+  `api/handlers/tts-queue-stream.ts` authenticates and delegates acknowledgements.
+- Reproduced a real graph/outbox-generated speech item reaching the queue, then
+  both renewal and completion receiving HTTP 400. The API required the obsolete
+  `tts-...` naming pattern; durable effect IDs use the execution/node identity.
+  Rejected renewal allowed the same item to be claimed a second time on expiry.
+- Removed that API naming assumption. Nonempty string IDs are opaque queue keys;
+  profile scoping, exact queue lookup, lease token and delivery-action checks
+  remain unchanged. No playback suppression, new queue or client fallback added.
+- Added one API/queue integration regression using an actual graph-generated ID,
+  controlled playback and clock. Renewal and completion return 200; competing
+  claims, expiry, graph replay and a fresh queue instance produce one playback.
+  Existing IDs, unauthenticated requests, wrong profiles, wrong leases and invalid
+  IDs retain their expected behavior. The existing TTS validation command runs it.
+- Validation: eight delivery tests, TTS ownership/client tests, Core typecheck,
+  architecture, isolated Site build and whitespace checks pass. Reproduction and full results are
+  preserved in the temporary `metahuman-tts-ack-repair-NHvOsU` directory. No live
+  audio or service restart was performed; installed deployment is not claimed.
+
+### Related camera diagnosis (read-only)
+
+- Two image requests reached the host adapter but expired before robot-wire
+  dispatch, at ages 5.173 and 3.246 seconds. Both adapter receipts have no wire
+  operation. The accepted-receipt/permission exchange preceded that expiry check.
+- Core's `EXPIRING_CONTROL_ACTION_TYPES` excludes `captureImage`, but the host
+  adapter's `NON_REPLAYABLE_ACTION_TYPES` includes it and applies a two-second
+  age limit in `_control_action_is_expired`. This is a cross-owner contract
+  mismatch, not evidence of a disconnected camera. The last inspected body
+  telemetry reports `cameraReady: true` and an authenticated connection.
+- The model described command expiry as sensor disconnection. No camera/adapter
+  repair or new capture was performed during this diagnosis. Aligning capture
+  admission with the Coordinator/receipt contract is the next repair; the live
+  records do not establish which part of the acknowledgement round trip consumed
+  each millisecond, or prove current physical image quality.
+
+## Durable recovery / authentication stall repair — 2026-09-07
+
+- Baseline: the Site did not answer bounded root, asset, or authentication HTTP
+  probes. Its process repeatedly waited on filesystem commits; SQLite committed
+  without changes to execution/event/receipt contents. Coordinator maintenance
+  replayed terminal receipts on every pass, opening a database per receipt and
+  updating rows whose values already matched.
+- Repaired the existing ExecutionStore receipt operations to avoid identical
+  updates while retaining conflicting-duplicate checks. Recovery reuses one
+  connection per profile and yields between items to service HTTP and other I/O;
+  no timed cooldown, new scheduler, or authentication fallback was introduced.
+- Immutable execution conflicts now fail their Coordinator job once instead of
+  retrying incompatible code. Saved executions and version checks remain intact;
+  this is not a checkpoint migration. Removed the separate per-receipt connection
+  sweep, not receipt recovery or retention.
+- Independent review caught a missing-database case silently skipped by the new
+  sweep. Corrected it to report unresolved work without recreating checkpoints,
+  while still recovering other profiles.
+- Validation: the owner reproduction changed from one redundant commit and a
+  delayed HTTP response to zero commits with the canonical authentication adapter
+  responding during recovery. All 166 durable tests, Core typecheck, architecture
+  checks, isolated Site build, and `git diff --check` pass. Independent probes
+  cover five receipt states, conflicting duplicates, missing storage, and version
+  rejection; no remaining concrete review findings. Exact commands/results are
+  in temporary `metahuman-recovery-stall-EkocWe` and
+  `metahuman-recovery-stall-independent-gcQr5q` evidence bundles.
+- Deployment remains unverified: no live service restart, installed build
+  replacement, authentication change, saved-task deletion, or robot action was
+  performed. Restart authorization was requested because Full mode is enabled.
+  Locked-profile access, old incompatible checkpoints, model context exhaustion,
+  and the separate adapter capture-expiry mismatch are not resolved by this fix.
+
+## Authenticated-profile durable recovery — 2026-09-07
+
+- Reproduction: a Coordinator boot with one stored cookie inspected two profiles
+  and admitted both saved executions before authentication. Recovery combined
+  the entire user registry with ledger usernames; the active-user resolver also
+  treated persisted activity/cookies as a current login.
+- The Session owner now records one storage-ready authenticated session for the
+  current server lifetime. Login, `/auth/me`, and explicit unlock select it;
+  logout, expiry, profile locking, and restart revoke it. Recovery no longer
+  enumerates profiles. Restored queue claims and old-execution outbox delivery
+  use the same selection, including Brain continuation requests. New explicit
+  work and incoming result evidence remain supported; saved executions are not
+  deleted or reconstructed.
+- Independent review reproduced three boundary failures in the initial repair:
+  late results drained old chat projections before login, a parked old stop
+  blocked fresh body work, and concurrent session activity could overwrite a
+  newer login/runtime. Corrected the existing relay and capacity checks. The
+  Session owner now makes transactional mutations using the already-installed
+  SQLite dependency, replacing whole-file JSON writes without another auth
+  owner. Legacy cookies import once; their JSON file is renamed to a private,
+  inert migration backup, never read as fallback. The dev-session helper now
+  delegates the same public Session functions instead of editing raw storage.
+- Verification: 179 durable tests pass, including real authentication handlers,
+  profile switching, expiry/lock/logout, restored claims, late receipts versus
+  fresh continuations, stopped relay, session migration, and overlapping-process
+  session writes. Core, Brain, scripts, and Site typechecks, the architecture
+  guard, isolated Site build, and `git diff --check` pass. Evidence is under
+  temporary `metahuman-login-recovery-opvmcK`.
+- An additional legacy `work-owner-architecture.spec.ts` check fails at line 60:
+  it asserts the Agent Follow-on Trigger file does not exist. Both the assertion
+  and that implemented node are unchanged from HEAD; neither was weakened or
+  changed in this repair. The maintained architecture guard passes.
+- Final independent review reran the unchanged projection/stop reproduction and
+  the overlapping-process session test successfully, with no remaining concrete
+  finding. Its sandbox blocked two other subprocess checks with `EPERM`; those
+  pass in the implementation owner's unrestricted suite. Original failures and
+  corrected results remain in `metahuman-login-recovery-independent-TxCJz5`.
+- No real account authentication, encrypted-volume unlock, installed build
+  replacement, service restart, or physical robot action was performed. The
+  session-storage migration has only run against isolated test data. Deployment
+  requires rebuilding and restarting the existing services, then authenticating.
+
+## Launcher shutdown completion — 2026-09-08
+
+- Owner: `start.sh` process lookup inside the existing exit/signal cleanup. A
+  normal `pgrep` no-match status propagated through `pipefail` and `errexit`,
+  ending cleanup before agent shutdown. Old workers could therefore survive a
+  web-server restart with incompatible code still loaded.
+- Replaced that pipeline with explicit lookup-status handling: no matches mean
+  no work; actual lookup failures retain their nonzero status and diagnostics.
+  Repository filtering, shutdown order, signals, and service owners are unchanged.
+  No scheduler, worker fallback, or autonomy policy was added or changed.
+- Added one launcher-owner test file to the normal test chain. Baseline: six
+  failures and one passing filtering control. After repair: 7/7 pass, exercising
+  the actual cleanup and trap definitions with mocked external effects, including
+  normal exit, INT/TERM/HUP, repeated cleanup, and lookup errors.
+- Validation: `pnpm test:launcher`, `pnpm typecheck:tests`,
+  `pnpm validate:security-routes` (14/14), `pnpm check:architecture`,
+  `bash -n start.sh stop.sh`, and `git diff --check` pass. ShellCheck is not
+  installed. No Site rebuild, live service stop/restart, or robot action was run.
+  Existing workers require a full `./stop.sh` then `./start.sh`; the launcher
+  script change itself does not require a Site build.
+
+## Saved-workflow cancellation, resume failure, and dispatch expiry — 2026-09-08
+
+- Baseline: queue Cancel ended individual jobs without cancelling the saved
+  workflow; failed resume receipts completed only their delivery rows, leaving
+  incompatible executions waiting and Full Auto repeatedly signalling them.
+  Core and the host adapter also independently expired newly approved commands
+  two seconds after creation, including time spent in the approval handshake.
+- The existing QueueSystem control path now cancels the saved execution before
+  its remaining jobs. The panel shows saved workflows and their Cancel control,
+  pending robot-stop acknowledgements, and an explicitly owner-confirmed stop
+  option for unreachable bodies. The latter records human confirmation, not a
+  fabricated adapter acknowledgement. Late genuine results retain their own
+  correlated evidence without reviving the cancelled execution.
+- Saved-only cancellation reaches the queue stream and records the authenticated
+  user's activity, waking Robot Operator's existing watcher. Viewer read errors
+  are reported to that stream and cannot abort somebody else's cancellation.
+  The obsolete job-only `clearQueued` method and its unused event were removed.
+- The execution store binds resume receipts to the attempting writer generation;
+  only that attempt can settle a terminal failure. Worker interruption retains
+  the checkpoint and schedules correlated recovery. Old receipts lacking writer
+  identity re-enter the version-checked runtime once. Newer progress is preserved,
+  including progress inside a node with multiple interrupts. Full Auto does not
+  issue another signal while a resume is pending.
+- Removed the competing creation-age expiry policies from Core and Ainekio's
+  host adapter. Explicit Coordinator deadlines, cancellation, receipt identity,
+  body fencing, and local gateway wire-age checks remain. No firmware, model,
+  prompt, objective selection, or autonomy-mode policy was changed.
+- Verification: 189 durable tests and 43 host adapter tests pass; Core, Brain,
+  tests, and Site typechecks pass; architecture and security routes (14/14)
+  pass; isolated Site build and both repositories' whitespace checks pass.
+  Independent review reproduced and then verified fixes for late resume receipts,
+  late physical evidence, saved-only cancellation notifications, and viewer
+  failures. No remaining concrete finding in this repair. Evidence and exact
+  commands are in temporary `metahuman-cancel-resume-repair-1EqD7b` and
+  `metahuman-cancel-resume-review-P2edU7` bundles.
+- Deployment/physical evidence remains unverified: the installed Site output,
+  services, saved real tasks, and robot were not changed or exercised. Rebuild
+  Site and restart MetaHuman plus the Ainekio host gateway/adapter to load this
+  repair; no firmware flash is required. Unrelated dirty work was preserved.
+
+## Durable execution efficiency — 2026-09-08
+
+- Baseline: a measured Full-mode cycle took 35.588 seconds, including four useful
+  model calls totalling 8.213 seconds. A second result/observation resume did no
+  graph work but still claimed model capacity and charged the configured two-second
+  cooldown. Separate failed Controller calls exhausted the 8,192-token context.
+  The original read-only evidence remains in `durable-execution-latency-review.md`.
+- Increased only the selected profile model's existing context setting to 16,384.
+  Replayed an unchanged failed request through the current model router: all 8,166
+  input tokens retained, 288 output tokens, strict Controller parser accepted.
+  This was an isolated model request, not an admitted robot decision. Model,
+  thinking settings, prompts, memory inputs, and available actions are unchanged.
+- Set the existing local-model lane cooldown to zero, retaining concurrency one.
+  The existing authenticated-profile recovery owner retires satisfied unstarted
+  resume jobs before lane claim; both result and observation events remain durable.
+  No new scheduler, admission path, or event-coalescing store was introduced.
+- Independent review exposed a related restart defect: consuming a result marked
+  its accepted runner finished even when the saved review was still pending. The
+  execution store now keeps that invocation accepted until its receipt settles.
+  Restart resumes the saved review once, and a current review failure still settles
+  the execution. The old test expectation that skipped this pending review was
+  corrected after the independent reproduction, not to hide a failed assertion.
+- The canonical scheduler now groups inactive-node bookkeeping with the next
+  executed node's checkpoint. Skipped-node visibility, active node output commits,
+  conditions, loops, cancellation, and physical-effect recovery remain intact.
+  Removed wasted per-inactive-node checkpoint cycles; no capability was removed.
+- Independent sequential comparison used the actual saved Controller, Executor,
+  and Action Result with mocked external effects: four model calls and one action
+  in all six runs; checkpoint puts 72 → 64 and pending writes 77 → 69. Median test
+  time was 2.65 → 2.37 seconds (about 11% lower), with overlapping ranges and three
+  runs per variant. This does not establish end-to-end physical latency improvement
+  or account for the separately removed queue cooldown.
+- Validation: 193/193 durable tests, Core/Brain/tests typechecks, all 38 graph
+  definitions, architecture guard, and isolated Site build pass. Independent
+  review reran 44 store/recovery/scheduler tests and the intermediate-checkpoint
+  restart probe, with no remaining concrete finding. Evidence, preserved baseline
+  sources, and exact commands are in temporary `metahuman-latency-repair-9uQ9V3`.
+- Deployment boundary: the selected model's 16K setting was exercised live and
+  remained GPU-resident. Runtime source/config changes need the existing rebuild
+  and restart procedure; installed Site output and services were not replaced.
+  No live robot commands or physical before/after timing tests were performed.
+  No dependency, firmware, graph JSON, model assignment, or LLM decision policy
+  changed in this repair. Unrelated worktree changes were preserved.
+
+## Authenticated-request handoff to Full Auto — 2026-09-08
+
+- Baseline: after restart, the browser cookie was valid but background profile
+  selection was empty; Robot Operator reported `no_authorized_owner`. A new test
+  through the real HTTP adapter and `/api/active-operator/config` reproduced it.
+- The shared router now asks the Session owner to restore that storage-ready
+  login on an authenticated request. Restoration cannot override explicit login,
+  switching, logout or locking, including changes during asynchronous checks.
+  Cookie validation alone still grants no recovery authority; no profiles are scanned.
+- Committed selection changes notify Robot Operator through the existing event
+  bus and its existing mode-arming function. Repeated unchanged requests neither
+  rewrite the selection nor rearm scheduling. Removed the dependence on an
+  `/auth/me` round trip; no new scheduler, store, prompt or autonomous policy.
+- Verification: 21 focused checks, all 199 durable tests, Core/Brain/tests/Site
+  typechecks, architecture, security routes and isolated Site build pass.
+  Independent review exercised the actual Robot Operator service with real
+  Session storage and an isolated bus: restoration bypassed the 30-second retry
+  and admitted one mocked Controller job; repeated requests, logout and shutdown
+  behaved correctly. No remaining concrete finding in this handoff repair.
+- Evidence and commands: temporary `metahuman-auth-handoff-FQNpuL/README.md`.
+  Installed Site output, services, real authentication state and robot actions
+  were not changed. Rebuild and fully stop/start MetaHuman to load the fix;
+  deployed Full Auto and physical behavior remain unverified. Unrelated work
+  was preserved.
+
+## Full Auto decision and evidence integration — 2026-09-08
+
+- Baseline: the Full Auto design/runtime audit reproduced stale action facts
+  under null semantic decisions, omitted saved camera evidence and capability
+  descriptions, lost specialist briefs/returns, Executor-only continuation,
+  unused connected intent history, and overflowing repeated context.
+- Repaired the existing owners: action facts advance independently of objective
+  changes; criteria and execution identity reach context; available frames retain
+  time/action identity; Controller and Goal Review share the actual capability
+  choice contract. Goal Review uses its existing inference slot, not an added
+  Controller call. Unfinished child returns reach its visible review branch.
+- Finite specialist prompts now receive the selected task brief through explicit
+  graph inputs. Their saved outputs return under the same execution; failed
+  graphs do not present intermediate context as an answer. Duplicate work
+  receipts retain the committed derived return and still reject changed source
+  facts. Boredom children use their existing plannerDecision input.
+- Removed the active unread handoff field, Executor-only choice restriction,
+  sliced structured-context fallback and repeated whole observation envelopes
+  from model context. Full durable evidence and conversation/inner history remain
+  saved. No new runtime, scheduler, store, dependency, forced speech or movement
+  policy was introduced. Historical receipts remain readable.
+- Replayed 55 recorded contexts; the largest text package fell from 52,377 to
+  about 43,000 characters. Tokenization plus recorded image overhead showed the
+  need for additional output headroom. The selected model's existing profile
+  option is now 24,576 context tokens; every other registry field is unchanged.
+- Verification: 206 durable tests, 64 specialist/context tests, four Environment
+  graph tests, all 38 graphs, model defaults, Core/Brain/tests/Site typechecks,
+  architecture guard and isolated Site build pass. Independent review found and
+  reverified three corrected owner defects. Existing schema-documentation and
+  graph-persistence warnings remain reported, not suppressed.
+- Evidence: temporary `metahuman-full-auto-repair-CJwjET/README.md` and independent
+  `metahuman-full-auto-review-4b25kU/README.md`; details and the original baseline
+  remain in `full-auto-design-runtime-review-2026-09-08.md`. No installed Site
+  replacement, model inference, live robot command, or physical behavior proof.
+  Rebuild/restart and test a new execution to evaluate deployed behavior.

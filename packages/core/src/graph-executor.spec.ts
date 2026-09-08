@@ -19,6 +19,10 @@ const { nodeExecutors, nodeRegistry } = await import('./nodes/index.js')
 const { defineNode } = await import('./nodes/types.js')
 const { ExecutionStore } = await import('./durable-execution/store.js')
 const { executionDefinition } = await import('./durable-execution/graph-contract.js')
+const { runGraph } = await import('./graph-runtime.js')
+const { openExecutionStore } = await import('./durable-execution/storage.js')
+const { withGraphWork } = await import('./durable-execution/runtime.js')
+const { getQueueManager } = await import('./queue/unified-queue-manager.js')
 after(() => eventBus.disconnect())
 
 function testNode(
@@ -83,6 +87,138 @@ function graph(
     edges,
   }
 }
+
+test('string cancellation reasons remain typed errors through the scheduler and durable facade', async () => {
+  const reason = 'Robot Operator disabled by Active Operator reactive mode'
+  let controller = new AbortController()
+  let calls = 0
+  const events: any[] = []
+  const aborted = testNode('test_string_cancellation', [], [], async (_inputs, context) => {
+    calls++
+    return new Promise((_resolve, reject) => {
+      context.abortSignal.addEventListener('abort', () => reject(context.abortSignal.reason), { once: true })
+      queueMicrotask(() => controller.abort(reason))
+    })
+  })
+  await withTestNodes([aborted], async () => {
+    const workflow = graph([{ id: 'abort', nodeType: aborted.id }], [])
+    const result = await executeGraph(workflow, {}, event => events.push(event), controller.signal)
+    assert.equal(result.status, 'failed')
+    assert.ok(result.error instanceof Error)
+    assert.equal(result.error.name, 'AbortError')
+    assert.equal(result.error.message, reason)
+    assert.equal(result.nodes.get('abort')?.error?.message, reason)
+    assert.equal(events.find(event => event.type === 'graph_error')?.data.error, reason)
+
+    controller = new AbortController()
+    controller.abort(reason)
+    const beforeStart = await executeGraph(workflow, {}, undefined, controller.signal)
+    assert.equal(calls, 1, 'A pre-aborted graph must not enter a node')
+    assert.equal(beforeStart.error?.name, 'AbortError')
+    assert.equal(beforeStart.error?.message, reason)
+
+    controller = new AbortController()
+    const leaseFailure = new Error('Execution lease lost')
+    controller.abort(leaseFailure)
+    const originalError = await executeGraph(workflow, {}, undefined, controller.signal)
+    assert.equal(originalError.error, leaseFailure, 'Existing Error identity must survive signal forwarding')
+    assert.equal(calls, 1)
+
+    controller = new AbortController()
+    const username = 'abort-fixture'
+    fs.mkdirSync(path.join(isolatedRoot, 'profiles', username), { recursive: true })
+    const manager = getQueueManager()
+    const work = manager.enqueue({ type: 'generic', handler: 'graph.resume', source: 'user', username,
+      maxAttempts: 1, input: {} })
+    assert.ok(manager.claim(work.id))
+    await assert.rejects(() => withGraphWork(work, id => manager.attachExecution(work.id, id),
+      () => runGraph({ graph: workflow, context: { username, userId: username }, signal: controller.signal }),
+      async input => manager.enqueue(input)),
+      error => error instanceof Error && error.name === 'AbortError' && error.message === reason)
+    manager.cancel(work.id, reason)
+    manager.acknowledgeCancellation(work.id)
+    const store = openExecutionStore(username)
+    try {
+      const [execution] = store.list()
+      assert.equal(execution.status, 'waiting', 'Worker cancellation parks the execution rather than inventing semantic cancellation')
+      assert.equal(execution.waitingReason, 'interrupted')
+    } finally { store.close() }
+  })
+})
+
+test('saved waits reject invalid wake metadata and interrupted workers cannot admit pending actions', async () => {
+  const username = 'wait-admission-fixture'
+  fs.mkdirSync(path.join(isolatedRoot, 'profiles', username), { recursive: true })
+  let plans = 0
+  const plan = testNode('test_wait_admission_plan', [], [{ name: 'commands', type: 'array' }], async (_inputs, context) => {
+    plans++
+    context.graphExecution.dispatch({ kind: 'coordinator_work', actionId: 'waiting-action', payload: {
+      type: 'generic', handler: 'test.effect', source: 'system', resource: 'system', username, input: {},
+    } })
+    return { commands: [{ id: 'waiting-action' }] }
+  })
+  await withTestNodes([plan], async () => {
+    const workflow = graph([{ id: 'plan', nodeType: plan.id }, { id: 'wait', nodeType: 'environment_result_wait' }], [
+      { id: 'commands', source: 'plan', sourceHandle: 'commands', target: 'wait', targetHandle: 'commands' },
+    ])
+    const store = openExecutionStore(username)
+    try {
+      const definition = executionDefinition(workflow)
+      const record = store.enter(username, definition, 'wait-admission', { graph: workflow, context: { username } })
+      const lease = store.claim(record.executionId, definition)
+      const first = await executeGraph(workflow, { username }, undefined, undefined, { store, lease })
+      assert.equal(first.status, 'waiting', first.error?.stack)
+      const checkpointVersion = store.get(record.executionId).checkpointVersion
+      store.settle(lease, 'waiting', 'robot_result')
+      const abort = new AbortController()
+      abort.abort('Worker interrupted at saved wait')
+      const direct = await executeGraph(workflow, { username }, undefined, abort.signal, { store, lease, resume: true })
+      assert.equal(direct.status, 'failed')
+      assert.equal(direct.error?.name, 'AbortError')
+      assert.equal(direct.error?.message, 'Worker interrupted at saved wait')
+      store.release(lease)
+
+      const enqueued: string[] = []
+      const manager = getQueueManager()
+      const invoke = async (resumeEventId?: string, signal?: AbortSignal) => {
+        const work = manager.enqueue({ type: 'generic', handler: 'graph.resume', source: 'user', username, maxAttempts: 1, input: {} })
+        assert.ok(manager.claim(work.id))
+        try {
+          return await withGraphWork(work, id => manager.attachExecution(work.id, id),
+            () => runGraph({ graph: workflow, context: { username }, executionId: record.executionId, resumeEventId, signal }),
+            async input => { enqueued.push(input.handler!); return manager.enqueue(input) })
+        } finally {
+          manager.cancel(work.id, 'Isolated invocation finished')
+          manager.acknowledgeCancellation(work.id)
+        }
+      }
+      const foreign = store.create(username, definition)
+      store.appendEvent(foreign.executionId, { eventId: 'foreign-wake', kind: 'observation_received', payload: {} })
+      await assert.rejects(() => invoke('foreign-wake'), /Unknown execution event foreign-wake/)
+      assert.equal(store.get(record.executionId).status, 'waiting', 'Invalid admission metadata must not terminally fail the objective')
+      assert.equal(store.get(record.executionId).checkpointVersion, checkpointVersion)
+      assert.equal(store.get(record.executionId).lastProcessedSequence, 0)
+      assert.equal(store.get(record.executionId).owner, null)
+      assert.deepEqual(enqueued, [])
+
+      const admissionsBefore = store.list().length
+      await assert.rejects(() => runGraph({ graph: workflow, context: { username }, resumeEventId: 'foreign-wake' }), /event wake requires an execution identity/)
+      assert.equal(store.list().length, admissionsBefore, 'A wake without execution identity must not create an orphan execution')
+
+      await assert.rejects(() => invoke(undefined, abort.signal), error =>
+        error instanceof Error && error.name === 'AbortError' && error.message === 'Worker interrupted at saved wait')
+      assert.equal(store.get(record.executionId).status, 'waiting')
+      assert.equal(store.get(record.executionId).waitingReason, 'interrupted')
+      assert.equal(store.get(record.executionId).cancelledAt, null, 'Worker interruption is not semantic cancellation')
+      assert.equal(store.get(record.executionId).checkpointVersion, checkpointVersion)
+      assert.equal(plans, 1, 'A saved wait never repeats the action-producing node')
+      assert.deepEqual(enqueued, [], 'A pre-aborted worker cannot admit pending actions or recovery work')
+      const intents = store.dispatches(record.executionId)
+      assert.equal(intents.find(intent => intent.actionId === 'waiting-action')?.status, 'pending')
+      assert.ok(intents.some(intent => intent.kind === 'graph_resume' && intent.status === 'pending'), 'Recovery remains committed for the existing maintenance owner')
+    } finally { store.close() }
+  })
+})
 
 test('the canonical executor resumes saved nodes with their persisted properties and original inputs', async () => {
   let plans = 0
@@ -184,6 +320,81 @@ test('actual child graphs wait and recover in the same parent thread without rep
   })
 })
 
+test('robot result waits preserve event order when reports and images arrive in separate invocations', async () => {
+  let plans = 0
+  const plan = testNode('test_separate_result_plan', [], [{ name: 'commands', type: 'array' }], async () => {
+    plans++
+    return { commands: [{ id: 'separate-action' }] }
+  })
+  await withTestNodes([plan], async () => {
+    const workflow = graph([{ id: 'plan', nodeType: plan.id }, { id: 'wait', nodeType: 'environment_result_wait' }], [
+      { id: 'commands', source: 'plan', sourceHandle: 'commands', target: 'wait', targetHandle: 'commands' },
+    ])
+    for (const earlyEvent of [false, true]) {
+      const filename = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-separate-results-')), 'execution.sqlite')
+      let store = new ExecutionStore(filename)
+      const definition = executionDefinition(workflow)
+      const execution = store.create('fixture', definition)
+      let lease = store.claim(execution.executionId, definition)
+      if (earlyEvent) store.appendEvent(execution.executionId, { eventId: 'unrelated', kind: 'autonomy_trigger', payload: {} })
+      const plannedBefore = plans
+      const initial = await executeGraph(workflow, {}, undefined, undefined, { store, lease })
+      assert.equal(initial.status, 'waiting', initial.error?.stack)
+      const report = store.appendEvent(execution.executionId, { eventId: 'report', kind: 'physical_result', actionId: 'separate-action',
+        payload: { feedback: { type: 'completed' } } })
+      const withoutImage = await executeGraph(workflow, {}, undefined, undefined, { store, lease, resumeEventId: report.eventId })
+      assert.equal(withoutImage.status, 'waiting', withoutImage.error?.stack)
+      assert.equal(store.get(execution.executionId).lastProcessedSequence, 0, 'The unfinished wait has no committed result yet')
+      // A repeated wake-up does not replay a consumed interrupt value as a new event.
+      const duplicateWake = await executeGraph(workflow, {}, undefined, undefined, { store, lease, resumeEventId: report.eventId })
+      assert.equal(duplicateWake.status, 'waiting', duplicateWake.error?.stack)
+      store.release(lease)
+      store.close()
+      store = new ExecutionStore(filename)
+      lease = store.claim(execution.executionId, definition)
+      const image = store.appendEvent(execution.executionId, { eventId: 'image', kind: 'observation_received', actionId: 'separate-action',
+        payload: { environmentObservation: { sessionId: 'fixture-body', timestamp: new Date().toISOString(), feedback: [],
+          visual: { id: 'after-image', mimeType: 'image/jpeg' } } } })
+      const completed = await executeGraph(workflow, {}, undefined, undefined, { store, lease, resumeEventId: image.eventId })
+      assert.equal(completed.status, 'completed', completed.error?.stack)
+      assert.deepEqual(completed.nodes.get('wait')?.outputs?.events.map((event: any) => event.eventId),
+        earlyEvent ? ['unrelated', 'report', 'image'] : ['report', 'image'])
+      assert.equal(store.get(execution.executionId).lastProcessedSequence, earlyEvent ? 3 : 2)
+      assert.equal(plans, plannedBefore + 1, 'Waiting never repeats the action-producing node')
+      store.release(lease)
+      store.close()
+    }
+  })
+})
+
+test('definitive action failure reaches review without an unavailable after-image', async () => {
+  const plan = testNode('test_failed_result_plan', [], [{ name: 'commands', type: 'array' }], async () => ({ commands: [{ id: 'failed-action' }] }))
+  await withTestNodes([plan], async () => {
+    const workflow = graph([{ id: 'plan', nodeType: plan.id }, { id: 'wait', nodeType: 'environment_result_wait' }], [
+      { id: 'commands', source: 'plan', sourceHandle: 'commands', target: 'wait', targetHandle: 'commands' },
+    ])
+    for (const type of ['failed', 'rejected', 'expired', 'cancelled', 'outcome_unknown']) {
+      const filename = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-failed-result-')), 'execution.sqlite')
+      const store = new ExecutionStore(filename)
+      const definition = executionDefinition(workflow)
+      const execution = store.create('fixture', definition)
+      const lease = store.claim(execution.executionId, definition)
+      store.appendEvent(execution.executionId, { eventId: type, kind: 'physical_result', actionId: 'failed-action',
+        payload: { feedback: { type } } })
+      const result = await executeGraph(workflow, {}, undefined, undefined, { store, lease })
+      assert.equal(result.status, type === 'outcome_unknown' ? 'waiting' : 'completed', result.error?.stack)
+      if (type !== 'outcome_unknown') {
+        assert.equal(result.nodes.get('wait')?.outputs?.events[0].payload.feedback.type, type)
+        assert.equal(result.nodes.get('wait')?.outputs?.context.environmentObservationCurrent, false)
+        assert.equal(store.get(execution.executionId).lastProcessedSequence, 1)
+      }
+      assert.equal(store.task(execution.executionId), null, 'A transport failure cannot fabricate objective completion')
+      store.release(lease)
+      store.close()
+    }
+  })
+})
+
 test('scheduler invokes only the selected branch and reports the other branch as skipped', async () => {
   const calls: string[] = []
   const events: string[] = []
@@ -227,6 +438,34 @@ test('scheduler invokes only the selected branch and reports the other branch as
     assert.equal(state.nodes.get('right')?.status, 'skipped')
     assert.match(state.nodes.get('right')?.skipReason ?? '', /inactive/i)
     assert.ok(events.includes('node_skip:right'))
+  })
+})
+
+test('inactive nodes retain their visible state without individual durable execution steps', async () => {
+  let calls = 0
+  const action = testNode('test_inactive_step', [], [], async () => { calls++; return {} })
+  await withTestNodes([action], async () => {
+    const checkpoints: number[] = []
+    for (const skipped of [0, 12]) {
+      const workflow = graph(Array.from({ length: skipped + 2 }, (_, i) => ({ id: `node-${i}`, nodeType: action.id })), [])
+      for (const node of workflow.nodes.slice(1, -1)) node.data.muted = true
+      const store = new ExecutionStore(path.join(isolatedRoot, `inactive-${skipped}.sqlite`))
+      try {
+        const definition = executionDefinition(workflow)
+        const record = store.create('fixture', definition)
+        const lease = store.claim(record.executionId, definition)
+        const events: string[] = []
+        const state = await executeGraph(workflow, {}, event => events.push(`${event.type}:${event.nodeId}`), undefined, { store, lease })
+        assert.equal(state.status, 'completed', state.error?.stack)
+        assert.equal([...state.nodes.values()].filter(node => node.status === 'completed').length, 2)
+        assert.equal([...state.nodes.values()].filter(node => node.status === 'skipped').length, skipped)
+        assert.equal(events.filter(event => event.startsWith('node_skip:')).length, skipped)
+        checkpoints.push(store.get(record.executionId).checkpointVersion)
+        store.release(lease)
+      } finally { store.close() }
+    }
+    assert.equal(calls, 4, 'No inactive executor or external effect ran')
+    assert.equal(checkpoints[1], checkpoints[0], 'Inactive scheduler bookkeeping does not require its own commit per node')
   })
 })
 

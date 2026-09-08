@@ -92,6 +92,7 @@ export interface EnvironmentTaskDecision {
   reason: string;
   /** Model-authored durable objective. A decision without an objective is not a task. */
   objective: string;
+  completionCriteria?: string;
   objectiveComplete: boolean;
   continuationPolicy?: EnvironmentContinuationPolicy;
   requiredCompletionBasis?: EnvironmentCompletionBasis;
@@ -188,6 +189,9 @@ export function projectRobotStatusContext(value: unknown): unknown {
       : null,
     task: task
       ? projectSelectorEvidence({
+          objectiveId: task.objectiveId,
+          executionId: task.executionId,
+          completionCriteria: task.completionCriteria,
           objective: task.objective,
           instruction: task.instruction,
           source: task.source,
@@ -513,6 +517,10 @@ function parseTaskDecision(
   if (!objective) {
     return { decision: null, error: 'taskDecision objective must be a non-empty string' };
   }
+  if (record.completionCriteria !== undefined
+    && (typeof record.completionCriteria !== 'string' || !record.completionCriteria.trim())) {
+    return { decision: null, error: 'taskDecision completionCriteria must be a non-empty string' };
+  }
   const requiredCompletionBasis = typeof record.requiredCompletionBasis === 'string'
     ? record.requiredCompletionBasis.trim() as EnvironmentCompletionBasis
     : undefined;
@@ -565,6 +573,8 @@ function parseTaskDecision(
     decision: {
       outcome,
       reason,
+      ...(typeof record.completionCriteria === 'string' && record.completionCriteria.trim()
+        ? { completionCriteria: record.completionCriteria.trim() } : {}),
       objective,
       objectiveComplete: typeof record.objectiveComplete === 'boolean'
         ? record.objectiveComplete
@@ -596,6 +606,7 @@ const SELECTOR_SCHEMA_DECISION_PROPERTIES = {
   outcome: { type: 'string', enum: [...ENVIRONMENT_TASK_OUTCOMES] },
   reason: { type: 'string', minLength: 1 },
   objective: { type: 'string', minLength: 1 },
+  completionCriteria: { type: 'string', minLength: 1, description: 'Observable success condition for this objective, not merely the next movement.' },
   objectiveComplete: { type: 'boolean' },
   continuationPolicy: { type: 'string', enum: [...ENVIRONMENT_CONTINUATION_POLICIES] },
   requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
@@ -918,6 +929,7 @@ const SELECTOR_TASK_DECISION_FIELDS = new Set([
   'outcome',
   'reason',
   'objective',
+  'completionCriteria',
   'objectiveComplete',
   'continuationPolicy',
   'requiredCompletionBasis',

@@ -162,6 +162,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
     { name: 'activeExecutions', type: 'array', optional: true, description: 'Existing objectives the user may steer, cancel, or leave separate from this turn' },
+    { name: 'execution', type: 'object', optional: true, description: 'Current execution facts for routing an internal intention' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
     { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
@@ -317,6 +318,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
 
       const promptValues = {
         userMessage,
+        executionSection: inputs.execution ? `Current execution: ${JSON.stringify(inputs.execution)}` : '',
         feedbackSection,
         recentMessages,
         recentConversationSection: recentMessages ? `Recent conversation:\n${recentMessages}` : '',

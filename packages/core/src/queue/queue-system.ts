@@ -33,6 +33,9 @@ import {
 } from './queue-persister.js';
 import { isWorkCoordinatorOwner } from './work-coordinator-ownership.js';
 import { recoverDurableExecutions } from '../durable-execution/recovery.js';
+import { openExecutionStore } from '../durable-execution/storage.js';
+import { resolvePath } from '../storage-client.js';
+import { getAuthenticatedRuntimeId, getCurrentlyActiveUser } from '../sessions.js';
 import { agentHandlerId, agentTaskType } from './agent-work-catalog.js';
 import { SLEEP_WORKFLOW_HANDLERS } from './sleep-workflow.js';
 import {
@@ -133,6 +136,12 @@ export class QueueSystem extends EventEmitter {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.queueManager = getQueueManager();
+    const runtimeId = getAuthenticatedRuntimeId();
+    if (!runtimeId) throw new Error('Work Coordinator must establish its authentication runtime before starting');
+    this.queueManager.configureRecovery(runtimeId, () => {
+      const user = getCurrentlyActiveUser();
+      return user && user.role !== 'guest' ? user.username : null;
+    });
     this.executionEngine = new ExecutionEngine({ wakeFallbackMs: 1_000,
       maintain: () => recoverDurableExecutions(this.queueManager, this.queueConfig?.execution?.terminalExecutionRetentionDays ?? 30),
     }, this.queueManager);
@@ -285,9 +294,8 @@ export class QueueSystem extends EventEmitter {
       return false;
     }
     try {
-      // The engine performs recovery before its first dispatch and on later
-      // wakes. A locked profile is reported there without preventing unrelated
-      // profiles from starting the Coordinator.
+      // Startup restores only the system ledger. Profile recovery stays dormant
+      // until authentication selects a storage-ready user in this server lifetime.
       this.executionEngine.start();
       this.triggerManager.start();
       this.setLifecycle('running');
@@ -427,6 +435,77 @@ export class QueueSystem extends EventEmitter {
 
   getAllTasks(): QueuedTask[] {
     return this.queueManager.getAllTasks();
+  }
+
+  /** The queue is a view/control surface for saved executions, not their owner. */
+  getExecutions(username: string) {
+    const resolved = resolvePath({ username, category: 'state', subcategory: 'sessions', relativePath: 'executions.sqlite' });
+    if (!resolved.success || !resolved.path) throw new Error(resolved.error || 'Execution storage cannot be resolved');
+    if (!fs.existsSync(resolved.path)) return [];
+    const store = openExecutionStore(username);
+    try {
+      return store.list(username).map(record => ({
+        executionId: record.executionId, graph: record.definition.graphId, status: record.status,
+        waitingReason: record.waitingReason, updatedAt: new Date(record.updatedAt).toISOString(),
+        liveWriter: Boolean(record.owner && (record.leaseUntil ?? 0) > Date.now()),
+      }));
+    } finally { store.close(); }
+  }
+
+  private taskExecutions(task: QueuedTask): string[] {
+    return [...new Set([
+      ...(task.graphExecutions ?? []), ...(task.durable ? [task.durable.executionId] : []),
+      ...(task.handler === 'graph.signal' || task.handler === 'graph.resume' ? [task.input.executionId] : []),
+    ].filter((id): id is string => typeof id === 'string' && Boolean(id)))];
+  }
+
+  cancelExecution(username: string, executionId: string, reason: string): void {
+    const store = openExecutionStore(username);
+    try {
+      const execution = store.get(executionId);
+      if (execution.username !== username) throw new Error('Execution belongs to another profile');
+      if (!['completed', 'failed', 'cancelled'].includes(execution.status)) {
+        store.cancel(executionId, { eventId: `queue-cancel:${executionId}`, kind: 'user_cancelled', payload: { reason } });
+      }
+    } finally { store.close(); }
+    for (const task of this.queueManager.getAllTasks()) {
+      if (task.username === username && this.taskExecutions(task).includes(executionId)) this.queueManager.cancel(task.id, reason);
+    }
+    this.emit('queue', { type: 'execution_cancelled', timestamp: new Date().toISOString(), details: { executionId } } satisfies QueueEvent);
+  }
+
+  cancelTask(taskId: string, reason: string): QueuedTask | null {
+    const task = this.queueManager.getTask(taskId);
+    if (!task) return null;
+    for (const executionId of this.taskExecutions(task)) this.cancelExecution(task.username, executionId, reason);
+    return this.queueManager.cancel(taskId, reason) ?? this.queueManager.getTask(taskId);
+  }
+
+  cancelPending(username: string, reason: string): number {
+    const tasks = this.queueManager.getAllTasks();
+    const running = new Set(tasks.filter(task => task.state === 'leased').flatMap(task => this.taskExecutions(task)));
+    const pending = tasks.filter(task => ['queued', 'waiting'].includes(task.state)
+      && !this.taskExecutions(task).some(id => running.has(id)));
+    const executions = this.getExecutions(username).filter(execution => execution.status === 'waiting'
+      && !execution.liveWriter && !running.has(execution.executionId));
+    for (const execution of executions) this.cancelExecution(username, execution.executionId, reason);
+    for (const task of pending) this.cancelTask(task.id, reason);
+    return pending.length + executions.length;
+  }
+
+  async confirmRobotStopped(taskId: string, confirmedBy: string): Promise<QueuedTask> {
+    const task = this.queueManager.getTask(taskId);
+    if (!task || task.type !== 'environment_command' || !task.bodyLease || !task.cancellationRequestedAt) {
+      throw new Error('Only a robot action awaiting cancellation can be confirmed stopped');
+    }
+    const { recordEnvironmentActionResult } = await import('../environment-interface/store.js');
+    // The adapter may have settled the action while the confirmation dialog was open.
+    const current = this.queueManager.getTask(taskId)!;
+    if (!['leased', 'waiting'].includes(current.state)) return current;
+    recordEnvironmentActionResult({ id: `owner-stopped:${task.id}`, actionId: task.input.id || task.id,
+      timestamp: task.cancellationRequestedAt, type: 'cancelled', message: 'Owner confirmed the robot is stopped',
+      data: { producer: 'owner_confirmation', confirmedBy } });
+    return this.queueManager.getTask(taskId)!;
   }
 
   getState() {

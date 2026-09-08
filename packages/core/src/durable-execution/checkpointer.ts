@@ -3,6 +3,7 @@ import { WRITES_IDX_MAP, type Checkpoint, type CheckpointListOptions, type Check
 import type { CheckpointTransition, ExecutionLease } from './types.js'
 import { ExecutionConflictError } from './types.js'
 import { canonicalJSON, ExecutionStore } from './store.js'
+import type { QueuedTask } from '../queue/types.js'
 
 export type CheckpointConfig = Parameters<SqliteSaver['put']>[0]
 
@@ -64,6 +65,36 @@ export class ExecutionCheckpointer extends SqliteSaver {
   override async getTuple(config: CheckpointConfig): Promise<CheckpointTuple | undefined> {
     const tuple = await super.getTuple(this.storageConfig(config))
     return tuple ? this.logicalTuple(tuple) : undefined
+  }
+
+  /** Read the saved returns of finite child graphs belonging to one dispatch. */
+  async workGraphResults(effectId: string, receipt: Pick<QueuedTask, 'state' | 'error'>) {
+    const effect = this.store.dispatch(effectId)
+    if (effect.executionId !== this.lease.executionId) throw new ExecutionConflictError('Work belongs to a different execution')
+    const prefix = `work:${effectId}:graph:`
+    const rows = this.store.db.prepare('SELECT invocation_id, definition FROM execution_graphs WHERE execution_id = ?')
+      .all(effect.executionId) as Array<{ invocation_id: string; definition: string }>
+    const results = []
+    const { getGraphOutput } = await import('../graph-executor.js')
+    for (const row of rows) {
+      if (!row.invocation_id.startsWith(prefix) || !/^\d+$/.test(row.invocation_id.slice(prefix.length))) continue
+      const reader = new ExecutionCheckpointer(this.store, this.lease, undefined, row.invocation_id)
+      const saved = await reader.getTuple({ configurable: { thread_id: effect.executionId } })
+      if (!saved) continue // The process can fail before its first graph checkpoint.
+      const values = saved.checkpoint.channel_values
+      const nodes = new Map((values.nodeEntries ?? []) as Array<[string, import('../graph-executor.js').NodeExecutionState]>)
+      const failed = [...nodes.values()].find(node => node.status === 'failed')
+      const unfinished = !Array.isArray(values.queue) || values.queue.length > 0
+      const status = failed ? 'failed' : unfinished
+        ? ['failed', 'cancelled', 'expired'].includes(receipt.state) ? receipt.state : 'waiting'
+        : 'completed'
+      const error = failed?.error ?? (unfinished ? receipt.error : undefined)
+      results.push({ invocationId: row.invocation_id, graph: this.store.codec.decode(row.definition).graphId,
+        status, output: status === 'completed'
+          ? getGraphOutput({ nodes, status: 'completed', startTime: Number(values.startedAt) }) : null,
+        ...(error ? { error } : {}) })
+    }
+    return results
   }
 
   override async *list(config: CheckpointConfig, options?: CheckpointListOptions): AsyncGenerator<CheckpointTuple> {

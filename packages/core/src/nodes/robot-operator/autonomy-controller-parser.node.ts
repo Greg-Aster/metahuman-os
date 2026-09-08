@@ -99,6 +99,52 @@ export function buildRobotAutonomyControllerJsonSchema(tasks: unknown) {
   } as const
 }
 
+/** Shared choice contract for initial autonomy and result-driven continuation. */
+export function parseRobotAutonomyChoice(responseValue: unknown, taskCatalog: unknown) {
+  const parsed = parseJson(responseValue)
+  const tasks = availableTasks(taskCatalog)
+  const invalid = (error: string): never => { throw new Error(error) }
+  if (!isRecord(parsed)) return invalid('Robot autonomy controller result was not a JSON object.')
+  if (Object.keys(parsed).length !== REQUIRED_FIELDS.size || Object.keys(parsed).some(field => !REQUIRED_FIELDS.has(field))) {
+    return invalid('Robot autonomy controller result contains unexpected or missing fields.')
+  }
+
+  const taskId = cleanText(parsed.taskId, 100)
+  const reason = cleanText(parsed.reason, 500)
+  const observationSummary = cleanText(parsed.observationSummary, 500)
+  const instruction = cleanText(parsed.instruction, 1_000)
+  const response = cleanText(parsed.response, 500)
+  const task = tasks.find(candidate => candidate.id === taskId) ?? null
+  if (taskId !== ROBOT_AUTONOMY_NO_TASK_ID && !task) {
+    return invalid('Robot autonomy controller selected a task outside its available catalog.')
+  }
+  if (!reason || !observationSummary) {
+    return invalid('Robot autonomy controller requires a reason and observation summary.')
+  }
+  if (taskId === ROBOT_AUTONOMY_EXECUTOR_TASK_ID && !instruction) {
+    return invalid('Robot Autonomy Executor selection requires one high-level instruction.')
+  }
+
+  const executorDecision: RobotOperatorDecision | null = taskId === ROBOT_AUTONOMY_EXECUTOR_TASK_ID
+    ? { observed: observationSummary, instruction, reason }
+    : null
+  const taskDecision = task?.kind === 'agent'
+    ? { task, reason, observationSummary, ...(instruction ? { instruction } : {}) }
+    : null
+  return {
+    decisionReceipt: {
+      taskId,
+      reason,
+      observationSummary,
+      ...(instruction ? { instruction } : {}),
+      responseAuthored: Boolean(response),
+    },
+    taskDecision,
+    executorDecision,
+    response,
+  }
+}
+
 export const robotAutonomyControllerParserNode = defineNode({
   id: 'robot_autonomy_controller_parser',
   name: 'Validate Autonomy Decision',
@@ -117,47 +163,6 @@ export const robotAutonomyControllerParserNode = defineNode({
   propertySchemas: {},
   description: 'Validates one LLM-owned Full-mode decision against the exact task catalog it received. It does not select or execute work.',
   async execute(inputs) {
-    const parsed = parseJson(inputs.response)
-    const tasks = availableTasks(inputs.availableTasks)
-    const invalid = (error: string): never => { throw new Error(error) }
-    if (!isRecord(parsed)) return invalid('Robot autonomy controller result was not a JSON object.')
-    if (Object.keys(parsed).length !== REQUIRED_FIELDS.size || Object.keys(parsed).some(field => !REQUIRED_FIELDS.has(field))) {
-      return invalid('Robot autonomy controller result contains unexpected or missing fields.')
-    }
-
-    const taskId = cleanText(parsed.taskId, 100)
-    const reason = cleanText(parsed.reason, 500)
-    const observationSummary = cleanText(parsed.observationSummary, 500)
-    const instruction = cleanText(parsed.instruction, 1_000)
-    const response = cleanText(parsed.response, 500)
-    const task = tasks.find(candidate => candidate.id === taskId) ?? null
-    if (taskId !== ROBOT_AUTONOMY_NO_TASK_ID && !task) {
-      return invalid('Robot autonomy controller selected a task outside its available catalog.')
-    }
-    if (!reason || !observationSummary) {
-      return invalid('Robot autonomy controller requires a reason and observation summary.')
-    }
-    if (taskId === ROBOT_AUTONOMY_EXECUTOR_TASK_ID && !instruction) {
-      return invalid('Robot Autonomy Executor selection requires one high-level instruction.')
-    }
-
-    const executorDecision: RobotOperatorDecision | null = taskId === ROBOT_AUTONOMY_EXECUTOR_TASK_ID
-      ? { observed: observationSummary, instruction, reason }
-      : null
-    const taskDecision = task?.kind === 'agent'
-      ? { task, reason, observationSummary, ...(instruction ? { instruction } : {}) }
-      : null
-    return {
-      decisionReceipt: {
-        taskId,
-        reason,
-        observationSummary,
-        ...(instruction ? { instruction } : {}),
-        responseAuthored: Boolean(response),
-      },
-      taskDecision,
-      executorDecision,
-      response,
-    }
+    return parseRobotAutonomyChoice(inputs.response, inputs.availableTasks)
   },
 })

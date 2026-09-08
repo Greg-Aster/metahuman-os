@@ -16,20 +16,78 @@
     {
       "id": "input",
       "type": "inputNode",
-      "position": { "x": 80, "y": 140 },
-      "data": { "label": "Pending Question", "nodeType": "curiosity_research_input", "properties": {} }
+      "position": {
+        "x": 80,
+        "y": 140
+      },
+      "data": {
+        "label": "Pending Question",
+        "nodeType": "curiosity_research_input",
+        "properties": {}
+      }
     },
     {
       "id": "research",
       "type": "agentNode",
-      "position": { "x": 470, "y": 140 },
+      "position": {
+        "x": 470,
+        "y": 140
+      },
       "width": 340,
       "height": 160,
-      "data": { "label": "Research Local Memory", "nodeType": "curiosity_research", "properties": {} }
+      "data": {
+        "label": "Research Local Memory",
+        "nodeType": "curiosity_research",
+        "properties": {},
+        "schema": {
+          "isOutputNode": true
+        }
+      }
+    },
+    {
+      "id": "task-brief",
+      "type": "default",
+      "position": {
+        "x": -400,
+        "y": 0
+      },
+      "data": {
+        "nodeType": "text_input",
+        "label": "Delegated Task Context",
+        "properties": {
+          "inputKey": "taskBrief",
+          "message": ""
+        }
+      }
     }
   ],
   "edges": [
-    { "id": "input-question-research-question", "source": "input", "target": "research", "sourceHandle": "question", "targetHandle": "question", "data": {} },
-    { "id": "input-prior-research-prior", "source": "input", "target": "research", "sourceHandle": "priorResearch", "targetHandle": "priorResearch", "data": {} }
+    {
+      "id": "input-question-research-question",
+      "source": "input",
+      "target": "research",
+      "sourceHandle": "question",
+      "targetHandle": "question",
+      "data": {}
+    },
+    {
+      "id": "input-prior-research-prior",
+      "source": "input",
+      "target": "research",
+      "sourceHandle": "priorResearch",
+      "targetHandle": "priorResearch",
+      "data": {}
+    },
+    {
+      "id": "delegated-task-context",
+      "source": "task-brief",
+      "sourceHandle": "text",
+      "target": "research",
+      "targetHandle": "taskBrief",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    }
   ]
 }

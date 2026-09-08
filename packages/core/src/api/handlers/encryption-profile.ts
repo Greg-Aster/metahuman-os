@@ -7,7 +7,9 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { audit } from '../../audit.js';
-import { lockProfile, unlockProfile } from '../../encryption-manager.js';
+import { lockProfile, unlockProfile, getEncryptionStatus } from '../../encryption-manager.js';
+import { selectAuthenticatedSession, clearAuthenticatedUser } from '../../sessions.js';
+import { isWorkCoordinatorOwner } from '../../queue/work-coordinator-ownership.js';
 
 /**
  * POST /api/encryption/lock
@@ -78,6 +80,15 @@ export async function handleUnlockProfile(req: UnifiedRequest): Promise<UnifiedR
     const result = await unlockProfile(req.user.userId, password);
 
     if (result.success) {
+      const sessionId = req.sessionId || req.metadata?.sessionToken;
+      if (isWorkCoordinatorOwner() && typeof sessionId === 'string') {
+        const readiness = await getEncryptionStatus(req.user.userId);
+        if (!readiness.unlocked) {
+          clearAuthenticatedUser(req.user.userId);
+          return { status: 423, data: { success: false, error: readiness.error || 'Profile storage remains locked' } };
+        }
+        selectAuthenticatedSession(sessionId);
+      }
       audit({
         level: 'info',
         category: 'security',

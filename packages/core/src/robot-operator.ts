@@ -274,7 +274,9 @@ export function activeRobotExecutions(username: string) {
     return store.list(username).filter(record => !['completed', 'failed', 'cancelled'].includes(record.status)
       && store.entry(record.executionId).context?.cognitiveMode === 'environment')
       .map(record => ({ executionId: record.executionId, status: record.status,
-        waitingReason: record.waitingReason, checkpointVersion: record.checkpointVersion }))
+        waitingReason: record.waitingReason, checkpointVersion: record.checkpointVersion,
+        resumePending: store.dispatches(record.executionId).some(effect => effect.kind === 'graph_resume'
+          && ['pending', 'admitted', 'accepted'].includes(effect.status)) }))
   } finally { store.close() }
 }
 

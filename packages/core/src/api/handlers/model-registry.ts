@@ -33,6 +33,7 @@ import {
   parseModelRegistry,
   type ModelRegistry,
 } from '../../model-resolver.js';
+import type { CognitiveModeId } from '../../cognitive-mode.js';
 // NOTE: invalidateStatusCache was removed - statusCache no longer exists (was redundant)
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,6 +43,18 @@ export const isRetiredDevelopmentModelId = (modelId: string): boolean => (
   || modelId.startsWith('ollama.environment-classifier')
   || modelId === 'ollama.environment-action-selector-0.8b:v1'
 );
+
+const CONFIGURABLE_COGNITIVE_MODES = new Set<CognitiveModeId>([
+  'dual',
+  'agent',
+  'emulation',
+  'environment',
+]);
+
+export function isConfigurableCognitiveMode(value: unknown): value is CognitiveModeId {
+  return typeof value === 'string'
+    && CONFIGURABLE_COGNITIVE_MODES.has(value as CognitiveModeId);
+}
 
 export interface AvailableRegistryModel {
   id: string
@@ -278,7 +291,11 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     const cognitiveModeMappings = registry.cognitiveModeMappings || {};
 
     // Get current cognitive mode from query param
-    const currentMode = query?.cognitiveMode as string | undefined;
+    const currentModeValue = query?.cognitiveMode;
+    if (currentModeValue !== undefined && !isConfigurableCognitiveMode(currentModeValue)) {
+      return { status: 400, error: `Unsupported cognitive mode: ${String(currentModeValue)}` };
+    }
+    const currentMode = currentModeValue;
 
     // Compute EFFECTIVE role assignments:
     // Start with defaults, then overlay cognitive mode specific mappings
@@ -478,8 +495,8 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     if (typeof modelId !== 'string') {
       return { status: 400, error: 'modelId must be a string' };
     }
-    if (cognitiveMode !== undefined && (typeof cognitiveMode !== 'string' || !cognitiveMode.trim())) {
-      return { status: 400, error: 'cognitiveMode must be a non-empty string' };
+    if (cognitiveMode !== undefined && !isConfigurableCognitiveMode(cognitiveMode)) {
+      return { status: 400, error: `Unsupported cognitive mode: ${String(cognitiveMode)}` };
     }
     if (isRetiredDevelopmentModelId(modelId)) {
       return {

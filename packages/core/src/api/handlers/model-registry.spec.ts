@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   collapseModelInventory,
+  isConfigurableCognitiveMode,
   isRetiredDevelopmentModelId,
   type AvailableRegistryModel,
 } from './model-registry.js'
@@ -53,8 +54,8 @@ test('collapseModelInventory lists a provider model once across role aliases', (
 
 test('collapseModelInventory keeps the same model name from different providers distinct', () => {
   const inventory = collapseModelInventory([
-    model('ollama.qwen3.5:2b', 'ollama', 'qwen3.5:2b'),
-    model('remote.qwen3.5:2b', 'remote-server', 'qwen3.5:2b'),
+    model('ollama.qwen3.5:9b', 'ollama', 'qwen3.5:9b'),
+    model('remote.qwen3.5:9b', 'remote-server', 'qwen3.5:9b'),
   ])
 
   assert.equal(inventory.length, 2)
@@ -65,6 +66,15 @@ test('production inventory rejects development folds and checkpoint tags', () =>
   assert.equal(isRetiredDevelopmentModelId('ollama.environment-classifier-2b:checkpoint-120'), true)
   assert.equal(isRetiredDevelopmentModelId('ollama.environment-classifier-0.8b:final'), true)
   assert.equal(isRetiredDevelopmentModelId('ollama.environment-action-selector-0.8b:v1'), true)
+})
+
+test('model mapping API accepts only maintained cognitive modes', () => {
+  for (const mode of ['dual', 'agent', 'emulation', 'environment']) {
+    assert.equal(isConfigurableCognitiveMode(mode), true)
+  }
+  assert.equal(isConfigurableCognitiveMode('default'), false)
+  assert.equal(isConfigurableCognitiveMode('environment '), false)
+  assert.equal(isConfigurableCognitiveMode(null), false)
 })
 
 test('registry migration removes environmentRouter instead of assigning its incompatible artifact to the new role', () => {

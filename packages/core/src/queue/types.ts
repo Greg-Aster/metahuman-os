@@ -152,6 +152,7 @@ export interface WorkError {
 /** Identity of a checkpointed dispatch, retained beyond the dashboard history. */
 export interface DurableWorkReference {
   executionId: string;
+  originRuntimeId?: string;
   effectId: string;
   recovery: 'resume' | 'reconcile';
 }
@@ -195,6 +196,8 @@ export interface TaskInput {
 
 export interface QueuedTask {
   id: string;
+  /** Assigned by the Coordinator, not by the submitting caller. */
+  admittedRuntimeId?: string;
   type: TaskType;
   handler: string;
   state: WorkState;
@@ -303,9 +306,9 @@ export type QueueEventType =
   | 'task_expired'
   | 'task_reordered'
   | 'task_deleted'
+  | 'execution_cancelled'
   | 'remote_dispatched'
   | 'remote_callback'
-  | 'lane_cleared'
   | 'lane_blocked'
   | 'lane_unblocked';
 

@@ -140,29 +140,34 @@ function statusTask(
   executionId: string,
 ): ExecutionObjective | undefined {
   const decision = isRecord(inputs.taskDecision) ? inputs.taskDecision : null
-  if (!decision) return undefined
+  const terminal = isRecord(inputs.terminalFeedback)
+    ? inputs.terminalFeedback as unknown as EnvironmentFeedback
+    : null
+  const bridgeRecord = isRecord(inputs.bridgeRecord) ? inputs.bridgeRecord : null
+  const dispatchedId = cleanText(firstRecord(bridgeRecord?.commands)?.id, 200)
+  // This task belongs to the current execution, not the shared status snapshot.
+  // Dispatch and matching receipts advance its action facts independently of an
+  // optional model decision about the objective itself.
+  if (!decision && (!previousTask || (!dispatchedId && terminal?.actionId !== previousTask.actionId))) return undefined
   const userInstruction = cleanText(inputs.userInstruction, 4_000)
-  const objective = cleanText(decision.objective, 1_000)
+  const objective = decision ? cleanText(decision.objective, 1_000) : previousTask!.objective
   if (!objective) return undefined
   const suppliedInstruction = cleanText(inputs.instruction, 4_000) || userInstruction
   const newUserTurn = !previousTask
   const instruction = previousTask?.instruction || suppliedInstruction || objective
   const selected = taskAction(currentAction(inputs))
   const id = actionId(inputs)
-  const terminal = isRecord(inputs.terminalFeedback)
-    ? inputs.terminalFeedback as unknown as EnvironmentFeedback
-    : null
-  const bridgeRecord = isRecord(inputs.bridgeRecord) ? inputs.bridgeRecord : null
+  const sameAction = Boolean(previousTask && (!id || id === previousTask.actionId))
   const frame = selectedFrame(inputs.frames)
   const previousBaseline = !newUserTurn ? previousTask?.baselineFrame ?? null : null
   return {
     objectiveId: previousTask?.objectiveId ?? randomUUID(),
     executionId,
-    completionCriteria: cleanText(decision.completionCriteria, 2_000) || previousTask?.completionCriteria || objective,
+    completionCriteria: cleanText(decision?.completionCriteria, 2_000) || previousTask?.completionCriteria || objective,
     objective,
     instruction: instruction || objective,
     source: previousTask?.source || (inputs.inputSource === 'autonomy' ? 'autonomy' : 'user'),
-    decision: {
+    decision: decision ? {
       outcome: cleanText(decision.outcome, 80),
       reason: cleanText(decision.reason, 1_000),
       objectiveComplete: decision.objectiveComplete === true,
@@ -174,12 +179,12 @@ function statusTask(
       ...(cleanText(decision.visualEvidenceMode, 80) ? { visualEvidenceMode: cleanText(decision.visualEvidenceMode, 80) } : {}),
       ...(cleanText(decision.completionEvidence, 1_000) ? { completionEvidence: cleanText(decision.completionEvidence, 1_000) } : {}),
       ...(cleanText(decision.nextInstruction, 1_000) ? { nextInstruction: cleanText(decision.nextInstruction, 1_000) } : {}),
-    },
+    } : previousTask!.decision,
     selectedAction: selected ?? (!newUserTurn ? previousTask?.selectedAction ?? null : null),
     actionId: id || (!newUserTurn ? previousTask?.actionId ?? '' : ''),
     actionStatus: cleanText(terminal?.type, 80)
       || cleanText(bridgeRecord?.status, 80)
-      || (!newUserTurn ? previousTask?.actionStatus ?? '' : ''),
+      || (sameAction ? previousTask?.actionStatus ?? '' : ''),
     feedback: terminal
       ? {
           type: terminal.type,
@@ -187,10 +192,10 @@ function statusTask(
           message: cleanText(terminal.message, 500),
           observedAt: now,
         }
-      : !newUserTurn
+      : sameAction
         ? previousTask?.feedback ?? null
         : null,
-    baselineFrame: decision.visualEvidenceMode === 'comparison' && frame
+    baselineFrame: decision?.visualEvidenceMode === 'comparison' && frame
       ? {
           id: frame.id,
           timestamp: frame.timestamp,

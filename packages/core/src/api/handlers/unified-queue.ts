@@ -69,6 +69,7 @@ function taskView(task: QueuedTask) {
     correlationId: task.correlationId,
     parentTaskId: task.parentTaskId,
     cancellationRequestedAt: task.cancellationRequestedAt,
+    robotSessionId: task.bodyLease?.bodyId,
     error: task.error?.message,
   };
 }
@@ -77,6 +78,7 @@ function queueSnapshot(user: UnifiedUser) {
   const system = getQueueSystem();
   const state = system.getState();
   const manager = getQueueManager();
+  const executions = system.getExecutions(user.username);
   const visible = (tasks: QueuedTask[]) => tasks.filter(task => canReadTask(task, user)).map(taskView);
   return {
     success: true,
@@ -90,6 +92,10 @@ function queueSnapshot(user: UnifiedUser) {
     resourceCapacity: state.resourceCapacity,
     tasks: visible(manager.getAllTasks()),
     history: visible(manager.getHistory()),
+    canConfirmRobotStopped: user.role === 'owner',
+    executions: executions.filter(execution => ['running', 'waiting'].includes(execution.status))
+      .concat(executions.filter(execution => !['running', 'waiting'].includes(execution.status))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 20)),
     inFlightRemote: user.role === 'owner' ? state.inFlightRemote : [],
     nextTriggers: user.role === 'owner' ? state.nextTriggers : [],
     lastActivity: user.role === 'owner' ? state.lastActivity : undefined,
@@ -189,12 +195,33 @@ export async function handleDeleteQueueTask(req: UnifiedRequest): Promise<Unifie
     const manager = getQueueManager();
     const existing = manager.getTask(taskId);
     if (!existing || !canReadTask(existing, req.user)) return failure('Work item not found', 404);
-    const task = manager.cancel(taskId, `Cancelled by ${req.user.username}`);
+    if (req.body?.confirmStopped === true && req.user.role !== 'owner') return failure('Owner confirmation required', 403);
+    const task = req.body?.confirmStopped === true
+      ? await getQueueSystem().confirmRobotStopped(taskId, req.user.username)
+      : getQueueSystem().cancelTask(taskId, `Cancelled by ${req.user.username}`);
     if (!task) return failure('Work item is already terminal', 409);
+    getQueueSystem().recordActivity(req.user.username);
     return success({ success: true, task: taskView(task), snapshot: queueSnapshot(req.user) });
   } catch (error) {
     return failure((error as Error).message);
   }
+}
+
+export async function handleCancelQueueExecution(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authError = requireUser(req.user);
+  if (authError) return authError;
+  const executionId = req.params?.id;
+  if (!executionId) return failure('Missing execution id', 400);
+  const system = getQueueSystem();
+  try {
+    if (!system.getExecutions(req.user.username).some(record => record.executionId === executionId)) {
+      return failure('Execution not found', 404);
+    }
+    system.cancelExecution(req.user.username, executionId, `Cancelled by ${req.user.username}`);
+    // A saved-only cancellation still wakes the existing user-activity observer.
+    system.recordActivity(req.user.username);
+    return success({ success: true, snapshot: queueSnapshot(req.user) });
+  } catch (error) { return failure((error as Error).message); }
 }
 
 export async function handleGetQueueTask(req: UnifiedRequest): Promise<UnifiedResponse> {
@@ -210,7 +237,10 @@ export async function handleGetQueueTask(req: UnifiedRequest): Promise<UnifiedRe
 export async function handleClearQueueTasks(req: UnifiedRequest): Promise<UnifiedResponse> {
   const authError = requireUser(req.user);
   if (authError) return authError;
-  const cancelled = getQueueManager().clearQueued();
+  if (req.user.role !== 'owner') return failure('Owner access required', 403);
+  const system = getQueueSystem();
+  const cancelled = system.cancelPending(req.user.username, `Cancelled by ${req.user.username}`);
+  system.recordActivity(req.user.username);
   return success({ success: true, cancelled, runningPreserved: true, snapshot: queueSnapshot(req.user) });
 }
 
@@ -269,19 +299,27 @@ export async function handleRecordActivity(req: UnifiedRequest): Promise<Unified
 export async function handleQueueStream(req: UnifiedRequest): Promise<UnifiedResponse> {
   if (!req.user.isAuthenticated) return failure('Authentication required', 401);
   async function* stream(): AsyncIterable<string> {
-    const manager = getQueueManager();
+    const system = getQueueSystem();
     const pending: string[] = [];
+    let readFailed = false;
     let wake: (() => void) | undefined;
     const listener = (event: QueueEvent) => {
-      pending.push(sse({ type: event.type, event, snapshot: queueSnapshot(req.user) }));
+      if (readFailed) return;
+      try {
+        pending.push(sse({ type: event.type, event, snapshot: queueSnapshot(req.user) }));
+      } catch (error) {
+        readFailed = true;
+        pending.push(sse({ type: 'error', error: (error as Error).message }));
+      }
       wake?.();
       wake = undefined;
     };
-    manager.addEventListener(listener);
+    system.on('queue', listener);
     try {
       yield sse({ type: 'snapshot', snapshot: queueSnapshot(req.user), timestamp: new Date().toISOString() });
       while (!req.signal?.aborted) {
         while (pending.length > 0) yield pending.shift()!;
+        if (readFailed) return;
         await new Promise<void>(resolve => {
           const timer = setTimeout(resolve, 15_000);
           wake = () => { clearTimeout(timer); resolve(); };
@@ -291,7 +329,7 @@ export async function handleQueueStream(req: UnifiedRequest): Promise<UnifiedRes
       }
     } finally {
       wake?.();
-      manager.removeEventListener(listener);
+      system.off('queue', listener);
     }
   }
   return { status: 200, stream: stream(), headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' } };

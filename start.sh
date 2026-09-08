@@ -197,13 +197,22 @@ is_repo_process() {
 matching_repo_pids() {
   local pattern="$1"
   local pid=""
+  local matches=""
+  local lookup_status=0
 
-  pgrep -f -- "$pattern" 2>/dev/null | while read -r pid; do
+  matches="$(pgrep -f -- "$pattern")" || lookup_status=$?
+  case "$lookup_status" in
+    0) ;;
+    1) return 0 ;; # No matching process is a normal shutdown condition.
+    *) return "$lookup_status" ;;
+  esac
+
+  while read -r pid; do
     [ -n "$pid" ] || continue
     if is_repo_process "$pid"; then
       echo "$pid"
     fi
-  done
+  done <<< "$matches"
 }
 
 release_start_lock() {

@@ -12,6 +12,13 @@ import {
 type ClaimedActionReceipt = Pick<import('../queue/types.js').QueuedTask,
   'id' | 'type' | 'handler' | 'state' | 'username' | 'input' | 'durable' | 'startedAt' | 'bodyLease'>
 
+interface ActionResultEvidence {
+  /** Compare-and-set against a specifically identified local delivery conclusion. */
+  reconcilesEventId?: string
+  /** A late transport diagnostic cannot replace a verified physical result. */
+  deliveryOnly?: boolean
+}
+
 /** Stable serialization for identity/conflict checks, not semantic interpretation. */
 export function canonicalJSON(value: unknown): string {
   if (value === null || typeof value !== 'object') {
@@ -37,7 +44,8 @@ export function contentHash(value: unknown): string {
 export class ExecutionStore {
   readonly db: Database.Database
 
-  constructor(filename: string, readonly codec = { encode: canonicalJSON, decode: JSON.parse as (text: string) => any }) {
+  constructor(filename: string, readonly codec = { encode: canonicalJSON, decode: JSON.parse as (text: string) => any },
+    private readonly originRuntimeId?: string) {
     if (filename !== ':memory:') fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 })
     this.db = new Database(filename)
     if (filename !== ':memory:') fs.chmodSync(filename, 0o600)
@@ -51,7 +59,7 @@ export class ExecutionStore {
         status TEXT NOT NULL, checkpoint_version INTEGER NOT NULL DEFAULT 0,
         last_sequence INTEGER NOT NULL DEFAULT 0, processed_sequence INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, cancelled_at INTEGER,
-        owner TEXT, owner_generation INTEGER NOT NULL DEFAULT 0, lease_until INTEGER
+        owner TEXT, owner_generation INTEGER NOT NULL DEFAULT 0, lease_until INTEGER, origin_runtime_id TEXT
       );
       CREATE TABLE IF NOT EXISTS execution_events (
         execution_id TEXT NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
@@ -100,7 +108,7 @@ export class ExecutionStore {
         execution_id TEXT NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
         checkpoint_id TEXT NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL,
         identity TEXT NOT NULL, action_id TEXT UNIQUE,
-        status TEXT NOT NULL DEFAULT 'pending', work_item_id TEXT
+        status TEXT NOT NULL DEFAULT 'pending', work_item_id TEXT, attempt_generation INTEGER
       );
       CREATE TABLE IF NOT EXISTS execution_blobs (
         hash TEXT PRIMARY KEY, value TEXT NOT NULL
@@ -112,6 +120,14 @@ export class ExecutionStore {
       CREATE INDEX IF NOT EXISTS execution_event_order ON execution_events(execution_id, sequence);
       CREATE INDEX IF NOT EXISTS execution_dispatch_state ON execution_outbox(execution_id, status);
     `)
+    this.db.transaction(() => {
+      if (!(this.db.pragma('table_info(executions)') as { name: string }[]).some(column => column.name === 'origin_runtime_id')) {
+        this.db.exec('ALTER TABLE executions ADD COLUMN origin_runtime_id TEXT')
+      }
+      if (!(this.db.pragma('table_info(execution_outbox)') as { name: string }[]).some(column => column.name === 'attempt_generation')) {
+        this.db.exec('ALTER TABLE execution_outbox ADD COLUMN attempt_generation INTEGER')
+      }
+    }).immediate()
   }
 
   close(): void { this.db.close() }
@@ -203,8 +219,8 @@ export class ExecutionStore {
       || !Number.isInteger(definition.checkpointSchemaVersion)) throw new Error('Incomplete execution identity')
     const now = Date.now()
     this.db.prepare(`INSERT INTO executions
-      (execution_id, username, definition, status, created_at, updated_at) VALUES (?, ?, ?, 'running', ?, ?)`)
-      .run(executionId, username, this.codec.encode(definition), now, now)
+      (execution_id, username, definition, status, created_at, updated_at, origin_runtime_id) VALUES (?, ?, ?, 'running', ?, ?, ?)`)
+      .run(executionId, username, this.codec.encode(definition), now, now, this.originRuntimeId ?? null)
     return this.get(executionId)
   }
 
@@ -213,6 +229,7 @@ export class ExecutionStore {
     if (!row) throw new Error(`Unknown execution ${executionId}`)
     return {
       executionId: row.execution_id, username: row.username, definition: this.codec.decode(row.definition),
+      originRuntimeId: row.origin_runtime_id ?? undefined,
       status: row.status, waitingReason: row.waiting_reason ?? undefined, checkpointVersion: row.checkpoint_version, lastSequence: row.last_sequence,
       lastProcessedSequence: row.processed_sequence, createdAt: row.created_at, updatedAt: row.updated_at,
       cancelledAt: row.cancelled_at, owner: row.owner, ownerGeneration: row.owner_generation,
@@ -250,7 +267,8 @@ export class ExecutionStore {
     }).immediate()
   }
 
-  claim(executionId: string, executable: ExecutionDefinition, owner = randomUUID(), leaseMs = 30_000): ExecutionLease {
+  claim(executionId: string, executable: ExecutionDefinition, owner = randomUUID(), leaseMs = 30_000,
+    resumeAttempt?: { effectId: string; workItemId: string }): ExecutionLease {
     return this.db.transaction(() => {
       this.assertDefinition(executionId, executable)
       const state = this.get(executionId)
@@ -261,6 +279,15 @@ export class ExecutionStore {
       const generation = state.ownerGeneration + 1
       this.db.prepare('UPDATE executions SET owner = ?, owner_generation = ?, lease_until = ? WHERE execution_id = ?')
         .run(owner, generation, now + leaseMs, executionId)
+      if (resumeAttempt) {
+        const dispatch = this.dispatch(resumeAttempt.effectId)
+        if (dispatch.executionId !== executionId || dispatch.kind !== 'graph_resume'
+          || dispatch.workItemId !== resumeAttempt.workItemId || dispatch.status !== 'accepted') {
+          throw new ExecutionConflictError('Resume writer does not match its accepted Coordinator receipt')
+        }
+        this.db.prepare('UPDATE execution_outbox SET attempt_generation=? WHERE effect_id=?')
+          .run(generation, dispatch.effectId)
+      }
       return { executionId, owner, generation }
     }).immediate()
   }
@@ -310,11 +337,16 @@ export class ExecutionStore {
     return this.event(executionId, event.eventId)
   }
 
-  event(executionId: string, eventId: string): ExecutionEvent {
+  findEvent(executionId: string, eventId: string): ExecutionEvent | null {
     const row = this.db.prepare('SELECT * FROM execution_events WHERE execution_id = ? AND event_id = ?')
       .get(executionId, eventId) as any
-    if (!row) throw new Error(`Unknown execution event ${eventId}`)
-    return this.readEvent(row)
+    return row ? this.readEvent(row) : null
+  }
+
+  event(executionId: string, eventId: string): ExecutionEvent {
+    const event = this.findEvent(executionId, eventId)
+    if (!event) throw new Error(`Unknown execution event ${eventId}`)
+    return event
   }
 
   private readEvent(row: any): ExecutionEvent {
@@ -386,10 +418,10 @@ export class ExecutionStore {
       return
     }
     this.db.prepare(`INSERT INTO execution_outbox
-      (effect_id, execution_id, checkpoint_id, kind, payload, identity, action_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      (effect_id, execution_id, checkpoint_id, kind, payload, identity, action_id, attempt_generation)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(intent.effectId, executionId, checkpointId, intent.kind, this.encodeDocument(executionId, intent.payload), identity,
-        intent.actionId ?? null)
+        intent.actionId ?? null, intent.kind === 'graph_resume' ? this.get(executionId).ownerGeneration : null)
   }
 
   dispatch(effectId: string): DispatchRecord {
@@ -399,6 +431,7 @@ export class ExecutionStore {
       effectId, executionId: row.execution_id, checkpointId: row.checkpoint_id, kind: row.kind,
       payload: this.decodeDocument(row.payload), status: row.status, workItemId: row.work_item_id,
       ...(row.action_id ? { actionId: row.action_id } : {}),
+      ...(row.attempt_generation !== null ? { attemptGeneration: row.attempt_generation } : {}),
     }
   }
 
@@ -425,8 +458,9 @@ export class ExecutionStore {
         eventId: `work:${receipt.id}:undispatched`, kind: 'dispatch_cancelled', workItemId: receipt.id,
         payload: { effectId, reason: 'Execution ended before work started' },
       })
-      this.db.prepare("UPDATE execution_outbox SET work_item_id = ?, status = 'cancelled' WHERE effect_id = ?")
-        .run(receipt.id, effectId)
+      this.db.prepare(`UPDATE execution_outbox SET work_item_id = ?, status = 'cancelled'
+        WHERE effect_id = ? AND (work_item_id IS NOT ? OR status != 'cancelled')`)
+        .run(receipt.id, effectId, receipt.id)
       return event
     }).immediate()
   }
@@ -453,7 +487,8 @@ export class ExecutionStore {
       if (dispatch.workItemId && dispatch.workItemId !== workItemId) throw new ExecutionConflictError('Conflicting Coordinator receipt')
       // A cancellation during cross-store relay keeps the receipt but never revives work.
       this.db.prepare(`UPDATE execution_outbox SET work_item_id = ?, status = CASE
-        WHEN status = 'pending' THEN 'admitted' ELSE status END WHERE effect_id = ?`).run(workItemId, effectId)
+        WHEN status = 'pending' THEN 'admitted' ELSE status END
+        WHERE effect_id = ? AND (work_item_id IS NOT ? OR status = 'pending')`).run(workItemId, effectId, workItemId)
       return this.dispatch(effectId)
     }).immediate()
   }
@@ -463,6 +498,21 @@ export class ExecutionStore {
       const previous = this.dispatch(effectId)
       const execution = this.get(previous.executionId)
       if (execution.cancelledAt !== null) throw new ExecutionCancelledError(previous.executionId)
+      if (previous.kind === 'graph_resume') {
+        // A queued wake may outlive the event or execution it referred to.
+        // Refresh legacy admission receipts at the accepting owner as well as
+        // at checkpoint commit; this never admits a new physical action.
+        this.settleFinishedDispatches(previous.executionId)
+        const current = this.dispatch(effectId)
+        if (current.status === 'completed') return current
+        if (execution.owner && (execution.leaseUntil ?? 0) > Date.now()) throw new ExecutionBusyError(execution.leaseUntil!)
+        // Also bind failures before claim (for example an incompatible graph).
+        // Once a writer claims this attempt it atomically advances the binding.
+        if (current.status !== 'accepted') {
+          this.db.prepare('UPDATE execution_outbox SET attempt_generation=? WHERE effect_id=?')
+            .run(execution.ownerGeneration, effectId)
+        }
+      }
       if (previous.status === 'accepted') {
         return previous
       }
@@ -500,7 +550,7 @@ export class ExecutionStore {
   }
 
   recordResult(executionId: string, actionId: string, event: NewExecutionEvent, uncertain = false, notExecuted = false,
-    receipt?: ClaimedActionReceipt): ExecutionEvent {
+    receipt?: ClaimedActionReceipt, evidence?: ActionResultEvidence): ExecutionEvent {
     return this.db.transaction(() => {
       const row = this.db.prepare('SELECT effect_id FROM execution_outbox WHERE execution_id = ? AND action_id = ?')
         .get(executionId, actionId) as any
@@ -513,9 +563,24 @@ export class ExecutionStore {
       const previous = this.db.prepare('SELECT event_id FROM execution_events WHERE execution_id = ? AND event_id = ?')
         .get(executionId, event.eventId)
       if (previous) return this.insertEvent(executionId, event)
+      if (evidence?.deliveryOnly) {
+        if (!receipt || !uncertain || dispatch.status !== 'completed' || event.kind !== 'delivery_result'
+          || evidence.reconcilesEventId) throw new ExecutionConflictError('Not a late transport diagnostic')
+        return this.insertEvent(executionId, event)
+      }
+      if (evidence?.reconcilesEventId) {
+        const latest = this.db.prepare(`SELECT * FROM execution_events WHERE execution_id = ? AND action_id = ?
+          AND kind = 'physical_result' ORDER BY sequence DESC LIMIT 1`).get(executionId, actionId) as any
+        if (!receipt || uncertain || dispatch.status !== 'completed' || event.kind !== 'physical_result'
+          || !latest || latest.event_id !== evidence.reconcilesEventId || latest.work_item_id !== receipt.id
+          || event.parentEventId !== latest.event_id) {
+          throw new ExecutionConflictError('Physical reconciliation does not match the current delivery conclusion')
+        }
+      }
       if (!['accepted', 'outcome_unknown'].includes(dispatch.status)
         && !(receipt && ['admitted', 'cancelled'].includes(dispatch.status))
-        && !(notExecuted && ['pending', 'admitted', 'cancelled'].includes(dispatch.status))) {
+        && !(notExecuted && ['pending', 'admitted', 'cancelled'].includes(dispatch.status))
+        && !evidence?.reconcilesEventId) {
         throw new ExecutionConflictError('Action is not waiting for a result')
       }
       const result = this.insertEvent(executionId, event)
@@ -528,10 +593,10 @@ export class ExecutionStore {
 
   /** The result and the request to resume its waiting graph cannot be separated by a crash. */
   deliverActionResult(executionId: string, actionId: string, event: NewExecutionEvent, uncertain = false, notExecuted = false,
-    receipt?: ClaimedActionReceipt): ExecutionEvent {
+    receipt?: ClaimedActionReceipt, evidence?: ActionResultEvidence): ExecutionEvent {
     return this.db.transaction(() => {
-      const result = this.recordResult(executionId, actionId, event, uncertain, notExecuted, receipt)
-      this.scheduleResume(result)
+      const result = this.recordResult(executionId, actionId, event, uncertain, notExecuted, receipt, evidence)
+      if (result.kind !== 'delivery_result') this.scheduleResume(result)
       return result
     }).immediate()
   }
@@ -578,43 +643,92 @@ export class ExecutionStore {
         .run(executionId)
     }
     const rows = this.db.prepare(`SELECT effect_id FROM execution_outbox WHERE execution_id = ?
-      AND kind = 'graph_resume' AND status = 'pending'`).all(executionId) as { effect_id: string }[]
+      AND kind = 'graph_resume' AND status IN ('pending', 'admitted', 'accepted')`).all(executionId) as { effect_id: string }[]
     for (const row of rows) {
       const effect = this.dispatch(row.effect_id)
       const payload = effect.payload as { eventId?: string }
       const consumed = payload.eventId && this.event(executionId, payload.eventId).sequence <= execution.lastProcessedSequence
-      if (consumed || ['completed', 'failed', 'cancelled'].includes(execution.status)) {
+      // An accepted wake owns an invocation that may still be reviewing the
+      // consumed input. Its terminal work receipt settles that invocation;
+      // only unstarted wakes are redundant merely because input was consumed.
+      if ((consumed && effect.status !== 'accepted') || ['completed', 'failed', 'cancelled'].includes(execution.status)) {
         this.db.prepare("UPDATE execution_outbox SET status = 'completed' WHERE effect_id = ?").run(effect.effectId)
       }
     }
   }
 
-  requestRecovery(executionId: string): void {
+  requestRecovery(executionId: string, interruptedWorkId?: string): void {
     this.db.transaction(() => {
       const record = this.get(executionId)
       if ((record.status !== 'running' && record.waitingReason !== 'interrupted') || record.cancelledAt !== null) return
       this.insertDispatch(executionId, `recovery:${record.checkpointVersion}`, {
-        effectId: `${executionId}:recovery:${record.checkpointVersion}`, kind: 'graph_resume',
+        effectId: `${executionId}:recovery:${record.checkpointVersion}${interruptedWorkId ? `:${interruptedWorkId}` : ''}`, kind: 'graph_resume',
         payload: { executionId },
       })
     }).immediate()
   }
 
   /** Coordinator receipts are facts about jobs, not decisions that an objective succeeded. */
-  deliverWorkResult(effectId: string, workItemId: string, payload: unknown): ExecutionEvent | null {
+  deliverWorkResult(effectId: string, workItemId: string,
+    payload: { state: string; result?: unknown; error?: unknown }, graphResults?: unknown[]): ExecutionEvent | null {
     return this.db.transaction(() => {
       const effect = this.dispatch(effectId)
       if (effect.workItemId !== workItemId) throw new ExecutionConflictError('Result has a different Coordinator receipt')
       if (effect.actionId) throw new ExecutionConflictError('Physical actions require a correlated physical result')
       if (effect.kind === 'graph_resume') {
-        this.db.prepare("UPDATE execution_outbox SET status = 'completed' WHERE effect_id = ? AND status != 'cancelled'").run(effectId)
-        return null
+        const alreadyRecorded = this.findEvent(effect.executionId, `work:${workItemId}:terminal`)
+        const result = this.insertEvent(effect.executionId, {
+          eventId: `work:${workItemId}:terminal`, kind: 'resume_result', workItemId,
+          payload: { effectId, result: payload },
+        })
+        const receipt = payload as { state: string; error?: unknown }
+        const record = this.get(effect.executionId)
+        const wake = effect.payload as { eventId?: string }
+        const unfinished = effect.status === 'accepted' || (wake.eventId
+          ? this.event(effect.executionId, wake.eventId).sequence > record.lastProcessedSequence
+          : effect.checkpointId === `recovery:${record.checkpointVersion}`)
+        // A terminal wake receipt must settle its saved position, not just the
+        // delivery row. A late receipt cannot overwrite a newer/live writer.
+        if (!alreadyRecorded && unfinished && !['completed', 'failed', 'cancelled'].includes(record.status)
+          && (!record.owner || (record.leaseUntil ?? 0) <= Date.now())) {
+          if (effect.attemptGeneration === record.ownerGeneration && (receipt.state === 'failed' || receipt.state === 'expired')) {
+            this.db.prepare("UPDATE executions SET status='failed', updated_at=? WHERE execution_id=?")
+              .run(Date.now(), effect.executionId)
+            this.db.prepare('DELETE FROM execution_waits WHERE execution_id=?').run(effect.executionId)
+            this.settleFinishedDispatches(effect.executionId)
+          } else if ((effect.attemptGeneration === record.ownerGeneration && receipt.state === 'cancelled')
+            || (effect.attemptGeneration === undefined && ['failed', 'expired', 'cancelled'].includes(receipt.state))) {
+            // Worker interruption is not a user cancellation of the objective.
+            // An old receipt without writer identity cannot settle current state;
+            // re-enter its checkpoint once through the version-checked runtime.
+            if (record.status !== 'waiting' || record.waitingReason !== 'interrupted') {
+              this.db.prepare("UPDATE executions SET status='waiting', updated_at=? WHERE execution_id=?")
+                .run(Date.now(), effect.executionId)
+              this.db.prepare('INSERT INTO execution_waits VALUES (?, ?) ON CONFLICT(execution_id) DO UPDATE SET reason=excluded.reason')
+                .run(effect.executionId, 'interrupted')
+            }
+            this.requestRecovery(effect.executionId, workItemId)
+          }
+        }
+        this.db.prepare("UPDATE execution_outbox SET status = 'completed' WHERE effect_id = ? AND status NOT IN ('cancelled', 'completed')").run(effectId)
+        return result
+      }
+      // The first committed receipt owns its derived graph-return snapshot.
+      // Replays validate the original Coordinator facts, not a recomputation of
+      // that snapshot using today's projection code or later checkpoints.
+      const committed = this.findEvent(effect.executionId, `work:${workItemId}:terminal`)
+      const savedResult = (committed?.payload as { result: typeof payload & { graphResults?: unknown[] } } | undefined)?.result
+      if (savedResult) {
+        const { graphResults: _derived, ...sourceReceipt } = savedResult
+        if (canonicalJSON(sourceReceipt) !== canonicalJSON(payload)) {
+          throw new ExecutionConflictError('Coordinator receipt reused with different content')
+        }
       }
       const result = this.insertEvent(effect.executionId, {
         eventId: `work:${workItemId}:terminal`, kind: 'work_result', workItemId,
-        payload: { effectId, result: payload },
+        payload: { effectId, result: savedResult ?? { ...payload, ...(graphResults?.length ? { graphResults } : {}) } },
       })
-      this.db.prepare("UPDATE execution_outbox SET status = 'completed' WHERE effect_id = ? AND status != 'cancelled'").run(effectId)
+      this.db.prepare("UPDATE execution_outbox SET status = 'completed' WHERE effect_id = ? AND status NOT IN ('cancelled', 'completed')").run(effectId)
       this.scheduleResume(result)
       return result
     }).immediate()
@@ -632,6 +746,7 @@ export class ExecutionStore {
       if (['completed', 'failed'].includes(this.get(executionId).status)) return result
       this.db.prepare(`UPDATE executions SET cancelled_at = COALESCE(cancelled_at, ?), status = 'cancelled', updated_at = ?
         WHERE execution_id = ?`).run(Date.now(), Date.now(), executionId)
+      this.db.prepare('DELETE FROM execution_waits WHERE execution_id=?').run(executionId)
       this.db.prepare(`UPDATE execution_outbox SET status = 'cancelled'
         WHERE execution_id = ? AND status IN ('pending', 'admitted')`).run(executionId)
       return result

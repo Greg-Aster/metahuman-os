@@ -459,7 +459,7 @@ export const systemPaths = {
 
   // Auth and session databases (stay at root)
   usersDb: path.join(ROOT, 'persona', 'users.json'),
-  sessionsFile: path.join(ROOT, 'logs', 'run', 'sessions.json'),
+  sessionsFile: path.join(ROOT, 'logs', 'run', 'sessions.sqlite'),
 
   // System configuration (accessible to all users)
   etc: path.join(ROOT, 'etc'),

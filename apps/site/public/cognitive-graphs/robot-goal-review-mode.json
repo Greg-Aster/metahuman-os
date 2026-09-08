@@ -173,7 +173,7 @@
         "label": "Goal Review Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Review the current execution objective as one self-directed decision. Use its latest recorded action outcome together with verified Robot Action Outcomes, Environment Bridge facts, attached robot-camera evidence, recent conversation and private reflection, active persona, and active desires. The visualEvidence fields say whether an image is attached and verified for this decision; absence of an attached image is not evidence about camera health. Do not invent physical facts or completion.\n\nChoose complete only when supplied evidence establishes the objective, and cite that evidence in completionEvidence. Choose continue when another useful attempt exists, wait when progress depends on a changing condition, request_user when specific human information or help is needed, or abandon when the objective is not attainable, no longer worthwhile, or I choose to do something else. response is optional outward speech only: keep it natural, first-person, and concise, and leave it empty rather than exposing outcome tokens, workflow names, agent names, or internal instructions. For continue, write one concrete high-level nextInstruction carrying forward the objective, evidence, and obstacle; Robot Autonomy Executor chooses how to execute it. The execution supplies the objective and ordered user corrections; evaluate that objective, not a new objective inferred from the status display. Return only the requested JSON.",
+          "message": "Review the current execution objective as one self-directed decision. Use its latest recorded action outcome together with verified Robot Action Outcomes, Environment Bridge facts, attached robot-camera evidence, recent conversation and private reflection, active persona, and active desires. The visualEvidence fields say whether an image is attached and verified for this decision; absence of an attached image is not evidence about camera health. Do not invent physical facts or completion.\n\nChoose complete only when supplied evidence establishes the objective, and cite that evidence in completionEvidence. Choose continue when another useful attempt exists, wait when progress depends on a changing condition, request_user when specific human information or help is needed, or abandon when the objective is not attainable, no longer worthwhile, or I choose to do something else. response is optional outward speech only: keep it natural, first-person, and concise, and leave it empty rather than exposing outcome tokens, workflow names, agent names, or internal instructions. Independently choose the next useful capability from availableTasks, or none. Every catalog meaning is available here just as at the initial autonomy decision. instruction carries the purpose and relevant evidence to the selected specialist or executor; the specialist performs its own task. A continuing objective does not require a physical action, and completion or abandonment can accompany a new activity. This is self-directed autonomy, not a requirement to await a user request. The execution supplies the objective and ordered user corrections; evaluate that objective, not a new objective inferred from the status display. Return only the requested JSON.",
           "inputKey": ""
         }
       }
@@ -366,6 +366,15 @@
           "waitForEvent": false,
           "userGraph": "environment",
           "autonomyGraph": "robot-autonomy-controller"
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "parser",
+              "output": "hasSelection",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -393,6 +402,75 @@
             }
           ]
         }
+      }
+    },
+    {
+      "id": "task-catalog",
+      "type": "operatorNode",
+      "position": {
+        "x": -700,
+        "y": 600
+      },
+      "data": {
+        "label": "Available Autonomy Tasks",
+        "nodeType": "robot_autonomy_task_catalog",
+        "properties": {
+          "taskIds": [
+            "robot-autonomy-executor",
+            "boredom-observer",
+            "boredom-movement",
+            "boredom-reflection",
+            "reflector",
+            "daydreamer",
+            "curiosity",
+            "curiosity-researcher",
+            "inner-curiosity",
+            "train-of-thought",
+            "desire-agent",
+            "mood"
+          ]
+        }
+      }
+    },
+    {
+      "id": "autonomy-activity",
+      "type": "contextNode",
+      "position": {
+        "x": -700,
+        "y": 850
+      },
+      "data": {
+        "label": "Recent Controller-Selected Task Results",
+        "nodeType": "robot_autonomy_activity_history",
+        "properties": {
+          "limit": 10
+        }
+      }
+    },
+    {
+      "id": "agent-dispatch",
+      "type": "default",
+      "position": {
+        "x": 1000,
+        "y": 1900
+      },
+      "data": {
+        "nodeType": "robot_autonomy_task_dispatch",
+        "label": "agent-dispatch",
+        "properties": {}
+      }
+    },
+    {
+      "id": "agent-result",
+      "type": "default",
+      "position": {
+        "x": 1300,
+        "y": 1900
+      },
+      "data": {
+        "nodeType": "work_result_wait",
+        "label": "agent-result",
+        "properties": {}
       }
     }
   ],
@@ -844,6 +922,148 @@
       "type": "default",
       "data": {
         "type": "object"
+      }
+    },
+    {
+      "id": "contextual-task-catalog-tasks-context-availableTasks",
+      "source": "task-catalog",
+      "sourceHandle": "tasks",
+      "target": "context",
+      "targetHandle": "availableTasks",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "contextual-task-catalog-tasks-parser-availableTasks",
+      "source": "task-catalog",
+      "sourceHandle": "tasks",
+      "target": "parser",
+      "targetHandle": "availableTasks",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "contextual-autonomy-activity-history-context-autonomyActivityHistory",
+      "source": "autonomy-activity",
+      "sourceHandle": "history",
+      "target": "context",
+      "targetHandle": "autonomyActivityHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "contextual-parser-agentDecision-authorize-continuation-selection",
+      "source": "parser",
+      "sourceHandle": "agentDecision",
+      "target": "authorize-continuation",
+      "targetHandle": "selection",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "contextual-authorize-continuation-selection-agent-dispatch-decision",
+      "source": "authorize-continuation",
+      "sourceHandle": "selection",
+      "target": "agent-dispatch",
+      "targetHandle": "decision",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "contextual-robot-input-robotObserver-agent-dispatch-robotObserver",
+      "source": "robot-input",
+      "sourceHandle": "robotObserver",
+      "target": "agent-dispatch",
+      "targetHandle": "robotObserver",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "contextual-observation-sessionId-agent-dispatch-sessionId",
+      "source": "observation",
+      "sourceHandle": "sessionId",
+      "target": "agent-dispatch",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "contextual-observation-observation-agent-dispatch-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "agent-dispatch",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "contextual-agent-dispatch-invocation-selected-workflow-invocation",
+      "source": "agent-dispatch",
+      "sourceHandle": "invocation",
+      "target": "selected-workflow",
+      "targetHandle": "invocation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "contextual-agent-dispatch-work-agent-result-work",
+      "source": "agent-dispatch",
+      "sourceHandle": "work",
+      "target": "agent-result",
+      "targetHandle": "work",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "contextual-agent-result-result-remaining-objective-control",
+      "source": "agent-result",
+      "sourceHandle": "result",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "kind": "control",
+        "when": {
+          "output": "result",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "contextual-status-out-persisted-authorize-continuation-control",
+      "source": "status-out",
+      "sourceHandle": "persisted",
+      "target": "authorize-continuation",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "persisted",
+          "truthy": true
+        }
       }
     }
   ],

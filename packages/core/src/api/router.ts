@@ -16,6 +16,7 @@ import {
   unauthorizedResponse,
   forbiddenResponse,
 } from './types.js';
+import { restoreAuthenticatedSession } from '../sessions.js';
 
 // Import handlers (will be populated as we migrate routes)
 // For now, start with a few proof-of-concept routes
@@ -158,6 +159,7 @@ import { handleActivityPing } from './handlers/activity-ping.js';
 import {
   handleClearQueueTasks,
   handleDeleteQueueTask,
+  handleCancelQueueExecution,
   handleEnqueueTask,
   handleSubmitCoordinatorWork,
   handleGetQueueStatus,
@@ -855,6 +857,7 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)\/stream$/, handler: handleQueueTaskStream },
   { method: 'GET', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)$/, handler: handleGetQueueTask, requiresAuth: true },
   { method: 'DELETE', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)$/, handler: handleDeleteQueueTask, requiresAuth: true },
+  { method: 'DELETE', pattern: /^\/api\/unified-queue\/executions\/([^\/]+)$/, handler: handleCancelQueueExecution, requiresAuth: true },
   { method: 'GET', pattern: '/api/queue-stream', handler: handleQueueStream, requiresAuth: true },
 
   // RunPod
@@ -1362,6 +1365,9 @@ export async function routeRequest(req: UnifiedRequest): Promise<UnifiedResponse
 
   // Execute handler
   try {
+    if (req.user.isAuthenticated && req.sessionId) {
+      await restoreAuthenticatedSession(req.sessionId, req.user.userId);
+    }
     return await route.handler(enrichedReq);
   } catch (error) {
     console.error(`[router] Handler error for ${req.method} ${req.path}:`, error);

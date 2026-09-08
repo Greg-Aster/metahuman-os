@@ -143,11 +143,17 @@ async function executeRobotAutonomyControllerGraph(
   const decision = isRecord(parsed.decisionReceipt) ? parsed.decisionReceipt : null
   if (!decision) throw new Error('Robot Autonomy Controller completed without a validated decision receipt')
   const selectedTaskId = typeof decision.taskId === 'string' ? decision.taskId : ''
-  const dispatch = selectedTaskId === 'robot-autonomy-executor'
-    ? requireGraphNodeOutput(graphState, 'robot_operator_environment_dispatch')
-    : selectedTaskId === 'none'
-      ? { queued: false, taskId: '', status: 'none_selected' }
-      : requireGraphNodeOutput(graphState, 'robot_autonomy_task_dispatch')
+  const dispatchType = selectedTaskId === 'robot-autonomy-executor'
+    ? 'robot_operator_environment_dispatch' : 'robot_autonomy_task_dispatch'
+  const dispatchNodes = [...graphState.nodes.values()]
+    .filter(node => node.definition?.type === dispatchType)
+  // Selected branches can still be inactive when a required input is absent.
+  // Report that execution outcome without selecting a different task.
+  const dispatch = selectedTaskId === 'none'
+    ? { queued: false, taskId: '', status: 'none_selected' }
+    : dispatchNodes.length === 1 && dispatchNodes[0].status === 'skipped'
+      ? { queued: false, taskId: '', status: 'skipped', reason: dispatchNodes[0].skipReason }
+      : requireGraphNodeOutput(graphState, dispatchType)
   return {
     graphExecuted: true,
     executionId: graphState.executionId,
@@ -160,6 +166,7 @@ async function executeRobotAutonomyControllerGraph(
       queued: dispatch.queued === true,
       taskId: typeof dispatch.taskId === 'string' ? dispatch.taskId : '',
       status: typeof dispatch.status === 'string' ? dispatch.status : 'unknown',
+      ...(typeof dispatch.reason === 'string' ? { reason: dispatch.reason } : {}),
     },
   }
 }

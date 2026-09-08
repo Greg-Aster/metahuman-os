@@ -20,7 +20,6 @@ import {
 
 const HEARTBEAT_MS = 15_000;
 const VALID_CONSUMER_ID = /^[a-zA-Z0-9._:-]{1,128}$/;
-const VALID_ITEM_ID = /^tts-[a-zA-Z0-9-]{1,160}$/;
 const VALID_LEASE_TOKEN = /^[a-zA-Z0-9-]{16,128}$/;
 const DELIVERY_ACTIONS = new Set<TTSDeliveryAction>([
   'complete',
@@ -225,7 +224,8 @@ export const handleTtsQueueDelivery: UnifiedHandler = async (req) => {
   const leaseToken = typeof req.body?.leaseToken === 'string' ? req.body.leaseToken.trim() : '';
   const action = req.body?.action as TTSDeliveryAction | undefined;
 
-  if (!VALID_ITEM_ID.test(itemId)) return badRequestResponse('A valid TTS itemId is required');
+  // Queue IDs are opaque (including durable graph effect IDs), not path names.
+  if (!itemId) return badRequestResponse('A valid TTS itemId is required');
   if (!VALID_LEASE_TOKEN.test(leaseToken)) return badRequestResponse('A valid TTS leaseToken is required');
   if (!action || !DELIVERY_ACTIONS.has(action)) {
     return badRequestResponse('A valid TTS delivery action is required');

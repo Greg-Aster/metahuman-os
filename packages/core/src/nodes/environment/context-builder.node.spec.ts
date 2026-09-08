@@ -149,7 +149,7 @@ test('Environment Context Builder does not present a saved camera frame as curre
     visual: savedObservation.visual,
     observationCurrent: false,
   }, {}, {})
-  assert.deepEqual(imageSelection.images, [])
+  assert.equal(imageSelection.images.length, 1, 'A saved frame remains available with its recorded time')
   assert.equal(imageSelection.current, false)
 
   const staleVision = await environmentContextBuilderNode.execute({
@@ -253,55 +253,25 @@ test('Environment selector schema exposes conversation, advertised action, and F
   assert.match(standaloneSchema.properties.response.description, /never substitutes/i)
 })
 
-test('Environment Image Input admits a saved frame only when it matches the current Robot Status action result', async () => {
+test('Environment Image Input distinguishes a saved view from evidence for a specific action', async () => {
   const savedObservation = observation()
-  savedObservation.visual = {
-    ...savedObservation.visual!,
-    metadata: {
-      correlationId: 'action-cycle-1',
-      actionId: 'action-1',
-    },
+  savedObservation.visual = { ...savedObservation.visual!,
+    metadata: { correlationId: 'action-cycle-1', actionId: 'action-1' } }
+  const available = await environmentImageInputNode.execute({
+    visual: savedObservation.visual, observationCurrent: false, execution: { task: null },
+  }, {}, {})
+  assert.equal(available.current, false)
+  assert.equal(available.verified, true)
+  assert.equal(available.images.length, 1)
+
+  for (const actionId of ['action-1', 'different-action']) {
+    const selected = await environmentImageInputNode.execute({
+      visual: savedObservation.visual, observationCurrent: false, actionId, correlationId: 'action-cycle-1',
+      terminalFeedback: { type: 'completed', actionId },
+    }, {}, {})
+    assert.equal(selected.current, false)
+    assert.equal(selected.verified, actionId === 'action-1')
+    assert.equal(selected.images.length, actionId === 'action-1' ? 1 : 0,
+      'A matching cycle cannot turn a different action image into proof of this result')
   }
-  const matched = await environmentImageInputNode.execute({
-    visual: savedObservation.visual,
-    observationCurrent: false,
-    robotStatus: {
-      ...robotStatus,
-      task: {
-        ...robotStatus.task,
-        actionId: 'action-1',
-        feedback: {
-          type: 'completed',
-          actionId: 'action-1',
-          message: 'done',
-          observedAt: '2026-09-02T12:00:00.000Z',
-        },
-      },
-    },
-  }, {}, {})
-
-  assert.equal(matched.current, false)
-  assert.equal(matched.verified, true)
-  assert.equal(matched.images.length, 1)
-
-  const mismatched = await environmentImageInputNode.execute({
-    visual: savedObservation.visual,
-    observationCurrent: false,
-    robotStatus: {
-      ...robotStatus,
-      task: {
-        ...robotStatus.task,
-        actionId: 'different-action',
-        feedback: {
-          type: 'completed',
-          actionId: 'different-action',
-          message: 'done',
-          observedAt: '2026-09-02T12:00:00.000Z',
-        },
-      },
-    },
-  }, {}, {})
-
-  assert.equal(mismatched.verified, false)
-  assert.deepEqual(mismatched.images, [])
 })

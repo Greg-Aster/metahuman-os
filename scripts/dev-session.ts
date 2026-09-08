@@ -9,16 +9,16 @@
  *   pnpm tsx scripts/dev-session.ts --username=owner
  *
  * This will:
- * 1. Create/update a session in logs/run/sessions.json
+ * 1. Create/update a session through the core Session owner
  * 2. Output the session cookie value to copy into your browser DevTools
  * 3. Optionally write it to .env.development for automated injection
  */
 
-import { randomBytes } from 'node:crypto';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { systemPaths } from '@metahuman/core';
 import { getUserByUsername } from '@metahuman/core/users';
+import { createSession, deleteUserSessions, updateSession } from '@metahuman/core/sessions';
 
 const args = process.argv.slice(2);
 const usernameArg = args.find(arg => arg.startsWith('--username='));
@@ -43,40 +43,18 @@ if (!user) {
   process.exit(1);
 }
 
-// Generate session token
-const sessionId = randomBytes(32).toString('hex');
-
-// Load existing sessions
-const sessionsPath = join(systemPaths.run, 'sessions.json');
-let sessions: any = { sessions: [], version: 1 };
-if (existsSync(sessionsPath)) {
-  try {
-    sessions = JSON.parse(readFileSync(sessionsPath, 'utf-8'));
-  } catch {
-    // Start fresh if corrupted
-  }
-}
-
-// Create session
+// Use the same session storage and lifecycle as authentication.
+deleteUserSessions(user.id);
+const session = createSession(user.id, user.role);
+const sessionId = session.id;
 const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
-const newSession = {
-  id: sessionId,
-  userId: user.id,
-  role: user.role,
-  createdAt: new Date().toISOString(),
+updateSession({
+  ...session,
   expiresAt: expiresAt.toISOString(),
-  lastActivity: new Date().toISOString(),
   metadata: {
     source: 'dev-session-helper',
   },
-};
-
-// Add to sessions array (remove existing session for this user if any)
-sessions.sessions = sessions.sessions.filter((s: any) => s.userId !== user.id);
-sessions.sessions.push(newSession);
-
-// Write sessions file
-writeFileSync(sessionsPath, JSON.stringify(sessions, null, 2));
+});
 
 console.log('✅ Dev session created successfully!\n');
 console.log('Session Details:');

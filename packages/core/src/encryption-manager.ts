@@ -415,6 +415,9 @@ export async function lockProfile(userId: string): Promise<UnlockResult> {
     return { success: true }; // Nothing to lock
   }
 
+  const { clearAuthenticatedUser } = await import('./sessions.js');
+  clearAuthenticatedUser(userId);
+
   switch (encConfig.type) {
     case 'aes256': {
       lockAesProfile(user.username);

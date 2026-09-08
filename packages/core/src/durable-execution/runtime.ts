@@ -7,7 +7,7 @@ import { getUserContext } from '../context.js'
 import { executeGraph, type GraphExecutionState } from '../graph-executor.js'
 import type { GraphRunParams } from '../graph-runtime.js'
 import { ExecutionCheckpointer } from './checkpointer.js'
-import { executionDefinition, graphContextSnapshot } from './graph-contract.js'
+import { executionAbortError, executionDefinition, graphContextSnapshot } from './graph-contract.js'
 import { ExecutionStore } from './store.js'
 import type { QueuedTask, TaskInput } from '../queue/types.js'
 import { relayExecutionOutbox } from './coordinator-outbox.js'
@@ -40,6 +40,7 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
   const signal = params.signal ? AbortSignal.any([params.signal, controller.signal]) : controller.signal
   try {
     const suppliedId = params.executionId || delegated?.executionId
+    if (params.resumeEventId && !suppliedId) throw new Error('An event wake requires an execution identity')
     const entry = suppliedId ? store.entry(suppliedId) : null
     const rootGraph = entry?.graphSource
       ? validateSvelteFlowGraph(JSON.parse(readFileSync(entry.graphSource, 'utf8')))
@@ -52,6 +53,7 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
     )
     if (record.username !== username) throw new Error('Execution belongs to a different profile')
     store.assertDefinition(record.executionId, definition)
+    if (params.resumeEventId) store.event(record.executionId, params.resumeEventId)
     scope?.attach(record.executionId)
     const invocationId = delegated ? `work:${delegated.effectId}:graph:${scope ? scope.graphIndex++ : externalGraphIndex++}` : undefined
     const checkpointConfig = { configurable: { thread_id: record.executionId } }
@@ -65,14 +67,33 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
       const values = saved.checkpoint.channel_values
       return { nodes: new Map(values.nodeEntries as any), startTime: Number(values.startedAt), status: 'completed', executionId: record.executionId, checkpointId: saved.checkpoint.id }
     }
-    lease = store.claim(record.executionId, definition)
-    const relay = () => relayExecutionOutbox(store, record.executionId, scope?.enqueue)
+    lease = store.claim(record.executionId, definition, undefined, undefined,
+      scope?.task.handler === 'graph.resume' && scope.task.durable
+        ? { effectId: scope.task.durable.effectId, workItemId: scope.task.id } : undefined)
+    const checkInterruption = () => {
+      if (!signal.aborted) return
+      // Worker interruption parks the objective; committed intents remain for recovery.
+      if (!controller.signal.aborted) {
+        store.settle(lease!, 'waiting', 'interrupted')
+        store.requestRecovery(record.executionId)
+      }
+      throw executionAbortError(signal.reason)
+    }
+    const relay = () => {
+      checkInterruption()
+      return relayExecutionOutbox(store, record.executionId, scope?.enqueue)
+    }
     heartbeat = setInterval(() => {
       try { store.renew(lease!); } catch (error) { controller.abort(error); }
     }, 10_000)
     heartbeat.unref()
     await relay()
-    const saved = delegated ? { context: graphContextSnapshot({ ...params.context, username }) } : store.entry(record.executionId)
+    // Finite agents resume the parent's committed dispatch, including its graph
+    // inputs. Process-local arguments are not the authority for that brief.
+    const delegatedInput = delegated ? (store.dispatch(delegated.effectId).payload as TaskInput).input?.graphContext : undefined
+    const saved = delegated
+      ? { context: graphContextSnapshot({ ...params.context, ...delegatedInput, username }) }
+      : store.entry(record.executionId)
     const reader = new ExecutionCheckpointer(store, lease, undefined, invocationId)
     const previousCheckpoint = await reader.getTuple(checkpointConfig)
     const result = await executeGraph(delegated ? params.graph : rootGraph, {
@@ -83,15 +104,7 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
       ...(invocationId ? { invocationId, checkpointNamespace: invocationId, externalChild: true } : {}),
       afterCheckpoint: relay,
     })
-    if (signal.aborted) {
-      // Worker interruption is not semantic cancellation of the user's objective.
-      if (!controller.signal.aborted) {
-        store.settle(lease, 'waiting', 'interrupted')
-        store.requestRecovery(record.executionId)
-        await relay()
-      }
-      throw signal.reason ?? new DOMException('Execution cancelled', 'AbortError')
-    }
+    checkInterruption()
     if (result.error instanceof ExecutionDeliveryError) {
       store.settle(lease, 'waiting')
       throw result.error

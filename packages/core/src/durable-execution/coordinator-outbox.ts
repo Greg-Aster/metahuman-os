@@ -6,6 +6,7 @@ import { saveRobotStatus, type RobotStatusSituation, type RobotStatusSourceFacts
 import type { DispatchRecord } from './types.js'
 import { queueTTS, getTTSQueueState, TTS_DELIVERY_MAX_AGE_MS } from '../tts/delivery-queue.js'
 import { writeBufferEntry, type CanonicalBufferMode, type ConversationMessage } from '../conversation-buffer.js'
+import { getAuthenticatedRuntimeId, getCurrentlyActiveUser } from '../sessions.js'
 
 /** The same admission contract is used by relay and by an early accepting worker. */
 export function executionWorkInput(store: ExecutionStore, effect: DispatchRecord): TaskInput {
@@ -17,6 +18,7 @@ export function executionWorkInput(store: ExecutionStore, effect: DispatchRecord
   return {
     ...input, username: store.get(effect.executionId).username, correlationId: effect.executionId,
     durable: { executionId: effect.executionId, effectId: effect.effectId,
+      originRuntimeId: store.get(effect.executionId).originRuntimeId,
       recovery: input.type === 'environment_command' || input.handler?.startsWith('agent.') ? 'reconcile' : 'resume' },
   }
 }
@@ -26,14 +28,22 @@ export async function relayExecutionOutbox(
   store: ExecutionStore,
   executionId: string,
   enqueue: (input: TaskInput) => Promise<QueuedTask> = submitCoordinatorWork,
+  stillActive: () => boolean = () => true,
 ): Promise<void> {
+  const execution = store.get(executionId)
   for (const effect of store.pendingDispatches().filter(item => item.executionId === executionId)) {
+    if (!stillActive()) return
+    const runtimeId = getAuthenticatedRuntimeId()
+    if (runtimeId && execution.originRuntimeId !== runtimeId) {
+      const user = getCurrentlyActiveUser()
+      if (!user || user.role === 'guest' || user.username !== execution.username) return
+    }
     if (effect.status !== 'pending') continue
     store.assertDispatchable(effect.effectId)
     if (effect.kind === 'execution_event') {
       const target = (effect.payload as { executionId: string }).executionId
       store.deliverExecutionInput(effect.effectId)
-      await relayExecutionOutbox(store, target, enqueue)
+      await relayExecutionOutbox(store, target, enqueue, stillActive)
       continue
     }
     if (effect.kind === 'robot_status') {

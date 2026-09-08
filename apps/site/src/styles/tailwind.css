@@ -1735,6 +1735,20 @@
     @apply flex items-center text-[0.8rem] gap-1.5 py-0.5 px-1 rounded-md transition-all relative;
   }
 
+  .model-role-section {
+    @apply mt-1 first:mt-0;
+  }
+
+  .model-role-section-heading {
+    @apply flex items-center gap-1 px-1 pt-1 text-[0.68rem] font-semibold uppercase tracking-wide
+           text-gray-500 dark:text-gray-400;
+  }
+
+  .model-role-help {
+    @apply inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border
+           border-gray-300 dark:border-gray-600 text-[0.55rem] font-bold;
+  }
+
   .model-role-row.active {
     @apply bg-violet-600/10 dark:bg-violet-400/15;
     box-shadow: 0 0 12px rgba(124, 58, 237, 0.3);
@@ -1742,6 +1756,10 @@
 
   .role-name {
     @apply text-gray-500 dark:text-gray-400 font-medium min-w-[75px] capitalize;
+  }
+
+  .role-name.agent-subrole {
+    @apply pl-2 text-[0.72rem];
   }
 
   .role-arrow {
@@ -1756,6 +1774,19 @@
   .role-model.clickable {
     @apply bg-transparent border border-gray-200 dark:border-gray-700 rounded-md px-2 py-1
            cursor-pointer transition-all hover:bg-gray-100 dark:hover:bg-gray-800 hover:border-gray-300 dark:hover:border-gray-600;
+  }
+
+  .role-model-copy {
+    @apply flex min-w-0 flex-1 flex-col items-start overflow-hidden leading-tight;
+  }
+
+  .role-model-primary {
+    @apply block max-w-full overflow-hidden text-ellipsis whitespace-nowrap;
+  }
+
+  .persona-adapter-line {
+    @apply block max-w-full overflow-hidden text-ellipsis whitespace-nowrap pt-0.5
+           text-[0.62rem] font-sans font-medium text-violet-600 dark:text-violet-300;
   }
 
   .role-model.error {

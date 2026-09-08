@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import type { EnvironmentObservation } from '../environment-interface/types.js'
+import type { EnvironmentCommandWork, EnvironmentObservation } from '../environment-interface/types.js'
 
 // Real saved graphs, node implementations, router, SQLite and Coordinator.
 // Only the provider/voice transport is replaced; all runtime files are isolated.
@@ -170,7 +170,8 @@ function seedDaydreamMemories() {
 
 function presetChoice() {
   return { response: '', actions: [{ type: 'robotCommand', command: 'walk' }], movementRequest: null,
-    taskDecision: { outcome: 'act', objective, objectiveComplete: false, reason: 'Inspect a different area.',
+    taskDecision: { outcome: 'act', objective, completionCriteria: 'Identify the target in visual evidence and report its location.',
+      objectiveComplete: false, reason: 'Inspect a different area.',
       requiredCompletionBasis: 'visual_observation', continuationPolicy: 'bounded' } }
 }
 
@@ -189,11 +190,34 @@ function incompleteActionReview() {
 function goalReview(outcome: 'continue' | 'wait' | 'request_user') {
   return { response: '', outcome, reason: 'The current evidence does not yet establish the target location.',
     requiredCompletionBasis: 'visual_observation', observationSummary: 'The visible floor area does not contain the target.',
-    completionEvidence: '', nextInstruction: outcome === 'continue' ? 'Inspect the adjacent area to locate the same fixture target.' : '' }
+    taskId: outcome === 'continue' ? 'robot-autonomy-executor' : 'none', completionEvidence: '', instruction: outcome === 'continue' ? 'Inspect the adjacent area to locate the same fixture target.' : '' }
+}
+
+const adapterActions = new Map<string, EnvironmentCommandWork[]>()
+function connectAdapter(sessionId: string) {
+  assert.equal(adapterActions.has(sessionId), false, 'Each fixture body has one accepting adapter')
+  const received: EnvironmentCommandWork[] = []
+  adapterActions.set(sessionId, received)
+  // Like the SSE adapter, claim at admission notification rather than after the
+  // entire parent graph unwinds. Command deadlines still apply at this boundary.
+  const dispatch = () => received.push(...dispatchEnvironmentActions(sessionId, 10))
+  const unsubscribe = subscribeEnvironmentActions(sessionId, dispatch)
+  dispatch()
+  return () => {
+    unsubscribe()
+    adapterActions.delete(sessionId)
+    assert.equal(received.length, 0, 'Every dispatched fixture command must be inspected')
+  }
+}
+
+function takeAdapterActions(sessionId: string, limit = 10) {
+  const received = adapterActions.get(sessionId)
+  assert.ok(received, 'The fixture adapter must be connected before taking commands')
+  return received.splice(0, limit)
 }
 
 function completeAction(current: EnvironmentObservation, expectedType: string, frameId: string) {
-  const actions = dispatchEnvironmentActions(current.sessionId!, 10)
+  const actions = takeAdapterActions(current.sessionId!, 10)
   assert.equal(actions.length, 1, 'Exactly one chosen physical effect should be dispatched')
   const action = actions[0]
   assert.equal(action.type, expectedType)
@@ -241,7 +265,7 @@ test('saved Environment workflow keeps conversation separate and resumes physica
   await withUserContext(user, async () => {
     recordEnvironmentObservation(observation)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(observation.sessionId, () => {})
+    const unsubscribe = connectAdapter(observation.sessionId)
     try {
       replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false, needsTaskLifecycle: false },
         { response: 'I am here with you.', actions: [], movementRequest: null, taskDecision: null })
@@ -264,7 +288,7 @@ test('saved Environment workflow keeps conversation separate and resumes physica
       assert.equal(store.task(executionId)?.objective, objective)
       assert.match(store.task(executionId)!.objectiveId, /^[a-f0-9-]{36}$/)
       store.close()
-      const [action] = dispatchEnvironmentActions(observation.sessionId, 1)
+      const [action] = takeAdapterActions(observation.sessionId, 1)
       assert.ok(action)
       assert.notEqual(action.id, action.workItemId)
       const result = { id: randomUUID(), actionId: action.id, type: 'completed' as const,
@@ -280,7 +304,7 @@ test('saved Environment workflow keeps conversation separate and resumes physica
         observationSummary: 'A new part of the floor is visible.', completionEvidence: '' } },
         { response: 'The target is on the floor.', outcome: 'complete',
           reason: 'The supplied after-action image contains the fixture target.', requiredCompletionBasis: 'visual_observation',
-          observationSummary: 'The target is visible.', completionEvidence: 'The target in fixture-after.', nextInstruction: '' })
+          observationSummary: 'The target is visible.', completionEvidence: 'The target in fixture-after.', taskId: 'none', instruction: '' })
       const resumed = await run({ graph: graph('environment'), context: context(), executionId })
       assert.equal(resumed.status, 'completed', resumed.error?.stack)
       assert.equal(calls.length, beforeResumeCalls + 2, 'Only action-result and goal-review inference should run after resumption')
@@ -303,7 +327,7 @@ test('saved Controller calls the real Executor and resumes its preset action und
     const current = freshObservation('controller-preset')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       const beforeCalls = calls.length
       replies.push(controllerChoice('robot-autonomy-executor'), routes, presetChoice())
@@ -319,7 +343,7 @@ test('saved Controller calls the real Executor and resumes its preset action und
       assert.equal(resumed.status, 'completed', resumed.error?.stack)
       assert.equal(calls.length, beforeCalls + 4, 'Resuming the parent must not rerun Controller, route selection or the completed action')
       assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-autonomy', 'robot-action-result'])
-      assert.equal(dispatchEnvironmentActions(current.sessionId!, 10).length, 0)
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
   })
@@ -330,7 +354,7 @@ test('saved Controller selects Observer, waits for its image, then calls Executo
     const current = freshObservation('controller-observer')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       const beforeCalls = calls.length
       replies.push(controllerChoice('boredom-observer'))
@@ -359,7 +383,7 @@ test('saved Controller selects Observer, waits for its image, then calls Executo
         assert.equal(store.frame(executionId, 'controller-observer-captured')?.id, 'controller-observer-captured')
         assert.equal(store.frame(executionId, 'controller-observer-after')?.id, 'controller-observer-after')
       } finally { store.close() }
-      assert.equal(dispatchEnvironmentActions(current.sessionId!, 10).length, 0)
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
   })
@@ -372,7 +396,7 @@ test('saved Environment invokes freestyle only when selected and persists the ge
       reference: 'stand', sourceActionId: 'fixture-standing-receipt', updatedAt: new Date().toISOString() } }
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       const beforeCalls = calls.length
       const standing = { R1: '135', R2: '45', L1: '45', L2: '135', R4: '0', R3: '180', L3: '0', L4: '180' }
@@ -400,7 +424,7 @@ test('saved Environment invokes freestyle only when selected and persists the ge
       assert.equal(finished.status, 'completed', finished.error?.stack)
       assert.equal(calls.length, beforeCalls + 4, 'The generated action and its model output are not replayed on resume')
       assertParticipatingGraphs(executionId, ['environment', 'robot-action-result'])
-      assert.equal(dispatchEnvironmentActions(current.sessionId!, 10).length, 0)
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
   })
@@ -467,14 +491,14 @@ test('saved Environment retains an after-action observation that arrives before 
     const current = freshObservation('image-before-result')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       const beforeCalls = calls.length
       replies.push(routes, presetChoice())
       const started = await run({ graph: graph('environment'), context: context(current) })
       assert.equal(started.status, 'waiting', started.error?.stack)
       const executionId = started.executionId!
-      const [action] = dispatchEnvironmentActions(current.sessionId!, 1)
+      const [action] = takeAdapterActions(current.sessionId!, 1)
       assert.ok(action)
       recordEnvironmentActionResult({ id: randomUUID(), actionId: action.id, type: 'accepted',
         timestamp: new Date().toISOString(), message: 'Fixture adapter accepted the movement' })
@@ -500,41 +524,55 @@ test('saved Environment retains an after-action observation that arrives before 
         assert.equal(store.frame(executionId, 'image-before-result-after')?.id, 'image-before-result-after')
         assert.equal(store.task(executionId)?.decision.objectiveComplete, true)
       } finally { store.close() }
-      assert.equal(dispatchEnvironmentActions(current.sessionId!, 10).length, 0)
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
   })
 })
 
-test('saved Environment reviews a rejected standalone action without requiring a nonexistent after-image', async () => {
+test('saved Environment reviews standalone actions without inventing an objective or requiring an image for rejection', async () => {
   await withUserContext(user, async () => {
-    const current = freshObservation('rejected-action')
-    recordEnvironmentObservation(current)
-    setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
-    try {
-      const beforeCalls = calls.length
-      replies.push({ ...routes, needsTaskLifecycle: false }, { ...presetChoice(), taskDecision: null })
-      const started = await run({ graph: graph('environment'), context: context(current) })
-      assert.equal(started.status, 'waiting', started.error?.stack)
-      const executionId = started.executionId!
-      const [action] = dispatchEnvironmentActions(current.sessionId!, 1)
-      assert.ok(action)
-      recordEnvironmentActionResult({ id: randomUUID(), actionId: action.id, type: 'rejected',
-        timestamp: new Date().toISOString(), message: 'The fixture adapter did not execute this action' })
-      replies.push({ response: 'The adapter rejected the movement before it started.', taskDecision: null })
-      const finished = await run({ graph: graph('environment'), context: context(current), executionId })
-      assert.equal(finished.status, 'completed', finished.error?.stack)
-      assert.equal(calls.length, beforeCalls + 3, 'Only one action-result review is needed for a rejected standalone action')
-      const store = openExecutionStore(username)
+    for (const outcome of ['rejected', 'completed'] as const) {
+      const current = freshObservation(`standalone-${outcome}`)
+      recordEnvironmentObservation(current)
+      setEnvironmentBridgeEnabled(true)
+      const unsubscribe = connectAdapter(current.sessionId!)
       try {
-        assert.equal(store.task(executionId), null, 'A rejected standalone action must not create a goal')
-        assert.equal(store.events(executionId).some(event => event.kind === 'observation_received'), false)
-      } finally { store.close() }
-      assert.equal(loadRobotStatus(username)?.lastAction?.status, 'rejected')
-      assert.equal(dispatchEnvironmentActions(current.sessionId!, 10).length, 0)
-      assert.equal(replies.length, 0)
-    } finally { unsubscribe() }
+        const beforeCalls = calls.length
+        replies.push({ ...routes, needsTaskLifecycle: false }, { ...presetChoice(), taskDecision: null })
+        const started = await run({ graph: graph('environment'), context: context(current) })
+        assert.equal(started.status, 'waiting', started.error?.stack)
+        const executionId = started.executionId!
+        const [action] = takeAdapterActions(current.sessionId!, 1)
+        assert.ok(action)
+        const feedback = { id: randomUUID(), actionId: action.id, type: outcome,
+          timestamp: new Date().toISOString(), message: `The fixture adapter reported ${outcome}` }
+        if (outcome === 'completed') recordEnvironmentActionResult({ ...feedback, id: randomUUID(), type: 'accepted' })
+        recordEnvironmentActionResult(feedback)
+        if (outcome === 'completed') publishEnvironmentObservation({ ...current,
+          timestamp: new Date().toISOString(), metadata: { actionId: action.id }, feedback: [feedback],
+          visual: { ...current.visual!, id: randomUUID(), metadata: { actionId: action.id } } }, { username })
+        replies.push({ response: 'The action report has arrived.', taskDecision: null })
+        const finished = await run({ graph: graph('environment'), context: context(current), executionId })
+        assert.equal(finished.status, 'completed', finished.error?.stack)
+        assert.equal(calls.length, beforeCalls + 3, 'Only one action-result review is needed for a standalone action')
+        const reviewCall = calls.at(-1)!
+        assert.deepEqual(reviewCall.options.jsonSchema.properties.taskDecision, { type: 'null' })
+        const reviewInput = reviewCall.messages.at(-1).content
+        const reviewText = typeof reviewInput === 'string' ? reviewInput : reviewInput.find((part: any) => part.type === 'text').text
+        const envelope = JSON.parse(reviewText.slice(reviewText.indexOf('{')))
+        assert.equal(envelope.robotStimulus.verifiedCurrentAction.actionId, action.id)
+        assert.equal(envelope.robotStimulus.feedback[0].type, outcome)
+        const store = openExecutionStore(username)
+        try {
+          assert.equal(store.task(executionId), null, 'A standalone action must not create a goal')
+          assert.equal(store.events(executionId).some(event => event.kind === 'observation_received'), outcome === 'completed')
+        } finally { store.close() }
+        assert.equal(loadRobotStatus(username)?.lastAction?.status, outcome)
+        assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
+        assert.equal(replies.length, 0)
+      } finally { unsubscribe() }
+    }
   })
 })
 
@@ -560,7 +598,7 @@ test('a new process resumes the saved Controller child wait without reconstructi
     const current = freshObservation('process-restart')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       replies.push(controllerChoice('robot-autonomy-executor'), routes, presetChoice())
       const started = await run({ graph: graph('robot-autonomy-controller'), context: controllerContext(current) })
@@ -611,7 +649,7 @@ test('a Controller-selected finite Daydreamer graph executes and returns through
     assert.equal(jobs.length, 1)
     const work = jobs[0]
     assert.equal(work.correlationId, executionId)
-    assert.equal(work.input.robotOperatorContext.controllerDecision.instruction, 'Reflect imaginatively on the recent observations.')
+    assert.equal(JSON.parse(work.input.graphContext.taskBrief).instruction, 'Reflect imaginatively on the recent observations.')
     assert.ok(manager.claim(work.id))
     const daydream = 'I imagine those colors becoming little windows, each opening onto a different quiet possibility.'
     replies.push(daydream)
@@ -623,6 +661,8 @@ test('a Controller-selected finite Daydreamer graph executes and returns through
     assert.equal(child.executionId, executionId)
     assert.equal(child.nodes.get('2')?.outputs?.daydream, daydream)
     assert.equal(child.nodes.get('4')?.outputs?.saved, true)
+    assert.equal(child.nodes.get('task-brief')?.outputs?.text, work.input.graphContext.taskBrief)
+    assert.match(JSON.stringify(calls.at(-1)?.messages), /Reflect imaginatively on the recent observations/)
     assert.equal(calls.length, beforeCalls + 2, 'Controller and specialist each use their actual configured model role')
     assert.equal(calls.at(-1)?.options.maxTokens, graph('daydreamer').nodes.find(node => node.id === '2')!.data.properties!.maxTokens)
     const store = openExecutionStore(username)
@@ -638,6 +678,7 @@ test('a Controller-selected finite Daydreamer graph executes and returns through
     assert.equal(resumed.status, 'completed', resumed.error?.stack)
     assert.equal(resumed.nodes.get('agent-result')?.outputs?.result.result.state, 'completed')
     assert.equal(resumed.nodes.get('agent-result')?.outputs?.result.result.result.daydreamsGenerated, 1)
+    assert.equal(resumed.nodes.get('agent-result')?.outputs?.result.result.graphResults[0].output.daydream, daydream)
     assert.equal(calls.length, beforeCalls + 2, 'Receipt resumption must not repeat Controller or Daydreamer decisions')
     const finished = openExecutionStore(username)
     try {
@@ -649,12 +690,105 @@ test('a Controller-selected finite Daydreamer graph executes and returns through
   })
 })
 
+test('saved Goal Review can choose a specialist and evaluate its returned evidence without another Controller call', async () => {
+  for (const failSpecialist of [false, true]) {
+  await withUserContext(user, async () => {
+    seedDaydreamMemories()
+    const current = freshObservation('review-specialist')
+    recordEnvironmentObservation(current)
+    setEnvironmentBridgeEnabled(true)
+    const unsubscribe = connectAdapter(current.sessionId!)
+    try {
+      replies.push(routes, presetChoice())
+      const started = await run({ graph: graph('environment'), context: context(current) })
+      assert.equal(started.status, 'waiting', started.error?.stack)
+      const executionId = started.executionId!
+      const completed = completeAction(current, 'robotCommand', 'review-specialist-after')
+      const beforeReview = calls.length
+      replies.push(incompleteActionReview(), { ...goalReview('continue'), taskId: 'daydreamer',
+        instruction: 'Imagine a fresh perspective on this search.', response: 'I am considering a fresh perspective.' })
+      const waiting = await run({ graph: graph('environment'), context: context(current), executionId })
+      assert.equal(waiting.status, 'waiting', waiting.error?.stack)
+      assert.equal(calls.length, beforeReview + 2, 'One result interpretation and one contextual choice; no added Controller call')
+      const jobs = manager.getAllTasks().filter(task => task.durable?.executionId === executionId && task.handler === 'agent.daydreamer')
+      assert.equal(jobs.length, 1)
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0, 'A specialist choice does not dispatch a physical action')
+      const specialist = jobs[0]
+      assert.ok(manager.claim(specialist.id))
+      const thought = 'I imagine the floor patterns as a map, suggesting another perspective without claiming to have seen the target.'
+      const failure = { code: 'provider_failed', message: 'Controlled specialist model failure', retryable: false }
+      replies.push(failSpecialist ? new Error(failure.message) : thought)
+      const child = await withGraphWork(specialist, id => manager.attachExecution(specialist.id, id), () => runGraph({
+        graph: graph('daydreamer'), context: { username, userId: username, cognitiveMode: 'agent',
+          allowMemoryWrites: true, idempotencyKey: `daydreamer:${username}:${specialist.id}`, memoryTimestamp: specialist.createdAt },
+      }), async input => manager.enqueue(input))
+      assert.equal(child.status, failSpecialist ? 'failed' : 'completed', child.error?.stack)
+      assert.equal(child.executionId, executionId)
+      assert.match(JSON.stringify(calls.at(-1)?.messages), /Imagine a fresh perspective on this search/)
+      manager.complete(specialist.id, !failSpecialist,
+        failSpecialist ? failure : { stdout: 'Verbose process logs are not the specialist answer.', stderr: '' })
+      await deliverDurableWorkReceipt(manager.getTask(specialist.id)!, async input => manager.enqueue(input))
+      await deliverDurableWorkReceipt(manager.getTask(specialist.id)!, async input => manager.enqueue(input))
+      replies.push(goalReview('wait'))
+      const resumed = await run({ graph: graph('environment'), context: context(current), executionId })
+      assert.equal(resumed.status, 'waiting', resumed.error?.stack)
+      const reviewMessages = JSON.stringify(calls.at(-1)?.messages)
+      assert.ok(reviewMessages.includes(failSpecialist ? failure.message : thought))
+      assert.ok(reviewMessages.includes(objective))
+      assert.ok(reviewMessages.includes('reflector'), 'Review retains the full catalog rather than an Executor-only continuation')
+      assert.ok(!reviewMessages.includes('Verbose process logs'))
+      const store = openExecutionStore(username)
+      try {
+        const returns = store.events(executionId).filter(event => event.kind === 'work_result' && event.workItemId === specialist.id)
+        assert.equal(returns.length, 1, 'Repeated receipt delivery must not duplicate the specialist return')
+        const graphReturn = (returns[0].payload as any).result.graphResults[0]
+        assert.equal(graphReturn.status, failSpecialist ? 'failed' : 'completed')
+        if (failSpecialist) assert.equal(graphReturn.output, null, 'An intermediate context node is not a failed specialist answer')
+        assert.equal(store.task(executionId)?.decision.objectiveComplete, false, 'An imagined perspective is not objective-completion evidence')
+        const { projectAutonomyActivityOutcomes } = await import('../nodes/robot-operator/autonomy-activity-history.node.js')
+        const projected = projectAutonomyActivityOutcomes([{ taskId: 'initial-admission', capabilityId: 'robot-autonomy-executor',
+          handler: 'workflow.robot-autonomy-controller', state: 'completed', createdAt: current.timestamp!, executionIds: [executionId],
+          result: { effect: { actionQueue: { status: 'coordinated_for_adapter' } } } }], store)
+        const projectedExecutions = projected[0].result?.executions
+        assert.ok(Array.isArray(projectedExecutions))
+        assert.equal(projectedExecutions[0].objective.actionStatus, 'completed')
+        assert.equal(projectedExecutions[0].status, 'waiting')
+        assert.equal('effect' in projected[0].result!, false, 'Initial admission facts do not impersonate the later outcome')
+        assert.equal(store.events(executionId).filter(event => event.kind === 'physical_result' && event.actionId === completed.action.id).length, 1)
+        store.cancel(executionId, { eventId: randomUUID(), kind: 'user_cancelled', payload: { reason: 'Fixture cleanup' } })
+      } finally { store.close() }
+      assert.equal(replies.length, 0)
+    } finally { unsubscribe() }
+  })
+  }
+})
+
+test('a taskless Controller receives the saved Bridge frame with its actual recorded time', async () => {
+  await withUserContext(user, async () => {
+    const current = freshObservation('saved-vision')
+    current.visual!.metadata = { actionId: 'earlier-action' }
+    recordEnvironmentObservation(current)
+    const trigger = { ...controllerContext(current), environmentObservation: undefined, environmentObservationCurrent: false }
+    const before = calls.length
+    replies.push({ ...controllerChoice('none'), instruction: '', response: 'I am taking in the view.' })
+    const result = await run({ graph: graph('robot-autonomy-controller'), context: trigger })
+    assert.equal(result.status, 'completed', result.error?.stack)
+    assert.equal(calls.length, before + 1)
+    assert.equal(result.nodes.get('image-input')?.outputs?.current, false)
+    assert.equal(result.nodes.get('image-input')?.outputs?.frames[0].metadata.actionId, 'earlier-action')
+    assert.ok(calls.at(-1)?.messages.some(message => Array.isArray(message.content) && message.content.some((part: any) => part.type === 'image_url')))
+    assert.ok(JSON.stringify(calls.at(-1)?.messages).includes('Re-examines') || JSON.stringify(calls.at(-1)?.messages).includes('reflector'))
+    assert.equal(manager.getAllTasks().filter(task => task.durable?.executionId === result.executionId && task.type === 'environment_command').length, 0)
+    assert.equal(replies.length, 0)
+  })
+})
+
 test('saved Goal Review continues through the real Executor and reviews its next result in the same parent', async () => {
   await withUserContext(user, async () => {
     const current = freshObservation('goal-continue')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       replies.push(routes, presetChoice())
       const started = await run({ graph: graph('environment'), context: context(current) })
@@ -662,13 +796,20 @@ test('saved Goal Review continues through the real Executor and reviews its next
       const executionId = started.executionId!
       const initial = completeAction(current, 'robotCommand', 'goal-continue-first-after')
       const beforeReview = calls.length
-      replies.push(incompleteActionReview(), goalReview('continue'), routes, presetChoice())
+      replies.push(incompleteActionReview(), goalReview('continue'), routes, { ...presetChoice(), taskDecision: null })
       const continuing = await run({ graph: graph('environment'), context: context(current), executionId })
       assert.equal(continuing.status, 'waiting', continuing.error?.stack)
       assert.equal(calls.length, beforeReview + 4, 'Action Result, Goal Review, intent and selection each execute once')
       const next = completeAction(initial.after, 'robotCommand', 'goal-continue-second-after')
       assert.notEqual(next.action.id, initial.action.id)
       assert.equal(next.action.executionId, executionId)
+      const dispatchedStore = openExecutionStore(username)
+      try {
+        const task = dispatchedStore.task(executionId)!
+        assert.equal(task.actionId, next.action.id, 'A new action is recorded even without an objective change')
+        assert.equal(task.feedback, null, 'The prior action receipt must not describe the new action')
+        assert.equal(task.completionCriteria, presetChoice().taskDecision.completionCriteria)
+      } finally { dispatchedStore.close() }
       replies.push(completionReview())
       const finished = await run({ graph: graph('environment'), context: context(current), executionId })
       assert.equal(finished.status, 'completed', finished.error?.stack)
@@ -688,7 +829,7 @@ test('saved Environment admits user steering into the exact Goal Review wait and
     const current = freshObservation('goal-steering')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       replies.push(routes, presetChoice())
       const started = await run({ graph: graph('environment'), context: context(current) })
@@ -745,7 +886,7 @@ test('malformed Observer output fails its actual saved parent instead of silentl
     const current = freshObservation('observer-invalid')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       replies.push(controllerChoice('boredom-observer'))
       const started = await run({ graph: graph('robot-autonomy-controller'), context: controllerContext(current) })
@@ -767,7 +908,7 @@ test('malformed Observer output fails its actual saved parent instead of silentl
         assert.equal(store.dispatch(effects[0].effect_id).actionId, action.id)
         assert.equal(store.events(executionId).filter(event => event.kind === 'physical_result' && event.actionId === action.id).length, 1)
       } finally { store.close() }
-      assert.equal(dispatchEnvironmentActions(current.sessionId!, 10).length, 0, 'No motion follows invalid observation planning')
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0, 'No motion follows invalid observation planning')
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
   })
@@ -796,7 +937,7 @@ test('saved Environment cancellation ends the identified Goal Review wait withou
     const current = freshObservation('goal-cancel')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       replies.push(routes, presetChoice())
       const started = await run({ graph: graph('environment'), context: context(current) })
@@ -821,7 +962,7 @@ test('saved Environment cancellation ends the identified Goal Review wait withou
         assert.equal(store.pendingDispatches().filter(effect => effect.executionId === executionId).length, 0)
       } finally { store.close() }
       await assert.rejects(runDurableGraph({ graph: graph('environment'), context: context(current), executionId }), /Execution cancelled/)
-      assert.equal(dispatchEnvironmentActions(current.sessionId!, 10).length, 0)
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
   })
@@ -832,7 +973,7 @@ test('an autonomy event at a user-origin Goal Review wait can select a non-robot
     const current = freshObservation('goal-autonomy-specialist')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       replies.push(routes, presetChoice())
       const started = await run({ graph: graph('environment'), context: context(current) })
@@ -873,6 +1014,7 @@ test('an autonomy event at a user-origin Goal Review wait can select a non-robot
       assert.equal(calls.length, beforeReview + 1, 'Goal Review considers the returned activity once')
       assert.ok(JSON.stringify(calls.at(-1)?.messages).includes('work_result'), 'Review receives the correlated finite-work result')
       assert.ok(JSON.stringify(calls.at(-1)?.messages).includes('daydreamsGenerated'), 'Review receives the specialist output, not just its name')
+      assert.ok(JSON.stringify(calls.at(-1)?.messages).includes('a small map made from shifting colors'), 'Review receives the specialist graph return as well as its process receipt')
       assert.ok(JSON.stringify(calls.at(-1)?.messages).includes(objective), 'Review retains the original objective beside the new result')
       const retained = openExecutionStore(username)
       try {
@@ -891,7 +1033,7 @@ test('a Controller speech-only choice after Goal Review wait does not finish the
     const current = freshObservation('goal-autonomy-none')
     recordEnvironmentObservation(current)
     setEnvironmentBridgeEnabled(true)
-    const unsubscribe = subscribeEnvironmentActions(current.sessionId!, () => {})
+    const unsubscribe = connectAdapter(current.sessionId!)
     try {
       replies.push(routes, presetChoice())
       const started = await run({ graph: graph('environment'), context: context(current) })
@@ -919,7 +1061,7 @@ test('a Controller speech-only choice after Goal Review wait does not finish the
         assert.equal(after.get(executionId).status, 'waiting')
         assert.equal(after.get(executionId).waitingReason, 'user_or_autonomy')
       } finally { after.close() }
-      assert.equal(dispatchEnvironmentActions(current.sessionId!, 10).length, 0)
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
   })

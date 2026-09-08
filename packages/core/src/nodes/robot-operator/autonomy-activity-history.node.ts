@@ -1,6 +1,9 @@
 import { defineNode } from '../types.js'
 import { getQueueManager } from '../../queue/unified-queue-manager.js'
 import type { QueuedTask } from '../../queue/types.js'
+import { openExecutionStore } from '../../durable-execution/storage.js'
+import type { ExecutionStore } from '../../durable-execution/store.js'
+import { executionEventContext } from '../utility/execution-context.node.js'
 
 export interface RobotAutonomyActivityRecord {
   taskId: string
@@ -14,6 +17,7 @@ export interface RobotAutonomyActivityRecord {
   reason?: string
   observationSummary?: string
   result?: Record<string, unknown>
+  executionIds?: string[]
   error?: { code: string; message: string }
 }
 
@@ -169,32 +173,18 @@ export function summarizeRobotAutonomyActivity(
         || (task.handler === 'environment.observation'
           ? 'robot-autonomy-executor'
           : task.handler)
-      const ownResult = compactResult(task.result)
-      const correlatedEffect = task.correlationId
-        ? tasks.find(candidate => (
-            candidate.id !== task.id
-            && candidate.correlationId === task.correlationId
-            && isRecord(candidate.result)
-            && isRecord(candidate.result.effect)
-          ))
-        : null
-      const downstreamEffect = compactEffect(correlatedEffect?.result?.effect)
-      const result = ownResult || downstreamEffect
-        ? {
-            ...(ownResult ?? {}),
-            ...(downstreamEffect ? { downstreamEffect } : {}),
-          }
-        : undefined
+      const result = compactResult(task.result)
       const errorCode = cleanText(task.error?.code, 100)
       const errorMessage = cleanText(task.error?.message, 500)
-      const instruction = cleanText(controllerDecision?.instruction, 1_000)
-      const reason = cleanText(controllerDecision?.reason, 500)
+      const instruction = cleanText(task.metadata?.decisionInstruction ?? controllerDecision?.instruction, 1_000)
+      const reason = cleanText(task.metadata?.decisionReason ?? controllerDecision?.reason, 500)
       const observationSummary = cleanText(
-        controllerDecision?.observationSummary ?? controllerDecision?.observed,
+        task.metadata?.observationSummary ?? controllerDecision?.observationSummary ?? controllerDecision?.observed,
         500,
       )
       return {
         taskId: task.id,
+        executionIds: task.graphExecutions ?? (task.durable ? [task.durable.executionId] : []),
         capabilityId,
         handler: task.handler,
         state: task.state,
@@ -210,6 +200,32 @@ export function summarizeRobotAutonomyActivity(
           : {}),
       }
     })
+}
+
+/** Current execution facts replace the initial admission snapshot, not its LLM decision. */
+export function projectAutonomyActivityOutcomes(history: RobotAutonomyActivityRecord[], store: ExecutionStore) {
+  const records = new Map(store.list().map(record => [record.executionId, record]))
+  return history.map(activity => {
+    const executions = (activity.executionIds ?? []).flatMap(executionId => {
+      const record = records.get(executionId)
+      if (!record) return [] // Terminal retention may outlive the detailed execution.
+      const task = store.task(executionId)
+      const lastResult = executionEventContext(store.events(executionId)
+        .filter(event => event.kind === 'physical_result' || event.kind === 'work_result').slice(-1))[0]
+      const payload = isRecord(lastResult?.payload) ? lastResult.payload : null
+      const feedback = isRecord(payload?.feedback) ? payload.feedback : null
+      return [{ executionId, status: record.status, waitingReason: record.waitingReason,
+        objective: task ? { objectiveId: task.objectiveId, objective: task.objective,
+          completionCriteria: task.completionCriteria, decision: task.decision,
+          selectedAction: task.selectedAction, actionStatus: task.actionStatus } : null,
+        lastResult: lastResult ? { sequence: lastResult.sequence, kind: lastResult.kind, actionId: lastResult.actionId,
+          ...(feedback ? { type: feedback.type, message: feedback.message, timestamp: feedback.timestamp }
+            : { result: payload?.result }) } : null }]
+    })
+    return executions.length ? { ...activity,
+      result: { ...(activity.result?.decision ? { decision: activity.result.decision } : {}), executions },
+    } : activity
+  })
 }
 
 export const robotAutonomyActivityHistoryNode = defineNode({
@@ -239,7 +255,12 @@ export const robotAutonomyActivityHistoryNode = defineNode({
     const supplied = username
       ? summarizeRobotAutonomyActivity(getQueueManager().getHistory(), username)
       : []
-    const history = supplied.slice(-boundedLimit(properties?.limit))
-    return { history, count: history.length }
+    const selected = supplied.slice(-boundedLimit(properties?.limit))
+    if (!selected.length) return { history: [], count: 0 }
+    const store = openExecutionStore(username)
+    try {
+      const history = projectAutonomyActivityOutcomes(selected, store)
+      return { history, count: history.length }
+    } finally { store.close() }
   },
 })

@@ -125,8 +125,8 @@ test('Agency Review names actual model calls, changed desires, strengths, reason
       cognitiveMode: 'agent',
       role: 'persona',
       provider: 'ollama',
-      model: 'qwen3.5:2b',
-      modelId: 'ollama.qwen3.5:2b',
+      model: 'qwen3.5:9b',
+      modelId: 'ollama.qwen3.5:9b',
       latencyMs: 5_212,
       tokens: { prompt: 4_098, completion: 141, total: 4_239 },
     }],
@@ -156,7 +156,7 @@ test('Agency Review names actual model calls, changed desires, strengths, reason
     generationSkippedReason: null,
   })
 
-  assert.match(content, /ollama\/qwen3\.5:2b \(agent mode, persona role, 5\.21s, 4239 tokens\)/)
+  assert.match(content, /ollama\/qwen3\.5:9b \(agent routing, persona role, 5\.21s, 4239 tokens\)/)
   assert.match(content, /Understand the owner \[desire-1\]: 0\.1888 → 0\.2688 \(\+0\.0800\)/)
   assert.match(content, /Evidence \(user_request:request-1\): Please learn this preference/)
   assert.match(content, /Old idea \[desire-2\]: 0\.2000 → 0\.1985 \(-0\.0015\)/)

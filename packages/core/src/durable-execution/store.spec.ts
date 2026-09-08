@@ -99,6 +99,140 @@ test('cancellation before or after admission never revives a dispatch', async ()
   }
 })
 
+test('terminal work receipts retain their committed graph-return snapshot across replay', async () => {
+  for (const originalGraphs of [undefined, [{ graph: 'specialist', status: 'failed', output: null }]]) {
+    const f = fixture()
+    try {
+      await checkpoint(f, { transitionId: 'specialist', dispatches: [
+        { effectId: 'specialist', kind: 'coordinator_work', payload: {} },
+      ] })
+      f.store.acknowledgeAdmission('specialist', 'specialist-job')
+      const receipt = { state: 'failed', result: null, error: { message: 'Provider failed' } }
+      const first = f.store.deliverWorkResult('specialist', 'specialist-job', receipt, originalGraphs)
+      const replay = f.store.deliverWorkResult('specialist', 'specialist-job', receipt,
+        [{ graph: 'specialist', status: 'failed', output: null, projectionVersion: 2 }])
+      assert.deepEqual(replay, first)
+      assert.equal(f.store.events(f.execution.executionId).filter(event => event.kind === 'work_result').length, 1)
+      assert.throws(() => f.store.deliverWorkResult('specialist', 'specialist-job', { ...receipt, state: 'completed' }),
+        /receipt reused with different content/)
+    } finally { f.store.close() }
+  }
+})
+
+test('resume receipts belong to their writer, including progress inside an interrupted node', async () => {
+  const f = fixture()
+  const State = Annotation.Root({ value: Annotation<unknown>() })
+  const build = (saver: ExecutionCheckpointer) => new StateGraph(State)
+    .addNode('wait', () => {
+      const result = interrupt('result')
+      const observation = interrupt('observation')
+      return { value: [result, observation] }
+    }).addEdge(START, 'wait').addEdge('wait', END).compile({ checkpointer: saver })
+  try {
+    await build(f.saver).invoke({ value: null }, f.config)
+    f.store.settle(f.lease, 'waiting', 'robot_result')
+    f.store.release(f.lease)
+    const event = f.store.deliverEvent(f.execution.executionId, { eventId: 'result', kind: 'physical_result', payload: {} })
+    const effectId = `${f.execution.executionId}:resume:${event.eventId}`
+    f.store.acknowledgeAdmission(effectId, 'old-wake')
+    f.store.acceptAction(effectId)
+    const before = f.store.get(f.execution.executionId)
+    const lease = f.store.claim(f.execution.executionId, definition)
+    const program = build(new ExecutionCheckpointer(f.store, lease))
+    await program.invoke(new Command({ resume: event.eventId }), f.config)
+    f.store.settle(lease, 'waiting', 'observation')
+    f.store.release(lease)
+    const progressed = f.store.get(f.execution.executionId)
+    assert.equal(progressed.checkpointVersion, before.checkpointVersion)
+    assert.equal(progressed.lastProcessedSequence, before.lastProcessedSequence)
+    assert.equal(progressed.ownerGeneration, before.ownerGeneration + 1)
+    assert.equal((await program.getState(f.config)).tasks[0].interrupts[0].value, 'observation')
+    const failure = { state: 'failed', error: { message: 'Earlier worker failed' } }
+    f.store.deliverWorkResult(effectId, 'old-wake', failure)
+    assert.equal(f.store.get(f.execution.executionId).status, 'waiting')
+    assert.equal(f.store.get(f.execution.executionId).waitingReason, 'observation')
+    const recorded = f.store.events(f.execution.executionId)
+    f.store.deliverWorkResult(effectId, 'old-wake', failure)
+    assert.deepEqual(f.store.events(f.execution.executionId), recorded)
+
+    const next = f.store.deliverEvent(f.execution.executionId, { eventId: 'observation', kind: 'observation_received', payload: {} })
+    const nextEffect = `${f.execution.executionId}:resume:${next.eventId}`
+    f.store.acknowledgeAdmission(nextEffect, 'current-wake')
+    f.store.acceptAction(nextEffect)
+    const current = f.store.claim(f.execution.executionId, definition, undefined, undefined,
+      { effectId: nextEffect, workItemId: 'current-wake' })
+    assert.equal(f.store.dispatch(nextEffect).attemptGeneration, current.generation)
+    f.store.release(current)
+    f.store.deliverWorkResult(nextEffect, 'current-wake', failure)
+    assert.equal(f.store.get(f.execution.executionId).status, 'failed', 'The actual failed writer settles its own execution')
+    assert.equal(f.store.get(f.execution.executionId).waitingReason, undefined)
+  } finally { f.store.close() }
+})
+
+test('interrupted and pre-migration resume receipts create one correlated recovery', async () => {
+  for (const legacy of [false, true]) {
+    const f = fixture()
+    try {
+      await checkpoint(f)
+      f.store.settle(f.lease, 'waiting', 'user_or_autonomy')
+      f.store.release(f.lease)
+      const event = f.store.deliverEvent(f.execution.executionId, { eventId: 'wake', kind: 'autonomy_trigger', payload: {} })
+      const effectId = `${f.execution.executionId}:resume:${event.eventId}`
+      f.store.acknowledgeAdmission(effectId, 'interrupted-wake')
+      f.store.acceptAction(effectId)
+      if (legacy) f.store.db.prepare('UPDATE execution_outbox SET attempt_generation=NULL WHERE effect_id=?').run(effectId)
+      const receipt = { state: legacy ? 'failed' : 'cancelled', error: { message: 'Worker stopped' } }
+      f.store.deliverWorkResult(effectId, 'interrupted-wake', receipt)
+      const state = f.store.get(f.execution.executionId)
+      assert.equal(state.status, 'waiting')
+      assert.equal(state.waitingReason, 'interrupted')
+      assert.equal(state.checkpointVersion, 1)
+      const recovery = f.store.pendingDispatches()
+      assert.equal(recovery.length, 1)
+      assert.equal(recovery[0].kind, 'graph_resume')
+      assert.match(recovery[0].effectId, /:interrupted-wake$/)
+      f.store.deliverWorkResult(effectId, 'interrupted-wake', receipt)
+      assert.deepEqual(f.store.pendingDispatches(), recovery)
+      assert.deepEqual(f.store.get(f.execution.executionId), state)
+    } finally { f.store.close() }
+  }
+})
+
+test('consuming a result retires queued wakes but not the runner that must still review it', async () => {
+  const f = fixture()
+  try {
+    let config = await checkpoint(f)
+    f.store.settle(f.lease, 'waiting', 'robot_result')
+    f.store.release(f.lease)
+    const result = f.store.deliverEvent(f.execution.executionId, { eventId: 'physical-result', kind: 'physical_result', payload: {} })
+    const observation = f.store.deliverEvent(f.execution.executionId, { eventId: 'observation', kind: 'observation_received', payload: {} })
+    const runner = `${f.execution.executionId}:resume:${result.eventId}`
+    const queued = `${f.execution.executionId}:resume:${observation.eventId}`
+    f.store.acknowledgeAdmission(runner, 'runner')
+    f.store.acknowledgeAdmission(queued, 'queued')
+    f.store.acceptAction(runner)
+    const lease = f.store.claim(f.execution.executionId, definition, undefined, undefined, { effectId: runner, workItemId: 'runner' })
+    const saver = new ExecutionCheckpointer(f.store, lease)
+    config = await saver.put(config, {
+      v: 4, id: randomUUID(), ts: new Date().toISOString(),
+      channel_values: { executionTransition: { transitionId: 'received', processedEventIds: [result.eventId, observation.eventId] } },
+      channel_versions: {}, versions_seen: {},
+    }, { source: 'loop', step: 1, parents: {} })
+    assert.equal(f.store.dispatch(queued).status, 'completed')
+    assert.equal(f.store.dispatch(runner).status, 'accepted', 'The result checkpoint is not the end of its reviewing invocation')
+    f.store.release(lease)
+    f.store.close()
+    const reopened = new ExecutionStore(f.filename)
+    try {
+      assert.equal(reopened.acceptAction(runner).status, 'accepted', 'A restarted runner still resumes its saved review')
+      const next = reopened.claim(f.execution.executionId, definition, undefined, undefined, { effectId: runner, workItemId: 'runner' })
+      reopened.release(next)
+      reopened.deliverWorkResult(runner, 'runner', { state: 'failed', error: { message: 'Review failed after result consumption' } })
+      assert.equal(reopened.get(f.execution.executionId).status, 'failed', 'A current review failure must settle even though its input was consumed')
+    } finally { reopened.close() }
+  } finally { if (f.store.db.open) f.store.close() }
+})
+
 test('an external child and its native subgraphs retain separate checkpoints in the parent thread', async () => {
   const f = fixture()
   const State = Annotation.Root({ value: Annotation<string>() })
@@ -147,7 +281,10 @@ test('event identity, cursor and stale checkpoint updates are authoritative', as
   const program = new StateGraph(State).addNode('decision', state => state)
     .addEdge(START, 'decision').addEdge('decision', END).compile({ checkpointer: f.saver })
   const event = { eventId: randomUUID(), kind: 'user_steering', payload: { text: 'the new objective' } }
+  assert.equal(f.store.findEvent(f.execution.executionId, event.eventId), null)
+  assert.throws(() => f.store.event(f.execution.executionId, event.eventId), /Unknown execution event/)
   f.store.appendEvent(f.execution.executionId, event)
+  assert.deepEqual(f.store.findEvent(f.execution.executionId, event.eventId), f.store.event(f.execution.executionId, event.eventId))
   await program.invoke({ objective: 'original', executionTransition: { transitionId: 'first', processedEventIds: [event.eventId] } }, f.config)
   const stale = (await program.getState(f.config)).config
   await program.updateState(f.config, { objective: 'newer' })
@@ -365,6 +502,58 @@ test('claimed action evidence survives terminal parents without authorizing anot
     assert.equal(await f.saver.pruneTerminal(Date.now() + 1), 1)
     f.store.close()
   }
+})
+
+test('physical reconciliation compares the exact previous receipt and late delivery diagnostics cannot replace it', async () => {
+  const f = fixture()
+  await checkpoint(f, { transitionId: 'dispatch', dispatches: [
+    { effectId: 'effect', kind: 'coordinator_work', actionId: 'action', payload: {} },
+  ] })
+  f.store.acknowledgeAdmission('effect', 'job')
+  const receipt = { id: 'job', type: 'environment_command' as const, handler: 'environment.command',
+    state: 'leased' as const, username: 'test-user', input: { id: 'action', sessionId: 'body' },
+    durable: { executionId: f.execution.executionId, effectId: 'effect', recovery: 'reconcile' as const },
+    startedAt: new Date().toISOString(), bodyLease: { bodyId: 'body', executionId: f.execution.executionId, generation: 1 } }
+  const conclusion = { eventId: 'local-delivery', kind: 'physical_result', actionId: 'action', workItemId: 'job',
+    payload: { status: 'failed' } }
+  const original = f.store.deliverActionResult(f.execution.executionId, 'action', conclusion, false, false, receipt)
+  f.store.settle(f.lease, 'failed')
+  const other = new ExecutionStore(f.filename)
+  try {
+    const terminal = { eventId: 'adapter-terminal', kind: 'physical_result', actionId: 'action', workItemId: 'job',
+      parentEventId: original.eventId, payload: { status: 'cancelled' } }
+    assert.throws(() => other.deliverActionResult(f.execution.executionId, 'action', terminal, false, false, receipt), /not waiting/)
+    for (const evidence of [{ reconcilesEventId: 'different-event' }, { deliveryOnly: true }, {}]) {
+      assert.throws(() => other.deliverActionResult(f.execution.executionId, 'action', terminal, false, false, receipt, evidence))
+    }
+    assert.throws(() => other.deliverActionResult(f.execution.executionId, 'action', {
+      ...terminal, parentEventId: 'different-event',
+    }, false, false, receipt, { reconcilesEventId: original.eventId }), /does not match/)
+    assert.throws(() => other.deliverActionResult(f.execution.executionId, 'action', terminal, false, false,
+      { ...receipt, id: 'different-work' }, { reconcilesEventId: original.eventId }), /does not prove/)
+    const committed = f.store.deliverActionResult(f.execution.executionId, 'action', terminal, false, false,
+      receipt, { reconcilesEventId: original.eventId })
+    assert.equal(other.deliverActionResult(f.execution.executionId, 'action', terminal, false, false,
+      receipt, { reconcilesEventId: original.eventId }).sequence, committed.sequence)
+    assert.throws(() => other.deliverActionResult(f.execution.executionId, 'action', {
+      ...terminal, eventId: 'racing-terminal', payload: { status: 'completed' },
+    }, false, false, receipt, { reconcilesEventId: original.eventId }), /does not match/)
+    assert.throws(() => other.deliverActionResult(f.execution.executionId, 'action', {
+      ...terminal, payload: { status: 'completed' },
+    }, false, false, receipt, { reconcilesEventId: original.eventId }), /different content/)
+    const diagnostic = { eventId: 'late-delivery', kind: 'delivery_result', actionId: 'action', workItemId: 'job',
+      payload: { status: 'outcome_unknown' } }
+    const delivery = other.deliverActionResult(f.execution.executionId, 'action', diagnostic, true, false,
+      receipt, { deliveryOnly: true })
+    assert.equal(other.deliverActionResult(f.execution.executionId, 'action', diagnostic, true, false,
+      receipt, { deliveryOnly: true }).sequence, delivery.sequence)
+    assert.deepEqual(other.event(f.execution.executionId, original.eventId), original)
+    assert.deepEqual(other.event(f.execution.executionId, committed.eventId), committed)
+    assert.equal(other.dispatch('effect').status, 'completed')
+    assert.equal(other.get(f.execution.executionId).status, 'failed')
+    assert.equal(other.pendingDispatches().length, 0)
+    assert.throws(() => other.acceptAction('effect'))
+  } finally { other.close(); f.store.release(f.lease); f.store.close() }
 })
 
 test('evidence is referenced once, rejected writes add no blobs, and retention protects active work', async () => {

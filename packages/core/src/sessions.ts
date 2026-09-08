@@ -2,17 +2,17 @@
  * Session Management System
  *
  * Handles user sessions with expiration, validation, and cleanup.
- * Stores sessions in logs/run/sessions.json.
+ * Owns the system-level session database, independent of encrypted profiles.
  */
 
 import fs from 'fs';
 import path from 'path';
+import Database from 'better-sqlite3';
 import { systemPaths } from './path-builder.js';
 import { generateUUID } from './uuid.js';
 import { audit } from './audit.js';
 import { getUser, getUserByUsername } from './users.js';
-import type { SafeUser } from './users.js';
-import { readLastActiveUsername } from './system-activity.js';
+import { eventBus } from './infrastructure/event-bus/client.js';
 
 const LOG_PREFIX = '[sessions]';
 
@@ -48,14 +48,105 @@ export interface Session {
 interface SessionStore {
   sessions: Session[];
   version: number;
+  /** One authenticated selection for the current server, shared with Brain workers. */
+  runtime?: { id: string; pid: number; sessionId?: string; selectionRevision?: number };
 }
 
-/**
- * Get the path to the sessions file.
- * Uses system-level path since sessions.json is a global database.
- */
-function getSessionsFilePath(): string {
-  return systemPaths.sessionsFile;
+let ownedRuntimeId: string | undefined;
+
+/** Called by the Coordinator's existing startup owner, never by a background worker. */
+export function beginAuthenticatedRuntime(): void {
+  const id = generateUUID();
+  mutateSessions(store => { store.runtime = { id, pid: process.pid, selectionRevision: 0 }; });
+  ownedRuntimeId = id;
+}
+
+function liveRuntime(store: SessionStore): SessionStore['runtime'] | undefined {
+  const runtime = store.runtime;
+  if (!runtime?.id || !Number.isSafeInteger(runtime.pid) || runtime.pid < 1) return undefined;
+  try { process.kill(runtime.pid, 0); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return undefined;
+    throw error;
+  }
+  return runtime;
+}
+
+export function getAuthenticatedRuntimeId(): string | undefined {
+  return liveRuntime(loadSessions())?.id;
+}
+
+/** Authentication handlers call this only after checking profile storage readiness. */
+export function selectAuthenticatedSession(sessionId: string | null): void {
+  mutateSessions(store => {
+    if (!ownedRuntimeId || store.runtime?.id !== ownedRuntimeId || store.runtime.pid !== process.pid) {
+      throw new Error('Only the current authentication runtime can select a session');
+    }
+    if (sessionId === null) {
+      if (!store.runtime.sessionId && (store.runtime.selectionRevision ?? 0) > 0) return;
+      delete store.runtime.sessionId;
+      store.runtime.selectionRevision = (store.runtime.selectionRevision ?? 0) + 1;
+      return;
+    }
+    const session = store.sessions.find(candidate => candidate.id === sessionId);
+    if (!session || !(Date.parse(session.expiresAt) > Date.now()) || isSessionTooOld(session)
+      || !getUser(session.userId)) throw new Error('An active authenticated session is required');
+    if (store.runtime.sessionId === sessionId) return;
+    store.runtime.sessionId = sessionId;
+    store.runtime.selectionRevision = (store.runtime.selectionRevision ?? 0) + 1;
+  });
+}
+
+/** Restore a surviving browser login on its first authenticated request after restart. */
+export async function restoreAuthenticatedSession(sessionId: string, userId: string): Promise<void> {
+  if (!ownedRuntimeId) return;
+  const snapshot = loadSessions();
+  const runtime = snapshot.runtime;
+  // Explicit login, switching, logout and locking retain authority over ordinary
+  // requests. In particular, polling must not undo a lock while storage unmounts.
+  if (runtime?.id !== ownedRuntimeId || runtime.pid !== process.pid
+    || runtime.sessionId || (runtime.selectionRevision ?? 0) !== 0) return;
+  const candidate = snapshot.sessions.find(session => session.id === sessionId);
+  if (!candidate || candidate.userId !== userId || candidate.role === 'guest'
+    || !(Date.parse(candidate.expiresAt) > Date.now()) || isSessionTooOld(candidate)
+    || !getUser(userId)) return;
+
+  const { getEncryptionStatus } = await import('./encryption-manager.js');
+  const storage = await getEncryptionStatus(userId);
+  if (!storage.unlocked || !storage.available || storage.error) return;
+
+  mutateSessions(store => {
+    // Storage checks can await external mounts. Do not overwrite a newer login,
+    // logout, lock or server runtime when that check returns.
+    if (store.runtime?.id !== runtime.id || ownedRuntimeId !== runtime.id
+      || store.runtime.pid !== process.pid || store.runtime.sessionId
+      || (store.runtime.selectionRevision ?? 0) !== 0) return;
+    const session = store.sessions.find(entry => entry.id === sessionId);
+    if (!session || session.userId !== userId || session.role === 'guest'
+      || !(Date.parse(session.expiresAt) > Date.now()) || isSessionTooOld(session)
+      || !getUser(userId)) return;
+    store.runtime.sessionId = sessionId;
+    store.runtime.selectionRevision = 1;
+  });
+}
+
+/** Wake existing background owners after a committed selection change; never expose cookies. */
+export function onAuthenticatedSessionChange(listener: () => void): () => void {
+  return eventBus.subscribe(event => {
+    if (event.event === 'session.selection_changed') listener();
+  });
+}
+
+/** Locking a profile clears readiness without deleting sessions or saved work. */
+export function clearAuthenticatedUser(userId: string): void {
+  mutateSessions(store => {
+    if (!store.runtime) return;
+    const selected = store.sessions.find(session => session.id === store.runtime!.sessionId);
+    if (selected && selected.userId !== userId) return;
+    if (!selected && (store.runtime.selectionRevision ?? 0) > 0) return;
+    delete store.runtime.sessionId;
+    store.runtime.selectionRevision = (store.runtime.selectionRevision ?? 0) + 1;
+  });
 }
 
 // Session expiration times
@@ -86,42 +177,69 @@ export function shouldPersistSessionActivity(
 function isSessionTooOld(session: Session): boolean {
   const createdAt = new Date(session.createdAt);
   const now = new Date();
-  return (now.getTime() - createdAt.getTime()) > MAX_SESSION_AGE;
+  return !Number.isFinite(createdAt.getTime()) || (now.getTime() - createdAt.getTime()) > MAX_SESSION_AGE;
 }
 
-/**
- * Load sessions from file
- */
-function loadSessions(): SessionStore {
-  if (!fs.existsSync(getSessionsFilePath())) {
-    return { sessions: [], version: 1 };
-  }
+let sessionDatabase: Database.Database | undefined;
 
+function database(): Database.Database {
+  if (sessionDatabase) return sessionDatabase;
+  fs.mkdirSync(path.dirname(systemPaths.sessionsFile), { recursive: true });
+  const db = new Database(systemPaths.sessionsFile);
   try {
-    const raw = fs.readFileSync(getSessionsFilePath(), 'utf-8');
-    return JSON.parse(raw) as SessionStore;
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Failed to load sessions:`, error);
-    return { sessions: [], version: 1 };
-  }
-}
-
-/**
- * Save sessions to file
- */
-function saveSessions(store: SessionStore): void {
-  try {
-    // Ensure directory exists
-    const dir = path.dirname(getSessionsFilePath());
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    fs.chmodSync(systemPaths.sessionsFile, 0o600);
+    db.pragma('journal_mode = WAL');
+    db.pragma('synchronous = FULL');
+    db.exec('CREATE TABLE IF NOT EXISTS session_store (id INTEGER PRIMARY KEY CHECK(id = 1), document TEXT NOT NULL)');
+    const legacy = path.join(systemPaths.run, 'sessions.json');
+    db.transaction(() => {
+      if (db.prepare('SELECT 1 FROM session_store WHERE id = 1').get()) return;
+      const store: SessionStore = fs.existsSync(legacy)
+        ? JSON.parse(fs.readFileSync(legacy, 'utf8')) : { sessions: [], version: 1 };
+      if (!Array.isArray(store.sessions) || store.version !== 1) throw new Error('Invalid legacy session database');
+      // Import cookies, not an authentication selection from an earlier server.
+      delete store.runtime;
+      db.prepare('INSERT INTO session_store VALUES (1, ?)').run(JSON.stringify(store));
+    }).immediate();
+    // The old file is an inert, recoverable migration backup, never a fallback.
+    if (fs.existsSync(legacy)) {
+      try {
+        fs.chmodSync(legacy, 0o600);
+        fs.renameSync(legacy, `${legacy}.migrated-${generateUUID()}`);
+      }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
+    sessionDatabase = db;
+    return db;
+  } catch (error) { db.close(); throw error; }
+}
 
-    fs.writeFileSync(getSessionsFilePath(), JSON.stringify(store, null, 2), 'utf-8');
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Failed to save sessions:`, error);
-    throw error;
-  }
+function loadSessions(): SessionStore {
+  const row = database().prepare('SELECT document FROM session_store WHERE id = 1').get() as { document: string };
+  return JSON.parse(row.document);
+}
+
+/** Read, change and commit at one owner; concurrent activity cannot overwrite login/logout. */
+function mutateSessions<T>(mutate: (store: SessionStore) => T): T {
+  const db = database();
+  let selectionChanged = false;
+  const result = db.transaction(() => {
+    const store = loadSessions();
+    const before = JSON.stringify(store);
+    const selectedBefore = store.runtime?.sessionId;
+    const result = mutate(store);
+    if (store.runtime?.sessionId && !store.sessions.some(session => session.id === store.runtime!.sessionId
+      && Date.parse(session.expiresAt) > Date.now() && !isSessionTooOld(session))) {
+      delete store.runtime.sessionId;
+      store.runtime.selectionRevision = (store.runtime.selectionRevision ?? 0) + 1;
+    }
+    const after = JSON.stringify(store);
+    if (after !== before) db.prepare('UPDATE session_store SET document = ? WHERE id = 1').run(after);
+    selectionChanged = selectedBefore !== store.runtime?.sessionId;
+    return result;
+  }).immediate();
+  if (selectionChanged) eventBus.emit('core', 'session.selection_changed');
+  return result;
 }
 
 /**
@@ -142,8 +260,6 @@ export function createSession(
     throw new Error('createSession: role must be owner, standard, or guest');
   }
   
-  const store = loadSessions();
-
   // Determine expiration based on role
   let duration: number;
   switch (role) {
@@ -169,8 +285,7 @@ export function createSession(
     metadata,
   };
 
-  store.sessions.push(session);
-  saveSessions(store);
+  mutateSessions(store => { store.sessions.push(session); });
 
   audit({
     level: 'info',
@@ -216,57 +331,55 @@ export function validateSession(sessionId: string): Session | null {
     return null;
   }
   
-  const store = loadSessions();
-  const session = store.sessions.find((s) => s.id === sessionId);
+  return mutateSessions(store => {
+    const session = store.sessions.find((s) => s.id === sessionId);
 
-  if (!session) {
-    return null;
-  }
+    if (!session) {
+      return null;
+    }
 
-  // Check if expired
-  const now = new Date();
-  const expiresAt = new Date(session.expiresAt);
+    // Check if expired
+    const now = new Date();
+    const expiresAt = new Date(session.expiresAt);
 
-  if (now > expiresAt) {
-    // Session expired, delete it
-    store.sessions = store.sessions.filter((s) => s.id !== sessionId);
-    saveSessions(store);
+    if (!Number.isFinite(expiresAt.getTime()) || now >= expiresAt) {
+      // Session expired, delete it
+      store.sessions = store.sessions.filter((s) => s.id !== sessionId);
 
-    audit({
-      level: 'info',
-      category: 'security',
-      event: 'session_expired',
-      details: { sessionId, userId: session.userId },
-      actor: session.userId,
-    });
+      audit({
+        level: 'info',
+        category: 'security',
+        event: 'session_expired',
+        details: { sessionId, userId: session.userId },
+        actor: session.userId,
+      });
 
-    return null;
-  }
+      return null;
+    }
 
-  // Check if session exceeded maximum age (must re-authenticate after 7 days)
-  if (isSessionTooOld(session)) {
-    store.sessions = store.sessions.filter((s) => s.id !== sessionId);
-    saveSessions(store);
+    // Check if session exceeded maximum age (must re-authenticate after 7 days)
+    if (isSessionTooOld(session)) {
+      store.sessions = store.sessions.filter((s) => s.id !== sessionId);
 
-    audit({
-      level: 'info',
-      category: 'security',
-      event: 'session_max_age_exceeded',
-      details: { sessionId, userId: session.userId, createdAt: session.createdAt },
-      actor: session.userId,
-    });
+      audit({
+        level: 'info',
+        category: 'security',
+        event: 'session_max_age_exceeded',
+        details: { sessionId, userId: session.userId, createdAt: session.createdAt },
+        actor: session.userId,
+      });
 
-    return null;
-  }
+      return null;
+    }
 
-  // Coalesce activity persistence. Expiry and max-age removals above remain
-  // immediate; this timestamp is used only for activity display/selection.
-  if (shouldPersistSessionActivity(session, now.getTime())) {
-    session.lastActivity = now.toISOString();
-    saveSessions(store);
-  }
+    // Coalesce activity persistence. Expiry and max-age removals above remain
+    // immediate; this timestamp is used only for activity display/selection.
+    if (shouldPersistSessionActivity(session, now.getTime())) {
+      session.lastActivity = now.toISOString();
+    }
 
-  return session;
+    return session;
+  });
 }
 
 /**
@@ -281,25 +394,29 @@ export function deleteSession(sessionId: string): boolean {
     return false;
   }
   
-  const store = loadSessions();
-  const session = store.sessions.find((s) => s.id === sessionId);
+  return mutateSessions(store => {
+    const session = store.sessions.find((s) => s.id === sessionId);
 
-  if (!session) {
-    return false;
-  }
+    if (!session) {
+      return false;
+    }
 
-  store.sessions = store.sessions.filter((s) => s.id !== sessionId);
-  saveSessions(store);
+    store.sessions = store.sessions.filter((s) => s.id !== sessionId);
+    // Logout can race the first request after restart, before any selection exists.
+    if (store.runtime && !store.runtime.sessionId) {
+      store.runtime.selectionRevision = Math.max(1, store.runtime.selectionRevision ?? 0);
+    }
 
-  audit({
-    level: 'info',
-    category: 'security',
-    event: 'session_deleted',
-    details: { sessionId, userId: session.userId },
-    actor: session.userId,
+    audit({
+      level: 'info',
+      category: 'security',
+      event: 'session_deleted',
+      details: { sessionId, userId: session.userId },
+      actor: session.userId,
+    });
+
+    return true;
   });
-
-  return true;
 }
 
 /**
@@ -314,24 +431,27 @@ export function deleteUserSessions(userId: string): number {
     return 0;
   }
   
-  const store = loadSessions();
-  const userSessions = store.sessions.filter((s) => s.userId === userId);
-  const count = userSessions.length;
+  return mutateSessions(store => {
+    const userSessions = store.sessions.filter((s) => s.userId === userId);
+    const count = userSessions.length;
 
-  store.sessions = store.sessions.filter((s) => s.userId !== userId);
-  saveSessions(store);
+    store.sessions = store.sessions.filter((s) => s.userId !== userId);
 
-  if (count > 0) {
-    audit({
-      level: 'info',
-      category: 'security',
-      event: 'user_sessions_deleted',
-      details: { userId, count },
-      actor: userId,
-    });
-  }
+    if (count > 0) {
+      if (store.runtime && !store.runtime.sessionId) {
+        store.runtime.selectionRevision = Math.max(1, store.runtime.selectionRevision ?? 0);
+      }
+      audit({
+        level: 'info',
+        category: 'security',
+        event: 'user_sessions_deleted',
+        details: { userId, count },
+        actor: userId,
+      });
+    }
 
-  return count;
+    return count;
+  });
 }
 
 /**
@@ -361,30 +481,30 @@ export function listUserSessions(userId: string): Session[] {
  * Should be run periodically (e.g., every hour)
  */
 export function cleanupExpiredSessions(): number {
-  const store = loadSessions();
-  const now = new Date();
-  const before = store.sessions.length;
+  return mutateSessions(store => {
+    const now = new Date();
+    const before = store.sessions.length;
 
-  store.sessions = store.sessions.filter((s) => {
-    const expiresAt = new Date(s.expiresAt);
-    return now <= expiresAt;
-  });
-
-  const removed = before - store.sessions.length;
-
-  if (removed > 0) {
-    saveSessions(store);
-
-    audit({
-      level: 'info',
-      category: 'system',
-      event: 'sessions_cleaned_up',
-      details: { removed, remaining: store.sessions.length },
-      actor: 'system',
+    store.sessions = store.sessions.filter((s) => {
+      const expiresAt = new Date(s.expiresAt);
+      return now <= expiresAt;
     });
-  }
 
-  return removed;
+    const removed = before - store.sessions.length;
+
+    if (removed > 0) {
+
+      audit({
+        level: 'info',
+        category: 'system',
+        event: 'sessions_cleaned_up',
+        details: { removed, remaining: store.sessions.length },
+        actor: 'system',
+      });
+    }
+
+    return removed;
+  });
 }
 
 /**
@@ -425,13 +545,13 @@ export function getSessionStats(): {
  * Update session (save changes to metadata, etc.)
  */
 export function updateSession(session: Session): void {
-  const store = loadSessions();
-  const index = store.sessions.findIndex((s) => s.id === session.id);
+  mutateSessions(store => {
+    const index = store.sessions.findIndex((s) => s.id === session.id);
 
-  if (index !== -1) {
-    store.sessions[index] = session;
-    saveSessions(store);
-  }
+    if (index !== -1) {
+      store.sessions[index] = session;
+    }
+  });
 }
 
 /**
@@ -446,51 +566,51 @@ export function refreshSession(sessionId: string): Session | null {
     return null;
   }
   
-  const store = loadSessions();
-  const session = store.sessions.find((s) => s.id === sessionId);
+  return mutateSessions(store => {
+    const session = store.sessions.find((s) => s.id === sessionId);
 
-  if (!session) {
-    return null;
-  }
+    if (!session) {
+      return null;
+    }
 
-  // Check if already expired
-  const now = new Date();
-  const expiresAt = new Date(session.expiresAt);
+    // Check if already expired
+    const now = new Date();
+    const expiresAt = new Date(session.expiresAt);
 
-  if (now > expiresAt) {
-    return null;
-  }
+    if (!Number.isFinite(expiresAt.getTime()) || now >= expiresAt) {
+      return null;
+    }
 
-  // Check if session exceeded maximum age (don't refresh, force re-auth)
-  if (isSessionTooOld(session)) {
-    return null;
-  }
+    // Check if session exceeded maximum age (don't refresh, force re-auth)
+    if (isSessionTooOld(session)) {
+      return null;
+    }
 
-  // Extend expiration based on role
-  let duration: number;
-  switch (session.role) {
-    case 'owner':
-    case 'standard':
-      duration = OWNER_SESSION_DURATION; // Standard users get same 24h session as owners
-      break;
-    case 'guest':
-      duration = GUEST_SESSION_DURATION;
-      break;
-  }
+    // Extend expiration based on role
+    let duration: number;
+    switch (session.role) {
+      case 'owner':
+      case 'standard':
+        duration = OWNER_SESSION_DURATION; // Standard users get same 24h session as owners
+        break;
+      case 'guest':
+        duration = GUEST_SESSION_DURATION;
+        break;
+    }
 
-  session.expiresAt = new Date(now.getTime() + duration).toISOString();
-  session.lastActivity = now.toISOString();
-  saveSessions(store);
+    session.expiresAt = new Date(now.getTime() + duration).toISOString();
+    session.lastActivity = now.toISOString();
 
-  audit({
-    level: 'info',
-    category: 'security',
-    event: 'session_refreshed',
-    details: { sessionId, userId: session.userId, expiresAt: session.expiresAt },
-    actor: session.userId,
+    audit({
+      level: 'info',
+      category: 'security',
+      event: 'session_refreshed',
+      details: { sessionId, userId: session.userId, expiresAt: session.expiresAt },
+      actor: session.userId,
+    });
+
+    return session;
   });
-
-  return session;
 }
 
 /**
@@ -532,57 +652,16 @@ export function getLoggedInUsers(): Array<{ userId: string; username: string; ro
 }
 
 /**
- * Get the most recently active user
- *
- * Returns the single user with the most recent lastActivity timestamp.
- * This should be used by background agents to avoid processing multiple users.
- * Excludes sessions that have exceeded max age.
- *
- * @returns The most recently active user, or null if no active sessions
- */
-export function getMostRecentlyActiveUser(): { userId: string; username: string; role: string } | null {
-  const store = loadSessions();
-  const now = new Date();
-  let mostRecent: { session: Session; user: SafeUser } | null = null;
-
-  for (const session of store.sessions) {
-    const expiresAt = new Date(session.expiresAt);
-
-    // Check both expiration and max age
-    if (expiresAt > now && !isSessionTooOld(session)) {
-      const lastActivity = new Date(session.lastActivity);
-
-      if (!mostRecent || lastActivity > new Date(mostRecent.session.lastActivity)) {
-        const user = getUser(session.userId);
-
-        if (user) {
-          mostRecent = { session, user };
-        }
-      }
-    }
-  }
-
-  if (!mostRecent) return null;
-
-  return {
-    userId: mostRecent.session.userId,
-    username: mostRecent.user.username,
-    role: mostRecent.session.role
-  };
-}
-
-/**
- * Resolve the authenticated user who most recently interacted with the system.
- * The immediate activity marker wins when that user still has a valid session;
- * the session timestamp remains the fallback for non-chat/API activity.
+ * Resolve the profile authenticated and storage-ready in this server lifetime.
+ * Stored cookies and activity history alone do not activate background recovery.
  */
 export function getCurrentlyActiveUser(): { userId: string; username: string; role: string } | null {
-  const activityUsername = readLastActiveUsername();
-  if (activityUsername) {
-    const activeSessionUser = getLoggedInUsers().find(user => user.username === activityUsername);
-    if (activeSessionUser) return activeSessionUser;
-  }
-  return getMostRecentlyActiveUser();
+  const store = loadSessions();
+  const runtime = liveRuntime(store);
+  const session = runtime?.sessionId && store.sessions.find(candidate => candidate.id === runtime.sessionId);
+  if (!session || !(Date.parse(session.expiresAt) > Date.now()) || isSessionTooOld(session)) return null;
+  const user = getUser(session.userId);
+  return user ? { userId: user.id, username: user.username, role: user.role } : null;
 }
 
 /**

@@ -16,6 +16,8 @@ Be yourself - ask in your own voice, not like an AI. Keep it under 20 words and 
 const DEFAULT_USER_PROMPT_TEMPLATE = `Recent experiences you're reflecting on:
 {{memoriesText}}
 
+Autonomy task context, when supplied: {{taskBrief}}
+
 What are you genuinely curious about? Ask one natural question.`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
@@ -39,7 +41,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     const memoriesText = memories.map((m: any, i: number) => `${i + 1}. ${m.content}`).join('\n');
     const personaPrompt = personaInput?.formatted || personaInput || '';
 
-    const promptValues = { personaPrompt, memoriesText };
+    const promptValues = { personaPrompt, memoriesText, taskBrief: inputs.taskBrief || '' };
     const systemPrompt = renderPromptTemplate(
       properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
       promptValues,
@@ -90,6 +92,7 @@ export const CuriosityQuestionGeneratorNode: NodeDefinition = defineNode({
   name: 'Curiosity Question Generator',
   category: 'curiosity',
   inputs: [
+    { name: 'taskBrief', type: 'string', optional: true, description: 'Purpose and observations supplied by the delegating autonomy decision' },
     { name: 'memories', type: 'array', description: 'Sampled memories' },
     { name: 'personaPrompt', type: 'string', optional: true, description: 'Formatted persona' },
   ],
@@ -112,14 +115,14 @@ export const CuriosityQuestionGeneratorNode: NodeDefinition = defineNode({
       type: 'text_multiline',
       default: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
       label: 'System Prompt',
-      description: 'Supports {{personaPrompt}} and {{memoriesText}}.',
+      description: 'Supports {{personaPrompt}}, {{memoriesText}}, {{taskBrief}}.',
       rows: 8,
     },
     userPromptTemplate: {
       type: 'text_multiline',
       default: DEFAULT_USER_PROMPT_TEMPLATE,
       label: 'User Prompt Template',
-      description: 'Supports {{personaPrompt}} and {{memoriesText}}.',
+      description: 'Supports {{personaPrompt}}, {{memoriesText}}, {{taskBrief}}.',
       rows: 6,
     },
   },

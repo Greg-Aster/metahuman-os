@@ -21,6 +21,8 @@ export interface ExecutionObjective extends RobotStatusTask {
 export interface ExecutionRecord {
   executionId: string
   username: string
+  /** Coordinator lifetime in which this execution was originally admitted. */
+  originRuntimeId?: string
   definition: ExecutionDefinition
   status: ExecutionStatus
   waitingReason?: string
@@ -75,6 +77,8 @@ export interface DispatchRecord extends DispatchIntent {
   status: 'pending' | 'admitted' | 'accepted' | 'completed' | 'outcome_unknown' | 'cancelled'
   workItemId: string | null
   checkpointId: string
+  /** Writer generation this resume attempt may settle; absent on pre-migration receipts. */
+  attemptGeneration?: number
 }
 
 /** Committed with a LangGraph checkpoint, never independently after a node. */

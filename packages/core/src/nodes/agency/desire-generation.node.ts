@@ -309,6 +309,8 @@ export async function executeDesireGeneration(
     ? inputs.existingDesires as Desire[]
     : []
   const userId = typeof context.userId === 'string' ? context.userId : context.username
+  const taskBrief = typeof inputs.taskBrief === 'string' && inputs.taskBrief
+    ? `\n\nAutonomy task context (not additional desire evidence): ${inputs.taskBrief}` : ''
 
   if (operation === 'reinforce') {
     const evidence = buildReinforcementEvidence(gathered)
@@ -331,7 +333,7 @@ export async function executeDesireGeneration(
       },
       {
         role: 'user',
-        content: `Existing desires keyed by the only permitted response keys:\n${JSON.stringify(desires, null, 2)}\n\nCurrent evidence catalog:\n${JSON.stringify(evidence, null, 2)}\n\nReturn one JSON object. Include a desire key only when the evidence genuinely reinforces it. Each value must contain a brief reason and one or more exact evidenceIds copied from catalog references. Return {} when none are reinforced.`,
+        content: `Existing desires keyed by the only permitted response keys:\n${JSON.stringify(desires, null, 2)}\n\nCurrent evidence catalog:\n${JSON.stringify(evidence, null, 2)}${taskBrief}\n\nReturn one JSON object. Include a desire key only when the evidence genuinely reinforces it. Each value must contain a brief reason and one or more exact evidenceIds copied from catalog references. Return {} when none are reinforced.`,
       },
     ]
     const response = await dependencies.callModel({
@@ -383,7 +385,7 @@ export async function executeDesireGeneration(
     },
     {
       role: 'user',
-      content: `Current context:\n\n${formatted}\n\nReturn only a JSON array with 0-5 objects containing title, description, reason, source, sourceId, risk, and suggestedAction. source and sourceId must identify the same supporting input, and sourceId must exactly match its value following id=.`,
+      content: `Current context:\n\n${formatted}${taskBrief}\n\nReturn only a JSON array with 0-5 objects containing title, description, reason, source, sourceId, risk, and suggestedAction. source and sourceId must identify the same supporting input, and sourceId must exactly match its value following id=.`,
     },
   ]
   const response = await dependencies.callModel({
@@ -427,6 +429,7 @@ export const DesireGenerationNode: NodeDefinition = defineNode({
   name: 'Generate or Reinforce Desires',
   category: 'agency',
   inputs: [
+    { name: 'taskBrief', type: 'string', optional: true, description: 'Purpose and observations supplied by the delegating autonomy decision; not new evidence or an automatic desire' },
     { name: 'operation', type: 'string' },
     { name: 'inputs', type: 'object' },
     { name: 'existingDesires', type: 'array' },

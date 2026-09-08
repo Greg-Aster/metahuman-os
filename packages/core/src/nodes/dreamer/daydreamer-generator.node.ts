@@ -32,6 +32,8 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `Based on these memory fragments, generate 
 
 {{memoriesText}}
 
+Autonomy task context, when supplied: {{taskBrief}}
+
 Generate a short, whimsical daydream (2-4 sentences) that weaves these memories together in a creative, contemplative way.`;
 
 export function buildDaydreamerMessages(
@@ -74,7 +76,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     })
     .join('\n');
 
-  const userPrompt = renderPromptTemplate(userPromptTemplate, { memoriesText });
+  const userPrompt = renderPromptTemplate(userPromptTemplate, { memoriesText, taskBrief: inputs.taskBrief || '' });
 
   try {
     const messages = buildDaydreamerMessages(systemPrompt, userPrompt, inputs.personaPrompt);
@@ -114,6 +116,7 @@ export const DaydreamerGeneratorNode: NodeDefinition = defineNode({
   name: 'Daydreamer Generator',
   category: 'dreamer',
   inputs: [
+    { name: 'taskBrief', type: 'string', optional: true, description: 'Purpose and observations supplied by the delegating autonomy decision' },
     { name: 'memories', type: 'array', description: 'Curated memories' },
     { name: 'personaPrompt', type: 'string', optional: true, description: 'Formatted persona' },
   ],
@@ -158,7 +161,7 @@ export const DaydreamerGeneratorNode: NodeDefinition = defineNode({
       type: 'text_multiline',
       default: DEFAULT_USER_PROMPT_TEMPLATE,
       label: 'User Prompt Template',
-      description: 'Template variables: {{memoriesText}}.',
+      description: 'Template variables: {{memoriesText}}, {{taskBrief}}.',
       rows: 8,
     },
   },

@@ -9,6 +9,8 @@ Generate one private, self-directed question that explores deeper patterns, conn
 const DEFAULT_USER_PROMPT = `Recent experiences:
 {{memoriesText}}
 
+Autonomy task context, when supplied: {{taskBrief}}
+
 What question should I ask myself to deepen my understanding?`;
 
 const MAX_QUESTION_CHARS = 1_500;
@@ -78,7 +80,7 @@ export async function executeInnerCuriosityQuestionGenerator(
     }
     return `${index + 1}. ${content.trim()}`;
   }).join('\n');
-  const values = { personaName: name, memoriesText };
+  const values = { personaName: name, memoriesText, taskBrief: inputs.taskBrief || '' };
   const messages: RouterMessage[] = [
     {
       role: 'system',
@@ -124,6 +126,7 @@ export const InnerCuriosityQuestionGeneratorNode: NodeDefinition = defineNode({
   name: 'Generate Inner Curiosity Question',
   category: 'curiosity',
   inputs: [
+    { name: 'taskBrief', type: 'string', optional: true, description: 'Purpose and observations supplied by the delegating autonomy decision' },
     { name: 'memories', type: 'array' },
     { name: 'personaLoaded', type: 'boolean' },
     { name: 'identity', type: 'object', optional: true },
@@ -150,14 +153,14 @@ export const InnerCuriosityQuestionGeneratorNode: NodeDefinition = defineNode({
       type: 'text_multiline',
       default: DEFAULT_SYSTEM_PROMPT,
       label: 'System Prompt',
-      description: 'Supports {{personaName}} and {{memoriesText}}.',
+      description: 'Supports {{personaName}}, {{memoriesText}}, {{taskBrief}}.',
       rows: 7,
     },
     userPromptTemplate: {
       type: 'text_multiline',
       default: DEFAULT_USER_PROMPT,
       label: 'User Prompt',
-      description: 'Supports {{personaName}} and {{memoriesText}}.',
+      description: 'Supports {{personaName}}, {{memoriesText}}, {{taskBrief}}.',
       rows: 6,
     },
   },

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { systemPaths } from '../path-builder.js';
+import { beginAuthenticatedRuntime } from '../sessions.js';
 
 const TOKEN_FILE = path.join(systemPaths.logs, 'run', 'queue', 'service-token');
 let owner = false;
@@ -23,6 +24,7 @@ export function claimWorkCoordinatorOwnership(): void {
   ownerToken = readToken() || randomBytes(32).toString('hex');
   if (!fs.existsSync(TOKEN_FILE)) fs.writeFileSync(TOKEN_FILE, `${ownerToken}\n`, { mode: 0o600 });
   try { fs.chmodSync(TOKEN_FILE, 0o600); } catch {}
+  beginAuthenticatedRuntime();
   owner = true;
 }
 

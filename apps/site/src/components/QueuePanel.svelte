@@ -21,6 +21,7 @@
     attempt: number;
     maxAttempts: number;
     cancellationRequestedAt?: string;
+    robotSessionId?: string;
     error?: string;
   }
 
@@ -32,11 +33,14 @@
     error?: string;
     tasks: WorkView[];
     history: WorkView[];
+    canConfirmRobotStopped: boolean;
+    executions: { executionId: string; graph: string; status: string; waitingReason?: string; updatedAt: string }[];
   }
 
   let snapshot: QueueSnapshot | null = null;
   let connected = false;
   let error = '';
+  let actionError = '';
   let busyAction = '';
   let sourceHandle: ConnectionHandle | null = null;
 
@@ -50,6 +54,7 @@
 
   async function mutate(label: string, path: string, init: RequestInit) {
     busyAction = label;
+    actionError = '';
     try {
       const response = await apiFetch(path, {
         ...init,
@@ -59,7 +64,7 @@
       if (!response.ok || data.success === false) throw new Error(data.error || `Request failed: ${response.status}`);
       if (data.snapshot) snapshot = data.snapshot;
     } catch (caught) {
-      error = (caught as Error).message;
+      actionError = (caught as Error).message;
     } finally {
       busyAction = '';
     }
@@ -71,6 +76,17 @@
 
   function cancelPending() {
     mutate('cancel-pending', '/api/unified-queue/clear', { method: 'POST', body: '{}' });
+  }
+
+  function cancelExecution(executionId: string) {
+    mutate(`execution:${executionId}`, `/api/unified-queue/executions/${encodeURIComponent(executionId)}`, { method: 'DELETE' });
+  }
+
+  function confirmRobotStopped(task: WorkView) {
+    if (!confirm(`Have you checked that the robot for session "${task.robotSessionId}" has stopped? This records your confirmation, not a device acknowledgement. Do not confirm while it is moving.`)) return;
+    mutate(`confirm:${task.id}`, `/api/unified-queue/tasks/${encodeURIComponent(task.id)}`, {
+      method: 'DELETE', body: JSON.stringify({ confirmStopped: true }),
+    });
   }
 
   function setPaused(paused: boolean) {
@@ -121,9 +137,9 @@
         on:click={() => snapshot && setPaused(snapshot.paused)}
       >{snapshot?.paused ? 'Resume' : 'Pause'}</button>
     </div>
-    {#if snapshot?.degraded || error}
+    {#if snapshot?.degraded || error || actionError}
       <div class="mt-2 rounded border border-red-500/30 bg-red-500/10 p-2 text-xs text-red-600 dark:text-red-300">
-        {error || snapshot?.error || 'Coordinator is degraded'}
+        {actionError || error || snapshot?.error || 'Coordinator is degraded'}
       </div>
     {/if}
   </header>
@@ -137,10 +153,27 @@
         <span class="text-xs text-gray-500 dark:text-gray-400">{snapshot.tasks.length} active work item(s)</span>
         <button
           class="rounded border border-red-500/40 px-2 py-1 text-xs text-red-600 disabled:opacity-50 dark:text-red-300"
-          disabled={!!busyAction || snapshot.tasks.every(task => task.state === 'leased')}
+          disabled={!!busyAction || (snapshot.tasks.every(task => task.state === 'leased')
+            && !snapshot.executions?.some(execution => execution.status === 'waiting'))}
           on:click={cancelPending}
         >Cancel pending</button>
       </div>
+
+      <section class="mb-4 rounded border border-gray-200 dark:border-gray-800">
+        <div class="border-b border-gray-200 p-2 text-xs font-semibold dark:border-gray-800">Saved workflows</div>
+        <div class="p-2 text-xs text-gray-500 dark:text-gray-400">These persist between jobs. Cancelling one ends that workflow and cancels its remaining work.</div>
+        {#each snapshot.executions ?? [] as execution}
+          <article class="border-t border-gray-200 p-2 text-xs dark:border-gray-800">
+            <div>{execution.graph} · {execution.status}</div>
+            <div class="mt-1 break-all text-[0.7rem] text-gray-500">{execution.executionId}</div>
+            {#if execution.waitingReason}<div class="mt-1 text-amber-600 dark:text-amber-300">{execution.waitingReason}</div>{/if}
+            {#if execution.status === 'running' || execution.status === 'waiting'}
+              <button class="mt-2 rounded border border-red-500/40 px-2 py-1 text-red-600 dark:text-red-300"
+                disabled={!!busyAction} on:click={() => cancelExecution(execution.executionId)}>Cancel workflow</button>
+            {/if}
+          </article>
+        {/each}
+      </section>
 
       <section class="mb-4 rounded border border-gray-200 dark:border-gray-800">
         <div class="border-b border-gray-200 p-2 text-xs font-semibold dark:border-gray-800">Global order</div>
@@ -163,7 +196,15 @@
                   {#if task.attempt > 0}<span>attempt {task.attempt + 1}/{task.maxAttempts}</span>{/if}
                 </div>
                 {#if task.waitingReason}<div class="mt-1 text-xs text-amber-600 dark:text-amber-300">{task.waitingReason}</div>{/if}
-                {#if task.cancellationRequestedAt}<div class="mt-1 text-xs text-red-600 dark:text-red-300">Cancellation requested</div>{/if}
+                {#if task.cancellationRequestedAt}
+                  <div class="mt-1 text-xs text-red-600 dark:text-red-300">
+                    {task.robotSessionId ? `Stop requested; waiting for robot confirmation from ${task.robotSessionId}.` : 'Cancellation requested; waiting for the worker to stop.'}
+                  </div>
+                  {#if task.robotSessionId && snapshot.canConfirmRobotStopped}
+                    <button class="mt-2 rounded border border-amber-500/40 px-2 py-1 text-xs"
+                      disabled={!!busyAction} on:click={() => confirmRobotStopped(task)}>I have checked: robot is stopped</button>
+                  {/if}
+                {/if}
                 <div class="mt-2 text-right">
                   <button
                     class="rounded border border-red-500/40 px-1.5 py-0.5 text-[0.7rem] text-red-600 dark:text-red-300"

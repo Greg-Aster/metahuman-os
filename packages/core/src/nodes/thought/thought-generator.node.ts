@@ -24,7 +24,9 @@ KEYWORDS: [comma-separated keywords]`;
 
 const DEFAULT_USER_PROMPT_TEMPLATE = `Continue from this thought or memory context:
 
-{{memoryContext}}`;
+{{memoryContext}}
+
+Autonomy task context, when supplied: {{taskBrief}}`;
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
   const input0 = inputs.context || {};
@@ -67,7 +69,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     personaName: persona.identity.name,
     thoughtHistory,
   });
-  const userPrompt = renderPromptTemplate(userPromptTemplate, { memoryContext });
+  const userPrompt = renderPromptTemplate(userPromptTemplate, { memoryContext, taskBrief: inputs.taskBrief || '' });
 
   const messages = [
     { role: 'system' as const, content: systemPrompt },
@@ -134,6 +136,7 @@ export const ThoughtGeneratorNode: NodeDefinition = defineNode({
   name: 'Thought Generator',
   category: 'thought',
   inputs: [
+    { name: 'taskBrief', type: 'string', optional: true, description: 'Purpose and observations supplied by the delegating autonomy decision' },
     { name: 'context', type: 'any', optional: true, description: 'Related memories and accumulated thought state' },
     { name: 'seedMemory', type: 'string', optional: true, description: 'Initial thought or memory seed' },
   ],
@@ -202,7 +205,7 @@ export const ThoughtGeneratorNode: NodeDefinition = defineNode({
       type: 'text_multiline',
       default: DEFAULT_USER_PROMPT_TEMPLATE,
       label: 'User Prompt Template',
-      description: 'Template variables: {{memoryContext}}.',
+      description: 'Template variables: {{memoryContext}}, {{taskBrief}}.',
       rows: 5,
     },
   },

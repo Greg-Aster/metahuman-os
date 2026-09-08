@@ -5,14 +5,19 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-environment-compatibility-'));
+assert.equal(fs.realpathSync(isolatedRoot), isolatedRoot);
 process.env.METAHUMAN_ROOT = isolatedRoot;
 globalThis.fetch = async () => { throw new Error('Network is forbidden in this owner fixture'); };
+const { ROOT, systemPaths } = await import('../path-builder.js');
+assert.equal(ROOT, isolatedRoot);
+assert.ok(systemPaths.run.startsWith(isolatedRoot + path.sep));
 const { eventBus } = await import('../infrastructure/event-bus/client.js');
 eventBus.disconnect();
 const { setAuditEnabled } = await import('../audit.js');
 setAuditEnabled(false);
 const {
   dispatchEnvironmentActions,
+  attachEnvironmentObservationTiming,
   enqueueConnectedEnvironmentStops,
   enqueueEnvironmentAction,
   getEnvironmentActionContext,
@@ -43,7 +48,7 @@ const { environmentImageInputNode } = await import('../nodes/environment/image-i
 const { environmentSendActionNode } = await import('../nodes/environment/send-action.node.js');
 const { TextInputNode } = await import('../nodes/input/text-input.node.js');
 const { JSONParserNode } = await import('../nodes/utility/json-parser.node.js');
-import type { EnvironmentObservation } from './types.js';
+import type { EnvironmentFeedback, EnvironmentObservation } from './types.js';
 
 const statePath = getEnvironmentBridgeStatePath();
 const stateExisted = fs.existsSync(statePath);
@@ -173,14 +178,17 @@ try {
   assert.equal(readinessObservation?.capabilities.actions.includes('captureImage'), false);
 
   resetState();
-  const stale = enqueueEnvironmentAction({
+  const delayed = enqueueEnvironmentAction({
     type: 'robotCommand',
     command: 'walk',
     sessionId: 'robot-1',
     createdAt: '2000-01-01T00:00:00Z',
   });
-  assert.deepEqual(dispatchEnvironmentActions('robot-1'), []);
-  assert.equal(manager.getTask(stale.workItemId!)?.state, 'expired');
+  assert.equal(manager.getTask(delayed.workItemId!)?.deadline, undefined,
+    'Creation time is not an implicit deadline for durable commands');
+  assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, delayed.id);
+  assert.equal(recordEnvironmentActionResult({ id: 'delayed-accepted', actionId: delayed.id,
+    timestamp: new Date().toISOString(), type: 'accepted', message: 'Accepted after transport delay' })?.admitted, true);
 
   resetState();
   const motionPlan = enqueueEnvironmentAction({
@@ -307,6 +315,7 @@ try {
     actionId: lifecycle.id,
   }));
   assert.equal(acceptedResponse.status, 200);
+  assert.equal(acceptedResponse.data.admitted, true);
   assert.equal(acceptedResponse.data.action.status, 'dispatched');
   assert.equal(acceptedResponse.data.robotBufferPersisted, false);
   assert.equal(manager.getTask(lifecycle.workItemId!)?.state, 'leased');
@@ -821,6 +830,79 @@ try {
   assert.equal(queuedBodyWork.metadata?.originatingInstruction,
     'Walk once, then use the returned observation to tell me what changed.');
 
+  // Transport timing changes on reconnect, but the same camera observation is
+  // one immutable execution event, including when an older event stored timing.
+  const originalFetch = globalThis.fetch;
+  fs.mkdirSync(path.join(systemPaths.run, 'queue'), { recursive: true });
+  fs.writeFileSync(path.join(systemPaths.run, 'queue', 'service-token'), 'isolated-coordinator-token');
+  let admittedResumes = 0;
+  globalThis.fetch = async (url, options) => {
+    assert.equal(new URL(String(url)).pathname, '/api/internal/work-coordinator/enqueue');
+    const input = JSON.parse(String(options?.body));
+    assert.equal(input.handler, 'graph.resume', 'Observation delivery never creates another physical command');
+    admittedResumes++;
+    return new Response(JSON.stringify({ task: manager.enqueue(input) }), { status: 200 });
+  };
+  const replayStore = openExecutionStore(queuedBodyWork.username);
+  try {
+    for (const legacy of [false, true]) {
+      const observation: EnvironmentObservation = {
+        id: randomUUID(), environmentId: 'ainekio', adapter: 'ainekio-gateway', sessionId: 'robot-1',
+        timestamp: '2026-09-07T12:00:00.000Z', capabilities: { actions: ['captureImage'], visual: true },
+        metadata: { actionId: queuedBodyCommand.id, sensorTag: 'preserved' },
+        visual: { id: 'stable-frame', timestamp: '2026-09-07T12:00:00.000Z', mimeType: 'image/jpeg',
+          dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=', metadata: { actionId: queuedBodyCommand.id } },
+        visuals: [{ id: 'secondary-frame', timestamp: '2026-09-07T12:00:00.000Z', mimeType: 'image/jpeg',
+          dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=' }],
+        feedback: [{ id: 'camera-feedback', type: 'status', timestamp: '2026-09-07T12:00:00.000Z',
+          actionId: queuedBodyCommand.id, message: 'Camera frame available', data: { command: 'walk' } }],
+      };
+      const enriched = attachEnvironmentObservationTiming(structuredClone(observation), {
+        queueEnteredAt: '2026-09-07T11:59:59.000Z', bridgeFrameReceivedAt: '2026-09-07T12:00:01.000Z',
+        coreObservationReceivedAt: '2026-09-07T12:00:02.000Z',
+      });
+      enriched.feedback![0].data = { ...enriched.feedback![0].data,
+        actionTiming: { version: 1, coreFeedbackReceivedAt: '2026-09-07T12:00:03.000Z' }, actionStageDurations: {} };
+      const eventId = `observation:robot-1:${observation.id}`;
+      const executionId = queuedBodyWork.durable!.executionId;
+      if (legacy) replayStore.deliverEvent(executionId, { eventId, kind: 'observation_received',
+        actionId: queuedBodyCommand.id, workItemId: queuedBodyWork.id,
+        payload: { environmentObservation: enriched, environmentObservationCurrent: true } });
+      const resumesBefore = admittedResumes;
+      const first = await handleEnvironmentBridgeObservation(bridgeRequest({ Authorization: 'Bearer bridge-secret' },
+        enriched as unknown as Record<string, unknown>), () => queuedBodyWork.username);
+      assert.equal(first.status, 200, JSON.stringify(first));
+      const saved = replayStore.event(executionId, eventId);
+      for (const replay of [observation, attachEnvironmentObservationTiming(observation, {
+        bridgeFrameReceivedAt: '2026-09-07T12:01:01.000Z', coreObservationReceivedAt: '2026-09-07T12:01:02.000Z',
+      })]) {
+        const response = await handleEnvironmentBridgeObservation(bridgeRequest({ Authorization: 'Bearer bridge-secret' },
+          replay as unknown as Record<string, unknown>), () => queuedBodyWork.username);
+        assert.equal(response.status, 200, `Observation replay must be acknowledged: ${JSON.stringify(response)}`);
+        assert.equal(response.data.workId, first.data.workId);
+        assert.deepEqual(replayStore.event(executionId, eventId), saved, 'A replay must not rewrite committed evidence');
+      }
+      assert.equal(admittedResumes - resumesBefore, 1);
+      assert.equal(replayStore.events(executionId).filter(event => event.eventId === eventId).length, 1);
+      const lastGood = readEnvironmentBridgeState().sessions['robot-1']!.latestObservation;
+      assert.equal(typeof lastGood?.metadata?.actionTiming, 'object', 'Receipt diagnostics remain available in the Bridge snapshot');
+      for (const conflict of [
+        { ...observation, visual: { ...observation.visual!, dataUrl: 'data:image/jpeg;base64,different' } },
+        { ...observation, feedback: [{ ...observation.feedback![0], data: { command: 'different-action' } }] },
+      ]) {
+        const response = await handleEnvironmentBridgeObservation(bridgeRequest({ Authorization: 'Bearer bridge-secret' },
+          conflict as unknown as Record<string, unknown>), () => queuedBodyWork.username);
+        assert.equal(response.status, 500, 'Same ID cannot change camera or action evidence');
+        assert.match(String(response.error), /different content/);
+        assert.deepEqual(replayStore.event(executionId, eventId), saved);
+        assert.deepEqual(readEnvironmentBridgeState().sessions['robot-1']!.latestObservation, lastGood,
+          'Rejected evidence cannot overwrite the latest valid observation');
+      }
+    }
+    assert.equal(manager.getAllTasks().filter(task => task.type === 'environment_command').length, 1,
+      'Replays do not create more physical actions');
+  } finally { replayStore.close(); globalThis.fetch = originalFetch; }
+
   // A claimed action can finish after its graph fails or is cancelled, even if
   // the adapter's earlier acceptance message was lost or delayed.
   for (const terminal of ['failed', 'cancelled'] as const) {
@@ -868,6 +950,139 @@ try {
       } finally { store.close(); }
     }
   }
+
+  // Physical receipts and transport conclusions have different authority. Use
+  // real checkpoint, Coordinator claim and HTTP owners, with no adapter effects.
+  const { ExecutionCheckpointer } = await import('../durable-execution/checkpointer.js');
+  const { executionWorkInput } = await import('../durable-execution/coordinator-outbox.js');
+  async function claimedActionFixture(type: 'captureImage' | 'robotCommand' = 'captureImage') {
+    resetState();
+    writeEnvironmentBridgeState(bodyOnlineState);
+    const store = openExecutionStore('bridge-spec');
+    const definition = { graphId: 'action-receipt', graphHash: 'owner-v1', runtimeVersion: 'owner-v1',
+      checkpointSchemaVersion: 1, nodeVersions: {} };
+    const execution = store.create('bridge-spec', definition);
+    const lease = store.claim(execution.executionId, definition);
+    const actionId = randomUUID();
+    const effectId = randomUUID();
+    await new ExecutionCheckpointer(store, lease).put({ configurable: { thread_id: execution.executionId } }, {
+      v: 4, id: randomUUID(), ts: new Date().toISOString(), channel_versions: {}, versions_seen: {},
+      channel_values: { executionTransition: { transitionId: randomUUID(), dispatches: [{ effectId, actionId,
+        kind: 'coordinator_work', payload: prepareEnvironmentCommand({ id: actionId, type,
+          ...(type === 'robotCommand' ? { command: 'walk' } : {}),
+          sessionId: 'robot-1' }, { username: 'bridge-spec' }) }] } },
+    }, { source: 'loop', step: 0, parents: {} });
+    const task = manager.enqueue(executionWorkInput(store, store.dispatch(effectId)));
+    store.acknowledgeAdmission(effectId, task.id);
+    store.settle(lease, 'waiting', 'robot_result');
+    store.release(lease);
+    assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, actionId);
+    const post = (feedback: EnvironmentFeedback) => handleEnvironmentBridgeActionResult(bridgeRequest({
+      Authorization: 'Bearer bridge-secret',
+    }, feedback as unknown as Record<string, unknown>), async () => true);
+    const feedback = (type: EnvironmentFeedback['type']): EnvironmentFeedback => ({
+      id: randomUUID(), actionId, type, timestamp: new Date().toISOString(), message: 'Owner receipt fixture',
+    });
+    return { store, definition, execution, effectId, task, actionId, post, feedback };
+  }
+  globalThis.fetch = async (url, options) => {
+    assert.equal(new URL(String(url)).pathname, '/api/internal/work-coordinator/enqueue');
+    const input = JSON.parse(String(options?.body));
+    assert.equal(input.handler, 'graph.resume');
+    return new Response(JSON.stringify({ task: manager.enqueue(input) }), { status: 200 });
+  };
+  try {
+    for (const origin of ['legacy-delivery', 'transport-unknown', 'prepare-failure', 'adapter-failure'] as const) {
+      const f = await claimedActionFixture();
+      try {
+        const first = { ...f.feedback(origin === 'transport-unknown' ? 'outcome_unknown' : 'failed'),
+          id: origin === 'adapter-failure' ? randomUUID() : `delivery-feedback-${Date.now()}-abc123`,
+          ...(origin === 'transport-unknown' || origin === 'prepare-failure' ? { data: {
+            producer: 'environment-bridge', delivery: origin === 'transport-unknown'
+              ? { stage: 'acceptance', outcome: 'unknown' } : { stage: 'prepare', outcome: 'not_sent' },
+          } } : {}),
+        };
+        if (origin === 'transport-unknown') {
+          const startedAt = manager.getTask(f.task.id)?.startedAt;
+          manager.importState(JSON.parse(JSON.stringify(manager.exportState())));
+          assert.equal(manager.getTask(f.task.id)?.startedAt, startedAt);
+          assert.equal(manager.getTask(f.task.id)?.state, 'waiting');
+        }
+        assert.equal((await f.post(first)).status, 200);
+        const firstEvent = f.store.event(f.execution.executionId, first.id);
+        const lease = f.store.claim(f.execution.executionId, f.definition);
+        f.store.settle(lease, 'failed');
+        f.store.release(lease);
+        const denied = await f.post(f.feedback('accepted'));
+        assert.equal(denied.data.admitted, false);
+        assert.equal(denied.data.action, undefined, 'Older Bridge clients must not mistake a historical receipt for dispatch permission');
+        const terminal = f.feedback('cancelled');
+        if (origin === 'legacy-delivery' || origin === 'transport-unknown') {
+          assert.equal((await f.post(terminal)).status, 200);
+          const once = f.store.event(f.execution.executionId, terminal.id);
+          assert.equal(once.parentEventId, origin === 'legacy-delivery' ? first.id : undefined);
+          assert.equal((await f.post(terminal)).status, 200);
+          assert.deepEqual(f.store.event(f.execution.executionId, terminal.id), once);
+          await assert.rejects(f.post({ ...terminal, message: 'Changed terminal evidence' }), /different content/);
+          await assert.rejects(f.post(f.feedback('completed')), /not waiting/);
+        } else {
+          await assert.rejects(f.post(terminal), /not waiting/, 'A definitive preparation or adapter failure is not a legacy transport conclusion');
+        }
+        assert.deepEqual(f.store.event(f.execution.executionId, first.id), firstEvent);
+        assert.equal(f.store.get(f.execution.executionId).status, 'failed');
+        assert.equal(f.store.pendingDispatches().filter(effect => effect.executionId === f.execution.executionId).length, 0);
+        assert.equal(dispatchEnvironmentActions('robot-1').length, 0);
+      } finally { f.store.close(); }
+    }
+    for (const restriction of ['none', 'failed', 'cancelled', 'cancellation-requested', 'superseded', 'expired'] as const) {
+      const f = await claimedActionFixture(restriction === 'expired' ? 'robotCommand' : 'captureImage');
+      const originalNow = Date.now;
+      try {
+        if (restriction === 'failed') {
+          const lease = f.store.claim(f.execution.executionId, f.definition);
+          f.store.settle(lease, 'failed'); f.store.release(lease);
+        } else if (restriction === 'cancelled') {
+          f.store.cancel(f.execution.executionId, { eventId: randomUUID(), kind: 'user_cancelled', payload: {} });
+        } else if (restriction === 'cancellation-requested') manager.cancel(f.task.id, 'Owner fixture');
+        else if (restriction === 'superseded') {
+          const stop = enqueueEnvironmentAction({ type: 'stop', sessionId: 'robot-1' });
+          assert.equal(dispatchEnvironmentActions('robot-1')[0]?.id, stop.id);
+          assert.equal(manager.hasCurrentBodyLease(f.task.id), false);
+        } else if (restriction === 'expired') {
+          f.task.deadline = new Date(Date.now() + 2_000).toISOString();
+          assert.ok(Number.isFinite(Date.parse(f.task.deadline!)));
+          Date.now = () => Date.parse(f.task.deadline!) + 1;
+        }
+        const response = await f.post(f.feedback('accepted'));
+        assert.equal(response.status, 200);
+        assert.equal(response.data.receiptRecorded, true);
+        assert.equal(response.data.admitted, restriction === 'none', restriction);
+        assert.equal(Boolean(response.data.action), restriction === 'none');
+        assert.equal(f.store.dispatch(f.effectId).status, 'accepted', 'Historical acceptance remains recorded even when new dispatch is denied');
+      } finally { Date.now = originalNow; f.store.close(); }
+    }
+    for (const terminal of ['completed', 'cancelled', 'failed'] as const) {
+      const f = await claimedActionFixture();
+      try {
+        const verified = f.feedback(terminal);
+        assert.equal((await f.post(verified)).status, 200);
+        const physical = f.store.event(f.execution.executionId, verified.id);
+        const before = structuredClone(manager.getTask(f.task.id));
+        const resumesBefore = f.store.dispatches(f.execution.executionId).filter(effect => effect.kind === 'graph_resume').length;
+        const late = { ...f.feedback('outcome_unknown'), data: { producer: 'environment-bridge',
+          delivery: { stage: 'acceptance', outcome: 'unknown' } } };
+        assert.equal((await f.post(late)).status, 200);
+        assert.equal((await f.post(late)).status, 200);
+        assert.equal(f.store.event(f.execution.executionId, late.id).kind, 'delivery_result');
+        assert.deepEqual(f.store.event(f.execution.executionId, verified.id), physical);
+        assert.equal(f.store.dispatch(f.effectId).status, 'completed');
+        assert.deepEqual(manager.getTask(f.task.id), before, 'Late transport uncertainty cannot regress verified work');
+        assert.equal(f.store.dispatches(f.execution.executionId).filter(effect => effect.kind === 'graph_resume').length, resumesBefore);
+        await assert.rejects(f.post({ ...late, message: 'Changed diagnostic' }), /different content/);
+        await assert.rejects(f.post(f.feedback('completed')), /not waiting/);
+      } finally { f.store.close(); }
+    }
+  } finally { globalThis.fetch = originalFetch; }
 
   resetState();
   const observerCaptureState = readEnvironmentBridgeState();
