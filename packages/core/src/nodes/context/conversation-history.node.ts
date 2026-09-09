@@ -106,6 +106,15 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
       console.warn('[ConversationHistory] No username in context');
     }
 
+    // Operational Agency reviews remain available in their buffer and audit record.
+    // They are not inner thoughts to replay as instructions in later model turns.
+    messages = messages.filter((message: any) => {
+      if (message.role === 'user' || message.meta?.source === 'user') return true
+      const meta = message.meta
+      return !(typeof meta?.type === 'string' && meta.type.startsWith('desire_'))
+        && !(Array.isArray(meta?.tags) && meta.tags.includes('agency'))
+    })
+
     // Auto-prune
     const maxMessages = limit;
     let pruned = false;

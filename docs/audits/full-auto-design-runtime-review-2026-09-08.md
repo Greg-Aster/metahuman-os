@@ -78,6 +78,110 @@ delivery were not measured in this repair. Existing version-incompatible saved
 executions must use the existing cancellation/restart controls, not bypass
 checkpoint compatibility.
 
+## Live verification follow-up — 2026-09-08, 15:06–15:12 PDT
+
+Read-only inspection after the owner rebuilt and started the installation.
+Evidence: persisted checkpoint heads decoded with the installed LangGraph
+serializer, ordered execution events, Coordinator receipts, Bridge feedback,
+conversation buffer, server traces, and backend health responses. No commands,
+settings, service lifecycle, or production code were changed by this inspection.
+
+- The repaired Controller/Executor paths are executing. Later Controller calls
+  contain an image and all 11 currently available catalog choices. The first
+  calls had no available image; result-specific images arrived after movement.
+- Nine inspected Controller decisions all selected the Executor: eight requested
+  slow forward exploration, then one selected a left turn. The adapter reported
+  four preset slow walks, two freestyle plans, and the later left turn completed.
+  These were separate action IDs, not replay of one physical command. This is
+  adapter feedback, not independent physical observation.
+- Eight durable TTS deliveries were claimed and acknowledged, each on attempt
+  one. The conversation buffer contains new outward responses. One Executor
+  response nevertheless claimed movement with no action or motion plan output.
+- Every inspected new execution had no stored task. Selectors/result reviewers
+  returned null task decisions; the Action Result graph ran, but its active-task
+  condition skipped Goal Review. The Controller then started a new execution.
+- Controller context still includes Robot Status's task from an older **failed**
+  execution, alongside the new execution's null task. Model reasons repeatedly
+  call that older exploration objective active. The repaired input transport
+  therefore does not yet establish a coherent current-objective interpretation.
+  Other choices are present; their absence from behavior is not catalog omission
+  in this sample.
+- A user direction command waited about 4.6 seconds behind autonomous movement,
+  then the adapter rejected it with `action_expired_before_dispatch`. Its
+  Coordinator item has no deadline. The later autonomous turn succeeded. The
+  adapter's expiry origin still needs tracing; this does not establish camera
+  disconnection or physical inability to turn.
+- An embedding-service availability error and a model-backend availability
+  failure occurred. Subsequent health reads showed the embedder ready and Ollama
+  serving the configured model with a 24,576-token context. The cause of those
+  intermittent availability failures was not established.
+
+Verdict for this live sample: speech and image delivery have improved, but rich
+context-driven autonomy and current-goal interpretation remain unsatisfactory.
+Do not treat the earlier source/integration checks as end-to-end acceptance.
+
+### Directed visual request: captured evidence without acknowledgement
+
+Follow-up inspection of the same live window established that a requested
+foreground object was plainly visible in a saved post-movement frame. Exact
+image-content hashes match the saved inputs of Action Result, the next Controller,
+and its Executor selector. This was not merely visible on a separate preview;
+the model path received the image. Original JPEG bytes were extracted locally
+without modification for inspection; no image or private transcript is tracked.
+
+- Initial intent selected a one-shot movement/vision route, with task lifecycle
+  false. The initial requested turn expired; a subsequent freestyle turn and
+  forward movements occurred. No execution objective was created.
+- The result model received the visible-object frame but returned empty speech
+  and a null task decision. Its context carried the autonomous movement's
+  originating instruction and the older Robot Status goal, while the user's
+  visual request remained in Robot Status user context.
+- `buildRobotActionResultJsonSchema` restricts taskDecision to null when no
+  execution objective exists (`action-result-parser.node.ts:91`). Therefore the
+  null result here is not evidence of a freely considered completion decision.
+  Speech is still permitted; the model authored an empty response.
+- The next Controller mentioned the direction request but selected another turn
+  while the object was already in the supplied view. The subsequent frame no
+  longer contained it. No recorded identification or completion was found.
+- The saved Action Result graph's `hasActiveTask` edge skipped Goal Review.
+  Repair must address objective admission and coherent result context, not
+  fabricate a found notification or force speech on every motion.
+
+### Goal-context owner repair — 2026-09-08
+
+The later authorized repair removes `needsTaskLifecycle` from the router,
+provider contract, context-builder schema switches, saved graphs, and editor
+copies. This was a permission to suppress objective output, not a context-loading
+branch. The existing informed selector now always has optional `taskDecision`;
+conversation and standalone movements still accept null. No new inference,
+forced goal, forced speech, command-specific rule, or execution owner was added.
+
+The Environment selector now identifies Current Execution, not Robot Status,
+as the objective owner. Result interpretation uses the matched action's existing
+originating instruction as well as any saved objective. Actual-graph tests show
+the whole request and distinct returned image survive dispatch and resumption
+without requiring a goal. No replacement image transport was necessary.
+
+Robot Status now projects the execution's actual lifecycle beside its task.
+Completed, failed, and cancelled executions do not appear as current goals;
+their objective and semantic decision remain inspectable and unchanged. Removed
+the old projection-only rewriting of cancelled objectives. Catalog and workflow
+descriptions were aligned with this existing ownership.
+
+Verification: 207/207 durable tests, 25/25 focused owner tests, 4/4 Environment
+graph checks, all 38 graphs, selector validation, model defaults, Core/Brain/tests/
+Site typechecks, architecture checks, and an isolated Site build pass. Existing
+node-documentation/persistence warnings remain. Independent review repeated the
+actual workflows and seven schema/parser cases; it found a weak image fixture,
+which was corrected to distinguish returned bytes from baseline bytes and passed.
+
+Evidence: `/tmp/metahuman-goal-context-repair-vJ6QH6/README.md` and independent
+`/tmp/metahuman-goal-context-review-pbfTOG/README.md`. The installed build, services,
+model settings, live task records, and physical robot were not changed. Rebuild,
+restart, and test a new request before claiming improved real-model behavior.
+The separately observed adapter expiry and intermittent backend availability
+remain diagnostic findings, not repairs claimed by this change.
+
 ## Verdict
 
 The current system does not satisfy the intended Full Auto behavior. This is not

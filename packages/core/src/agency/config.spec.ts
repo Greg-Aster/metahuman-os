@@ -77,6 +77,8 @@ test('very strong mature desires can reduce trust requirements without bypassing
     sourceId: 'request-1',
     risk: 'low',
     suggestedAction: 'Plan it',
+    outcomeKey: 'identify_owner',
+    completionCriteria: 'A report identifies the canonical owner with a source reference',
   }, DEFAULT_AGENCY_CONFIG)
   desire.strength = 0.99
   const requirement = resolveAutoApprovalTrustRequirement(DEFAULT_AGENCY_CONFIG, desire.strength, desire)

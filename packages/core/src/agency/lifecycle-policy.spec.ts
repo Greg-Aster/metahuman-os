@@ -36,8 +36,10 @@ function approvalCandidate(status: Desire['status'] = 'awaiting_approval'): Desi
     plan: {
       id: 'plan-1',
       version: 2,
+      completionCriteria: "A receipt verifies the approved action",
       steps: [{
         order: 1,
+        executionTarget: "operator",
         action: 'Act',
         expectedOutcome: 'Done',
         risk: 'low',
@@ -99,4 +101,23 @@ test('user approval requires the canonical awaiting state and exact plan-version
   const stale = approvalCandidate()
   stale.review!.planVersion = 1
   assert.match(validateDesireForUserApproval(stale) || '', /does not match/)
+})
+
+test('Robot Status awareness strips full desires, strength, and behavioral text even from legacy snapshots', async () => {
+  const { projectDesireAwareness } = await import('./lifecycle-policy.js')
+  const pending = { ...approvalCandidate('questioning'), title: 'Reduce interruptions',
+    description: 'Move slowly forever. '.repeat(100), reason: 'A rationale that must not become a motor instruction.',
+    plan: { instruction: 'Unreviewed body action' } }
+  const summary = projectDesireAwareness([pending, { ...pending, id: 'completed-1', status: 'completed' }])
+  assert.deepEqual(summary, [{ id: pending.id, title: pending.title, status: 'questioning', nextAction: 'owner_input', updatedAt: pending.updatedAt }])
+  assert.doesNotMatch(JSON.stringify(summary), /slowly|rationale|instruction|strength/)
+  assert.ok(JSON.stringify(summary).length < JSON.stringify(pending).length / 4)
+})
+
+test('reduced inhibition does not bypass finite plan eligibility', () => {
+  const candidate = approvalCandidate()
+  candidate.strength = 1
+  candidate.reinforcements = 100
+  delete candidate.plan!.completionCriteria
+  assert.match(validateDesireForUserApproval(candidate)!, /completion criteria/i)
 })

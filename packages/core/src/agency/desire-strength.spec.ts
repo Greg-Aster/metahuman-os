@@ -23,6 +23,8 @@ function candidate(source: DesireSource): DesireCandidate {
     sourceId: `${source}-1`,
     risk: 'low',
     suggestedAction: 'Plan it',
+    outcomeKey: 'identify_owner',
+    completionCriteria: 'A report identifies the canonical owner with a source reference',
   }
 }
 

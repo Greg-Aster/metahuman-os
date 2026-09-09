@@ -51,7 +51,9 @@ evaluation pass.
 Deployment remains conditional on strict JSON, Core-contract validity, semantic
 selection accuracy, false-positive and missed actions, unnecessary captures,
 and latency. The model is not the safety boundary: Core capability admission
-and the canonical Robot Status task record remain authoritative.
+and the canonical durable execution record remain authoritative; Robot Status
+only projects that execution. Generated corpora record the prompt used at
+generation time; regenerate them from the active graph before new training.
 
 Current development status: `qwen3.5-0.8b-cv-004` completed in two trainer
 pairs but was rejected. Its better epoch-two checkpoint reached 87.0% exact

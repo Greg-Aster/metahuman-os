@@ -32,8 +32,10 @@ function candidate(status: Desire['status'] = 'awaiting_approval'): Desire {
     plan: {
       id: 'plan-approval',
       version: 3,
+      completionCriteria: "A returned receipt verifies the approved step",
       steps: [{
         order: 1,
+        executionTarget: "operator",
         action: 'Perform approved step',
         expectedOutcome: 'Done',
         risk: 'low',

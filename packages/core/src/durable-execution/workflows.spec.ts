@@ -124,7 +124,7 @@ async function signalExecution(executionId: string) {
   assert.equal(manager.getTask(work.id)?.state, 'completed', manager.getTask(work.id)?.error?.message)
 }
 const routes = { needsResponse: true, needsConversationHistory: true, needsMemory: false,
-  needsRobotStatus: true, needsEnvironment: true, needsVision: true, needsAction: true, needsTaskLifecycle: true,
+  needsRobotStatus: true, needsEnvironment: true, needsVision: true, needsAction: true,
   executionDisposition: 'new', targetExecutionId: '' }
 const objective = 'Locate the fixture target and report its location.'
 const observation = {
@@ -267,7 +267,7 @@ test('saved Environment workflow keeps conversation separate and resumes physica
     setEnvironmentBridgeEnabled(true)
     const unsubscribe = connectAdapter(observation.sessionId)
     try {
-      replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false, needsTaskLifecycle: false },
+      replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false },
         { response: 'I am here with you.', actions: [], movementRequest: null, taskDecision: null })
       const conversational = await run({ graph: graph('environment'), context: { ...context(), userMessage: 'How are you?' } })
       assert.equal(conversational.status, 'completed', conversational.error?.stack)
@@ -276,6 +276,7 @@ test('saved Environment workflow keeps conversation separate and resumes physica
       assert.equal(calls.length, 2)
       assert.equal(calls[0].provider, 'ollama')
       assert.equal(calls[0].options.model, 'fixture-model')
+      assert.equal(conversational.nodes.get('robot-status-out')?.outputs?.task, null)
 
       replies.push(routes, { response: 'I will look in the adjacent area.',
         actions: [{ type: 'robotCommand', command: 'walk' }], movementRequest: null,
@@ -284,6 +285,8 @@ test('saved Environment workflow keeps conversation separate and resumes physica
       const started = await run({ graph: graph('environment'), context: context() })
       assert.equal(started.status, 'waiting', started.error?.stack)
       const executionId = started.executionId!
+      assert.deepEqual(calls.at(-1)!.options.jsonSchema.properties.taskDecision.anyOf.map((branch: any) => branch.type),
+        ['null', 'object'], 'The selector can define an objective without permission from the routing model')
       let store = openExecutionStore(username)
       assert.equal(store.task(executionId)?.objective, objective)
       assert.match(store.task(executionId)!.objectiveId, /^[a-f0-9-]{36}$/)
@@ -460,7 +463,7 @@ test('a retryable saved workflow resumes the failed model node through the Coord
       () => runDurableGraph({ graph: workflow, context: { ...context(), userMessage: 'How are you?' } }),
       async input => manager.enqueue(input))
     assert.ok(manager.claim(work.id))
-    replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false, needsTaskLifecycle: false },
+    replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false },
       new Error('Temporary controlled transport failure'))
     const first = await invoke()
     assert.equal(first.status, 'failed')
@@ -539,19 +542,24 @@ test('saved Environment reviews standalone actions without inventing an objectiv
       const unsubscribe = connectAdapter(current.sessionId!)
       try {
         const beforeCalls = calls.length
-        replies.push({ ...routes, needsTaskLifecycle: false }, { ...presetChoice(), taskDecision: null })
-        const started = await run({ graph: graph('environment'), context: context(current) })
+        const instruction = 'Change the viewpoint and describe the newly visible area.'
+        replies.push(routes, { ...presetChoice(), taskDecision: null })
+        const started = await run({ graph: graph('environment'), context: { ...context(current), userMessage: instruction } })
         assert.equal(started.status, 'waiting', started.error?.stack)
         const executionId = started.executionId!
         const [action] = takeAdapterActions(current.sessionId!, 1)
         assert.ok(action)
+        const frameId = randomUUID()
+        const returnedVisual = { ...current.visual!, id: frameId, metadata: { actionId: action.id },
+          dataUrl: 'data:image/jpeg;base64,/9j/2gAB/9k=' }
+        assert.notEqual(returnedVisual.dataUrl, current.visual!.dataUrl)
         const feedback = { id: randomUUID(), actionId: action.id, type: outcome,
           timestamp: new Date().toISOString(), message: `The fixture adapter reported ${outcome}` }
         if (outcome === 'completed') recordEnvironmentActionResult({ ...feedback, id: randomUUID(), type: 'accepted' })
         recordEnvironmentActionResult(feedback)
         if (outcome === 'completed') publishEnvironmentObservation({ ...current,
           timestamp: new Date().toISOString(), metadata: { actionId: action.id }, feedback: [feedback],
-          visual: { ...current.visual!, id: randomUUID(), metadata: { actionId: action.id } } }, { username })
+          visual: returnedVisual }, { username })
         replies.push({ response: 'The action report has arrived.', taskDecision: null })
         const finished = await run({ graph: graph('environment'), context: context(current), executionId })
         assert.equal(finished.status, 'completed', finished.error?.stack)
@@ -562,6 +570,14 @@ test('saved Environment reviews standalone actions without inventing an objectiv
         const reviewText = typeof reviewInput === 'string' ? reviewInput : reviewInput.find((part: any) => part.type === 'text').text
         const envelope = JSON.parse(reviewText.slice(reviewText.indexOf('{')))
         assert.equal(envelope.robotStimulus.verifiedCurrentAction.actionId, action.id)
+        assert.equal(envelope.robotStimulus.verifiedCurrentAction.originatingInstruction, instruction,
+          'The whole request, including its observation purpose, survives dispatch and resume without requiring a goal')
+        assert.equal(envelope.execution.task, null)
+        if (outcome === 'completed') {
+          assert.equal(envelope.robotStimulus.visualEvidence.frames[0].id, frameId)
+          assert.ok(reviewInput.some((part: any) => part.type === 'image_url' && part.image_url.url === returnedVisual.dataUrl))
+          assert.equal(reviewInput.some((part: any) => part.type === 'image_url' && part.image_url.url === current.visual!.dataUrl), false)
+        }
         assert.equal(envelope.robotStimulus.feedback[0].type, outcome)
         const store = openExecutionStore(username)
         try {
@@ -581,7 +597,7 @@ test('the same saved workflow follows a different profile-configured provider th
     const beforeCalls = calls.length
     configureProvider('openai', 'fixture-alternate-model')
     try {
-      replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false, needsTaskLifecycle: false },
+      replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false },
         { response: 'I am here with you.', actions: [], movementRequest: null, taskDecision: null })
       const result = await run({ graph: graph('environment'), context: { ...context(), userMessage: 'How are you?' } })
       assert.equal(result.status, 'completed', result.error?.stack)
@@ -824,6 +840,61 @@ test('saved Goal Review continues through the real Executor and reviews its next
   })
 })
 
+test('user and Controller workflows correct rejected selector output on the same objective and dispatch only the corrected choice', async () => {
+  for (const entry of ['environment', 'robot-autonomy-controller']) await withUserContext(user, async () => {
+    const current = freshObservation(`selector-correction-${entry}`)
+    recordEnvironmentObservation(current)
+    setEnvironmentBridgeEnabled(true)
+    const unsubscribe = connectAdapter(current.sessionId!)
+    try {
+      if (entry === 'robot-autonomy-controller') replies.push(controllerChoice('robot-autonomy-executor'))
+      replies.push(routes, presetChoice())
+      const started = await run({ graph: graph(entry), context: entry === 'environment' ? context(current) : controllerContext(current) })
+      assert.equal(started.status, 'waiting', started.error?.stack)
+      const executionId = started.executionId!
+      const initialStore = openExecutionStore(username)
+      let objectiveId: string
+      try { objectiveId = initialStore.task(executionId)!.objectiveId } finally { initialStore.close() }
+      const initial = completeAction(current, 'robotCommand', `correction-${entry}-first-after`)
+      const invalid = { ...presetChoice(), response: 'I intend to inspect another area.', actions: [] }
+      const corrected = { ...presetChoice(), taskDecision: { ...presetChoice().taskDecision, outcome: 'continue' } }
+      const beforeReview = calls.length
+      replies.push(incompleteActionReview(), goalReview('continue'), routes, invalid, corrected)
+      const continuing = await run({ graph: graph(entry), context: context(current), executionId })
+      assert.equal(continuing.status, 'waiting', continuing.error?.stack)
+      assert.equal(calls.length, beforeReview + 5, 'Only the invalid selector decision adds an inference call')
+      const correction = calls.at(-1)!
+      assert.deepEqual(correction.messages.slice(0, -2), calls.at(-2)!.messages,
+        'The original instruction, criteria, image parts and routing context remain unchanged')
+      assert.deepEqual(correction.options, calls.at(-2)!.options, 'Model role, settings and output contract are unchanged')
+      assert.equal(correction.messages.at(-2).content, JSON.stringify(invalid))
+      assert.match(correction.messages.at(-1).content, /outcome=act requires an action or movementRequest/)
+      const next = completeAction(initial.after, 'robotCommand', `correction-${entry}-second-after`)
+      assert.notEqual(next.action.id, initial.action.id)
+      assert.equal(next.action.executionId, executionId)
+      const pending = openExecutionStore(username)
+      try {
+        assert.equal(pending.task(executionId)?.objectiveId, objectiveId)
+        assert.equal(pending.task(executionId)?.objective, objective)
+        assert.equal(pending.task(executionId)?.completionCriteria, presetChoice().taskDecision.completionCriteria)
+        assert.equal(pending.task(executionId)?.decision.outcome, 'continue')
+        assert.equal(pending.task(executionId)?.decision.objectiveComplete, false)
+      } finally { pending.close() }
+      replies.push(completionReview())
+      const finished = await run({ graph: graph(entry), context: context(current), executionId })
+      assert.equal(finished.status, 'completed', finished.error?.stack)
+      assertParticipatingGraphs(executionId, [entry, 'robot-action-result', 'robot-goal-review', 'boredom-autonomy'])
+      const store = openExecutionStore(username)
+      try {
+        assert.equal(store.task(executionId)?.objectiveId, objectiveId)
+        assert.equal(store.events(executionId).filter(event => event.kind === 'physical_result').length, 2)
+      } finally { store.close() }
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
+      assert.equal(replies.length, 0)
+    } finally { unsubscribe() }
+  })
+})
+
 test('saved Environment admits user steering into the exact Goal Review wait and completion remains on that parent', async () => {
   await withUserContext(user, async () => {
     const current = freshObservation('goal-steering')
@@ -914,20 +985,26 @@ test('malformed Observer output fails its actual saved parent instead of silentl
   })
 })
 
-test('malformed Environment selection fails without dispatch or a fabricated successful workflow', async () => {
-  await withUserContext(user, async () => {
+test('a failed correction preserves its actual error without dispatch or fabricated objective completion', async () => {
+  for (const entry of ['environment', 'robot-autonomy-controller']) await withUserContext(user, async () => {
     const current = freshObservation('selector-invalid')
+    if (entry === 'robot-autonomy-controller') replies.push(controllerChoice('robot-autonomy-executor'))
     replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false },
       { response: 'The task is complete.', actions: [], movementRequest: null,
         taskDecision: { outcome: 'complete', objective, objectiveComplete: true,
-          continuationPolicy: 'none', reason: 'Fixture malformed contract.', requiredCompletionBasis: 'not-a-supported-evidence-type' } })
-    const result = await run({ graph: graph('environment'), context: context(current) })
+          continuationPolicy: 'none', reason: 'Fixture malformed contract.', requiredCompletionBasis: 'not-a-supported-evidence-type' } },
+      new Error('Controlled correction transport failure'))
+    const result = await run({ graph: graph(entry), context: entry === 'environment' ? context(current) : controllerContext(current) })
     assert.equal(result.status, 'failed')
-    assert.match(result.error?.message ?? '', /Environment Action Selector output is invalid/)
-    assert.equal(result.nodes.get('6')?.status, 'failed')
+    assert.equal(result.error?.message, 'Controlled correction transport failure', 'The old parser rejection must not hide a new failure')
+    if (entry === 'environment') assert.equal(result.nodes.get('6')?.status, 'failed')
+    assert.match(calls.at(-1)!.messages.at(-1).content, /taskDecision requiredCompletionBasis is not supported/)
     assert.equal(manager.getAllTasks().filter(task => task.durable?.executionId === result.executionId && task.type === 'environment_command').length, 0)
     const store = openExecutionStore(username)
-    try { assert.equal(store.get(result.executionId!).status, 'failed') } finally { store.close() }
+    try {
+      assert.equal(store.get(result.executionId!).status, 'failed')
+      assert.equal(store.task(result.executionId!), null, 'A rejected completion claim cannot establish an objective')
+    } finally { store.close() }
     assert.equal(replies.length, 0)
   })
 })
@@ -949,7 +1026,7 @@ test('saved Environment cancellation ends the identified Goal Review wait withou
       assert.equal(waiting.status, 'waiting', waiting.error?.stack)
       const message = 'Cancel this search. I do not want to continue it.'
       replies.push({ ...routes, executionDisposition: 'cancel', targetExecutionId: executionId,
-        needsEnvironment: false, needsVision: false, needsAction: false, needsTaskLifecycle: false },
+        needsEnvironment: false, needsVision: false, needsAction: false },
       { response: 'The search is cancelled.', actions: [], movementRequest: null, taskDecision: null })
       const cancelled = await run({ graph: graph('environment'), context: { ...context(current), userMessage: message } })
       assert.equal(cancelled.status, 'completed', cancelled.error?.stack)
@@ -1064,5 +1141,170 @@ test('a Controller speech-only choice after Goal Review wait does not finish the
       assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
+  })
+})
+
+for (const satisfied of [true, false]) test(`Desire robot steps stop at outcome review when step evidence is ${satisfied ? 'satisfied' : 'unsatisfied'}`, async () => {
+  await withUserContext(user, async () => {
+    const { saveDesire, loadDesire } = await import('../agency/storage.js')
+    const { initializeDesireMetrics } = await import('../agency/types.js')
+    setEnvironmentBridgeEnabled(true)
+    const current = freshObservation(`desire-finite-${satisfied}`)
+    const unsubscribe = connectAdapter(current.sessionId!)
+    const id = `desire-${Date.now()}-finite`
+    const plan = { id: `${id}-plan`, version: 1, completionCriteria: 'Two inspected areas are documented with returned observations.',
+      steps: [1, 2].map(order => ({ order, action: `Inspect area ${order}.`, executionTarget: 'robot' as const,
+        expectedOutcome: `Area ${order} is documented in a returned observation.`, risk: 'low' as const, requiresApproval: true })),
+      estimatedRisk: 'low' as const, requiredSkills: [], requiredTrustLevel: 'suggest' as const,
+      operatorGoal: 'Inspect two areas and stop.', createdAt: new Date().toISOString() }
+    const desire = {
+      id, title: 'Document two areas', description: 'Produce two observations', reason: 'A finite requested inspection',
+      source: 'user_request' as const, strength: 1, baseWeight: 1, threshold: 0.7, decayRate: 0.03,
+      lastReviewedAt: new Date().toISOString(), reinforcements: 1, runCount: 1, risk: 'low' as const,
+      requiredTrustLevel: 'suggest' as const, status: 'executing' as const, metrics: initializeDesireMetrics(),
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), plan,
+      review: { id: `${id}-review`, verdict: 'approve' as const, planId: plan.id, planVersion: plan.version,
+        reasoning: 'The user approved this bounded inspection.', riskAssessment: 'Low risk', alignmentScore: 1,
+        reviewedAt: new Date().toISOString(), autoApprove: false },
+      execution: { startedAt: new Date().toISOString(), status: 'in_progress' as const,
+        planId: plan.id, planVersion: plan.version, stepsCompleted: 0, stepsTotal: 2, stepResults: [] },
+    }
+    const workflow = validateSvelteFlowGraph(JSON.parse(fs.readFileSync(path.join(root, 'etc/cognitive-graphs/desire-executor.json'), 'utf8')))
+    try {
+      await saveDesire(desire, username)
+      recordEnvironmentObservation(current)
+      replies.push(routes, presetChoice())
+      const alteredInput = structuredClone(desire)
+      alteredInput.plan.steps[0].action = 'Unreviewed motion style inserted into a graph input'
+      const first = await run({ graph: workflow, context: { ...context(current), userMessage: '', desire: alteredInput } })
+      assert.equal(first.status, 'waiting', first.error?.stack)
+      const executionId = first.executionId!
+      const firstReceipt = completeAction(current, 'robotCommand', 'desire-area-one')
+      replies.push(satisfied ? completionReview() : incompleteActionReview())
+      if (satisfied) replies.push(routes, presetChoice())
+      const second = await run({ graph: workflow, executionId, context: { ...context(firstReceipt.after), userMessage: '', desire } })
+      const afterFirst = await loadDesire(id, username)
+      assert.equal(afterFirst?.execution?.stepResults?.length, 1, 'The first receipt is durably retained across the next wait')
+      if (satisfied) {
+        assert.equal(second.status, 'waiting', second.error?.stack)
+        const secondReceipt = completeAction(firstReceipt.after, 'robotCommand', 'desire-area-two')
+        replies.push(completionReview())
+        const end = await run({ graph: workflow, executionId, context: { ...context(secondReceipt.after), userMessage: '', desire } })
+        assert.equal(end.status, 'waiting', end.error?.stack)
+      } else {
+        assert.equal(second.status, 'waiting', second.error?.stack)
+        assert.equal(afterFirst?.execution?.status, 'failed')
+      }
+      const waiting = openExecutionStore(username)
+      try { assert.equal(waiting.get(executionId).waitingReason, 'effect_delivery', 'Only the admitted outcome review remains') }
+      finally { waiting.close() }
+      const saved = await loadDesire(id, username)
+      assert.equal(saved?.status, 'awaiting_review', 'Action completion is distinct from desire satisfaction')
+      assert.equal(saved?.execution?.executionId, executionId)
+      assert.equal(saved?.execution?.planVersion, 1)
+      const executedSteps = satisfied ? plan.steps : [plan.steps[0]]
+      assert.deepEqual(saved?.execution?.stepResults?.map(result => result.stepOrder), executedSteps.map(step => step.order))
+      const facts = saved?.execution?.stepResults?.map(result => (result.result as any).task)
+      assert.deepEqual(facts?.map(task => task.desireId), executedSteps.map(() => id))
+      assert.deepEqual(facts?.map(task => task.desireStepOrder), executedSteps.map(step => step.order))
+      assert.deepEqual(facts?.map(task => task.completionCriteria), executedSteps.map(step => step.expectedOutcome))
+      assert.deepEqual(facts?.map(task => task.objective), executedSteps.map(step => step.action), 'Stored reviewed instructions own execution')
+      assert.equal(new Set(facts?.map(task => task.actionId)).size, executedSteps.length)
+      assert.equal(takeAdapterActions(current.sessionId!).length, 0, 'No action is admitted after the plan finishes or a step fails')
+      assert.equal(replies.length, 0, 'No general Goal Review model call follows an Agency-owned step')
+      const reviews = manager.getAllTasks().filter(task => task.input.desireId === id && task.handler === 'agency.desire-outcome-review')
+      assert.equal(reviews.length, 1, 'Durable graph finalization admits one review through Desire Agent')
+      assert.equal(reviews[0].input.triggeredBy, 'desire-agent')
+      assert.ok(manager.claim(reviews[0].id))
+      replies.push({ verdict: 'completed', reasoning: 'Both recorded step observations meet the reviewed criteria.',
+        successScore: 1, failureCategory: 'none', isFixableBug: false, notifyUser: false,
+        lessonsLearned: [], completionCriteriaMet: true })
+      const { reviewDesireOutcomeViaGraph } = await import('../agency/executor.js')
+      const reviewed = await withGraphWork(reviews[0], execution => manager.attachExecution(reviews[0].id, execution),
+        () => reviewDesireOutcomeViaGraph(saved!, username), async input => manager.enqueue(input))
+      assert.equal(reviewed.success, true, reviewed.error)
+      manager.complete(reviews[0].id, true, reviewed)
+      await deliverDurableWorkReceipt(manager.getTask(reviews[0].id)!, async input => manager.enqueue(input))
+      const settled = await run({ graph: workflow, executionId, context: { username, userId: username } })
+      assert.equal(settled.status, 'completed', settled.error?.stack)
+      assert.equal((await loadDesire(id, username))?.status, satisfied ? 'completed' : 'needs_attention',
+        'A completion claim cannot overrule an unsatisfied robot receipt')
+      assert.equal(replies.length, 0)
+      assert.equal(takeAdapterActions(current.sessionId!).length, 0)
+
+    } finally { unsubscribe() }
+  })
+})
+
+test('reduced inhibition admits a finite plan while uncertain external results are never replayed', async () => {
+  await withUserContext(user, async () => {
+    const { DEFAULT_AGENCY_CONFIG, canAutoApprove } = await import('../agency/config.js')
+    const { initializeDesireMetrics } = await import('../agency/types.js')
+    const { saveDesire, loadDesire, saveAgencyConfig } = await import('../agency/storage.js')
+    const { registerBackend } = await import('../escalation-backend.js')
+    const { DesireExecutorNode } = await import('../nodes/agency/desire-executor.node.js')
+    const config = structuredClone(DEFAULT_AGENCY_CONFIG)
+    config.mode = 'autonomous'
+    config.execution.preferredBackend = 'desire-fixture'
+    config.execution.fallbackBackend = 'desire-fixture'
+    await saveAgencyConfig(config, username)
+    let attempts = 0
+    registerBackend({
+      id: 'desire-fixture', name: 'Controlled Desire backend', description: 'Never invokes external tools',
+      isAvailable: async () => true, isReady: () => true, start: async () => true,
+      stop: () => {}, supportsStreaming: false,
+      execute: async () => {
+        attempts++
+        return { success: false, output: 'The request began but its final result is unavailable.', error: 'Response timeout' }
+      },
+    })
+    const now = new Date().toISOString()
+    const plan = { id: 'finite-external-plan', version: 1, completionCriteria: 'A report references the two supplied notes.',
+      steps: [{ order: 1, action: 'Write the report.', expectedOutcome: 'The report is saved with references.',
+        executionTarget: 'operator' as const, risk: 'low' as const, requiresApproval: false }],
+      estimatedRisk: 'low' as const, requiredSkills: [], requiredTrustLevel: 'suggest' as const,
+      operatorGoal: 'Save one report and stop.', createdAt: now }
+    const desire = {
+      id: 'desire-finite-external', title: 'Write a referenced report', description: 'A report of supplied notes', reason: 'Requested report',
+      source: 'user_request' as const, strength: 0.99, baseWeight: 1, threshold: 0.7, decayRate: 0.03,
+      lastReviewedAt: now, reinforcements: 5, runCount: 5, risk: 'low' as const, requiredTrustLevel: 'suggest' as const,
+      status: 'executing' as const, metrics: initializeDesireMetrics(), createdAt: now, updatedAt: now, plan,
+      review: { id: 'finite-external-review', verdict: 'approve' as const, planId: plan.id, planVersion: 1,
+        reasoning: 'A bounded low-risk report passed review.', riskAssessment: 'Low risk', alignmentScore: 1,
+        reviewedAt: now, autoApprove: true },
+      execution: { startedAt: now, status: 'in_progress' as const, planId: plan.id, planVersion: 1,
+        stepsCompleted: 0, stepsTotal: 1, stepResults: [] },
+    }
+    const approval = await canAutoApprove('low', desire.strength, 'suggest', username, desire)
+    assert.equal(approval.autoApprove, true, approval.reason)
+    assert.equal(approval.trustDegradation?.reduction, 2)
+    assert.equal((await canAutoApprove('low', 0.8, 'suggest', username, desire)).autoApprove, false)
+    await saveDesire(desire, username)
+    const workflow = validateSvelteFlowGraph(JSON.parse(fs.readFileSync(path.join(root, 'etc/cognitive-graphs/desire-executor.json'), 'utf8')))
+    const result = await run({ graph: workflow, context: { username, userId: username, desire } })
+    assert.equal(result.status, 'waiting', result.error?.stack)
+    const executionId = result.executionId!
+    assert.equal((await loadDesire(desire.id, username))?.execution?.status, 'outcome_unknown')
+    await run({ graph: workflow, executionId, context: { username, userId: username } })
+    const originalInput = { ...desire, execution: { ...desire.execution, executionId } }
+    const dispatches: any[] = []
+    const replay = await DesireExecutorNode.execute({ desire: originalInput }, {
+      username, graphExecution: { executionId, dispatch: (intent: any) => { dispatches.push(intent); return intent } } as any,
+    }, {})
+    assert.equal(replay.execution.status, 'outcome_unknown', 'Reusing a manifest receipt must preserve uncertainty')
+    assert.equal(replay.desire.metrics.executionAttemptCount, 1)
+    assert.equal(attempts, 1, 'Neither graph recovery nor manifest replay repeats the external attempt')
+    const reviews = manager.getAllTasks().filter(task => task.input.desireId === desire.id && task.handler === 'agency.desire-outcome-review')
+    assert.equal(reviews.length, 1)
+    assert.equal(dispatches[0].payload.idempotencyKey, reviews[0].idempotencyKey)
+    const { applyDesireOutcomeReview } = await import('../agency/desire-outcome-transition.js')
+    const reviewed = await applyDesireOutcomeReview(replay.desire, {
+      id: 'external-outcome', planId: plan.id, planVersion: 1, executionStartedAt: now,
+      verdict: 'retry', reasoning: 'Try the report again.', successScore: 0, failureCategory: 'external_error',
+      isFixableBug: false, lessonsLearned: [], notifyUser: true, reviewedAt: now, completionCriteriaMet: false,
+    }, username)
+    assert.equal(reviewed.desire.status, 'needs_attention', 'A model retry cannot resolve an unknown external outcome')
+    assert.equal(reviewed.desire.metrics.outcomeRetryCount, 0)
+    assert.equal(attempts, 1)
   })
 })

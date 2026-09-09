@@ -114,7 +114,7 @@ export type DesireRisk = 'none' | 'low' | 'medium' | 'high' | 'critical';
 /**
  * Goal type determines how completion is evaluated.
  * - one_time: Single achievement, archived when done (e.g., "buy a car")
- * - recurring: Ongoing without end, cycles forever (e.g., "stay healthy")
+ * - recurring: One finite cycle; another requires fresh evidence and a reviewed plan
  * - long_running: Takes weeks/months with clear end (e.g., "hike PCT")
  */
 export type DesireGoalType = 'one_time' | 'recurring' | 'long_running';
@@ -404,7 +404,7 @@ export type DesireScratchpadEntryType =
   | 'outcome_review'      // Post-execution review
   | 'retry_scheduled'     // Desire sent back for retry
   | 'completed'           // Desire marked as complete
-  | 'recurring_reset'     // Recurring desire reset to continue
+  | 'recurring_reset'     // Historical receipt; new recurring cycles do not reset automatically
   | 'strength_adjusted'   // Strength manually or automatically adjusted
   | 'user_input'          // User provided direct input
   | 'note';               // General note/observation
@@ -470,6 +470,10 @@ export type FailureCategory =
  * Post-execution review by the outcome reviewer agent.
  */
 export interface DesireOutcomeReview {
+  /** Exact attempt evaluated; copied by the workflow, never invented by the model. */
+  planId?: string;
+  planVersion?: number;
+  executionStartedAt?: string;
   /** Unique identifier */
   id: string;
   /** The verdict */
@@ -587,6 +591,8 @@ export interface Desire {
   description: string;
   /** Why does the system want this? What need does it fulfill? */
   reason: string;
+  /** Stable semantic outcome key shared by evidence for the same desired result. */
+  outcomeKey?: string;
 
   // Behavioral metrics - nature emerges from these, not hardcoded types
   /** Metrics tracking the desire's behavior over time */
@@ -724,6 +730,8 @@ export interface DesirePlan {
   id: string;
   /** Version number (1 = original, 2+ = revisions) */
   version: number;
+  /** Satisfaction condition approved with this immutable plan version. Required for execution. */
+  completionCriteria?: string;
   /** Ordered list of steps to execute */
   steps: PlanStep[];
   /** Overall risk assessment */
@@ -748,6 +756,8 @@ export interface PlanStep {
   order: number;
   /** Human-readable action description */
   action: string;
+  /** The existing owner that performs this finite step. Required for execution. */
+  executionTarget?: 'operator' | 'robot';
   /** Skill ID to invoke */
   skill?: string;
   /** Input parameters for the skill */
@@ -815,12 +825,16 @@ export interface StepResult {
 }
 
 export interface DesireExecution {
+  /** Exact reviewed plan and durable graph owning this attempt. */
+  planId?: string;
+  planVersion?: number;
+  executionId?: string;
   /** ISO timestamp when execution started */
   startedAt: string;
   /** ISO timestamp when execution completed */
   completedAt?: string;
   /** Current execution status */
-  status: 'running' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+  status: 'running' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'outcome_unknown';
   /** Operator session ID for tracking */
   operatorSessionId?: string;
   /** Current step being executed (1-based) */
@@ -1099,6 +1113,8 @@ export interface DesireSummary {
   source: DesireSource;
   status: DesireStatus;
   strength: number;
+  outcomeKey?: string;
+  completionCriteria?: string;
 }
 
 // ============================================================================
@@ -1116,6 +1132,8 @@ export interface DesireCandidate {
   sourceId?: string;
   risk: DesireRisk;
   suggestedAction: string;
+  outcomeKey: string;
+  completionCriteria: string;
 }
 
 /**
@@ -1125,6 +1143,7 @@ export interface PlanGenerationOutput {
   steps: Array<{
     order: number;
     action: string;
+    executionTarget: 'operator' | 'robot';
     skill?: string;
     inputs?: Record<string, unknown>;
     expectedOutcome: string;

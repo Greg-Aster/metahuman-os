@@ -6,7 +6,6 @@
  */
 
 import type { SvelteFlowGraph } from './cognitive-graph-schema.js';
-import { validateSvelteFlowGraph } from './cognitive-graph-schema.js';
 import { ROOT } from './path-builder.js';
 import { existsSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
@@ -53,13 +52,14 @@ export function clearCancellation(requestId: string): void {
 // Graph Loading & Caching
 // ============================================================================
 
-interface GraphCacheEntry {
+export type CachedGraphEntry = {
   source: string;
   mtimeMs: number;
-  graph: SvelteFlowGraph;
-}
+  ctimeMs: number;
+  size: number;
+} & ({ graph: SvelteFlowGraph } | { error: GraphConfigurationError });
 
-const graphCache: Record<string, GraphCacheEntry | null> = {};
+const graphCache: Record<string, CachedGraphEntry | null> = {};
 const graphSources = new WeakMap<SvelteFlowGraph, string>();
 
 export function loadedGraphSource(graph: SvelteFlowGraph): string | undefined {
@@ -69,21 +69,46 @@ export function loadedGraphSource(graph: SvelteFlowGraph): string | undefined {
 /**
  * Read and validate a Svelte Flow graph from a file
  */
-async function readGraphFromFile(filePath: string): Promise<SvelteFlowGraph | null> {
-  try {
-    console.log(`[graph-streaming] Reading graph: ${filePath}`);
-    const raw = await readFile(filePath, 'utf-8');
-    console.log(`[graph-streaming] File size: ${raw.length} bytes`);
-    const parsed = JSON.parse(raw);
-    console.log(`[graph-streaming] Parsed: ${parsed.nodes?.length || 0} nodes, ${parsed.edges?.length || 0} edges`);
-    const validated = validateSvelteFlowGraph(parsed);
-    graphSources.set(validated, filePath);
-    console.log(`[graph-streaming] Validation PASSED`);
-    return validated;
-  } catch (error) {
-    console.error('[graph-streaming] Read error:', error);
-    return null;
+export class GraphConfigurationError extends Error {
+  constructor(readonly source: string, cause: Error, logPrefix = '[graph-streaming]') {
+    super(`${logPrefix} Invalid workflow ${source}: ${cause.message}`, { cause });
+    this.name = 'GraphConfigurationError';
   }
+}
+
+/** Shared file-loading owner for named workflows and explicitly configured graph files. */
+export async function loadGraphFile(
+  filePath: string,
+  options: { cache?: Record<string, CachedGraphEntry | null>; cacheKey?: string; logPrefix?: string } = {},
+): Promise<LoadedGraph | null> {
+  const { cache, cacheKey = filePath, logPrefix } = options;
+  if (!existsSync(filePath)) return null;
+  const stats = await stat(filePath);
+  const cached = cache?.[cacheKey];
+  if (cached && cached.source === filePath && cached.mtimeMs === stats.mtimeMs
+    && cached.ctimeMs === stats.ctimeMs && cached.size === stats.size) {
+    if ('error' in cached) throw cached.error;
+    return { graph: cached.graph, source: filePath };
+  }
+  const raw = await readFile(filePath, 'utf8');
+  // Validation needs the node registry; importing a loader/error contract does
+  // not. Keep Coordinator and individual node imports independent of registry
+  // initialization order.
+  const { validateSvelteFlowGraph, GraphValidationError } = await import('./cognitive-graph-schema.js');
+  let graph: SvelteFlowGraph;
+  try {
+    graph = validateSvelteFlowGraph(JSON.parse(raw));
+  } catch (error) {
+    if (error instanceof SyntaxError || error instanceof GraphValidationError) {
+      const failure = new GraphConfigurationError(filePath, error, logPrefix);
+      if (cache) cache[cacheKey] = { source: filePath, mtimeMs: stats.mtimeMs, ctimeMs: stats.ctimeMs, size: stats.size, error: failure };
+      throw failure;
+    }
+    throw error;
+  }
+  graphSources.set(graph, filePath);
+  if (cache) cache[cacheKey] = { source: filePath, mtimeMs: stats.mtimeMs, ctimeMs: stats.ctimeMs, size: stats.size, graph };
+  return { graph, source: filePath };
 }
 
 /**
@@ -91,12 +116,9 @@ async function readGraphFromFile(filePath: string): Promise<SvelteFlowGraph | nu
  * @param graphKey - The cognitive mode key (e.g., 'dual', 'agent', 'emulation')
  * @param _username - Deprecated: Big Brother routing now handled at LLM call level
  */
-export async function loadGraphForMode(graphKey: string, _username?: string): Promise<LoadedGraph | null> {
-  const loadStart = Date.now();
-
+export async function loadGraphForMode(graphKey: string, _username?: string): Promise<LoadedGraph> {
   if (!graphKey) {
-    console.log('[graph-streaming] No graphKey provided');
-    return null;
+    throw new GraphConfigurationError('cognitive-graphs', new Error('A workflow name is required'));
   }
 
   const normalizedKey = graphKey.toLowerCase();
@@ -109,35 +131,12 @@ export async function loadGraphForMode(graphKey: string, _username?: string): Pr
     path.join(ROOT, 'etc', 'cognitive-graphs', `${baseName}.json`),
   ];
 
-  console.log(`[graph-streaming] Loading graph: "${graphKey}"`);
-
   for (const filePath of pathsToCheck) {
-    try {
-      if (!existsSync(filePath)) continue;
-
-      const stats = await stat(filePath);
-      const cached = graphCache[normalizedKey];
-
-      // Use cache if valid
-      if (cached && cached.source === filePath && cached.mtimeMs === stats.mtimeMs) {
-        console.log(`[graph-streaming] ⏱️ Using cached graph (total: ${Date.now() - loadStart}ms)`);
-        return { graph: cached.graph, source: filePath };
-      }
-
-      // Load fresh
-      const graph = await readGraphFromFile(filePath);
-      if (graph) {
-        graphCache[normalizedKey] = { source: filePath, mtimeMs: stats.mtimeMs, graph };
-        console.log(`[graph-streaming] ⏱️ Graph loaded fresh (total: ${Date.now() - loadStart}ms)`);
-        return { graph, source: filePath };
-      }
-    } catch (error) {
-      console.error(`[graph-streaming] Failed to load ${filePath}:`, error);
-    }
+    const loaded = await loadGraphFile(filePath, { cache: graphCache, cacheKey: normalizedKey });
+    if (loaded) return loaded;
   }
 
-  console.warn(`[graph-streaming] No valid graph found for "${graphKey}"`);
-  return null;
+  throw new GraphConfigurationError(pathsToCheck.join(' or '), new Error(`Workflow not found: ${graphKey}`));
 }
 
 /**

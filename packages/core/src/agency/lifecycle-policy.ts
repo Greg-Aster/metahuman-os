@@ -1,3 +1,4 @@
+import { desirePlanExecutionErrors } from './plan-policy.js'
 import type { Desire, DesireStatus } from './types.js'
 
 export const DESIRE_STATUSES: readonly DesireStatus[] = [
@@ -63,6 +64,32 @@ export function isActiveDesire(desire: Pick<Desire, 'status'>): boolean {
   return ACTIVE_DESIRE_STATUSES.includes(desire.status)
 }
 
+/** Awareness only. Full intentions and plans belong to the selected Agency workflow. */
+export interface DesireAwareness {
+  id: string
+  title: string
+  status: DesireStatus
+  nextAction: 'desire-agent' | 'owner_input' | 'execution_result'
+  updatedAt: string
+}
+
+export function projectDesireAwareness(value: unknown, limit = 5): DesireAwareness[] {
+  if (!Array.isArray(value)) return []
+  const text = (v: unknown, length: number) => typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, length) : ''
+  return value.flatMap(item => {
+    if (!item || typeof item !== 'object' || !isActiveDesire(item)) return []
+    const id = text(item.id, 160)
+    const title = text(item.title, 120)
+    if (!id || !title) return []
+    return [{
+      id, title, status: item.status as DesireStatus,
+      nextAction: NEEDS_ACTION_DESIRE_STATUSES.includes(item.status) ? 'owner_input' as const
+        : item.status === 'executing' ? 'execution_result' as const : 'desire-agent' as const,
+      updatedAt: text(item.updatedAt, 80),
+    }]
+  }).slice(0, limit)
+}
+
 const OWNER_ADVANCE_TARGETS: Record<DesireStatus, DesireStatus[]> = {
   nascent: ['pending', 'planning', 'paused', 'archived', 'abandoned'],
   pending: ['planning', 'paused', 'archived', 'abandoned'],
@@ -109,6 +136,8 @@ export function validateDesireForUserApproval(desire: Desire): string | null {
   if (!desire.plan || !desire.review) {
     return 'Cannot approve desire without a persisted plan and review.'
   }
+  const errors = desirePlanExecutionErrors(desire.plan)
+  if (errors.length) return `Cannot approve desire: ${errors.join('; ')}`
   if (desire.review.planId !== desire.plan.id
     || desire.review.planVersion !== desire.plan.version
     || desire.review.verdict !== 'approve') {

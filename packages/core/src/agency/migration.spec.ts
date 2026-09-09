@@ -38,8 +38,9 @@ test('migration repairs legacy provenance and metrics without activating untrace
   )
   assert.equal(result.safeToApply, true)
   assert.equal(result.desire.source, 'curiosity')
-  assert.equal(result.desire.status, 'nascent')
-  assert.equal(result.desire.currentStage, 'nascent')
+  assert.equal(result.desire.status, 'needs_attention')
+  assert.equal(result.desire.currentStage, 'user_attention')
+  assert.match(result.desire.dispositionReason!, /finite outcome/)
   assert.equal(result.desire.folderPath, 'folders/desire-legacy')
   assert.equal(result.desire.metrics.reinforcementCount, 4)
   assert.equal(result.desire.metrics.netReinforcement, 4)
@@ -66,6 +67,7 @@ test('explicitly owner-rejected legacy records migrate to archived history', () 
 test('traceable above-threshold evidence can restore a pending lifecycle state', () => {
   const result = normalizeDesireForMigration(legacy({
     source: 'curiosity',
+    completionCriteria: 'A cited answer to the original question is saved.',
     evidence: [{
       id: 'curiosity:question-1',
       kind: 'origin',
@@ -86,4 +88,21 @@ test('migration reports unknown provenance instead of fabricating it', () => {
   )
   assert.equal(result.safeToApply, false)
   assert.match(result.warnings.join(' '), /Unknown desire source/)
+})
+
+test('an unbounded backlog is held without activation and an executing record is never rewritten', () => {
+  const strong = legacy({
+    strength: 1, source: 'user_request',
+    evidence: [{ id: 'user_request:request-1', kind: 'origin', source: 'user_request', sourceId: 'request-1',
+      summary: 'A style preference', observedAt: '2026-09-01T00:00:00.000Z' }],
+  })
+  const held = normalizeDesireForMigration(strong, DEFAULT_AGENCY_CONFIG)
+  assert.equal(held.desire.status, 'needs_attention')
+  assert.equal(held.changes.includes('activation:pending'), false)
+  const again = normalizeDesireForMigration(held.desire, DEFAULT_AGENCY_CONFIG)
+  assert.deepEqual(again.changes, [])
+  const active = normalizeDesireForMigration({ ...strong, status: 'executing' }, DEFAULT_AGENCY_CONFIG)
+  assert.equal(active.safeToApply, false)
+  assert.equal(active.desire.status, 'executing')
+  assert.match(active.warnings.join(' '), /active execution must settle/)
 })

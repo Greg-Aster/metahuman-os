@@ -23,7 +23,7 @@ export function hasTraceableDesireEvidence(desire: Pick<Desire, 'evidence'>): bo
 }
 
 export function isDesireActivationEligible(desire: Desire): boolean {
-  return hasTraceableDesireEvidence(desire) && isAboveThreshold(desire)
+  return Boolean(desire.completionCriteria?.trim()) && hasTraceableDesireEvidence(desire) && isAboveThreshold(desire)
 }
 
 export function createDesireFromCandidate(
@@ -45,6 +45,8 @@ export function createDesireFromCandidate(
     title: candidate.title.trim(),
     description: candidate.description.trim(),
     reason: candidate.reason.trim(),
+    outcomeKey: candidate.outcomeKey,
+    completionCriteria: candidate.completionCriteria,
     source: candidate.source,
     sourceId: candidate.sourceId,
     evidence: evidence ? [evidence] : [],

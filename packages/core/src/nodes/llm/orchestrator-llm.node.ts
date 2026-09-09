@@ -88,7 +88,6 @@ const ENVIRONMENT_INTENT_FIELDS = [
   'needsEnvironment',
   'needsVision',
   'needsAction',
-  'needsTaskLifecycle',
 ] as const;
 
 export type EnvironmentIntentRouting = Record<typeof ENVIRONMENT_INTENT_FIELDS[number], boolean> & {
@@ -181,7 +180,6 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'needsVision', type: 'boolean', description: 'Whether fresh correlated visual evidence is needed' },
     { name: 'needsRobotStatus', type: 'boolean', description: 'Whether downstream reasoning needs the current Robot Status snapshot' },
     { name: 'needsAction', type: 'boolean', description: 'Whether an action/skill is needed (routes to Big Brother)' },
-    { name: 'needsTaskLifecycle', type: 'boolean', description: 'Whether this turn creates, advances, completes, or otherwise changes a durable objective' },
     { name: 'actionType', type: 'string', description: 'Type of action to perform' },
     { name: 'actionParams', type: 'object', description: 'Parameters for the action' },
     { name: 'complexity', type: 'number', description: 'Task complexity 0-1 (>0.7 triggers Big Brother)' },

@@ -89,10 +89,11 @@ export async function executeDesireFeasibility(
   const goalContext = isLongRunning
     ? `This is a long-running goal. The user performs physical work; assess whether the system can support research, planning, tracking, reminders, or logistics. Completion criteria: ${desire.completionCriteria || 'not specified'}. Milestones: ${desire.milestones?.length || 0}.`
     : 'Assess whether meaningful progress can be completed in one bounded execution session.'
-  const prompt = `Assess this desire using only the listed capabilities. Do not infer tools, permissions, or external effects that are absent.
+  const prompt = `Assess this desire using only the listed capabilities. A preference, mood, motion style, or endless instruction is not feasible as an executable desire. Require a useful observable result and a finite endpoint; do not replace an unsupported goal with invented research. Do not infer tools, permissions, or external effects that are absent.
 
 Desire: ${desire.title}
 Description: ${desire.description}
+Proposed completion criteria: ${desire.completionCriteria || "Missing; do not invent satisfaction"}
 Reason: ${desire.reason || 'Not specified'}
 Source: ${desire.source}
 Goal type: ${desire.goalType || 'one_time'}

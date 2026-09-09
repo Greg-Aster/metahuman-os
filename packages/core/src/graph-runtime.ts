@@ -6,11 +6,8 @@
  * owns runtime behavior.
  */
 
-import { existsSync } from 'node:fs'
-import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { SvelteFlowGraph, SvelteFlowNode } from './cognitive-graph-schema.js'
-import { validateSvelteFlowGraph } from './cognitive-graph-schema.js'
 import {
   executeGraph,
   getGraphOutput,
@@ -32,11 +29,7 @@ export interface GraphRunParams {
   resumeEventId?: string;
 }
 
-export interface CachedGraphEntry {
-  source: string;
-  mtimeMs: number;
-  graph: SvelteFlowGraph;
-}
+export { loadGraphFile, type CachedGraphEntry } from './graph-streaming.js'
 
 export interface FailedGraphNode {
   nodeId: string;
@@ -231,43 +224,6 @@ export function findMissingExecutors(graph: SvelteFlowGraph): MissingExecutorInf
   }
 
   return missing
-}
-
-export async function loadGraphFile(
-  filePath: string,
-  options: {
-    cache?: Record<string, CachedGraphEntry | null>;
-    cacheKey?: string;
-    logPrefix?: string;
-  } = {}
-): Promise<{ graph: SvelteFlowGraph; source: string } | null> {
-  const { cache, cacheKey = filePath, logPrefix = '[graph-runtime]' } = options
-
-  try {
-    if (!existsSync(filePath)) {
-      console.error(`${logPrefix} Graph file not found: ${filePath}`)
-      return null
-    }
-
-    const stats = await stat(filePath)
-    const cached = cache?.[cacheKey]
-    if (cached && cached.source === filePath && cached.mtimeMs === stats.mtimeMs) {
-      return { graph: cached.graph, source: filePath }
-    }
-
-    const raw = await readFile(filePath, 'utf-8')
-    const parsed = JSON.parse(raw)
-    const graph = validateSvelteFlowGraph(parsed)
-
-    if (cache) {
-      cache[cacheKey] = { source: filePath, mtimeMs: stats.mtimeMs, graph }
-    }
-
-    return { graph, source: filePath }
-  } catch (error) {
-    console.error(`${logPrefix} Failed to load graph:`, error)
-    return null
-  }
 }
 
 export function cognitiveGraphPath(fileName: string): string {

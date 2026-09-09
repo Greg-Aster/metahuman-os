@@ -1,4 +1,4 @@
-import { defineNode } from '../types.js';
+import { defineNode, NodeInputValidationError } from '../types.js';
 import type {
   EnvironmentAction,
   EnvironmentObservation,
@@ -163,7 +163,7 @@ export const environmentActionParserNode = defineNode({
       inputs.response,
       sessionId,
     );
-    if (!validation.value) throw new Error(
+    if (!validation.value) throw new NodeInputValidationError('response',
       `Environment Action Selector output is invalid: ${validation.errors.join('; ')}`,
     );
     const validated = validation.value;

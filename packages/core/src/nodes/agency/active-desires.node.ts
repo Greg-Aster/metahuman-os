@@ -1,4 +1,5 @@
 import { listActiveDesires } from '../../agency/storage.js'
+import { projectDesireAwareness } from '../../agency/lifecycle-policy.js'
 import { defineNode } from '../types.js'
 
 export const activeDesiresNode = defineNode({
@@ -32,18 +33,8 @@ export const activeDesiresNode = defineNode({
     const limit = Number.isInteger(configuredLimit)
       ? Math.max(1, Math.min(10, Number(configuredLimit)))
       : 5
-    const summaries = desires
-      .sort((a, b) => b.strength - a.strength || b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, limit)
-      .map(desire => ({
-        id: desire.id,
-        title: desire.title.slice(0, 200),
-        description: desire.description.slice(0, 500),
-        reason: desire.reason.slice(0, 500),
-        status: desire.status,
-        strength: desire.strength,
-        updatedAt: desire.updatedAt,
-      }))
+    desires.sort((a, b) => b.strength - a.strength || b.updatedAt.localeCompare(a.updatedAt))
+    const summaries = projectDesireAwareness(desires, limit)
     return {
       desires: summaries,
       count: desires.length,

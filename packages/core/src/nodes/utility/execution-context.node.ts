@@ -50,6 +50,7 @@ export const executionContextNode = defineNode({
     { name: 'context', type: 'object', description: 'Execution identity, task and recent event facts' },
     { name: 'task', type: 'object', description: 'Checkpointed task, or null for an execution without a task' },
     { name: 'activeExecutions', type: 'array', description: 'Other unfinished executions available for user steering' },
+    { name: 'needsGoalReview', type: 'boolean', description: 'An unfinished objective whose continuation is owned by Robot Goal Review rather than Agency' },
     { name: 'hasActiveTask', type: 'boolean', description: 'Whether the saved LLM decision leaves an objective unfinished' },
   ],
   properties: { eventLimit: 16 },
@@ -60,6 +61,7 @@ export const executionContextNode = defineNode({
     const events = context.graphExecution.events()
     const limit = Number(properties?.eventLimit)
     if (!Number.isInteger(limit) || limit < 0) throw new Error('Recent Events must be a non-negative integer')
+    const hasActiveTask = Boolean(task && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete'].includes(task.decision.outcome))
     return {
       activeExecutions: context.graphExecution.activeExecutions(),
       context: { executionId: context.graphExecution.executionId, task,
@@ -67,7 +69,8 @@ export const executionContextNode = defineNode({
         observationEncoding: 'First observation is complete; later observationChanges replace or remove the named path relative to the previous observation. Image references retain their recorded time.',
         events: executionEventContext(limit ? events.slice(-limit) : events) },
       task,
-      hasActiveTask: Boolean(task && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete'].includes(task.decision.outcome)),
+      hasActiveTask,
+      needsGoalReview: hasActiveTask && !task?.desireId,
     }
   },
 })

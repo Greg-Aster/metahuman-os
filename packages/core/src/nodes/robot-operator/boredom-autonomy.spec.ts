@@ -51,7 +51,6 @@ const ALL_AUTONOMY_ROUTES = {
   needsEnvironment: true,
   needsVision: true,
   needsAction: true,
-  needsTaskLifecycle: true,
 };
 
 test('continuation authorization preserves specialist choices and operating-mode semantics', async () => {
@@ -251,6 +250,19 @@ test('Buffer History limit zero defers retention to the canonical buffer owner',
 
   assert.equal(result.count, 80);
   assert.equal(result.pruned, false);
+});
+
+test('Agency operational reports stay out of later model history while user messages remain', async () => {
+  const retained = [
+    { role: 'user', content: 'Please slow down while explaining this.' },
+    { role: 'system', content: 'A long historical agency review says to keep moving slowly.', meta: { type: 'desire_generation' } },
+    { role: 'assistant', content: 'I will explain the first step.' },
+    { role: 'reflection', content: 'Detailed automatic plan review with a full motivation.', meta: { tags: ['agency', 'review', 'inner'] } },
+    { role: 'user', content: 'What does that desire mean?', meta: { tags: ['agency'] } },
+  ];
+  const result = await ConversationHistoryNode.execute({}, { conversationHistory: retained }, { mode: 'conversation', limit: 0 });
+  assert.deepEqual(result.history, [retained[0], retained[2], retained[4]]);
+  assert.equal(retained.length, 5, 'The model projection does not delete stored history');
 });
 
 test('a closed Observer planner gate does not call the model', async () => {
@@ -588,6 +600,7 @@ test('Robot Autonomy Executor context carries trigger, semantic memory, delegate
         activeDesires: [{
           id: 'desire-1',
           title: 'Play with the striped ball',
+          status: 'pending',
           reason: 'A current active desire makes the remembered ball relevant.',
           strength: 0.8,
         }],
@@ -615,6 +628,7 @@ test('Robot Autonomy Executor context carries trigger, semantic memory, delegate
   assert.match(serialized, /walk forward using the requested step count/);
   assert.doesNotMatch(serialized, /autonomyTriggerInstruction/);
   const supporting = modelInputEnvelope(result);
+  assert.doesNotMatch(serialized, /A current active desire makes the remembered ball relevant/);
   assert.equal(
     supporting.robotOperatorContext.robotStatus.state.agency.activeDesires[0].title,
     'Play with the striped ball',
@@ -693,7 +707,6 @@ test('Robot Autonomy context admits only the routes selected for an internal int
       needsEnvironment: false,
       needsVision: false,
       needsAction: false,
-      needsTaskLifecycle: false,
     },
     observation,
     robotObserver: observation.metadata.robotObserver,
@@ -1051,7 +1064,7 @@ test('Robot Autonomy Controller context combines unfinished work, buffers, bridg
     innerHistory: [{ role: 'reflection', content: 'The last view was too dark.' }],
     actionHistory: [{ actionId: 'turn-1', status: 'completed', verified: true, requested: { type: 'robotCommand', command: 'turn-right' } }],
     personaText: 'Curious, attentive, and persistent.',
-    activeDesires: [{ id: 'desire-1', title: 'Explore carefully', status: 'active' }],
+    activeDesires: [{ id: 'desire-1', title: 'Explore carefully', status: 'pending' }],
     availableTasks: tasks,
     autonomyActivityHistory: [{
       taskId: 'prior-observer',
@@ -1106,7 +1119,7 @@ test('Robot Goal Review context includes current active desires with its other d
         content: `Later goal narrative ${index + 1}.`,
       })),
     ],
-    activeDesires: [{ id: 'desire-1', title: 'Help find important objects', status: 'active' }],
+    activeDesires: [{ id: 'desire-1', title: 'Help find important objects', status: 'pending' }],
     robotObserver: {
       cycleId: 'goal-review-cycle',
       step: 1,

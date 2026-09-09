@@ -327,7 +327,7 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
           : 60,
         applyMode: 'restart',
         writable: true,
-        description: 'Semi-autonomous idle threshold for reviewing an unfinished Robot Status objective.',
+        description: 'Semi-autonomous idle threshold for resuming an execution with an unfinished objective.',
       },
       {
         key: 'robotGoalReviewJitterMs',

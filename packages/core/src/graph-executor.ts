@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { systemPaths } from './path-builder.js';
 import { getNode, getNodeExecutor, materializeNodeProperties } from './nodes/index.js';
+import { NodeInputValidationError, type ModelOutputFeedback } from './nodes/types.js';
 import { Annotation, Command, END, START, StateGraph, interrupt, isGraphInterrupt } from '@langchain/langgraph';
 import { ExecutionCheckpointer } from './durable-execution/checkpointer.js';
 import { executionAbortError, executionDefinition, graphContextSnapshot, type DurableGraphOptions, type GraphNodeExecution } from './durable-execution/graph-contract.js';
@@ -367,7 +368,6 @@ async function executeNode(
     }
   } catch (error) {
     if (isGraphInterrupt(error)) throw error;
-    console.error(`[GraphExecutor] Node ${nodeId} (${nodeType}) FAILED:`, error);
     state.status = 'failed';
     state.error = error as Error;
     state.endTime = Date.now();
@@ -376,7 +376,9 @@ async function executeNode(
       eventHandler({
         type: 'node_error',
         nodeId,
-        data: { error: (error as Error).message, durationMs: state.endTime - state.startTime! },
+        data: { error: (error as Error).message, durationMs: state.endTime - state.startTime!,
+          ...(error instanceof NodeInputValidationError ? { validationInput: error.input } : {}),
+          ...((error as Error)?.name === 'AbortError' ? { interrupted: true } : {}) },
         timestamp: Date.now(),
       });
     }
@@ -457,91 +459,85 @@ async function executeNodeByType(
     : (node.data.properties || {});
 
   if (executor) {
-    try {
-      // Determine timeout based on node type and config
-      // Priority: node property > operator config > defaults
-      let timeoutMs = effectiveProperties?.timeout;
+    // Determine timeout based on node type and config
+    // Priority: node property > operator config > defaults
+    let timeoutMs = effectiveProperties?.timeout;
 
-      if (!timeoutMs) {
-        // Try to load operator config for custom timeouts
-        const username = context.userId || context.username;
-        let graphConfig: { defaultNodeTimeout?: number; llmNodeTimeout?: number } | undefined;
+    if (!timeoutMs) {
+      // Try to load operator config for custom timeouts
+      const username = context.userId || context.username;
+      let graphConfig: { defaultNodeTimeout?: number; llmNodeTimeout?: number } | undefined;
 
-        if (username && username !== 'anonymous') {
-          try {
-            const opConfig = loadOperatorConfig(username);
-            graphConfig = (opConfig as any).graphExecutor;
-          } catch {
-            // Config not available, use defaults
-          }
-        }
-
-        // Use LLM timeout for LLM nodes, otherwise default timeout
-        if (LLM_NODE_TYPES.has(nodeType)) {
-          timeoutMs = graphConfig?.llmNodeTimeout || DEFAULT_LLM_TIMEOUT;
-        } else {
-          timeoutMs = graphConfig?.defaultNodeTimeout || DEFAULT_NODE_TIMEOUT;
+      if (username && username !== 'anonymous') {
+        try {
+          const opConfig = loadOperatorConfig(username);
+          graphConfig = (opConfig as any).graphExecutor;
+        } catch {
+          // Config not available, use defaults
         }
       }
 
-      const startTime = Date.now();
-
-      // Big Brother nodes and desire executor have no timeout - cloud LLM/research takes as long as needed
-      const neverTimeout = nodeType === 'claude_full_task' || nodeType === 'big_brother_executor' || nodeType === 'desire_executor';
-
-      if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, timeout: ${timeoutMs}ms`);
-
-      const controller = new AbortController();
-      const signal = context.abortSignal
-        ? AbortSignal.any([context.abortSignal, controller.signal])
-        : controller.signal;
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-      if (!neverTimeout && nodeDefinition?.execution.timeoutOwner !== 'children') {
-        timeoutHandle = setTimeout(() => {
-          controller.abort(new Error(`TIMEOUT: Node ${node.id} (${nodeType}) exceeded ${timeoutMs / 1000} second execution limit`));
-        }, timeoutMs);
+      // Use LLM timeout for LLM nodes, otherwise default timeout
+      if (LLM_NODE_TYPES.has(nodeType)) {
+        timeoutMs = graphConfig?.llmNodeTimeout || DEFAULT_LLM_TIMEOUT;
+      } else {
+        timeoutMs = graphConfig?.defaultNodeTimeout || DEFAULT_NODE_TIMEOUT;
       }
-      const execution = context.graphExecution as GraphNodeExecution | undefined;
-      const scopedContext = {
-        ...context, abortSignal: signal,
-        ...(execution ? { graphExecution: {
-          ...execution,
-          dispatch: (...args: Parameters<GraphNodeExecution['dispatch']>) => { signal.throwIfAborted(); return execution.dispatch(...args); },
-          recordTask: (...args: Parameters<GraphNodeExecution['recordTask']>) => { signal.throwIfAborted(); return execution.recordTask(...args); },
-          recordFrames: (...args: Parameters<GraphNodeExecution['recordFrames']>) => { signal.throwIfAborted(); return execution.recordFrames(...args); },
-          waitForEvent: (reason?: string) => { signal.throwIfAborted(); return execution.waitForEvent(reason); },
-          callGraph: (graph: SvelteFlowGraph, childContext: Record<string, any>) => {
-            signal.throwIfAborted();
-            return execution.callGraph(graph, { ...childContext, abortSignal: signal });
-          },
-        } } : {}),
-      };
-
-      let onAbort: () => void = () => {};
-      const cancelled = new Promise<never>((_, reject) => {
-        onAbort = () => reject(signal.reason ?? new DOMException('Node execution cancelled', 'AbortError'));
-        signal.addEventListener('abort', onAbort, { once: true });
-        if (signal.aborted) onAbort();
-      });
-      let result: unknown;
-      try {
-        signal.throwIfAborted();
-        result = await Promise.race([executor(inputs, scopedContext, effectiveProperties), cancelled]);
-        signal.throwIfAborted();
-      } finally {
-        signal.removeEventListener('abort', onAbort);
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-      }
-
-      const duration = Date.now() - startTime;
-      if (process.env.DEBUG_GRAPH) console.log(`[EXEC_END] Node ${node.id} (${nodeType}) completed in ${duration}ms`);
-
-      return result as Record<string, any>;
-    } catch (error) {
-      if (isGraphInterrupt(error)) throw error;
-      console.error(`[Node:${nodeType}] EXECUTION FAILED:`, error);
-      throw error;
     }
+
+    const startTime = Date.now();
+
+    // Big Brother nodes and desire executor have no timeout - cloud LLM/research takes as long as needed
+    const neverTimeout = nodeType === 'claude_full_task' || nodeType === 'big_brother_executor' || nodeType === 'desire_executor';
+
+    if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, timeout: ${timeoutMs}ms`);
+
+    const controller = new AbortController();
+    const signal = context.abortSignal
+      ? AbortSignal.any([context.abortSignal, controller.signal])
+      : controller.signal;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    if (!neverTimeout && nodeDefinition?.execution.timeoutOwner !== 'children') {
+      timeoutHandle = setTimeout(() => {
+        controller.abort(new Error(`TIMEOUT: Node ${node.id} (${nodeType}) exceeded ${timeoutMs / 1000} second execution limit`));
+      }, timeoutMs);
+    }
+    const execution = context.graphExecution as GraphNodeExecution | undefined;
+    const scopedContext = {
+      ...context, abortSignal: signal,
+      ...(execution ? { graphExecution: {
+        ...execution,
+        dispatch: (...args: Parameters<GraphNodeExecution['dispatch']>) => { signal.throwIfAborted(); return execution.dispatch(...args); },
+        recordTask: (...args: Parameters<GraphNodeExecution['recordTask']>) => { signal.throwIfAborted(); return execution.recordTask(...args); },
+        recordFrames: (...args: Parameters<GraphNodeExecution['recordFrames']>) => { signal.throwIfAborted(); return execution.recordFrames(...args); },
+        waitForEvent: (reason?: string) => { signal.throwIfAborted(); return execution.waitForEvent(reason); },
+        callGraph: (graph: SvelteFlowGraph, childContext: Record<string, any>) => {
+          signal.throwIfAborted();
+          return execution.callGraph(graph, { ...childContext, abortSignal: signal });
+        },
+      } } : {}),
+    };
+
+    let onAbort: () => void = () => {};
+    const cancelled = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason ?? new DOMException('Node execution cancelled', 'AbortError'));
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
+    let result: unknown;
+    try {
+      signal.throwIfAborted();
+      result = await Promise.race([executor(inputs, scopedContext, effectiveProperties), cancelled]);
+      signal.throwIfAborted();
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+
+    const duration = Date.now() - startTime;
+    if (process.env.DEBUG_GRAPH) console.log(`[EXEC_END] Node ${node.id} (${nodeType}) completed in ${duration}ms`);
+
+    return result as Record<string, any>;
   }
 
   throw new Error(`No executor registered for node type ${nodeType}`);
@@ -741,6 +737,7 @@ export async function executeGraph(
       queue: Annotation<string[]>(),
       counts: Annotation<Record<string, number>>(),
       nodeEntries: Annotation<Array<[string, NodeExecutionState]>>(),
+      modelFeedback: Annotation<Record<string, ModelOutputFeedback>>(),
       contextSnapshot: Annotation<Record<string, any>>(),
       executionTransition: Annotation<CheckpointTransition | undefined>(),
       startedAt: Annotation<number>(),
@@ -754,6 +751,7 @@ export async function executeGraph(
       }
       const executionQueue = [...schedule.queue];
       const executedCount = new Map(Object.entries(schedule.counts));
+      const modelFeedback = { ...schedule.modelFeedback };
       executionState.clear();
       schedule.nodeEntries.forEach(([id, state]) => executionState.set(id, state));
       let selected: { node: SvelteFlowGraph['nodes'][number]; inputs: Record<string, any> } | undefined;
@@ -813,7 +811,7 @@ export async function executeGraph(
             checkpointNamespace: durable.checkpointNamespace,
             config: runtimeConfig, invocationId: `${occurrenceId}:child:${childIndex++}`,
           });
-          if (child.status === 'failed') throw [...child.nodes.values()].find(node => node.error)?.error
+          if (child.status === 'failed') throw child.error ?? [...child.nodes.values()].find(node => node.error)?.error
             ?? new Error(`Child graph ${childGraph.name} failed`);
           return child;
         },
@@ -839,13 +837,41 @@ export async function executeGraph(
         abortSignal: signal,
         graphExecution: nodeExecution,
         _graphExecutorIteration: iterCount,
+        modelOutputFeedback: modelFeedback[nodeId],
         emitEvent: eventHandler
           ? (type: ExecutionEvent['type'], data: any) => eventHandler({ type, data, nodeId, timestamp: Date.now() })
           : undefined,
       };
 
       // Execute the node
-      await executeNode(nodeId, graph, executionState, inputs, nodeContext, eventHandler);
+      try {
+        await executeNode(nodeId, graph, executionState, inputs, nodeContext, eventHandler);
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (!(error instanceof NodeInputValidationError)) throw error;
+        const sources = graph.edges.filter(edge => edge.target === nodeId
+          && edge.targetHandle === error.input && isEdgeActive(edge, executionState));
+        const source = sources.length === 1 ? graph.nodes.find(node => node.id === sources[0].source) : undefined;
+        const output = source && getNode(source.data.nodeType)?.execution.modelOutput;
+        const response = source && output ? readOutputPath(executionState.get(source.id)?.outputs ?? {}, output).value : undefined;
+        // Regenerate only an explicitly declared model output that no other
+        // consumer has evaluated (including inactive branches). Never change a
+        // committed branch decision, rewind an effect, or replay a child.
+        const alreadyEvaluated = source && (graph.edges.some(edge => edge.source === source.id
+          && edge.target !== nodeId && executionState.has(edge.target))
+          || graph.nodes.some(node => node.id !== nodeId && executionState.has(node.id)
+            && node.data.activation?.when?.some(condition => condition.nodeId === source.id)));
+        if (!source || !output || sources[0].sourceHandle !== output || typeof response !== 'string'
+          || alreadyEvaluated || dispatches.length || taskUpdate || processedEventIds.length || frames.length || childIndex) throw error;
+        modelFeedback[source.id] = { response, error: error.message, consumerId: nodeId };
+        // The rejected answer remains in earlier immutable checkpoints. This
+        // checkpoint records the feedback and the next model occurrence together,
+        // so recovery cannot replay a parser against the same rejected answer.
+        return { queue: [source.id, nodeId, ...executionQueue], counts: Object.fromEntries(executedCount),
+          nodeEntries: [...executionState], modelFeedback,
+          executionTransition: durable ? { transitionId: `${occurrenceId}:validation-feedback` } : undefined };
+      }
+      delete modelFeedback[nodeId];
       signal?.throwIfAborted();
       const transition: CheckpointTransition | undefined = durable ? {
         transitionId: occurrenceId, dispatches, processedEventIds, frames, ...(taskUpdate ? { task: taskUpdate } : {}),
@@ -856,7 +882,7 @@ export async function executeGraph(
         && edge.data?.loop === true
       ));
       if (outgoingLoopEdges.length === 0) {
-        return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState], executionTransition: transition };
+        return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState], modelFeedback, executionTransition: transition };
       }
 
       const activeLoopEdges = outgoingLoopEdges.filter(edge => isEdgeActive(edge, executionState));
@@ -892,7 +918,7 @@ export async function executeGraph(
         executionQueue.length = 0;
         executionQueue.push(...scheduledQueue);
       }
-      return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState], executionTransition: transition };
+      return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState], modelFeedback, executionTransition: transition };
     }).addConditionalEdges(START, schedule => schedule.queue.length ? 'execute' : END)
       .addConditionalEdges('execute', schedule => schedule.queue.length ? 'execute' : END)
       .compile({ checkpointer: durable ? new ExecutionCheckpointer(durable.store, durable.lease, durable.afterCheckpoint, durable.checkpointNamespace) : undefined });
@@ -911,7 +937,7 @@ export async function executeGraph(
     let finished = previous?.tasks.some(task => task.interrupts?.length)
       ? previous.values as typeof Schedule.State
       : await program.invoke(durable?.resume || durable?.resumeEventId ? null : {
-      queue: executionOrder, counts: {}, nodeEntries: [], contextSnapshot: durable ? graphContextSnapshot(contextData) : {},
+      queue: executionOrder, counts: {}, nodeEntries: [], modelFeedback: {}, contextSnapshot: durable ? graphContextSnapshot(contextData) : {},
       startedAt: graphState.startTime, executionTransition: durable?.initialTransition,
     }, config);
     if (ownsInvocation) {
@@ -995,6 +1021,12 @@ export async function executeGraph(
     graphState.status = 'failed';
     graphState.endTime = Date.now();
     const duration = graphState.endTime - graphState.startTime;
+    const interrupted = (error as Error)?.name === 'AbortError';
+    // Child failures retain their original error through the call chain. Only
+    // the invoked root reports it to the terminal, and preemption is not a fault.
+    if ((!durable?.invocationId || durable.externalChild) && !interrupted) {
+      console.error(`[GraphExecutor] ${graph.name} failed at node ${graphState.currentNodeId ?? 'entry'}:`, error);
+    }
 
     // Write trace failure and publish to event bus
     writeGraphTrace({
@@ -1012,12 +1044,12 @@ export async function executeGraph(
       graphName: graph.name,
       error: (error as Error).message,
       durationMs: duration,
-    }, { requestId, sessionId, userId, level: 'error' });
+    }, { requestId, sessionId, userId, level: interrupted ? 'info' : 'error' });
 
     if (eventHandler) {
       eventHandler({
         type: 'graph_error',
-        data: { error: (error as Error).message },
+        data: { error: (error as Error).message, ...(interrupted ? { interrupted: true } : {}) },
         timestamp: Date.now(),
       });
     }

@@ -12,13 +12,10 @@ import {
   saveDesireReviewToFolder,
 } from './storage.js'
 
-const CYCLE_RESET_STRENGTH = 0.3
 const RETRY_STRENGTH_PENALTY = 0.1
 
 export type DesireOutcomeAction =
   | 'completed'
-  | 'recurring_reset'
-  | 'continued'
   | 'milestone_advanced'
   | 'retry'
   | 'archived'
@@ -173,57 +170,65 @@ export async function applyDesireOutcomeReview(
     )
   }
 
+  if (!review.userConfirmed && (review.planId !== desire.plan?.id || review.planVersion !== desire.plan?.version
+    || !review.executionStartedAt || review.executionStartedAt !== desire.execution?.startedAt)) {
+    throw new Error('Outcome review does not identify the current plan version and execution attempt')
+  }
+  if (desire.outcomeReview?.id === review.id) {
+    return { desire, review, action: desire.status === 'completed' ? 'completed' : 'escalated',
+      summary: `Desire ${desire.id}: this outcome review was already applied.` }
+  }
   const now = new Date().toISOString()
   let updated = baseReviewedDesire(desire, review, now)
   let action: DesireOutcomeAction
   let summary: string
 
-  if (review.isFixableBug) {
+  const completedSteps = desire.execution?.status === 'completed'
+    && desire.execution.planId === desire.plan?.id && desire.execution.planVersion === desire.plan?.version
+    && Boolean(desire.plan?.steps.length)
+    && desire.execution.stepResults?.length === desire.plan?.steps.length
+    && desire.execution.stepResults?.every((step, index) => step.stepOrder === desire.plan!.steps[index].order
+      && step.success && step.result != null)
+  if (desire.execution?.status === 'outcome_unknown' && !review.userConfirmed) {
+    action = 'escalated'
+    updated.status = 'needs_attention'
+    updated.currentStage = 'user_attention'
+    updated.dispositionReason = 'The external attempt has no recoverable result. Establish what happened before authorizing more work.'
+    summary = `Desire ${desire.id} stopped with an unknown execution outcome; owner review is required.`
+  } else if (review.isFixableBug) {
     action = 'escalated'
     updated.status = 'needs_attention'
     updated.currentStage = 'user_attention'
     updated.dispositionReason = review.userMessage?.trim() || review.reasoning
     summary = `Review of "${desire.title}" found a possible system defect. User review is required; no repair task was created.`
   } else if (review.verdict === 'completed') {
-    const metrics = updated.metrics || initializeDesireMetrics()
-    const completionCount = metrics.completionCount + 1
-    updated.metrics = {
-      ...metrics,
-      completionCount,
-    }
-
-    if (desire.goalType === 'recurring') {
-      action = 'recurring_reset'
-      updated = archiveCurrentDesireCycle(updated)
-      updated.status = 'nascent'
-      updated.currentStage = 'nascent'
-      updated.strength = CYCLE_RESET_STRENGTH
-      updated.runCount = 0
-      updated.metrics = {
-        ...updated.metrics!,
-        cycleCount: updated.metrics!.cycleCount + 1,
-        currentCycle: updated.metrics!.currentCycle + 1,
-      }
-      summary = `Completed a cycle of "${desire.title}" and reset the existing desire for its next cycle.`
-    } else if (desire.goalType === 'long_running' && !review.completionCriteriaMet) {
-      action = review.milestoneAdvance ? 'milestone_advanced' : 'continued'
-      updated = review.milestoneAdvance
-        ? advanceMilestone(archiveCurrentDesireCycle(updated), now)
-        : archiveCurrentDesireCycle(updated)
-      updated.status = 'planning'
-      updated.currentStage = 'planning'
-      updated.strength = review.adjustedStrength ?? desire.strength
-      summary = review.milestoneAdvance
-        ? `Reviewed "${desire.title}", advanced its milestone, and returned it to planning.`
-        : `Reviewed "${desire.title}" as incomplete against its completion criteria and returned it to planning.`
+    const verified = review.completionCriteriaMet === true
+      && Boolean(desire.plan?.completionCriteria?.trim())
+      && (review.userConfirmed === true || completedSteps)
+    if (!verified) {
+      action = 'escalated'
+      updated.status = 'needs_attention'
+      updated.currentStage = 'user_attention'
+      updated.dispositionReason = 'Completion was claimed without evidence satisfying the approved plan criteria.'
+      summary = `Desire ${desire.id} is awaiting review of its missing completion evidence.`
     } else {
       action = 'completed'
       updated.status = 'completed'
       updated.currentStage = 'complete'
       updated.completedAt = now
-      summary = `Reviewed "${desire.title}" as completed.`
+      updated.metrics = { ...updated.metrics, completionCount: updated.metrics.completionCount + 1 }
+      summary = `Verified completion of "${desire.title}". Any new cycle requires fresh evidence and a newly reviewed plan.`
     }
-  } else if (review.verdict === 'retry') {
+  } else if (review.verdict === 'continue' && desire.goalType === 'long_running'
+    && review.milestoneAdvance && review.completionCriteriaMet !== true
+    && completedSteps
+    && desire.goalProgress && desire.milestones?.[desire.goalProgress.currentMilestone + 1]) {
+    action = 'milestone_advanced'
+    updated = advanceMilestone(archiveCurrentDesireCycle(updated), now)
+    updated.status = 'planning'
+    updated.currentStage = 'planning'
+    summary = `Verified progress of desire ${desire.id}; the next milestone requires a new plan and review.`
+  } else if (review.verdict === 'retry' || review.verdict === 'continue') {
     const config = await deps.loadConfig(username)
     const maxRetries = config.execution?.maxPlanRetries
     if (!Number.isInteger(maxRetries) || Number(maxRetries) < 0) {
@@ -255,23 +260,6 @@ export async function applyDesireOutcomeReview(
         lastActivityAt: now,
       }
       summary = `Review of "${desire.title}" requested a new plan using the recorded lessons.`
-    }
-  } else if (review.verdict === 'continue') {
-    if (desire.goalType === 'long_running'
-      && review.milestoneAdvance
-      && !review.completionCriteriaMet) {
-      action = 'milestone_advanced'
-      updated = advanceMilestone(archiveCurrentDesireCycle(updated), now)
-      updated.status = 'planning'
-      updated.currentStage = 'planning'
-      summary = `Reviewed "${desire.title}", advanced its existing milestone progress, and returned it to planning.`
-    } else {
-      action = 'continued'
-      updated = archiveCurrentDesireCycle(updated)
-      updated.status = 'planning'
-      updated.currentStage = 'planning'
-      updated.strength = review.adjustedStrength ?? desire.strength
-      summary = `Review of "${desire.title}" returned the existing desire to planning for continued pursuit.`
     }
   } else if (review.verdict === 'abandon') {
     action = 'archived'

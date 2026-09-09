@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 # Treat the script directory as the MetaHuman repository root.
 SERVER_ENTRY="$REPO_ROOT/apps/site/dist/server/entry.mjs"
+RUNTIME_CHECK="$REPO_ROOT/apps/site/dist/server/check-runtime.mjs"
 # Point to the prebuilt Astro/Node production server entrypoint.
 NODE_VERSION_FILE="$REPO_ROOT/.nvmrc"
 # Pin the supported Node.js line for interactive and desktop launches.
@@ -260,6 +261,15 @@ acquire_start_lock() {
   START_LOCK_HELD=true
 }
 
+verify_site_runtime() {
+  if [ ! -f "$SERVER_ENTRY" ] || [ ! -f "$RUNTIME_CHECK" ]; then
+    print_error "A verified production server build is required"
+    echo "Run: pnpm --dir apps/site build"
+    return 1
+  fi
+  node "$RUNTIME_CHECK" "$REPO_ROOT"
+}
+
 kill_pids() {
   local pids="$1"
   local signal="${2:-TERM}"
@@ -451,13 +461,6 @@ if ! command_exists pnpm; then
   exit 1
 fi
 
-if [ ! -f "$SERVER_ENTRY" ]; then
-  # Do not build during startup; fail fast when the server bundle is absent.
-  print_error "Production server bundle is missing"
-  echo "Run: pnpm --dir apps/site build"
-  exit 1
-fi
-
 mkdir -p "$LOG_DIR" "$RUN_LOG_DIR"
 # Ensure log folders exist before background launchers or cleanup write logs.
 
@@ -470,6 +473,9 @@ fi
 
 acquire_start_lock
 # Refuse overlapping launcher instances before starting background services.
+
+verify_site_runtime
+# The compiled validator and source workers must agree before either starts.
 
 if command_exists lsof && lsof -n -i ":$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   # Refuse to start if another process already owns the web port.

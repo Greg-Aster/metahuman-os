@@ -102,6 +102,16 @@ const graphCache: Record<string, CachedGraphEntry | null> = {};
 const MAX_USER_REQUESTS = 20;
 const MAX_USER_REQUEST_CHARS = 1_000;
 
+/** Equivalent outcomes share one intention even when their titles differ. */
+export function selectUniqueDesireCandidates(candidates: DesireCandidate[], existing: DesireSummary[]): DesireCandidate[] {
+  const seen = new Set(existing.map(desire => desire.outcomeKey).filter(Boolean))
+  return candidates.filter(candidate => {
+    if (seen.has(candidate.outcomeKey)) return false
+    seen.add(candidate.outcomeKey)
+    return true
+  })
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -594,6 +604,8 @@ async function loadExistingDesires(): Promise<{
       source: d.source,
       status: d.status,
       strength: d.strength,
+      outcomeKey: d.outcomeKey,
+      completionCriteria: d.completionCriteria,
     }));
 
     const rejectedSummaries: DesireSummary[] = rejected.slice(0, 20).map(d => ({
@@ -602,6 +614,8 @@ async function loadExistingDesires(): Promise<{
       source: d.source,
       status: d.status,
       strength: d.strength,
+      outcomeKey: d.outcomeKey,
+      completionCriteria: d.completionCriteria,
     }));
 
     return { active: activeSummaries, rejected: rejectedSummaries };
@@ -741,28 +755,6 @@ export async function identifyDesires(
   }
 }
 
-/**
- * Check if a candidate is too similar to existing desires
- */
-function isDuplicate(candidate: DesireCandidate, existing: DesireSummary[]): boolean {
-  const candidateTitle = candidate.title.toLowerCase();
-
-  for (const desire of existing) {
-    const existingTitle = desire.title.toLowerCase();
-
-    // Simple similarity check - could be enhanced with embeddings
-    if (
-      candidateTitle === existingTitle ||
-      candidateTitle.includes(existingTitle) ||
-      existingTitle.includes(candidateTitle)
-    ) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 // ============================================================================
 // Desire Nurturing System (Run-Based)
 // ============================================================================
@@ -868,11 +860,13 @@ function reinforcementEvidenceFingerprint(decision: DesireReinforcementDecision)
  * Load the only Desire states governed by reinforcement and decay.
  */
 async function loadNurturableDesires(username: string): Promise<Desire[]> {
-  const [nascentDesires, pendingDesires] = await Promise.all([
+  const [nascentDesires, pendingDesires, questioningDesires, attentionDesires] = await Promise.all([
     listNascentDesires(username),
     listPendingDesires(username),
+    listDesiresByStatus('questioning', username),
+    listDesiresByStatus('needs_attention', username),
   ])
-  return [...nascentDesires, ...pendingDesires]
+  return [...nascentDesires, ...pendingDesires, ...questioningDesires, ...attentionDesires]
 }
 
 function projectedArchiveCount(
@@ -976,6 +970,7 @@ async function applyNurtureDecisions(
       // it represents a genuine, persistent want that should become a goal.
       // =========================================================================
       if (
+        isDesireActivationEligible(updated) &&
         newStrength >= GOAL_PROPOSAL_THRESHOLDS.minStrength &&
         updated.reinforcements >= GOAL_PROPOSAL_THRESHOLDS.minReinforcements
       ) {
@@ -1164,95 +1159,9 @@ function countEvidenceBySource(inputs: DesireGeneratorInputs): Record<string, nu
   }
 }
 
-function reportText(value: string, maxLength = 360): string {
-  const compact = value.replace(/\s+/g, ' ').trim()
-  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength - 1)}…`
-}
-
-function reportStrength(value: number): string {
-  return value.toFixed(4)
-}
-
+/** Keep the operational report in audit data; narrative receives only bounded lifecycle facts. */
 export function formatAgencyReview(report: AgencyReviewReport): string {
-  const lines = [
-    '💭 Agency Review',
-    '',
-    `Reviewed ${report.freshEvidenceCount} new evidence item(s) at ${report.reviewedAt}.`,
-  ]
-  const evidenceCounts = Object.entries(report.evidenceBySource)
-    .filter(([, count]) => count > 0)
-    .map(([source, count]) => `${count} ${source}`)
-  lines.push(evidenceCounts.length > 0
-    ? `Evidence: ${evidenceCounts.join(', ')}.`
-    : 'Evidence: none; no previously analyzed input was reconsidered.')
-
-  lines.push('', `Model calls (${report.modelCalls.length}):`)
-  if (report.modelCalls.length === 0) {
-    lines.push('• None.')
-  } else {
-    for (const call of report.modelCalls) {
-      const duration = call.latencyMs === undefined ? '' : `, ${(call.latencyMs / 1_000).toFixed(2)}s`
-      const tokens = call.tokens ? `, ${call.tokens.total} tokens` : ''
-      lines.push(`• ${call.operation === 'reinforce' ? 'Reinforcement review' : 'New-desire review'}: ${call.provider}/${call.model} (${call.cognitiveMode ?? 'default'} routing, ${call.role} role${duration}${tokens}).`)
-    }
-  }
-
-  lines.push('', `Reinforced desires (${report.reinforced.length}):`)
-  if (report.reinforced.length === 0) {
-    lines.push('• None.')
-  } else {
-    for (const change of report.reinforced) {
-      lines.push(`• ${change.title} [${change.desireId}]: ${reportStrength(change.previousStrength)} → ${reportStrength(change.newStrength)} (+${reportStrength(change.change)}).`)
-      lines.push(`  Reason: ${reportText(change.reason)}`)
-      for (const evidence of change.evidence ?? []) {
-        lines.push(`  Evidence (${evidence.source}:${evidence.sourceId}): ${reportText(evidence.summary)}`)
-      }
-    }
-  }
-
-  lines.push('', `Elapsed-time decay (${report.decayed.length}):`)
-  if (report.decayed.length === 0) {
-    lines.push('• None.')
-  } else {
-    for (const change of report.decayed) {
-      lines.push(`• ${change.title} [${change.desireId}]: ${reportStrength(change.previousStrength)} → ${reportStrength(change.newStrength)} (${reportStrength(change.change)}); no fresh reinforcing evidence.`)
-    }
-  }
-
-  lines.push('', `Archived after decay (${report.archived.length}):`)
-  if (report.archived.length === 0) {
-    lines.push('• None.')
-  } else {
-    for (const change of report.archived) {
-      lines.push(`• ${change.title} [${change.desireId}]: ${reportStrength(change.previousStrength)} → ${reportStrength(change.newStrength)}; reached the archive threshold.`)
-    }
-  }
-
-  lines.push('', `New desires created (${report.created.length}):`)
-  if (report.created.length === 0) {
-    lines.push('• None.')
-  } else {
-    for (const desire of report.created) {
-      lines.push(`• ${desire.title} [${desire.desireId}]: strength ${reportStrength(desire.strength)}, status ${desire.status}, source ${desire.source}:${desire.sourceId ?? 'unknown'}.`)
-      lines.push(`  Reason: ${reportText(desire.reason)}`)
-    }
-  }
-
-  lines.push(
-    '',
-    `Lifecycle results: ${report.activated.length} activated; ${report.goalsProposed.length} goal proposal(s); ${report.candidatesRejectedAsDuplicates} candidate(s) rejected as duplicates; ${report.candidatesBlockedByCapacity} candidate(s) blocked by capacity.`,
-  )
-  for (const desire of report.activated) {
-    lines.push(`• Activated ${desire.title} [${desire.desireId}]: effective strength ${reportStrength(desire.effectiveStrength)} crossed threshold ${reportStrength(desire.threshold)}.`)
-  }
-  for (const proposal of report.goalsProposed) {
-    lines.push(`• Proposed goal ${proposal.goalId} from ${proposal.title} [${proposal.desireId}].`)
-  }
-  if (report.generationSkippedReason) {
-    lines.push(`New-desire generation skipped: ${report.generationSkippedReason}.`)
-  }
-
-  return lines.join('\n')
+  return `Desire Agent reviewed ${report.freshEvidenceCount} new evidence items: ${report.created.length} new, ${report.reinforced.length} reinforced, ${report.activated.length} ready for planning, ${report.archived.length} archived. Pending work is tracked by Agency; only an approved plan may execute.`
 }
 
 // ============================================================================
@@ -1310,8 +1219,9 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
     listActiveDesires(username),
   ])
   const hasFreshEvidence = inputEvidenceTokens(inputs).length > 0
-  const reinforcementDecision = nurturableDesires.length > 0 && hasFreshEvidence
-    ? await identifyReinforcedDesires(nurturableDesires, inputs, signal)
+  const desiresToReinforce = nurturableDesires.filter(desire => ['nascent', 'pending'].includes(desire.status))
+  const reinforcementDecision = desiresToReinforce.length > 0 && hasFreshEvidence
+    ? await identifyReinforcedDesires(desiresToReinforce, inputs, signal)
     : { reinforcements: new Map<string, DesireReinforcementDecision>(), modelCall: null }
   const reinforcements = reinforcementDecision.reinforcements
 
@@ -1356,10 +1266,10 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
   const existingSummaries = [
     ...inputs.activeDesires,
     ...inputs.recentlyRejected,
-    ...updatedNascent.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength })),
-    ...updatedPending.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength })),
+    ...updatedNascent.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength, outcomeKey: d.outcomeKey, completionCriteria: d.completionCriteria })),
+    ...updatedPending.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength, outcomeKey: d.outcomeKey, completionCriteria: d.completionCriteria })),
   ];
-  const uniqueCandidates = candidates.filter(c => !isDuplicate(c, existingSummaries))
+  const uniqueCandidates = selectUniqueDesireCandidates(candidates, existingSummaries)
   const availableSlots = Math.max(0, maxOpenDesires - updatedTotal)
   const candidatesToCreate = uniqueCandidates.slice(0, availableSlots)
   if (candidates.length > 0) {
@@ -1377,6 +1287,10 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
       summary: candidate.reason,
       observedAt: cycleNow,
     });
+    desire.evidence = candidates.filter(item => item.outcomeKey === candidate.outcomeKey)
+      .map(item => ({ id: `${item.source}:${item.sourceId}`, kind: 'origin' as const,
+        source: item.source, sourceId: item.sourceId, summary: item.reason, observedAt: cycleNow }))
+      .filter((item, index, evidence) => evidence.findIndex(other => other.id === item.id) === index)
     if (desire.status === 'pending') {
       if (hasDesireActivationCapacity(updatedActive.length + newlyActive, config)) {
         newlyActive++;
@@ -1445,6 +1359,7 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
       candidatesBlockedByCapacity: uniqueCandidates.length - candidatesToCreate.length,
       generationSkippedReason,
     }
+    audit({ category: 'agent', level: 'info', event: 'agency_review', actor: 'desire-agent', details: { username, ...agencyReview } })
     const innerDialogue = formatAgencyReview(agencyReview)
 
     // The admission graph owns both the rolling buffer entry and its matching
@@ -1455,7 +1370,6 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
       type: 'desire_generation',
       tags: ['agency', 'desire-generation', 'inner'],
       agency: true,
-      agencyReview,
       desiresGenerated: created.length,
       desiresReinforced: nurtureResult.reinforced.length,
       desiresDecayed: nurtureResult.decayed.length,

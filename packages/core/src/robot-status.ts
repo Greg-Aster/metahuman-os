@@ -2,19 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getProfilePaths } from './paths.js'
 import { openExecutionStore } from './durable-execution/storage.js'
+import type { ExecutionStatus } from './durable-execution/types.js'
+import { projectDesireAwareness, type DesireAwareness } from './agency/lifecycle-policy.js'
 
 const ROBOT_STATUS_FILE = 'robot-status.json'
 const ROBOT_STATUS_HISTORY_LIMIT = 8
 
-export interface RobotStatusDesireSummary {
-  id: string
-  title: string
-  description: string
-  reason: string
-  status: string
-  strength: number
-  updatedAt: string
-}
+export type RobotStatusDesireSummary = DesireAwareness
 
 export interface RobotStatusAction {
   actionId: string
@@ -98,6 +92,8 @@ export interface RobotStatusTaskFrame {
 export interface RobotStatusTask {
   objectiveId?: string
   executionId?: string
+  /** Populated by the status projection; the execution record owns this state. */
+  executionStatus?: ExecutionStatus
   completionCriteria?: string
   objective: string
   instruction: string
@@ -183,12 +179,6 @@ function cleanText(value: unknown, maxLength: number): string {
   return typeof value === 'string'
     ? value.replace(/\s+/g, ' ').trim().slice(0, maxLength)
     : ''
-}
-
-function finiteStrength(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value)
-    ? Math.max(0, Math.min(1, value))
-    : 0
 }
 
 function boundedRecord(value: unknown): Record<string, unknown> {
@@ -335,6 +325,7 @@ function normalizeTask(value: unknown): RobotStatusTask | null {
   return {
     ...(typeof value.objectiveId === 'string' ? { objectiveId: value.objectiveId } : {}),
     ...(typeof value.executionId === 'string' ? { executionId: value.executionId } : {}),
+    ...(typeof value.executionStatus === 'string' ? { executionStatus: value.executionStatus as ExecutionStatus } : {}),
     ...(typeof value.completionCriteria === 'string' ? { completionCriteria: value.completionCriteria } : {}),
     objective,
     instruction: cleanText(value.instruction, 4_000),
@@ -347,24 +338,6 @@ function normalizeTask(value: unknown): RobotStatusTask | null {
     baselineFrame: normalizeTaskFrame(value.baselineFrame),
     updatedAt: cleanText(value.updatedAt, 80),
   }
-}
-
-function normalizeDesires(value: unknown): RobotStatusDesireSummary[] {
-  if (!Array.isArray(value)) return []
-  return value.filter(isRecord).slice(0, 5).flatMap(item => {
-    const id = cleanText(item.id, 160)
-    const title = cleanText(item.title, 200)
-    if (!id || !title) return []
-    return [{
-      id,
-      title,
-      description: cleanText(item.description, 500),
-      reason: cleanText(item.reason, 500),
-      status: cleanText(item.status, 80),
-      strength: finiteStrength(item.strength),
-      updatedAt: cleanText(item.updatedAt, 80),
-    }]
-  })
 }
 
 export function parseRobotStatusSituation(value: unknown, allowEmpty = false): RobotStatusSituation {
@@ -419,9 +392,14 @@ export function loadRobotStatus(username: string): RobotStatusSnapshot | null {
   const store = openExecutionStore(username)
   try {
     const task = normalizeTask(store.projectedTask(username))
-    const ongoing = task && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete'].includes(task.decision.outcome)
-    return { ...parsed, task, situation: { ...parsed.situation, currentGoal: ongoing ? task.objective : '' } }
+    return { ...parsed, agency: { activeDesires: projectDesireAwareness(parsed.agency?.activeDesires) }, task, situation: { ...parsed.situation, currentGoal: currentGoal(task) } }
   } finally { store.close() }
+}
+
+function currentGoal(task: RobotStatusTask | null): string {
+  const active = task && (task.executionStatus === undefined || ['running', 'waiting'].includes(task.executionStatus))
+    && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete'].includes(task.decision.outcome)
+  return active ? task.objective : ''
 }
 
 function previousHistoryEntry(snapshot: RobotStatusSnapshot): RobotStatusHistoryEntry {
@@ -441,7 +419,6 @@ export function buildRobotStatusProjection(
   sources: RobotStatusSourceFacts,
 ): RobotStatusSnapshot {
   const task = normalizeTask(currentTask)
-  const ongoing = task && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete'].includes(task.decision.outcome)
   const now = sources.generatedAt ?? new Date().toISOString()
   const history = previous
     ? [...previous.history, previousHistoryEntry(previous)].slice(-ROBOT_STATUS_HISTORY_LIMIT)
@@ -462,8 +439,8 @@ export function buildRobotStatusProjection(
     body,
     lastAction: retainLastAction ? previous.lastAction : normalizeAction(sources.lastAction),
     task,
-    agency: { activeDesires: normalizeDesires(sources.activeDesires) },
-    situation: parseRobotStatusSituation({ ...situation, currentGoal: ongoing ? task.objective : '' }, true),
+    agency: { activeDesires: projectDesireAwareness(sources.activeDesires) },
+    situation: parseRobotStatusSituation({ ...situation, currentGoal: currentGoal(task) }, true),
     history,
   }
   return snapshot

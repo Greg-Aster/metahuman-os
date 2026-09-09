@@ -2740,7 +2740,6 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'needsVision', type: 'boolean', description: 'Whether fresh correlated visual evidence is needed' },
       { name: 'needsRobotStatus', type: 'boolean', description: 'Whether downstream reasoning needs the current Robot Status snapshot' },
       { name: 'needsAction', type: 'boolean', description: 'Whether an action or skill is needed' },
-      { name: 'needsTaskLifecycle', type: 'boolean', description: 'Whether this turn creates, advances, completes, or otherwise changes a durable objective' },
       { name: 'actionType', type: 'string', description: 'LLM-interpreted action type' },
       { name: 'actionParams', type: 'object', description: 'Parameters for the action' },
       { name: 'complexity', type: 'number', description: 'Task complexity 0-1' },

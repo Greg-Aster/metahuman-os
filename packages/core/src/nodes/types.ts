@@ -163,6 +163,22 @@ export interface NodeExecutionPolicy {
   requiredInputs: string[];
   /** Child workflows enforce their own node deadlines; cancellation still propagates. */
   timeoutOwner?: 'node' | 'children';
+  /** Pure model output that can be regenerated after downstream validation feedback. */
+  modelOutput?: string;
+}
+
+/** A consumer rejected one input's content, not execution or transport itself. */
+export class NodeInputValidationError extends Error {
+  constructor(readonly input: string, message: string) {
+    super(message);
+    this.name = 'NodeInputValidationError';
+  }
+}
+
+export interface ModelOutputFeedback {
+  response: string;
+  error: string;
+  consumerId: string;
 }
 
 // ============================================================================
@@ -192,6 +208,8 @@ export interface NodeExecutionContext {
   emitProgress?: (event: ProgressEvent) => void;
   /** Emit arbitrary events to the graph executor (for streaming to client) */
   emitEvent?: (type: string, data: any) => void;
+  /** Persisted consumer feedback for this model occurrence, absent on normal calls. */
+  modelOutputFeedback?: ModelOutputFeedback;
   [key: string]: any;
 }
 
@@ -389,6 +407,7 @@ export function defineNode(
         ?? (requiredInputs.length > 0 ? 'required-inputs' : 'any-input'),
       requiredInputs,
       ...(definition.execution?.timeoutOwner ? { timeoutOwner: definition.execution.timeoutOwner } : {}),
+      ...(definition.execution?.modelOutput ? { modelOutput: definition.execution.modelOutput } : {}),
     },
   };
 }

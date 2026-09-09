@@ -150,7 +150,7 @@ function statusTask(
   // optional model decision about the objective itself.
   if (!decision && (!previousTask || (!dispatchedId && terminal?.actionId !== previousTask.actionId))) return undefined
   const userInstruction = cleanText(inputs.userInstruction, 4_000)
-  const objective = decision ? cleanText(decision.objective, 1_000) : previousTask!.objective
+  const objective = previousTask?.desireId ? previousTask.objective : decision ? cleanText(decision.objective, 1_000) : previousTask!.objective
   if (!objective) return undefined
   const suppliedInstruction = cleanText(inputs.instruction, 4_000) || userInstruction
   const newUserTurn = !previousTask
@@ -163,7 +163,8 @@ function statusTask(
   return {
     objectiveId: previousTask?.objectiveId ?? randomUUID(),
     executionId,
-    completionCriteria: cleanText(decision?.completionCriteria, 2_000) || previousTask?.completionCriteria || objective,
+    ...(previousTask?.desireId ? { desireId: previousTask.desireId, desirePlanId: previousTask.desirePlanId, desirePlanVersion: previousTask.desirePlanVersion, desireStepOrder: previousTask.desireStepOrder } : {}),
+    completionCriteria: previousTask?.desireId ? previousTask.completionCriteria : cleanText(decision?.completionCriteria, 2_000) || previousTask?.completionCriteria || objective,
     objective,
     instruction: instruction || objective,
     source: previousTask?.source || (inputs.inputSource === 'autonomy' ? 'autonomy' : 'user'),

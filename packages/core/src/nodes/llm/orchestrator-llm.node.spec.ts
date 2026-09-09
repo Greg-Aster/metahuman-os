@@ -6,13 +6,7 @@ import {
   resolveOrchestratorActionRequirement,
 } from './orchestrator-llm.node.js';
 
-test('Environment intent routing gives the LLM an independent task-lifecycle decision', () => {
-  assert.equal(ENVIRONMENT_INTENT_JSON_SCHEMA.required.includes('needsTaskLifecycle'), true);
-  assert.equal(
-    ENVIRONMENT_INTENT_JSON_SCHEMA.properties.needsTaskLifecycle.type,
-    'boolean',
-  );
-
+test('Environment intent selects context and routes without owning the later objective decision', () => {
   const routing = parseEnvironmentIntentRouting(JSON.stringify({
     needsResponse: true,
     needsConversationHistory: true,
@@ -21,9 +15,10 @@ test('Environment intent routing gives the LLM an independent task-lifecycle dec
     needsEnvironment: true,
     needsVision: true,
     needsAction: true,
-    needsTaskLifecycle: true,
   }));
-  assert.equal(routing.needsTaskLifecycle, true);
+  assert.equal(routing.needsAction, true);
+  assert.deepEqual(ENVIRONMENT_INTENT_JSON_SCHEMA.required, Object.keys(routing));
+  assert.equal('needsTaskLifecycle' in ENVIRONMENT_INTENT_JSON_SCHEMA.properties, false);
 });
 
 test('Environment complexity never changes the advisory action hint', () => {

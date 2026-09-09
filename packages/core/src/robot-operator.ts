@@ -86,7 +86,7 @@ export interface RobotOperatorRuntimeState {
   serviceId: 'robot-operator'
   updatedAt: string
   mode: AutonomyMode
-  lifecycle: 'starting' | 'armed' | 'dormant' | 'admitting' | 'stopped'
+  lifecycle: 'starting' | 'armed' | 'dormant' | 'admitting' | 'failed' | 'stopped'
   reason: string
   children: Record<RobotOperatorStimulusAgent, RobotOperatorChildRuntimeState>
 }

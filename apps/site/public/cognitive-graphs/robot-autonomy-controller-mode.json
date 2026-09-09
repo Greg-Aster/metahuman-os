@@ -895,7 +895,7 @@
     {
       "id": "contextual-remaining-objective-hasActiveTask-review-remaining-objective-control",
       "source": "remaining-objective",
-      "sourceHandle": "hasActiveTask",
+      "sourceHandle": "needsGoalReview",
       "target": "review-remaining-objective",
       "targetHandle": "control",
       "type": "default",
@@ -903,7 +903,7 @@
         "type": "boolean",
         "kind": "control",
         "when": {
-          "output": "hasActiveTask",
+          "output": "needsGoalReview",
           "truthy": true
         }
       }

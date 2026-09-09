@@ -16,7 +16,8 @@ const { eventBus } = await import('./infrastructure/event-bus/client.js')
 eventBus.disconnect()
 const { executeGraph } = await import('./graph-executor.js')
 const { nodeExecutors, nodeRegistry } = await import('./nodes/index.js')
-const { defineNode } = await import('./nodes/types.js')
+const { defineNode, NodeInputValidationError } = await import('./nodes/types.js')
+const { ExecutionCheckpointer } = await import('./durable-execution/checkpointer.js')
 const { ExecutionStore } = await import('./durable-execution/store.js')
 const { executionDefinition } = await import('./durable-execution/graph-contract.js')
 const { runGraph } = await import('./graph-runtime.js')
@@ -265,6 +266,109 @@ test('the canonical executor resumes saved nodes with their persisted properties
     store.release(lease)
     store.close()
   })
+})
+
+test('model correction survives both feedback and corrected-output checkpoints without replaying committed effects', async () => {
+  for (const crashAt of ['feedback', 'corrected-output']) {
+    let modelCalls = 0
+    let preparations = 0
+    let stopped = false
+    const prepare = testNode('test_correction_prepare', [], [{ name: 'request', type: 'string' }], async (_inputs, context) => {
+      preparations++
+      context.graphExecution.dispatch({ kind: 'test-effect', payload: {}, actionId: 'prior-effect' })
+      return { request: context.userMessage }
+    })
+    const model = defineNode({
+      id: 'test_correction_model', name: 'Correction model', category: 'model', description: 'Pure inference fixture',
+      execution: { modelOutput: 'response' },
+      inputs: [{ name: 'request', type: 'string' }], outputs: [{ name: 'response', type: 'llm_response' }],
+      async execute(inputs, context) {
+        modelCalls++
+        assert.equal(inputs.request, 'Original objective and complete success criteria')
+        if (modelCalls === 1) return { response: 'invalid' }
+        assert.deepEqual(context.modelOutputFeedback, { response: 'invalid', error: 'Expected an action object', consumerId: 'validate' })
+        return { response: '{"action":"chosen"}' }
+      },
+    })
+    const validate = testNode('test_correction_validate', [{ name: 'response', type: 'string' }], [{ name: 'action', type: 'string' }], async inputs => {
+      if (inputs.response === 'invalid') throw new NodeInputValidationError('response', 'Expected an action object')
+      return JSON.parse(inputs.response)
+    })
+    const effect = testNode('test_correction_effect', [{ name: 'action', type: 'string' }], [], async (inputs, context) => {
+      context.graphExecution.dispatch({ kind: 'test-effect', payload: inputs, actionId: 'chosen-effect' })
+      return {}
+    })
+    await withTestNodes([prepare, model, validate, effect], async () => {
+      const workflow = graph([
+        { id: 'prepare', nodeType: prepare.id }, { id: 'model', nodeType: model.id },
+        { id: 'validate', nodeType: validate.id }, { id: 'effect', nodeType: effect.id },
+      ], [
+        { id: 'request', source: 'prepare', sourceHandle: 'request', target: 'model', targetHandle: 'request' },
+        { id: 'response', source: 'model', sourceHandle: 'response', target: 'validate', targetHandle: 'response' },
+        { id: 'action', source: 'validate', sourceHandle: 'action', target: 'effect', targetHandle: 'action' },
+      ])
+      const filename = path.join(isolatedRoot, `correction-${crashAt}.sqlite`)
+      let store = new ExecutionStore(filename)
+      const definition = executionDefinition(workflow)
+      const execution = store.create('test-user', definition)
+      let lease = store.claim(execution.executionId, definition)
+      const first = await executeGraph(workflow, { userMessage: 'Original objective and complete success criteria' }, undefined, undefined, {
+        store, lease, afterCheckpoint: async () => {
+          const saved = await new ExecutionCheckpointer(store, lease).getTuple({ configurable: { thread_id: execution.executionId } })
+          const values = saved?.checkpoint.channel_values
+          const nodes = new Map(values?.nodeEntries as any)
+          const reached = crashAt === 'feedback' ? Boolean((values?.modelFeedback as any)?.model)
+            : (nodes.get('model') as any)?.outputs?.response === '{"action":"chosen"}'
+          if (reached && !stopped) { stopped = true; throw new Error('Process interrupted at committed correction boundary') }
+        },
+      })
+      assert.equal(first.status, 'failed')
+      assert.match(first.error!.message, /committed correction boundary/)
+      assert.equal(store.pendingDispatches().length, 1, 'Rejected output cannot dispatch an action')
+      store.release(lease)
+      store.close()
+
+      store = new ExecutionStore(filename)
+      lease = store.claim(execution.executionId, definition)
+      try {
+        const resumed = await executeGraph(workflow, { userMessage: 'Unrelated restart input' }, undefined, undefined, { store, lease, resume: true })
+        assert.equal(resumed.status, 'completed', resumed.error?.stack)
+        assert.equal(preparations, 1)
+        assert.equal(modelCalls, 2, 'Only rejected inference is repeated; committed corrected output is reused')
+        assert.deepEqual(store.pendingDispatches().map(item => item.actionId).sort(), ['chosen-effect', 'prior-effect'])
+      } finally { store.release(lease); store.close() }
+    })
+  }
+})
+
+test('output correction cannot replace a decision already evaluated by another branch', async () => {
+  for (const selected of [false, true]) {
+    let calls = 0
+    let effects = 0
+    const model = defineNode({
+      id: 'test_shared_model', name: 'Shared model', category: 'model', description: 'Pure inference fixture',
+      execution: { modelOutput: 'response' }, inputs: [], outputs: [{ name: 'response', type: 'string' }],
+      async execute() { return { response: ++calls === 1 ? 'invalid' : 'valid' } },
+    })
+    const sibling = testNode('test_shared_effect', [{ name: 'response', type: 'string' }], [], async () => { effects++; return {} })
+    const validate = testNode('test_shared_validation', [{ name: 'response', type: 'string' }], [], async inputs => {
+      if (inputs.response !== 'valid') throw new NodeInputValidationError('response', 'Expected valid output')
+      return {}
+    })
+    await withTestNodes([model, sibling, validate], async () => {
+      const result = await executeGraph(graph([
+        { id: 'model', nodeType: model.id }, { id: 'sibling', nodeType: sibling.id }, { id: 'validate', nodeType: validate.id },
+      ], [
+        { id: 'sibling', source: 'model', sourceHandle: 'response', target: 'sibling', targetHandle: 'response',
+          data: { when: { output: 'response', equals: selected ? 'invalid' : 'valid' } } },
+        { id: 'validation', source: 'model', sourceHandle: 'response', target: 'validate', targetHandle: 'response' },
+      ]), {})
+      assert.equal(result.status, 'failed', 'The graph cannot claim completion with contradictory branch decisions')
+      assert.ok(result.error instanceof NodeInputValidationError)
+      assert.equal(calls, 1, 'An output already consumed or skipped elsewhere cannot be replaced')
+      assert.equal(effects, selected ? 1 : 0, 'No effect can be replayed or fabricated')
+    })
+  }
 })
 
 test('actual child graphs wait and recover in the same parent thread without repeating a dispatch', async () => {

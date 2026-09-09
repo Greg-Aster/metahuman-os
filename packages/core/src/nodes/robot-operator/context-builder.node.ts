@@ -1,3 +1,4 @@
+import { projectDesireAwareness } from '../../agency/lifecycle-policy.js'
 import type {
   EnvironmentObservation,
   EnvironmentVisualFrame,
@@ -230,7 +231,6 @@ function autonomySelectorSchema(
     robotCommands: observation?.capabilities.robotCommands ?? [],
     actionRouteSelected: routingAnalysis.needsAction === true
       || (routingAnalysis.needsVision === true && !currentVisionAvailable),
-    taskLifecycleSelected: routingAnalysis.needsTaskLifecycle === true,
     requireAction: routingAnalysis.needsAction === true
       || robotObserver?.requestedBy === 'boredom-movement',
     requireProgress: true,
@@ -459,7 +459,7 @@ async function buildRobotOperatorContext(
       : null;
     const activeDesires = (outputContract === 'autonomy_controller' || outputContract === 'goal_review')
       && Array.isArray(inputs.activeDesires)
-      ? inputs.activeDesires
+      ? projectDesireAwareness(inputs.activeDesires)
       : [];
     const availableTasks = (outputContract === 'autonomy_controller' || outputContract === 'goal_review') && Array.isArray(inputs.availableTasks)
       ? inputs.availableTasks.filter(isRecord).map(({ id, name, description, kind }) => ({ id, name, description, kind }))
@@ -569,6 +569,7 @@ async function buildRobotOperatorContext(
           ? {
               activeDesires: {
                 provenance: 'canonical_agency_storage',
+                purpose: 'Awareness only. Select Desire Agent to progress eligible work; owner_input items await the user. Do not turn these summaries into robot instructions.',
                 entries: activeDesires,
               },
             }

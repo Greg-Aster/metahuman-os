@@ -22,6 +22,30 @@ function runShell(names: string[], mocks: string, body: string) {
   })
 }
 
+test('launcher verifies the compiled runtime before starting any services', () => {
+  assert.ok(source.indexOf('\nverify_site_runtime\n') < source.indexOf('"Starting background services"'))
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-launch-check-'))
+  try {
+    const entry = path.join(fixture, 'entry.mjs')
+    const checker = path.join(fixture, 'check-runtime.mjs')
+    fs.writeFileSync(entry, '')
+    const mocks = `
+SERVER_ENTRY=${JSON.stringify(entry)}
+RUNTIME_CHECK=${JSON.stringify(checker)}
+print_error() { printf '%s\\n' "$*" >&2; }
+`
+    const missing = runShell(['verify_site_runtime'], mocks, 'verify_site_runtime\necho services-started')
+    assert.equal(missing.status, 1)
+    assert.doesNotMatch(missing.stdout, /services-started/)
+    for (const status of [1, 0]) {
+      fs.writeFileSync(checker, `if (process.argv[2] !== '/fixture/metahuman') process.exit(99); process.exit(${status})`)
+      const checked = runShell(['verify_site_runtime'], mocks, 'verify_site_runtime\necho services-started')
+      assert.equal(checked.status, status)
+      assert.equal(checked.stdout.includes('services-started'), status === 0)
+    }
+  } finally { fs.rmSync(fixture, { recursive: true, force: true }) }
+})
+
 test('launcher process lookup distinguishes absence from failure', () => {
   for (const status of [1, 2, 3]) {
     const result = runShell(['matching_repo_pids', 'kill_pattern_fast'], `

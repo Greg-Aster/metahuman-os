@@ -36,7 +36,6 @@ test('a current user instruction owns provenance over an unfinished autonomous R
       needsEnvironment: true,
       needsVision: true,
       needsAction: false,
-      needsTaskLifecycle: false,
     },
     robotStatus: {
       task: {
@@ -59,7 +58,8 @@ test('a current user instruction owns provenance over an unfinished autonomous R
   assert.equal(result.currentInstruction, 'What do you see?')
   assert.equal(result.instructionSource, 'user')
   assert.equal(envelope.inputSource, 'user')
-  assert.equal((result.jsonSchema as any).properties.taskDecision.type, 'null')
+  assert.equal(envelope.execution, null, 'Another execution’s status cannot become this turn’s objective')
+  assert.deepEqual((result.jsonSchema as any).properties.taskDecision.anyOf.map((branch: any) => branch.type), ['null', 'object'])
   assert.match((result.jsonSchema as any).properties.taskDecision.description, /durable objective/i)
 })
 

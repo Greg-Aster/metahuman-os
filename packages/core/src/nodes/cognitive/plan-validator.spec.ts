@@ -8,8 +8,10 @@ function validPlan(): DesirePlan {
   return {
     id: 'plan-1',
     version: 1,
+    completionCriteria: "A report names the canonical owner and source location",
     steps: [{
       order: 1,
+      executionTarget: "operator",
       action: 'Inspect the canonical owner',
       expectedOutcome: 'The owner is identified',
       risk: 'low',
@@ -24,6 +26,16 @@ function validPlan(): DesirePlan {
 }
 
 const structuralOnly = { checkSkillAvailability: false, checkTrustLevel: false }
+
+test('every plan requires completion criteria bound to its reviewed version', async () => {
+  for (const goalType of ['one_time', 'recurring', 'long_running']) {
+    const unbounded = validPlan()
+    delete unbounded.completionCriteria
+    const result = await PlanValidatorNode.execute({ plan: unbounded, goalType }, {}, structuralOnly)
+    assert.equal(result.valid, false, `${goalType} must not execute without a satisfaction condition`)
+    assert.match((result.errors as string[]).join('\n'), /completion criteria/i)
+  }
+})
 
 test('plan validator accepts a complete bounded one-time plan', async () => {
   const result = await PlanValidatorNode.execute({

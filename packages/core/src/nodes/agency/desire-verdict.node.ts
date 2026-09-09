@@ -24,7 +24,7 @@ import {
   highestPlanStepRisk,
   planRequiresManualApproval,
   planRiskCoversEveryStep,
-} from '../../agency/plan-risk.js';
+} from '../../agency/plan-policy.js';
 
 interface AlignmentReviewInput {
   alignmentScore: number;

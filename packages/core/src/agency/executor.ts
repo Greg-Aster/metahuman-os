@@ -89,6 +89,7 @@ export function clearGraphCache(): void {
 export interface ExecuteDesireResult {
   success: boolean;
   graphCompleted: boolean;
+  waiting?: boolean;
   execution?: DesireExecution;
   error?: string;
 }
@@ -201,6 +202,7 @@ export async function executeDesireViaGraph(
     console.log(`${LOG_PREFIX} Executing via graph pipeline for: ${desire.title}`);
     const graphResult = await runGraph({ graph, context: graphContext, eventHandler, signal });
 
+    if (graphResult.status === 'waiting') return { success: false, graphCompleted: false, waiting: true }
     if (graphResult.status !== 'completed') {
       return {
         success: false,

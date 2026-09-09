@@ -46,6 +46,18 @@ function externalizeMetahumanCoreForClient() {
   };
 }
 
+function compiledRuntimeCheck() {
+  let serverBuild = false;
+  return {
+    name: 'metahuman-compiled-runtime-check',
+    apply: 'build',
+    configResolved(config) { serverBuild = Boolean(config.build.ssr); },
+    buildStart() {
+      if (serverBuild) this.emitFile({ type: 'chunk', id: path.join(repoRoot, 'scripts/check-site-runtime.ts'), fileName: 'check-runtime.mjs' });
+    },
+  };
+}
+
 export default defineConfig({
   integrations: [
     tailwind({ applyBaseStyles: true }),
@@ -60,7 +72,7 @@ export default defineConfig({
   output: 'server',
   vite: {
     define: { __METAHUMAN_EXECUTABLE_HASH__: JSON.stringify(sourceExecutableHash(repoRoot)) },
-    plugins: [externalizeMetahumanCoreForClient()],
+    plugins: [externalizeMetahumanCoreForClient(), compiledRuntimeCheck()],
     logLevel: 'warn', // Show warnings and errors, allow console.log from API handlers
     clearScreen: false, // Don't clear terminal on restart
     resolve: {

@@ -67,7 +67,6 @@ async function executeRobotStatusGraph(
   const user = getUserByUsername(task.username)
   if (!user) throw new Error(`Robot Status user not found: ${task.username}`)
   const loaded = await loadGraphForMode(graphName, user.username)
-  if (!loaded) throw new Error(`Robot Status graph not found: ${graphName}`)
   const graphState = await withUserContext(
     { userId: user.id, username: user.username, role: user.role },
     () => runGraph({
@@ -108,7 +107,6 @@ async function executeRobotAutonomyControllerGraph(
   const user = getUserByUsername(task.username)
   if (!user) throw new Error(`Robot Autonomy Controller user not found: ${task.username}`)
   const loaded = await loadGraphForMode(graphName, user.username)
-  if (!loaded) throw new Error(`Robot Autonomy Controller graph not found: ${graphName}`)
   const cycleId = typeof task.input.cycleId === 'string' && task.input.cycleId.trim()
     ? task.input.cycleId.trim()
     : task.correlationId?.trim()
@@ -277,7 +275,6 @@ export async function executeRobotAutonomyTriggerWork(
   const user = getUserByUsername(task.username)
   if (!user) throw new Error(`Robot workflow user not found: ${task.username}`)
   const loaded = await loadGraphForMode(cycle.graph, user.username)
-  if (!loaded) throw new Error(`Robot workflow not found: ${cycle.graph}`)
   const graphState = await withUserContext({ userId: user.id, username: user.username, role: user.role }, () => runGraph({
     graph: loaded.graph, signal: context.signal,
     context: { userId: user.id, username: user.username, cognitiveMode: 'environment',

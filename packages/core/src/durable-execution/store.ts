@@ -175,9 +175,7 @@ export class ExecutionStore {
     const candidates = this.list(username).flatMap(record => {
       const task = this.task(record.executionId)
       if (!task) return []
-      return [{ record, task: record.cancelledAt === null ? task : {
-        ...task, decision: { ...task.decision, outcome: 'cancel', objectiveComplete: false },
-      } }]
+      return [{ record, task: { ...task, executionStatus: record.status } }]
     })
     candidates.sort((a, b) => {
       const active = (candidate: typeof a) => ['running', 'waiting'].includes(candidate.record.status)

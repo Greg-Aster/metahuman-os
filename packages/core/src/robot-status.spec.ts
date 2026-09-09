@@ -30,6 +30,7 @@ const { robotActionResultParserNode } = await import('./nodes/robot-operator/act
 const { robotGoalReviewParserNode } = await import('./nodes/robot-operator/goal-review-parser.node.js')
 const { runDurableGraph } = await import('./durable-execution/runtime.js')
 const { openExecutionStore } = await import('./durable-execution/storage.js')
+const { ExecutionCheckpointer } = await import('./durable-execution/checkpointer.js')
 const { validateSvelteFlowGraph, DEFAULT_GRAPH_SCHEDULER } = await import('./cognitive-graph-schema.js')
 
 // Literal fixture inputs use the existing Text Input/JSON Parser contracts. The
@@ -129,10 +130,8 @@ const sources = {
   activeDesires: [{
     id: 'desire-1',
     title: 'Find the cat',
-    description: 'Look for the cat in the room.',
-    reason: 'The cat has not been seen recently.',
-    status: 'planning',
-    strength: 0.9,
+    status: 'planning' as const,
+    nextAction: 'desire-agent' as const,
     updatedAt: '2026-08-27T18:00:04.000Z',
   }],
 }
@@ -184,6 +183,42 @@ test('Robot Status storage keeps deterministic facts and bounded history in one 
   assert.equal(loaded?.history.length, 8)
   assert.equal(loaded?.history.at(-1)?.situationalSummary, 'Status update 8')
   assert.equal(robotStatusPath(username), path.join(testRoot, 'profiles', username, 'state', 'robot-status.json'))
+})
+
+test('Robot Status projects execution lifecycle without rewriting or reviving its objective', async () => {
+  for (const state of ['running', 'waiting', 'completed', 'failed', 'cancelled'] as const) {
+    const username = `status-execution-${state}`
+    const store = openExecutionStore(username)
+    try {
+      const definition = { graphId: 'status-owner-fixture', graphHash: 'fixture-v1', runtimeVersion: 'fixture-v1',
+        checkpointSchemaVersion: 1, nodeVersions: {} }
+      const execution = store.create(username, definition)
+      const lease = store.claim(execution.executionId, definition)
+      const task = { objectiveId: randomUUID(), executionId: execution.executionId,
+        objective: 'Inspect the work area.', completionCriteria: 'Report the observed target location.',
+        instruction: 'Inspect the work area and report the target location.', source: 'user',
+        decision: { outcome: 'act', objectiveComplete: false, reason: 'Inspect another area.' },
+        selectedAction: null, actionId: '', actionStatus: '', feedback: null, baselineFrame: null,
+        updatedAt: new Date().toISOString() }
+      await new ExecutionCheckpointer(store, lease).put({ configurable: { thread_id: execution.executionId } }, {
+        v: 4, id: randomUUID(), ts: task.updatedAt,
+        channel_values: { executionTransition: { transitionId: 'objective', task } },
+        channel_versions: {}, versions_seen: {},
+      }, { source: 'loop', step: 0, parents: {} })
+      saveRobotStatus(username, situation, sources)
+      if (state === 'cancelled') store.cancel(execution.executionId, { eventId: 'cancel', kind: 'user_cancelled', payload: {} })
+      else if (state !== 'running') store.settle(lease, state)
+
+      const read = await robotStatusNode.execute!({}, { username }, { historyLimit: 3 })
+      assert.equal(read.task.executionStatus, state)
+      assert.equal(read.task.objective, task.objective, 'Historical objectives remain inspectable')
+      assert.equal(read.context.situation.currentGoal, ['running', 'waiting'].includes(state) ? task.objective : '')
+      assert.deepEqual(store.task(execution.executionId), task, 'A status read cannot rewrite the execution decision')
+      const saved = saveRobotStatus(username, situation, sources)
+      assert.equal(saved.situation.currentGoal, read.context.situation.currentGoal)
+      assert.equal(saved.task?.executionStatus, state)
+    } finally { store.close() }
+  }
 })
 
 test('out-of-order projections retain facts together with their independent source timestamps', () => {
@@ -369,12 +404,14 @@ test('Robot Status writer and reusable input node share the same canonical snaps
   const read = await robotStatusNode.execute!({}, { username }, { historyLimit: 3 })
   assert.equal(read.found, true)
   assert.equal(read.status.updatedAt, written.status.updatedAt)
-  assert.equal(read.context.situation.currentGoal, situation.currentGoal)
+  assert.equal(read.context.situation.currentGoal, '', 'The fixture graph ended; its saved objective is historical')
+  assert.equal(read.task.executionStatus, 'completed')
   assert.equal(read.context.body.battery.voltage, 7.4)
   assert.equal(read.context.body.motion.available, true)
   assert.equal(read.context.lastAction.command, 'wave')
   assert.equal(read.context.agency.activeDesires[0].title, 'Find the cat')
-  assert.equal(read.context.agency.activeDesires[0].reason, 'The cat has not been seen recently.')
+  assert.equal(read.context.agency.activeDesires[0].nextAction, 'desire-agent')
+  assert.equal('reason' in read.context.agency.activeDesires[0], false)
   assert.equal('telemetry' in read.context.body, false)
   assert.equal('capabilities' in read.context.body, false)
   assert.equal(JSON.stringify(read.context).length < 6_000, true)
@@ -724,15 +761,23 @@ test('Environment selector receives the decision-bearing Robot Status fields', a
         movement: true,
       },
     },
-    robotStatus: read.context,
+    robotStatus: { ...read.context, agency: { activeDesires: Array.from({ length: 5 }, (_, index) => ({
+      ...read.context.agency.activeDesires[0], id: `desire-${index}`,
+    })) } },
   } as any))
 
   assert.equal(envelope.robotStatus.body.battery.voltage, 7.4)
   assert.equal(envelope.robotStatus.body.motion.available, true)
   assert.equal(envelope.robotStatus.lastAction.command, 'wave')
-  assert.equal(envelope.robotStatus.situation.currentGoal, situation.currentGoal)
+  assert.equal(envelope.robotStatus.situation.currentGoal, '')
+  assert.equal(envelope.robotStatus.task.objective, situation.currentGoal)
+  assert.equal(envelope.robotStatus.task.executionStatus, 'completed')
   assert.equal(envelope.robotStatus.agency.activeDesires[0].title, 'Find the cat')
-  assert.equal(envelope.robotStatus.agency.activeDesires[0].reason, 'The cat has not been seen recently.')
+  assert.equal(envelope.robotStatus.agency.activeDesires[0].nextAction, 'desire-agent')
+  assert.equal('reason' in envelope.robotStatus.agency.activeDesires[0], false)
+  assert.equal(envelope.robotStatus.agency.activeDesires.length, 5)
+  assert.ok(envelope.robotStatus.agency.activeDesires.every((desire: any) => desire.nextAction === 'desire-agent'))
+  assert.match(envelope.robotStatus.agency.purpose, /Pending work for Desire Agent/)
 })
 
 test('Robot Status has one editable refresh graph and is read and written by action executors', () => {

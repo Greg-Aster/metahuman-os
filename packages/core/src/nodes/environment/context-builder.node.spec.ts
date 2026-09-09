@@ -96,7 +96,6 @@ test('Environment Context Builder packages only orchestrator-selected context an
       needsEnvironment: true,
       needsVision: true,
       needsAction: true,
-      needsTaskLifecycle: false,
     },
     images: [{ type: 'image_url', image_url: { url: TEST_JPEG } }],
     conversationHistory: [
@@ -165,7 +164,6 @@ test('Environment Context Builder does not present a saved camera frame as curre
       needsEnvironment: true,
       needsVision: true,
       needsAction: false,
-      needsTaskLifecycle: false,
     },
     images: imageSelection.images,
   }, { username: 'owner' }, {
@@ -193,20 +191,19 @@ test('Environment Context Builder does not present a saved camera frame as curre
       needsEnvironment: false,
       needsVision: false,
       needsAction: false,
-      needsTaskLifecycle: false,
     },
   }, { username: 'owner' }, { systemPrompt: 'Return one Environment decision.' })
   const conversationEnvelope = JSON.parse(String(conversationOnly.message))
   assert.equal(conversationEnvelope.currentEnvironment, null)
   assert.equal(conversationOnly.messages.length, 2)
-  assert.equal((conversationOnly.jsonSchema as any).properties.taskDecision.type, 'null')
+  assert.deepEqual((conversationOnly.jsonSchema as any).properties.taskDecision.anyOf.map((branch: any) => branch.type),
+    ['null', 'object'], 'Goal decisions belong to the informed selector even when no action route was selected')
 })
 
 test('Environment selector schema exposes conversation, advertised action, and Freestyle as the three LLM-owned routes', () => {
   const schema = buildEnvironmentSelectorJsonSchema({
     actions: ['robotCommand', 'robotMotionPlan'],
     robotCommands: ['stand', '#1', '#2'],
-    taskLifecycleSelected: true,
   }) as any
   const routes = schema.allOf[0].anyOf
 
@@ -215,10 +212,10 @@ test('Environment selector schema exposes conversation, advertised action, and F
   assert.deepEqual(routes[0].properties.movementRequest, { type: 'null' })
   assert.equal(routes[0].properties.taskDecision.properties.outcome.enum.includes('act'), false)
   assert.deepEqual(routes[1].properties.actions, { minItems: 1 })
-  assert.deepEqual(routes[1].properties.taskDecision.properties.outcome.enum, ['act'])
+  assert.equal('outcome' in routes[1].properties.taskDecision.properties, false)
   assert.deepEqual(routes[1].properties.taskDecision.properties.objectiveComplete.enum, [false])
   assert.deepEqual(routes[2].properties.movementRequest, { type: 'object' })
-  assert.deepEqual(routes[2].properties.taskDecision.properties.outcome.enum, ['act'])
+  assert.equal('outcome' in routes[2].properties.taskDecision.properties, false)
   assert.deepEqual(routes[2].properties.taskDecision.properties.objectiveComplete.enum, [false])
   assert.deepEqual(routes[2].properties.taskDecision.properties.motionClass.enum, ['body_local'])
 
@@ -233,11 +230,10 @@ test('Environment selector schema exposes conversation, advertised action, and F
   const standaloneSchema = buildEnvironmentSelectorJsonSchema({
     actions: ['robotCommand', 'robotMotionPlan'],
     robotCommands: ['stand'],
-    taskLifecycleSelected: false,
     requireAction: true,
   }) as any
-  assert.equal(standaloneSchema.properties.taskDecision.type, 'null')
-  assert.equal(standaloneSchema.allOf[1].anyOf.length, 3)
+  assert.deepEqual(standaloneSchema.properties.taskDecision.anyOf.map((branch: any) => branch.type), ['null', 'object'])
+  assert.equal(standaloneSchema.allOf[1].anyOf.length, 4)
   const standaloneActionBranches = standaloneSchema.allOf.find((constraint: any) => (
     constraint.anyOf?.length === 2
     && constraint.anyOf.every((branch: any) => (
@@ -247,8 +243,9 @@ test('Environment selector schema exposes conversation, advertised action, and F
   )).anyOf
   assert.equal(standaloneActionBranches.length, 2)
   assert.ok(standaloneActionBranches.every((branch: any) => (
-    branch.properties.taskDecision.type === 'null'
-  )))
+    !('type' in branch.properties.taskDecision)
+    && !('outcome' in branch.properties.taskDecision.properties)
+  )), 'Movement permits a null decision or the model-selected ongoing objective outcome')
   assert.equal(standaloneSchema.properties.response.type, 'string')
   assert.match(standaloneSchema.properties.response.description, /never substitutes/i)
 })

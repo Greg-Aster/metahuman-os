@@ -70,7 +70,7 @@ export const robotOperatorInputNode = defineNode({
       sourceObservationAt: cleanText(supplied?.sourceObservationAt, 100),
       sessionId: cleanText(supplied?.sessionId, 200),
       currentVisualEvidence: supplied?.currentVisualEvidence === true,
-      inputSource: robotObserver?.triggerSource ?? 'user',
+      inputSource: context.graphExecution?.task()?.desireId ? 'autonomy' : robotObserver?.triggerSource ?? 'user',
       responseMetadata: robotObserver?.triggerSource === 'autonomy'
         ? {
             dialogueSource: robotObserver.requestedBy,

@@ -30,3 +30,12 @@ export function executableHash(): string {
   currentHash ??= sourceExecutableHash(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..'))
   return currentHash
 }
+
+/** Launch source workers only alongside the runtime built from the same core. */
+export function assertExecutableCurrent(repoRoot: string): void {
+  const built = executableHash()
+  const current = sourceExecutableHash(repoRoot)
+  if (built !== current) {
+    throw new Error(`Site runtime ${built.slice(0, 12)} does not match current source ${current.slice(0, 12)}. Rebuild with pnpm --dir apps/site build before starting services.`)
+  }
+}

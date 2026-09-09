@@ -11,7 +11,7 @@ import {
   type ExecuteDesireResult,
 } from './executor.js'
 import type { Desire, DesireExecution, DesirePlan, DesireReview } from './types.js'
-import { planRequiresManualApproval, planRiskCoversEveryStep } from './plan-risk.js'
+import { planRequiresManualApproval, desirePlanExecutionErrors } from './plan-policy.js'
 import { loadConfig } from './config.js'
 
 export interface ApprovedDesireExecutionOptions {
@@ -26,6 +26,7 @@ export interface ApprovedDesireExecutionResult {
   executed: number
   succeeded: number
   failed: number
+  waiting: number
   skipped: number
   desireIds: string[]
   skippedReasons: Record<string, string>
@@ -89,14 +90,13 @@ export function assertDesireExecutable(
   if (!desire.plan?.steps?.length) {
     throw new Error(`Cannot execute desire ${desire.id} without an approved plan`)
   }
+  const errors = desirePlanExecutionErrors(desire.plan)
+  if (errors.length) throw new Error(`Cannot execute desire ${desire.id}: ${errors.join('; ')}`)
   if (!desire.review
     || desire.review.planId !== desire.plan.id
     || desire.review.planVersion !== desire.plan.version
-    || desire.review.verdict === 'reject') {
+    || desire.review.verdict !== 'approve') {
     throw new Error(`Cannot execute desire ${desire.id} without a matching plan-version review`)
-  }
-  if (!planRiskCoversEveryStep(desire.plan)) {
-    throw new Error(`Cannot execute desire ${desire.id} because its aggregate risk understates a plan step`)
   }
   if (planRequiresManualApproval(desire.plan)
     && desire.review.autoApprove === true
@@ -109,7 +109,9 @@ function failedExecution(desire: Desire, error: string, startedAt: string): Desi
   return {
     startedAt,
     completedAt: new Date().toISOString(),
-    status: 'failed',
+    status: desire.execution?.currentStep
+      && !desire.execution.stepResults?.some(step => step.stepOrder === desire.execution!.currentStep) ? 'outcome_unknown' : 'failed',
+    planId: desire.plan?.id, planVersion: desire.plan?.version, executionId: desire.execution?.executionId,
     stepsCompleted: desire.execution?.stepsCompleted || 0,
     stepsTotal: desire.plan?.steps.length || 0,
     stepResults: desire.execution?.stepResults || [],
@@ -180,7 +182,13 @@ async function executeOne(
     const current = await deps.loadDesire(desire.id, options.username)
     if (!current || current.status !== 'approved') return null
     const allowAutoApprovedManualSteps = await deps.allowAutoApprovedManualSteps(options.username)
-    assertDesireExecutable(current, allowAutoApprovedManualSteps)
+    try {
+      assertDesireExecutable(current, allowAutoApprovedManualSteps)
+    } catch (error) {
+      await deps.saveManifest({ ...current, status: 'needs_attention', currentStage: 'user_attention',
+        dispositionReason: (error as Error).message, updatedAt: new Date().toISOString() }, options.username)
+      throw error
+    }
 
     const now = new Date().toISOString()
     const claimed: Desire = {
@@ -189,6 +197,8 @@ async function executeOne(
       updatedAt: now,
       execution: {
         startedAt: now,
+        planId: current.plan.id,
+        planVersion: current.plan.version,
         status: 'in_progress',
         stepsCompleted: 0,
         stepsTotal: current.plan!.steps.length,
@@ -203,7 +213,7 @@ async function executeOne(
       options.onProgress,
       options.signal,
     )
-    if (!result.graphCompleted) {
+    if (!result.graphCompleted && !result.waiting) {
       const message = result.error || 'Desire execution graph did not complete'
       await recordInfrastructureFailure(deps, claimed, options.username, message)
       throw new Error(message)
@@ -259,6 +269,7 @@ export function createApprovedDesireExecutor(dependencies: Partial<DesireExecuti
       executed: 0,
       succeeded: 0,
       failed: 0,
+      waiting: 0,
       skipped: 0,
       desireIds: [],
       skippedReasons: {},
@@ -281,7 +292,8 @@ export function createApprovedDesireExecutor(dependencies: Partial<DesireExecuti
       summary.executed += 1
       remainingDailyExecutions -= 1
       summary.desireIds.push(desire.id)
-      if (result.success) summary.succeeded += 1
+      if (result.waiting) summary.waiting += 1
+      else if (result.success) summary.succeeded += 1
       else summary.failed += 1
     }
 

@@ -202,7 +202,6 @@ export const environmentContextBuilderNode = defineNode({
       robotCommands: promptObservation?.capabilities.robotCommands ?? [],
       actionRouteSelected: routingAnalysis.needsAction === true
         || (routingAnalysis.needsVision === true && selectedImages.length === 0),
-      taskLifecycleSelected: routingAnalysis.needsTaskLifecycle === true,
     });
 
     return {

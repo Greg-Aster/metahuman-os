@@ -45,14 +45,14 @@ const SYSTEM_PROMPT = `You are the Planning module of MetaHuman OS. Your job is 
 ## Goal Types
 Determine the appropriate goal type for each desire:
 - **one_time**: Single achievement, then done (e.g., "buy a car", "submit tax return")
-- **recurring**: Ongoing without end, cycles forever (e.g., "stay healthy", "maintain relationships")
+- **recurring**: One bounded repeatable outcome. A new cycle needs fresh evidence; preferences like "stay healthy" are not executable cycles.
 - **long_running**: Takes weeks/months with a clear end (e.g., "hike the PCT", "write a novel", "learn Spanish")
 
 ## Completion Criteria
 For EVERY desire, specify what "DONE" actually means:
 - Be specific and verifiable: "Reach Monument 78 at Canadian border" NOT "complete the hike"
 - For one_time: The single condition that marks completion
-- For recurring: The condition that marks one cycle as complete (will repeat)
+- For recurring: The condition that marks this cycle as complete; repetition requires fresh evidence and a new reviewed plan
 - For long_running: The ultimate end goal that must be achieved
 
 ## Milestones (for long_running only)
@@ -78,7 +78,7 @@ The catalog, approval requirements, and policy constraints are authoritative.
 - high: Irreversible actions, external system interactions
 - critical: Financial, security, or privacy implications
 
-IMPORTANT: Always generate at least 1 step. Never return empty steps. If the desire seems impossible, create steps to research how to accomplish it or gather the necessary resources.
+Do not fabricate an achievable goal from a mood or behavioral style. If a useful finite result cannot be established, return an empty steps array with the missing information; execution must wait for clarification.
 
 Respond with valid JSON matching the plan schema.`;
 
@@ -129,6 +129,7 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Plan
 **Reason**: {{reason}}
 **Source**: {{source}}
 **Risk Level**: {{risk}}
+**Proposed satisfaction condition**: {{completionCriteria}}
 {{clarificationContext}}
 {{revisionContext}}{{milestoneContext}}{{executionContext}}
 ## Available Tools
@@ -150,11 +151,12 @@ Requirements:
 3. For long_running: Create 3-10 milestones AND steps for the FIRST milestone only
 4. Clear, ordered steps describing WHAT to do
 5. Expected outcome for each step
-6. Risk assessment per step (none/low/medium/high/critical)
-7. A single "operatorGoal" summarizing the overall objective
+6. Explicit executionTarget per step: "robot" for one finite native Environment workflow action and its returned evidence, "operator" for the configured digital operator. Robot steps cannot be open-ended; list each finite action separately.
+7. Risk assessment per step (none/low/medium/high/critical)
+8. A single "operatorGoal" summarizing the overall objective
 {{revisionReminder}}
 
-CRITICAL: You MUST generate at least 1 step. Do not return empty steps array.
+Each step must terminate with observable evidence. If the outcome cannot be bounded using available capabilities, return no steps. Never reinterpret an indefinite preference as continuous action.
 
 Output as JSON:
 {
@@ -171,6 +173,7 @@ Output as JSON:
     {
       "order": 1,
       "action": "Clear description of what this step accomplishes",
+      "executionTarget": "operator | robot",
       "skill": "optional_skill_name_or_general",
       "inputs": { "key": "value" },
       "expectedOutcome": "What should happen when this step completes",
@@ -376,6 +379,7 @@ Consider:
 
   const userPrompt = renderPromptTemplate(userPromptTemplate, {
     title: desire.title,
+    completionCriteria: desire.completionCriteria || "Needs clarification",
     description: desire.description,
     reason: desire.reason || 'Not specified',
     source: desire.source || 'user',
@@ -489,9 +493,11 @@ Consider:
     const plan: DesirePlan = {
       id: generatePlanId(desire.id) + (planVersion > 1 ? `-v${planVersion}` : ''),
       version: planVersion,
+      completionCriteria,
       steps: parsed.steps.map((step, idx) => ({
         order: step.order || idx + 1,
         action: step.action,
+        executionTarget: step.executionTarget,
         skill: step.skill,
         inputs: step.inputs,
         expectedOutcome: step.expectedOutcome,

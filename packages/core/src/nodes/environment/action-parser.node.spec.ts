@@ -98,7 +98,27 @@ test('punctuation-only advertised commands are admitted unchanged', async () => 
   }
 });
 
-test('the parser rejects physical work that contradicts the LLM decision contract', async () => {
+test('objective progress is independent of action choice but dispatch is not completion', async () => {
+  for (const outcome of ['act', 'continue', 'observe', 'curiosity']) {
+    for (const freestyle of [false, true]) {
+      const result = await environmentActionParserNode.execute({
+        response: JSON.stringify({
+          response: '',
+          actions: freestyle ? [] : [{ type: 'robotCommand', command: 'stand' }],
+          movementRequest: freestyle ? { description: 'Extend a front leg and return it.' } : null,
+          taskDecision: { objective: 'Locate a target and greet it.', outcome, reason: 'Another step toward the same objective.',
+            objectiveComplete: false, continuationPolicy: 'none', requiredCompletionBasis: 'visual_observation' },
+        }),
+        observation: { ...observation, capabilities: { ...observation.capabilities, actions: ['robotCommand', 'robotMotionPlan'] } },
+        sessionId: observation.sessionId,
+      }, {}, {});
+      assert.equal(result.valid, true);
+      assert.equal(result.taskDecision.outcome, outcome, 'The parser must preserve the model decision');
+      assert.equal(result.movementRequested, freestyle);
+      assert.equal(result.hasActions, !freestyle);
+      assert.equal(result.hasResponse, false);
+    }
+  }
   await assert.rejects(environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I am standing now.',
@@ -117,7 +137,7 @@ test('the parser rejects physical work that contradicts the LLM decision contrac
     }),
     observation,
     sessionId: observation.sessionId,
-  }, {}, {}), /physical work requires taskDecision outcome=act/i);
+  }, {}, {}), /newly selected action cannot establish objective completion/i);
 });
 
 test('a task decision must author its durable objective', async () => {

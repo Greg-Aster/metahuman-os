@@ -26,10 +26,8 @@ function decisionContext(
       activeDesires: status.agency.activeDesires.map(desire => ({
         id: desire.id,
         title: desire.title,
-        description: desire.description,
-        reason: desire.reason,
         status: desire.status,
-        strength: desire.strength,
+        nextAction: desire.nextAction,
       })),
     },
     history: historyLimit > 0 ? status.history.slice(-historyLimit) : [],

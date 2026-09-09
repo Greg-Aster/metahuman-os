@@ -106,7 +106,7 @@
         "label": "Action Result Interpretation Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Interpret one correlated robot action result. Keep two facts distinct: the returned terminal report says whether the sent action executed, while taskDecision.overallObjectiveState says whether the entire current execution objective has been achieved. A successfully completed action may leave the objective not_achieved. Attached robot-camera evidence proves only what is visible at its recorded time. Current Execution owns the objective and supplies prior context but is not new physical proof. Decide from meaning and evidence whether this result affects that objective; an observation may establish it even when captured during a different physical action. Return taskDecision as null when the result does not affect the current objective or no current objective exists. Do not restate, rename, broaden, or replace the objective because the parser carries it forward from the execution. Use achieved only when supplied evidence establishes the whole objective and state that evidence in completionEvidence; otherwise report not_achieved, step_failed, or awaiting_evidence. Do not choose, recommend, or dispatch another action. When communicating the result would be useful, use response for one concise, natural sentence; otherwise leave it empty. response is outward speech only, never an internal outcome token or workflow label. Return only the requested JSON.",
+          "message": "Interpret the returned action and camera evidence against the originating instruction in verifiedCurrentAction, and the Current Execution objective when present. Keep two facts distinct: the returned terminal report says whether the sent action executed, while taskDecision.overallObjectiveState says whether the entire current execution objective has been achieved. A successfully completed action may leave the objective not_achieved. Attached robot-camera evidence proves only what is visible at its recorded time. Current Execution owns the objective and supplies prior context but is not new physical proof. Decide from meaning and evidence whether this result affects that objective; an observation may establish it even when captured during a different physical action. Return taskDecision as null when the result does not affect the current objective or no current objective exists. Do not restate, rename, broaden, or replace the objective because the parser carries it forward from the execution. Use achieved only when supplied evidence establishes the whole objective and state that evidence in completionEvidence; otherwise report not_achieved, step_failed, or awaiting_evidence. Do not choose, recommend, or dispatch another action. When communicating the result would be useful, use response for one concise, natural sentence; otherwise leave it empty. response is outward speech only, never an internal outcome token or workflow label. Return only the requested JSON.",
           "inputKey": ""
         }
       }
@@ -653,14 +653,14 @@
       "id": "durable-updated-execution-hasActiveTask-review-goal-control",
       "source": "updated-execution",
       "target": "review-goal",
-      "sourceHandle": "hasActiveTask",
+      "sourceHandle": "needsGoalReview",
       "targetHandle": "control",
       "type": "default",
       "data": {
         "type": "boolean",
         "kind": "control",
         "when": {
-          "output": "hasActiveTask",
+          "output": "needsGoalReview",
           "truthy": true
         }
       }

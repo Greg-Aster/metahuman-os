@@ -11,6 +11,15 @@ executor and the web editor.
   `environment-mode.json` own the four interactive conversation modes.
 - Agent and workflow graphs own bounded background work such as curation,
   reflection, dreaming, agency, and Robot Operator behavior.
+- Desire Agent remains the sole public Agency controller. `desire-executor.json`
+  loads the persisted reviewed plan, prepares one finite step, and records its
+  result before advancing. Digital steps use the configured operator; native
+  robot steps call `boredom-autonomy` within the same durable execution. Returned
+  action evidence is bound to the Desire, plan version, and step. A failed step
+  stops the plan; finalization admits one outcome review through Desire Agent.
+  The parent closes after that review returns. Recurring outcomes stop when the
+  current cycle is satisfied; another cycle requires fresh evidence and review.
+  Reduced inhibition remains part of Agency approval policy.
 - Model-backed product operations that are not cataloged Brain agents are also
   explicit graphs: Desire Check-in, persona extraction and interview questions,
   weekly goal review, self-healing analysis, and semantic-turn classification.
@@ -33,13 +42,15 @@ executor and the web editor.
   self-directed consequence, records Robot Status, and ends.
 - `robot-action-result-mode.json` interprets one correlated returned action result
   and records it in Robot Status without selecting or dispatching another action.
-- `robot-goal-review-mode.json` is a separately scheduled, persona-guided LLM
-  review after a correlated action result leaves a Robot Status objective
-  incomplete or failed. It receives bounded conversation and reflection,
-  verified robot-action outcomes, Robot Status, current bridge facts, and only
-  genuinely current camera evidence. It may complete, continue, wait, request
-  the user, abandon, or speak; only continuation delegates one high-level
-  intention to Robot Autonomy Executor, and then the review ends.
+- `robot-goal-review-mode.json` reviews an unfinished Current Execution objective
+  inside the same durable parent after a correlated result. It receives
+  conversation and reflection, verified outcomes, Robot Status, bridge facts,
+  and time-labelled camera evidence. It may complete, continue, wait, request
+  the user, abandon, speak, or select a catalog-backed activity. Waiting resumes
+  from a new event; it does not reconstruct the goal from Robot Status.
+  Agency-owned steps return to their Desire plan and outcome review instead of
+  entering this general continuation workflow. Pending Desire summaries convey
+  lifecycle work, not robot motion instructions.
 - `robot-status-mode.json` performs one bounded situational update. Its reusable
   Robot Status input node supplies supporting context without replacing fresh
   Environment evidence.

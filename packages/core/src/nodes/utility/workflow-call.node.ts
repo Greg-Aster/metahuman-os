@@ -22,7 +22,6 @@ export const workflowCallNode = defineNode({
     if (typeof name !== 'string' || !name) throw new Error('Run Child Workflow requires a selected graph')
     if (!context.graphExecution) throw new Error('Child workflows require the durable graph runtime')
     const loaded = await loadGraphForMode(name, context.username)
-    if (!loaded) throw new Error(`Child workflow not found: ${name}`)
     const child = await context.graphExecution.callGraph(loaded.graph, {
       ...context, ...inputs.context, ...inputs.invocation?.context, graphExecution: undefined,
     })

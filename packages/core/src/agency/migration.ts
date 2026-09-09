@@ -16,8 +16,9 @@ import {
   type DesireSource,
   type DesireStatus,
 } from './types.js'
-import { isDesireStatus } from './lifecycle-policy.js'
+import { isDesireStatus, isOpenDesire } from './lifecycle-policy.js'
 import { hasTraceableDesireEvidence } from './desire-strength.js'
+import { desirePlanExecutionErrors } from './plan-policy.js'
 
 const LEGACY_SOURCE_MAP: Record<string, DesireSource> = {
   unanswered_question: 'curiosity',
@@ -199,6 +200,8 @@ export function normalizeDesireForMigration(
   }
   desire.evidence = existingEvidence
 
+  const incompleteOutcome = !desire.completionCriteria?.trim()
+  const obsoletePlan = desire.plan && desirePlanExecutionErrors(desire.plan).length > 0
   const rejectedByOwner = desire.status === 'rejected'
     && desire.rejectionHistory?.some(entry => entry.rejectedBy === 'user')
   if (rejectedByOwner) {
@@ -206,15 +209,29 @@ export function normalizeDesireForMigration(
     desire.currentStage = 'archived'
     desire.dispositionReason = desire.dispositionReason || 'Archived after explicit owner rejection'
     changes.push('ownerRejection:archived')
-  } else if (desire.status === 'nascent' && isAboveThreshold(desire) && hadTraceableEvidence) {
+  } else if (desire.status === 'nascent' && isAboveThreshold(desire) && hadTraceableEvidence
+    && !incompleteOutcome && !obsoletePlan) {
     desire.status = 'pending'
     desire.currentStage = 'strengthening'
     desire.activatedAt = desire.activatedAt || now
     changes.push('activation:pending')
-  } else if (desire.status === 'nascent' && isAboveThreshold(desire)) {
+  } else if (desire.status === 'nascent' && isAboveThreshold(desire) && !hadTraceableEvidence) {
     warnings.push('Above-threshold legacy strength has no traceable evidence and requires owner review')
   }
 
+  if (isOpenDesire(desire) && (incompleteOutcome || obsoletePlan)) {
+    if (desire.status === 'executing') {
+      safeToApply = false
+      warnings.push('An active execution must settle before migrating its Desire contract')
+    } else if (desire.status !== 'needs_attention') {
+      desire.status = 'needs_attention'
+      desire.currentStage = 'user_attention'
+      desire.dispositionReason = incompleteOutcome
+        ? 'A finite outcome and observable satisfaction condition must be established before planning.'
+        : 'This historical plan must be regenerated and reviewed with completion criteria and explicit execution targets.'
+      changes.push('outcomeContract:needs_attention')
+    }
+  }
   return { id: desire.id, changes, warnings, safeToApply, desire }
 }
 

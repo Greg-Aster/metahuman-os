@@ -179,6 +179,21 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 {
+  for (const error of ['Temporary transport failure', { code: 'transport_failure', message: 'Temporary transport failure', retryable: true }]) {
+    const manager = new UnifiedQueueManager();
+    const task = manager.enqueue(input({ resource: 'io', maxAttempts: 2 }));
+    assert.ok(manager.claim(task.id));
+    assert.equal(manager.requeue(task, error), true);
+    assert.equal(task.state, 'queued');
+    assert.equal(task.error?.retryable, true, 'queued retries must retain their retryable error contract');
+    assert.ok(manager.claim(task.id));
+    assert.equal(manager.requeue(task, error), false);
+    assert.equal(task.state, 'failed');
+    assert.equal(task.error?.retryable, false, 'exhausted attempts must have a terminal error contract');
+  }
+}
+
+{
   const manager = new UnifiedQueueManager();
   const task = manager.enqueue(input({
     type: 'user_message',

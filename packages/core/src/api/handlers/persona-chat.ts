@@ -228,10 +228,6 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     yield push('progress', { step: 'loading_graph', message: `Resolving graph for key: ${graphKey}` });
 
     const loaded = await loadGraphForMode(graphKey, userContext?.username);
-    if (!loaded) {
-      yield push('error', { message: 'Failed to load cognitive graph' });
-      return;
-    }
 
     const loadDuration = Date.now() - loadStartTime;
     yield push('progress', { step: 'loading_graph', message: `Graph loaded in ${loadDuration}ms: ${loaded.source}` });

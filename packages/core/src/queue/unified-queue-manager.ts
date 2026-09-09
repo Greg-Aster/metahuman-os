@@ -464,10 +464,10 @@ export class UnifiedQueueManager {
     task.leaseOwner = undefined;
   }
 
-  private normalizeError(error: string | WorkError | undefined, fallbackCode: string): WorkError | undefined {
+  private normalizeError(error: string | WorkError | undefined, fallbackCode: string, retryable = false): WorkError | undefined {
     if (!error) return undefined;
     if (typeof error !== 'string') return error;
-    return { code: fallbackCode, message: error, retryable: false };
+    return { code: fallbackCode, message: error, retryable };
   }
 
   private addTerminal(task: QueuedTask): void {
@@ -509,7 +509,7 @@ export class UnifiedQueueManager {
   requeue(task: QueuedTask, error?: string | WorkError): boolean {
     const current = this.tasks.get(task.id);
     if (!current || current.state !== 'leased') return false;
-    const failure = this.normalizeError(error, 'execution_failed');
+    const failure = this.normalizeError(error, 'execution_failed', true);
     if (current.bodyLease || failure?.code === 'outcome_unknown') {
       current.error = failure?.code === 'outcome_unknown' ? failure
         : { code: 'outcome_unknown', message: 'Interrupted physical action requires a correlated result or reconciliation', retryable: false };
@@ -526,6 +526,10 @@ export class UnifiedQueueManager {
       this.complete(current.id, false, { ...(failure ?? { code: 'execution_failed', message: 'Handler failed' }), retryable: false });
       return false;
     }
+    if (failure?.retryable === false) {
+      this.complete(current.id, false, failure);
+      return false;
+    }
     if (current.type === 'user_message'
       || current.type === 'desire_execute'
       || current.type === 'desire_review') current.maxAttempts = 1;
@@ -534,7 +538,8 @@ export class UnifiedQueueManager {
     if (current.attempt >= current.maxAttempts) {
       current.state = 'failed';
       current.completedAt = new Date().toISOString();
-      current.error = this.normalizeError(error || 'Maximum attempts exhausted', 'attempts_exhausted');
+      const exhausted = this.normalizeError(error || 'Maximum attempts exhausted', 'attempts_exhausted');
+      current.error = exhausted && { ...exhausted, retryable: false };
       this.addTerminal(current);
       this.emit({ type: 'task_failed', taskId: current.id, lane: this.laneFor(current.resource, current.type), details: { error: current.error } });
       this.notifyChange();
@@ -543,7 +548,7 @@ export class UnifiedQueueManager {
 
     current.state = 'queued';
     current.startedAt = undefined;
-    current.error = this.normalizeError(error, 'retryable_failure');
+    current.error = this.normalizeError(error, 'retryable_failure', true);
     this.emit({
       type: 'task_retried',
       taskId: current.id,

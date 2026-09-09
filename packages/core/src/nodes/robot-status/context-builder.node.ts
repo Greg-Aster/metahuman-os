@@ -1,3 +1,4 @@
+import { projectDesireAwareness } from '../../agency/lifecycle-policy.js'
 import type { RobotStatusAction, RobotStatusBody, RobotStatusSourceFacts } from '../../robot-status.js'
 import { ROBOT_STATUS_SEMANTIC_JSON_SCHEMA } from '../../robot-status.js'
 import { defineNode } from '../types.js'
@@ -208,19 +209,6 @@ function conversation(value: unknown): Array<Record<string, unknown>> {
   })
 }
 
-function desires(value: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(value)) return []
-  return value.filter(isRecord).slice(0, 5).map(desire => ({
-    id: cleanText(desire.id, 160),
-    title: cleanText(desire.title, 200),
-    description: cleanText(desire.description, 500),
-    reason: cleanText(desire.reason, 500),
-    status: cleanText(desire.status, 80),
-    strength: typeof desire.strength === 'number' ? desire.strength : 0,
-    updatedAt: cleanText(desire.updatedAt, 80),
-  }))
-}
-
 export const robotStatusContextBuilderNode = defineNode({
   id: 'robot_status_context_builder',
   name: 'Robot Status Context Builder',
@@ -247,7 +235,7 @@ export const robotStatusContextBuilderNode = defineNode({
     if (!instruction) throw new Error('Robot Status Context Builder requires editable instructions')
     const body = bodyFacts(inputs.environmentSummary, inputs.robotTelemetry)
     const recentConversation = conversation(inputs.conversationHistory)
-    const activeDesires = desires(inputs.activeDesires)
+    const activeDesires = projectDesireAwareness(inputs.activeDesires)
     const sourceFacts: RobotStatusSourceFacts = {
       sourceUpdatedAt: {
         environment: body?.observationAt ?? '',
@@ -271,7 +259,7 @@ export const robotStatusContextBuilderNode = defineNode({
       evidenceRules: {
         bridgeAndRobotBufferAreFacts: true,
         conversationAndPriorStatusAreNarrativeContext: true,
-        activeDesiresMayInfluenceButDoNotProveCurrentActions: true,
+        desiresArePendingWorkOnly: 'Only Desire Agent may load, plan, approve and execute a desire. Pending desires do not set current goals or motion style.',
         missingDataMustRemainUncertain: true,
       },
     }

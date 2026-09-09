@@ -12,6 +12,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
   id: 'model_router',
   name: 'Model Router',
   category: 'model',
+  execution: { modelOutput: 'response' },
   inputs: [
     { name: 'messages', type: 'array', description: 'Complete provider message array supplied by the upstream prompt/context owner' },
     { name: 'role', type: 'string', optional: true, description: 'Optional runtime role override; a connection takes precedence over Model Role' },
@@ -83,16 +84,17 @@ export const ModelRouterNode: NodeDefinition = defineNode({
       ],
     },
   },
-  description: 'Calls the profile-resolved model for the configured role using connected messages. It returns model output only; downstream nodes own validation and effects.',
+  description: 'Calls the profile-resolved model using connected messages. Downstream nodes own validation and effects; rejected output returns as saved feedback to this model without repeating earlier actions.',
 
   execute: async (inputs, context, properties) => {
     const precomputedResponse = typeof inputs.precomputedResponse === 'string'
       ? inputs.precomputedResponse.trim()
       : '';
     if (precomputedResponse) {
+      if (context.modelOutputFeedback) throw new Error('A precomputed response cannot be corrected by model inference');
       return { response: precomputedResponse, precomputed: true };
     }
-    const messages = inputs.messages ?? inputs[0] ?? [];
+    const suppliedMessages = inputs.messages ?? inputs[0] ?? [];
     const role = inputs.role || inputs[1] || properties?.role || 'persona';
     const jsonSchema = inputs.jsonSchema
       && typeof inputs.jsonSchema === 'object'
@@ -101,9 +103,16 @@ export const ModelRouterNode: NodeDefinition = defineNode({
       : null;
     const username = context.userId || context.username;
 
-    if (!Array.isArray(messages) || messages.length === 0) {
+    if (!Array.isArray(suppliedMessages) || suppliedMessages.length === 0) {
       return { response: '', skipped: true };
     }
+
+    const feedback = context.modelOutputFeedback;
+    const messages = feedback ? [
+      ...suppliedMessages,
+      { role: 'assistant' as const, content: feedback.response },
+      { role: 'user' as const, content: `Output validation failed: ${feedback.error}\nReturn a corrected response to the original input using the supplied output contract.` },
+    ] : suppliedMessages;
 
     const response = await callLLM({
         role,

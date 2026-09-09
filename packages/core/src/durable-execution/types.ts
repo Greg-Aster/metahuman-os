@@ -16,6 +16,9 @@ export interface ExecutionObjective extends RobotStatusTask {
   executionId: string
   completionCriteria: string
   desireId?: string
+  desirePlanId?: string
+  desirePlanVersion?: number
+  desireStepOrder?: number
 }
 
 export interface ExecutionRecord {

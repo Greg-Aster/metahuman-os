@@ -1,8 +1,8 @@
 /**
  * Desire Executor Node
  *
- * Executes a desire's plan by routing each step through the Big Brother operator.
- * This is where desires become REAL ACTIONS.
+ * Executes finite approved steps. Robot work uses the existing child graph and
+ * correlated receipts; digital work uses the configured escalation owner.
  *
  * Inputs:
  *   - desire: Desire object with approved plan
@@ -15,15 +15,16 @@
  *   - error?: string
  */
 
-import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import type { Desire, DesireExecution, PlanStep } from '../../agency/types.js';
+import { assertDesireExecutable } from '../../agency/desire-execution-service.js'
+import { defineNode, type NodeDefinition } from '../types.js';
+import type { Desire, DesireExecution, DesirePlan, PlanStep } from '../../agency/types.js';
+import { initializeStageIterations } from '../../agency/types.js';
 import type { DesireProgressCallback } from '../../agency/executor.js';
 import {
   saveExecutionToFolder,
   saveDesireManifest,
-  addScratchpadEntryToFolder,
+  loadDesire,
 } from '../../agency/storage.js';
-import { submitExecutionProgress } from '../../buffer-admission.js';
 import {
   escalate,
   getActiveBackend,
@@ -58,14 +59,6 @@ const DEFAULT_TASK_PROMPT_TEMPLATE = `You are executing a task for MetaHuman OS 
 
 Please execute this step now.`;
 
-interface StepResult {
-  stepOrder: number;
-  success: boolean;
-  result?: unknown;
-  error?: string;
-  completedAt: string;
-}
-
 /**
  * Build a task prompt for execution
  */
@@ -77,7 +70,7 @@ function buildTaskPrompt(step: PlanStep, desire: Desire, taskPromptTemplate = DE
     stepOrder: step.order,
     stepCount: desire.plan?.steps?.length || '?',
     action: step.action,
-    expectedOutcome: step.expectedOutcome || 'Complete successfully',
+    expectedOutcome: step.expectedOutcome,
     risk: step.risk,
     skill: step.skill || '',
     skillSection: step.skill ? `**Suggested Approach**: ${step.skill}\n` : '',
@@ -117,7 +110,8 @@ async function executeStep(
   onProgress?: DesireProgressCallback,
   taskPromptTemplate?: string,
   signal?: AbortSignal,
-): Promise<{ success: boolean; result?: unknown; error?: string }> {
+  onAttemptStart?: () => Promise<void>,
+): Promise<{ success: boolean; result?: unknown; error?: string; outcomeUnknown?: boolean }> {
   throwIfAborted(signal);
   const prompt = buildTaskPrompt(step, desire, taskPromptTemplate);
 
@@ -158,7 +152,7 @@ async function executeStep(
 
   console.log(`[desire-executor] 🤖 Using ${backend.name}...`);
   console.log(`[desire-executor]    Action: ${step.action}`);
-  console.log(`[desire-executor]    Expected: ${step.expectedOutcome || 'Complete successfully'}`);
+  console.log(`[desire-executor]    Expected: ${step.expectedOutcome}`);
 
   const workingMsg = `🤖 ${backend.name} is working on: ${step.action}`;
 
@@ -172,16 +166,7 @@ async function executeStep(
     timestamp: Date.now(),
   });
 
-  // Publish bounded live progress through the canonical System Buffer workflow.
-  if (username) {
-    await submitExecutionProgress(username, workingMsg, {
-      desireId: desire.id,
-      stepNumber: step.order,
-      action: step.action,
-      backend: backend.id,
-    });
-  }
-
+  let attempted = false;
   try {
     // Get configurable timeout from operator config
     const timeout = username
@@ -191,6 +176,8 @@ async function executeStep(
     // Execute exactly once through the backend selected before the external action.
     const timeoutMins = Math.round(timeout / 60000);
     console.log(`[desire-executor] ⏳ Waiting for response (${timeoutMins} min timeout)...`);
+    await onAttemptStart?.();
+    attempted = true;
     const result = await escalate(prompt, {
       timeout,
       username,
@@ -203,6 +190,7 @@ async function executeStep(
       console.log(`[desire-executor] ❌ Execution failed: ${result.error}`);
       return {
         success: false,
+        outcomeUnknown: true,
         error: result.error || 'Execution failed',
       };
     }
@@ -218,318 +206,186 @@ async function executeStep(
     };
   } catch (error) {
     if ((error as Error).name === 'AbortError' || signal?.aborted) throw error;
+    if (!attempted) throw error;
     console.log(`[desire-executor] ❌ Execution error: ${(error as Error).message}`);
     return {
       success: false,
+      outcomeUnknown: true,
       error: `Execution failed: ${(error as Error).message}`,
     };
   }
 }
 
-const execute: NodeExecutor = async (inputs, context, properties) => {
-  const desire = inputs.desire as Desire | undefined;
-  const taskPromptTemplate = properties?.taskPromptTemplate ?? DEFAULT_TASK_PROMPT_TEMPLATE;
-  const signal = context.abortSignal as AbortSignal | undefined;
-  const username = typeof context.username === 'string' ? context.username.trim() : '';
 
-  if (!desire) {
+/** Graph inputs identify an attempt; the persisted reviewed plan supplies its instructions. */
+async function loadReviewedExecution(desire: Desire, username: string, executionId: string): Promise<Desire & { plan: DesirePlan; execution: DesireExecution }> {
+  const current = await loadDesire(desire.id, username)
+  if (!current?.plan || !current.execution || !['executing', 'awaiting_review'].includes(current.status)
+    || current.plan.id !== desire.plan?.id || current.plan.version !== desire.plan?.version
+    || current.execution.planId !== current.plan.id || current.execution.planVersion !== current.plan.version
+    || current.execution.startedAt !== desire.execution?.startedAt
+    || (current.execution.executionId && current.execution.executionId !== executionId)) {
+    throw new Error('Desire plan or claimed execution changed')
+  }
+  const config = await loadAgencyConfig(username)
+  assertDesireExecutable({ ...current, status: 'approved' }, config.mode === 'yolo')
+  const cursor = desire.execution?.stepResults?.length ?? 0
+  const recorded = current.execution.stepResults?.length ?? 0
+  if (cursor > recorded || recorded > cursor + 1) throw new Error('Desire step cursor does not match its recorded receipts')
+  return current as Desire & { plan: DesirePlan; execution: DesireExecution }
+}
+
+export const DesireStepPrepareNode = defineNode({
+  id: 'desire_step_prepare', name: 'Prepare Approved Desire Step', category: 'agency',
+  inputs: [{ name: 'desire', type: 'object', description: 'Claimed Desire attempt and saved graph step cursor' }],
+  outputs: [
+    { name: 'desire', type: 'object', description: 'Persisted reviewed plan bound to this execution' },
+    { name: 'invocation', type: 'object', description: 'One native robot child invocation, or null when no robot action is needed' },
+    { name: 'needsRobotAction', type: 'boolean', description: 'Whether this unrecorded step requires the native robot child graph' },
+  ],
+  properties: {},
+  description: 'Binds one approved plan step to its durable execution before any action is dispatched.',
+  async execute(inputs, context) {
+    const desire = inputs.desire as Desire
+    if (!context.graphExecution || !context.username) throw new Error('Desire steps require an authenticated durable execution')
+    if (desire.status !== 'executing' || !desire.execution) throw new Error('Desire step requires a claimed execution')
+    const current = await loadReviewedExecution(desire, context.username, context.graphExecution.executionId)
+    const cursor = desire.execution.stepResults?.length ?? 0
+    const execution = { ...current.execution, stepResults: (current.execution.stepResults ?? []).slice(0, cursor),
+      executionId: context.graphExecution.executionId }
+    if (execution.planId !== current.plan.id || execution.planVersion !== current.plan.version) {
+      throw new Error('Desire execution does not match the approved plan version')
+    }
+    const step = current.plan.steps[execution.stepResults?.length ?? 0]
+    if (!step) throw new Error('No unexecuted approved step remains')
+    const prepared = { ...current, execution }
+    if (step.executionTarget === 'operator' || current.execution.stepResults?.some(result => result.stepOrder === step.order)) {
+      if (!current.execution.executionId) await saveDesireManifest({ ...current, execution }, context.username)
+      return { desire: prepared, invocation: null, needsRobotAction: false }
+    }
+    const currentTask = context.graphExecution.task()
+    if (currentTask && !currentTask.decision.objectiveComplete && currentTask.desireId !== desire.id) {
+      throw new Error('A Desire step cannot replace an unrelated execution objective')
+    }
+    execution.currentStep = step.order
+    await saveDesireManifest(prepared, context.username)
+    context.graphExecution.recordTask({
+      objectiveId: `${context.graphExecution.executionId}:${current.plan.id}:${step.order}`,
+      executionId: context.graphExecution.executionId,
+      desireId: desire.id, desirePlanId: current.plan.id, desirePlanVersion: current.plan.version, desireStepOrder: step.order,
+      objective: step.action, instruction: step.action, completionCriteria: step.expectedOutcome,
+      source: 'desire', decision: { outcome: 'incomplete', reason: 'Approved finite Desire plan step', objectiveComplete: false },
+      selectedAction: null, actionId: '', actionStatus: '', feedback: null, baselineFrame: null,
+      updatedAt: new Date().toISOString(),
+    })
     return {
-      execution: null,
-      success: false,
-      error: 'No desire provided',
-    };
-  }
-
-  if (!username) {
-    throw new Error('Desire execution requires an authenticated profile username');
-  }
-
-  if (!desire.plan || !desire.plan.steps || desire.plan.steps.length === 0) {
-    return {
-      execution: null,
-      success: false,
-      error: 'Desire has no plan to execute',
-    };
-  }
-
-  if (desire.status !== 'approved' && desire.status !== 'executing') {
-    return {
-      execution: null,
-      success: false,
-      error: `Cannot execute desire in '${desire.status}' status. Must be 'approved' or 'executing'.`,
-    };
-  }
-
-  const plan = desire.plan;
-  const execution: DesireExecution = {
-    startedAt: new Date().toISOString(),
-    status: 'in_progress',
-    stepsCompleted: 0,
-    stepsTotal: plan.steps.length,
-    stepResults: [],
-  };
-
-  // Get progress callback from context (passed by executeDesireViaGraph)
-  const onProgress = context.onDesireProgress as DesireProgressCallback | undefined;
-
-  console.log(`[desire-executor] 🚀 Executing plan with ${plan.steps.length} steps`);
-  console.log(`[desire-executor]    Goal: ${plan.operatorGoal}`);
-
-  // Execute each step sequentially
-  for (const step of plan.steps) {
-    throwIfAborted(signal);
-    console.log(`[desire-executor] 📍 Step ${step.order}: ${step.action}`);
-    execution.currentStep = step.order;
-
-    // Emit step start progress
-    const stepStartMsg = `Step ${step.order}/${plan.steps.length}: ${step.action}`;
-    onProgress?.({
-      type: 'step_start',
-      stepNumber: step.order,
-      totalSteps: plan.steps.length,
-      action: step.action,
-      message: stepStartMsg,
-      timestamp: Date.now(),
-      data: { expectedOutcome: step.expectedOutcome, risk: step.risk },
-    });
-
-    // Publish bounded live progress through the canonical System Buffer workflow.
-    if (username) {
-      await submitExecutionProgress(username, `🎯 ${stepStartMsg}`, {
-        desireId: desire.id,
-        stepNumber: step.order,
-        totalSteps: plan.steps.length,
-        action: step.action,
-      });
+      desire: prepared, needsRobotAction: true,
+      invocation: { graph: 'boredom-autonomy', context: {
+        userMessage: '', cognitiveMode: 'agent',
+        robotOperatorContext: { plannerDecision: {
+          instruction: step.action, reason: `Satisfy approved plan step ${step.order}: ${step.expectedOutcome}`,
+          observed: 'Agency admitted the reviewed plan; use current Bridge evidence before acting.',
+        } },
+      } },
     }
-
-    try {
-      const result = await executeStep(step, desire, username, onProgress, taskPromptTemplate, signal);
-
-      const stepResult: StepResult = {
-        stepOrder: step.order,
-        success: result.success,
-        result: result.result,
-        error: result.error,
-        completedAt: new Date().toISOString(),
-      };
-
-      (execution.stepResults as StepResult[]).push(stepResult);
-
-      if (result.success) {
-        execution.stepsCompleted = (execution.stepsCompleted || 0) + 1;
-        console.log(`[desire-executor]    ✅ Step ${step.order} completed`);
-
-        // Emit step complete progress
-        const stepCompleteMsg = `✅ Step ${step.order}/${plan.steps.length} completed`;
-        onProgress?.({
-          type: 'step_complete',
-          stepNumber: step.order,
-          totalSteps: plan.steps.length,
-          action: step.action,
-          message: stepCompleteMsg,
-          timestamp: Date.now(),
-          data: { result: result.result },
-        });
-
-        // Publish completion progress through the canonical System Buffer workflow.
-        if (username) {
-          await submitExecutionProgress(username, stepCompleteMsg, {
-            desireId: desire.id,
-            stepNumber: step.order,
-            totalSteps: plan.steps.length,
-            action: step.action,
-            success: true,
-          });
-        }
-      } else {
-        execution.status = 'failed';
-        execution.error = `Step ${step.order} failed: ${result.error}`;
-        console.log(`[desire-executor]    ❌ Step ${step.order} failed: ${result.error}`);
-
-        // Emit step error progress
-        const stepErrorMsg = `❌ Step ${step.order} failed: ${result.error}`;
-        onProgress?.({
-          type: 'step_error',
-          stepNumber: step.order,
-          totalSteps: plan.steps.length,
-          action: step.action,
-          message: stepErrorMsg,
-          timestamp: Date.now(),
-          data: { error: result.error },
-        });
-
-        // Publish failure progress through the canonical System Buffer workflow.
-        if (username) {
-          await submitExecutionProgress(username, stepErrorMsg, {
-            desireId: desire.id,
-            stepNumber: step.order,
-            totalSteps: plan.steps.length,
-            action: step.action,
-            success: false,
-            error: result.error,
-          });
-        }
-        break;
-      }
-    } catch (error) {
-      if ((error as Error).name === 'AbortError' || signal?.aborted) throw error;
-      execution.status = 'failed';
-      execution.error = `Step ${step.order} threw error: ${(error as Error).message}`;
-      console.log(`[desire-executor]    ❌ Step ${step.order} error: ${(error as Error).message}`);
-
-      // Emit step error progress
-      const exceptionMsg = `❌ Step ${step.order} error: ${(error as Error).message}`;
-      onProgress?.({
-        type: 'step_error',
-        stepNumber: step.order,
-        totalSteps: plan.steps.length,
-        action: step.action,
-        message: exceptionMsg,
-        timestamp: Date.now(),
-        data: { error: (error as Error).message },
-      });
-
-      // Publish exception progress through the canonical System Buffer workflow.
-      if (username) {
-        await submitExecutionProgress(username, exceptionMsg, {
-          desireId: desire.id,
-          stepNumber: step.order,
-          totalSteps: plan.steps.length,
-          action: step.action,
-          success: false,
-          error: (error as Error).message,
-        });
-      }
-      break;
-    }
-  }
-
-  // Mark as completed if all steps succeeded
-  if (execution.status !== 'failed' && execution.stepsCompleted === plan.steps.length) {
-    execution.status = 'completed';
-    execution.completedAt = new Date().toISOString();
-    console.log(`[desire-executor] 🎉 All ${plan.steps.length} steps completed!`);
-  }
-
-  // Persist the canonical manifest before secondary execution history and audit data.
-  // Any persistence failure fails the graph; callers must never report success for an
-  // external effect that was not durably recorded.
-  const attemptNumber = (desire.metrics?.executionAttemptCount || 0) + 1;
-  const now = new Date().toISOString();
-  const updatedDesire: Desire = {
-    ...desire,
-    execution,
-    updatedAt: now,
-    status: 'awaiting_review',
-    currentStage: 'outcome_review',
-    metrics: desire.metrics
-      ? {
-          ...desire.metrics,
-          executionAttemptCount: desire.metrics.executionAttemptCount + 1,
-          executionSuccessCount: desire.metrics.executionSuccessCount + (execution.status === 'completed' ? 1 : 0),
-          executionFailCount: desire.metrics.executionFailCount + (execution.status === 'completed' ? 0 : 1),
-          lastActivityAt: now,
-        }
-      : desire.metrics,
-    stageIterations: {
-      planning: desire.stageIterations?.planning || 0,
-      planReview: desire.stageIterations?.planReview || 0,
-      userApproval: desire.stageIterations?.userApproval || 0,
-      executing: (desire.stageIterations?.executing || 0) + 1,
-      outcomeReview: desire.stageIterations?.outcomeReview || 0,
-    },
-  };
-
-  await saveDesireManifest(updatedDesire, username);
-  await saveExecutionToFolder(desire.id, execution, attemptNumber, username);
-  await addScratchpadEntryToFolder(desire.id, {
-    timestamp: now,
-    type: execution.status === 'completed' ? 'execution_completed' : 'execution_failed',
-    description: execution.status === 'completed'
-      ? `Execution completed successfully (${execution.stepsCompleted}/${execution.stepsTotal} steps)`
-      : `Execution failed: ${execution.error}`,
-    actor: 'system',
-    data: {
-      attemptNumber,
-      stepsCompleted: execution.stepsCompleted,
-      stepsTotal: execution.stepsTotal,
-      status: execution.status,
-      error: execution.error,
-    },
-  }, username);
-
-  // Generate human-readable summary for inner dialogue and TTS
-  let summary = '';
-  if (execution.status === 'completed') {
-    summary = `I completed "${desire.title}". `;
-    if (plan.operatorGoal) {
-      summary += plan.operatorGoal + ' ';
-    }
-    // Add step summaries
-    const stepSummaries: string[] = [];
-    for (const stepResult of (execution.stepResults || [])) {
-      if (stepResult.success && stepResult.result) {
-        const resultObj = stepResult.result as { response?: string };
-        // Use the generic 'response' field from escalation result
-        const response = resultObj.response || '';
-        if (response) {
-          // Extract first meaningful line
-          const lines = response.split('\n').filter((l: string) => l.trim());
-          if (lines.length > 0) {
-            stepSummaries.push(lines[0].substring(0, 150));
-          }
-        }
-      }
-    }
-    if (stepSummaries.length > 0) {
-      summary += 'What I did: ' + stepSummaries.slice(0, 3).join('; ');
-    }
-  } else {
-    summary = `I tried to execute "${desire.title}" but it failed: ${execution.error}`;
-  }
-
-  return {
-    execution,
-    success: execution.status === 'completed',
-    error: execution.error,
-    desire: updatedDesire,
-    summary, // Human-readable summary for inner dialogue and TTS
-  };
-};
+  },
+})
 
 export const DesireExecutorNode: NodeDefinition = defineNode({
-  id: 'desire_executor',
-  name: 'Desire Executor',
-  category: 'agency',
-  description: 'Executes a desire plan through the Big Brother operator',
-
+  id: 'desire_executor', name: 'Record Desire Step', category: 'agency',
   inputs: [
-    { name: 'desire', type: 'object', description: 'Desire with approved plan to execute' },
+    { name: 'desire', type: 'object', description: 'Reviewed attempt prepared for its next result' },
+    { name: 'robotResult', type: 'boolean', optional: true, description: 'Native child completion; the execution task supplies the correlated evidence' },
   ],
-
   outputs: [
-    { name: 'execution', type: 'object', description: 'Execution results with step details' },
-    { name: 'success', type: 'boolean', description: 'Whether all steps completed' },
-    { name: 'error', type: 'string', description: 'Error message if execution failed' },
-    { name: 'desire', type: 'object', description: 'Updated desire with execution and metrics' },
-    { name: 'summary', type: 'string', description: 'Human-readable summary for inner dialogue and TTS' },
+    { name: 'desire', type: 'object', description: 'Desire with the durably recorded step receipt' },
+    { name: 'execution', type: 'object', description: 'Current attempt with ordered step results' },
+    { name: 'success', type: 'boolean', description: 'Whether the current step returned its expected outcome' },
+    { name: 'error', type: 'string', optional: true, description: 'Failed or uncertain step outcome' },
+    { name: 'hasNext', type: 'boolean', description: 'Whether a successful result permits the next approved step' },
+    { name: 'summary', type: 'string', description: 'Final attempt summary released for persistence before outcome review' },
   ],
-
-  properties: {
-    taskPromptTemplate: DEFAULT_TASK_PROMPT_TEMPLATE,
+  properties: { taskPromptTemplate: DEFAULT_TASK_PROMPT_TEMPLATE },
+  propertySchemas: { taskPromptTemplate: { type: 'text_multiline', default: DEFAULT_TASK_PROMPT_TEMPLATE,
+    label: 'Approved Step Instruction', description: 'Template supplied only to the configured digital execution backend', rows: 16 } },
+  description: 'Executes one digital step or records one native robot result. Only the graph advances to the next approved step.',
+  async execute(inputs, context, properties) {
+    const username = context.username
+    const runtime = context.graphExecution
+    const input = inputs.desire as Desire
+    if (!username || !runtime || !input?.plan || !input.execution) throw new Error('Desire step lacks its execution owner')
+    const current = await loadReviewedExecution(input, username, runtime.executionId)
+    const plan = current.plan
+    const cursor = input.execution.stepResults?.length ?? 0
+    const attempt = { ...current.execution, stepResults: (current.execution.stepResults ?? []).slice(0, cursor) }
+    const desire = { ...current, execution: attempt }
+    const step = plan.steps[cursor]
+    if (!step) throw new Error('No approved step remains')
+    // A successful manifest write may precede its graph checkpoint. Reuse that
+    // receipt; never repeat an external effect to rebuild a lost acknowledgement.
+    const retained = current.execution.stepResults?.find(result => result.stepOrder === step.order)
+    let result: { success: boolean; result?: unknown; error?: string; outcomeUnknown?: boolean }
+    if (retained) result = { ...retained, outcomeUnknown: current.execution.status === 'outcome_unknown' }
+    else if (step.executionTarget === 'robot') {
+      const task = runtime.task()
+      if (inputs.robotResult !== true || task?.desireId !== desire.id || task.desirePlanId !== plan.id
+        || task.desirePlanVersion !== plan.version || task.desireStepOrder !== step.order) {
+        throw new Error('Robot result is not correlated to this approved Desire step')
+      }
+      const feedback = task.feedback
+      const success = task.decision.objectiveComplete === true
+        && Boolean(task.decision.completionEvidence?.trim())
+        && Boolean(task.actionId && feedback?.actionId === task.actionId && feedback.type === 'completed')
+      result = { success, result: { task, executionId: runtime.executionId },
+        ...(!success ? { error: 'The finite robot step did not return evidence satisfying its approved outcome' } : {}) }
+    } else {
+      // Escalation backends have no replay receipt API. Once an attempt has begun,
+      // recovery must expose uncertainty instead of invoking that effect twice.
+      if (current.execution.currentStep === step.order && current.execution.executionId === runtime.executionId) {
+        result = { success: false, outcomeUnknown: true, error: 'External step outcome is unknown after interruption; owner review is required' }
+      } else {
+        result = await executeStep(step, desire, username, context.onDesireProgress,
+          properties?.taskPromptTemplate, context.abortSignal,
+          () => saveDesireManifest({ ...current, execution: { ...attempt, currentStep: step.order } }, username))
+      }
+    }
+    const now = retained?.completedAt ?? new Date().toISOString()
+    const { outcomeUnknown, ...stepOutcome } = result
+    const stepResults = [...(desire.execution.stepResults ?? []), retained ?? { stepOrder: step.order, ...stepOutcome, completedAt: now }]
+    const hasNext = result.success && stepResults.length < plan.steps.length
+    const execution: DesireExecution = {
+      ...desire.execution, currentStep: step.order, stepResults,
+      stepsCompleted: stepResults.filter(entry => entry.success).length,
+      status: outcomeUnknown ? 'outcome_unknown' : hasNext ? 'in_progress' : result.success ? 'completed' : 'failed',
+      ...(!hasNext ? { completedAt: now } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    }
+    const updated: Desire = {
+      ...desire, execution, updatedAt: now,
+      status: hasNext ? 'executing' : 'awaiting_review',
+      currentStage: hasNext ? 'executing' : 'outcome_review',
+      stageIterations: {
+        ...(desire.stageIterations ?? initializeStageIterations()),
+        executing: (desire.stageIterations?.executing ?? 0) + (hasNext || retained ? 0 : 1),
+      },
+      metrics: { ...desire.metrics,
+        executionAttemptCount: desire.metrics.executionAttemptCount + (hasNext || retained ? 0 : 1),
+        executionSuccessCount: desire.metrics.executionSuccessCount + (!hasNext && !retained && result.success ? 1 : 0),
+        executionFailCount: desire.metrics.executionFailCount + (!retained && !result.success ? 1 : 0), lastActivityAt: now },
+    }
+    await saveDesireManifest(updated, username)
+    if (!hasNext) {
+      await saveExecutionToFolder(desire.id, execution, updated.metrics.executionAttemptCount, username)
+      // Checkpointed admission also runs when a physical receipt resumes this graph
+      // after its initial Coordinator worker has returned.
+      const { buildDesireAgentTaskInput } = await import('../../queue/work-submission.js')
+      runtime.dispatch({ kind: 'coordinator_work', payload: buildDesireAgentTaskInput({
+        operation: 'review', username, desireId: desire.id, source: 'autonomy',
+        idempotencyKey: `desire-outcome-review:${desire.id}:execution:${execution.startedAt}`,
+        metadata: { producer: 'desire-execution-transition' },
+      }) })
+    }
+    return { desire: updated, execution, success: result.success, error: result.error, hasNext,
+      summary: hasNext ? '' : `Desire ${desire.id}: ${execution.stepsCompleted}/${plan.steps.length} steps returned successfully; outcome review must verify satisfaction.` }
   },
-  propertySchemas: {
-    taskPromptTemplate: {
-      type: 'text_multiline',
-      default: DEFAULT_TASK_PROMPT_TEMPLATE,
-      label: 'Task Prompt Template',
-      description: 'Template variables include {{title}}, {{description}}, {{stepOrder}}, {{stepCount}}, {{action}}, {{expectedOutcome}}, {{risk}}, {{skillSection}}, {{inputsSection}}, {{desire}}, {{step}}.',
-      rows: 18,
-    },
-  },
-
-  execute,
-});
-
-export default DesireExecutorNode;
+})

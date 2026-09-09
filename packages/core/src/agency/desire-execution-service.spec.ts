@@ -36,8 +36,10 @@ function approvedDesire(id = 'desire-1'): Desire {
     plan: {
       id: 'plan-1',
       version: 1,
+      completionCriteria: "An action receipt confirms the named test action",
       steps: [{
         order: 1,
+        executionTarget: "operator",
         action: 'Perform test action',
         expectedOutcome: 'Action completes',
         risk: 'low',
@@ -197,11 +199,32 @@ test('approved desire execution claims once and reports the durable graph result
     succeeded: 1,
     failed: 0,
     skipped: 0,
+    waiting: 0,
     desireIds: ['desire-1'],
     skippedReasons: {},
   })
   assert.deepEqual(savedStatuses, ['executing'])
   assert.equal(stored.status, 'awaiting_review')
+})
+
+test('a durable robot wait remains executing and is not an infrastructure failure', async () => {
+  let stored = approvedDesire('desire-waiting')
+  const execute = createApprovedDesireExecutor({
+    loadDesire: async () => structuredClone(stored),
+    listApproved: async () => [structuredClone(stored)],
+    saveManifest: async desire => { stored = structuredClone(desire) },
+    addScratchpadEntry: async () => initializeScratchpadSummary(),
+    executeGraph: async () => ({ success: false, graphCompleted: false, waiting: true }),
+  })
+  const result = await execute({ username: 'profile-a', desireId: stored.id })
+  assert.equal(result.waiting, 1)
+  assert.equal(result.failed, 0)
+  assert.equal(result.succeeded, 0)
+  assert.equal(stored.status, 'executing')
+  assert.equal(stored.execution?.status, 'in_progress')
+  assert.equal(stored.execution?.planId, stored.plan?.id)
+  const repeat = await execute({ username: 'profile-a', desireId: stored.id })
+  assert.equal(repeat.executed, 0)
 })
 
 test('concurrent admission cannot execute the same profile desire twice', async () => {
@@ -294,9 +317,9 @@ test('execution rejects understated aggregate risk before claiming or invoking t
 
   await assert.rejects(
     execute({ username: 'profile-a', desireId: stored.id }),
-    /aggregate risk understates a plan step/,
+    /lower than highest step risk/,
   )
-  assert.equal(saveCalls, 0)
+  assert.equal(saveCalls, 1, "Invalid approved plans are moved to owner attention before any action")
   assert.equal(graphCalls, 0)
 })
 
@@ -321,6 +344,24 @@ test('execution rejects auto-approval when any step requires explicit user appro
     /step requiring user approval was auto-approved/,
   )
   assert.equal(graphCalls, 0)
+})
+
+test('infrastructure failure after starting a robot step preserves an unknown outcome', async () => {
+  let stored = approvedDesire('desire-native-interrupted')
+  stored.plan!.steps[0].executionTarget = 'robot'
+  const execute = createApprovedDesireExecutor({
+    loadDesire: async () => structuredClone(stored),
+    listApproved: async () => [structuredClone(stored)],
+    saveManifest: async desire => { stored = structuredClone(desire) },
+    addScratchpadEntry: async () => initializeScratchpadSummary(),
+    executeGraph: async () => {
+      stored.execution!.currentStep = 1
+      return { success: false, graphCompleted: false, error: 'Interrupted before a receipt was recorded' }
+    },
+  })
+  await assert.rejects(execute({ username: 'profile-a', desireId: stored.id }), /Interrupted before a receipt/)
+  assert.equal(stored.status, 'awaiting_review')
+  assert.equal(stored.execution?.status, 'outcome_unknown')
 })
 
 test('an explicit Agency YOLO policy can execute an auto-approved manual step after review', async () => {
@@ -381,7 +422,7 @@ test('desire executor graph and coordinator configuration have one valid finaliz
   assert.ok(graph.edges.some((edge: any) =>
     edge.source === '1'
     && edge.sourceHandle === 'desire'
-    && edge.target === '3'
+    && edge.target === 'prepare'
     && edge.targetHandle === 'desire'))
   assert.ok(graph.edges.some((edge: any) =>
     edge.source === '7'

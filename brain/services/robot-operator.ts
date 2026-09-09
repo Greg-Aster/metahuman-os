@@ -21,6 +21,8 @@ import {
   randomizedRobotOperatorIdleMs,
   readSystemActivityTimestamp,
   robotOperatorChildGraph,
+  loadGraphForMode,
+  GraphConfigurationError,
   SLEEP_RUNTIME_FILE,
   systemPaths,
   writeRobotOperatorRuntimeState,
@@ -65,7 +67,7 @@ let activeSince = Date.now()
 let previousMode = getOperatorMode()
 let shuttingDown = false
 let fullTimer: NodeJS.Timeout | null = null
-let lifecycle: 'starting' | 'armed' | 'dormant' | 'admitting' | 'stopped' = 'starting'
+let lifecycle: 'starting' | 'armed' | 'dormant' | 'admitting' | 'failed' | 'stopped' = 'starting'
 let lifecycleReason = 'startup'
 
 function iso(timestamp: number): string | undefined {
@@ -179,11 +181,12 @@ function armFull(reason: string, minimumDelayMs = 0): void {
   schedules[FULL_CONTROLLER].nextRunAt = 0
   if (shuttingDown || getOperatorMode() !== 'full') return
   if (!isRobotOperatorChildEnabled(FULL_CONTROLLER)) return
+  lifecycle = 'armed'
+  lifecycleReason = reason
   const child = FULL_CONTROLLER
   const dueAt = Date.now() + Math.max(0, minimumDelayMs)
   schedules[child].nextRunAt = dueAt
   fullTimer = setTimeout(() => void onDeadline(child, 'full'), dueAt - Date.now())
-  console.log(`[${SERVICE_ID}] Armed child=${child} reason=${reason} mode=full due=${new Date(dueAt).toISOString()}`)
 }
 
 function watchFullCycle(reason: string): void {
@@ -309,6 +312,10 @@ async function onDeadline(
       publishRuntime()
       return
     }
+    // Startup verifies that the source worker and compiled server share the
+    // same node contracts. Validate a fresh Controller before admitting work;
+    // selected child failures and existing executions are not admission gates.
+    if (expectedMode === 'full') await loadGraphForMode(config.robotAutonomyControllerGraph)
     const cycleId = randomUUID()
     const task = await submitCoordinatorWork({
       type: 'generic',
@@ -354,6 +361,15 @@ async function onDeadline(
     if (expectedMode === 'full') watchFullCycle('cycle-active')
     else armSemiChild(child, 'child-admitted')
   } catch (error) {
+    if (error instanceof GraphConfigurationError) {
+      const outcome = `workflow_configuration_invalid: ${error.message}`
+      if (schedule.lastOutcome !== outcome) console.error(`[${SERVICE_ID}] ${error.message}`)
+      schedule.lastOutcome = outcome
+      lifecycle = 'failed'
+      lifecycleReason = error.message
+      publishRuntime()
+      return
+    }
     schedule.lastOutcome = `admission_failed: ${(error as Error).message}`
     console.error(`[${SERVICE_ID}] Failed to admit ${child}:`, error)
     audit({
@@ -394,6 +410,10 @@ export async function run(): Promise<void> {
     watchFile(AGENTS_CONFIG, () => armForMode('agent-config')),
     watchFile(WORK_COORDINATOR_STATE, () => {
       if (getOperatorMode() === 'full') checkFullCycle()
+    }),
+    // Reconsider the selected Controller after an edit, without a retry timer.
+    fs.watch(path.join(systemPaths.etc, 'cognitive-graphs'), { recursive: true }, (_event, filename) => {
+      if (filename?.toString().endsWith('.json') && getOperatorMode() === 'full') checkFullCycle()
     }),
     watchFile(ACTIVE_OPERATOR_CONFIG, () => {
       const mode = getOperatorMode()

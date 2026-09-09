@@ -3132,3 +3132,116 @@ Validation:
   remain in `full-auto-design-runtime-review-2026-09-08.md`. No installed Site
   replacement, model inference, live robot command, or physical behavior proof.
   Rebuild/restart and test a new execution to evaluate deployed behavior.
+
+### 2026-09-08 — Optional objective admission and terminal-status projection
+
+- Removed the early `needsTaskLifecycle` permission from routing, provider
+  schemas, context builders, graph prompts, and editor copies. The existing
+  informed selectors own optional goals; speech and standalone actions remain
+  independent. No new model call or execution path was added.
+- Corrected the remaining Environment prompt's Robot Status objective authority.
+  Action Result interpretation uses the unchanged originating request and any
+  Current Execution objective. Existing correlated image transport is retained.
+- Robot Status projects execution lifecycle without rewriting stored objective
+  decisions. Terminal tasks remain historical data, not current goals; removed
+  the cancelled-task decision override and updated misleading owner descriptions.
+- Verification: 207 durable tests, 25 focused owner tests, four Environment graph
+  tests, 38 graphs, selector/model-default validation, Core/Brain/tests/Site types,
+  architecture and isolated Site build pass. Independent review verified actual
+  workflows, nullable goals/speech, and distinct returned image bytes. Existing
+  schema documentation and graph-persistence warnings remain unsuppressed.
+- Evidence and exact commands: `metahuman-goal-context-repair-vJ6QH6/README.md`
+  and `metahuman-goal-context-review-pbfTOG/README.md` under `/tmp`. No deployment,
+  model inference, live task mutation, or physical result is claimed.
+
+### 2026-09-08 — Full Auto waiting on an unresolved body result
+
+- Baseline: the Ainekio adapter stopped monitoring a dispatched movement after
+  30 seconds, recorded `outcome_unknown`, then only replayed that receipt. Core
+  correctly retained the unresolved body job; the following movement stayed queued.
+- Repaired the existing Ainekio host gateway/adapter owners: removed the fixed
+  action-result cutoff, restored saved-command tracking and correlated images,
+  distinguished host sessions, and released capture resources on acknowledged
+  cancellation. Recovery does not resend a motion or generate a stop.
+- Independent Core verification used actual saved Environment/Action Result
+  workflows and the existing API/Coordinator/durable owners. Late completion and
+  cancellation each settle the original execution and release the next body job
+  without another model call. No Core production code was changed for this repair.
+- Verification: 68 Ainekio owner tests, three independent recovery probes, the
+  two-permutation Core continuation test, and both repository whitespace checks
+  pass. Evidence: `ainekio-completion-repair-5ZujFn`,
+  `ainekio-terminal-recovery-review-nAo8Xl`, and
+  `metahuman-stall-core-review-gpq3uc` under `/tmp`.
+- The host gateway still requires restart. No installed build, service, live
+  task, or firmware was changed. The original missing body-terminal cause and
+  physical Full Auto behavior remain unverified; no serial device is attached.
+  Concurrent Agency and other pre-existing changes were preserved.
+
+### 2026-09-08 — Finite Desire execution with reduced inhibition
+
+- Root cause: unresolved motivation entered ordinary robot context, while plan
+  admission and outcome review did not require a finite satisfaction condition.
+  Recurring/continuation behavior could repeat without closing the desire.
+- Kept Core Agency, Desire Agent admission, Work Coordinator, and the saved graph
+  runtime as the owners. Preserved intentional reduced inhibition and existing
+  trust/mode settings. Consolidated risk and finite-plan checks in Agency plan
+  policy and removed the old risk-only module and node-local structural validator.
+- Candidate generation now requires observable outcomes and semantic outcome keys.
+  Robot Status projects bounded pending-work summaries. Removed full desire
+  motivations from general model context and filtered automatic Agency reports
+  from subsequent model history while retaining user messages and stored evidence.
+- The saved executor advances the persisted reviewed plan one step at a time.
+  Native robot steps retain Desire/plan/step/action correlation, and results return
+  to Agency instead of starting general Goal Review continuation. Attempt identity
+  is saved before dispatch. Finalization stages outcome review in the existing
+  durable outbox; the parent closes after that receipt returns. Superseded worker
+  review-admission code and the imperative all-steps executor loop were removed.
+- Completion needs verified criteria and matching ordered results. Unsatisfied
+  steps stop; recurring success stops; continuation uses the configured retry
+  budget. Unknown external outcomes remain unknown across replay and do not
+  automatically retry. Existing elapsed-time decay covers stale questions and
+  attention records; the explicit migration holds incomplete legacy contracts.
+- Verification: **153 focused tests**, the check-in contract, and **23 saved-graph
+  workflow tests** pass. The latter include finite two-step robot success/failure,
+  immutable stored instructions, parent closure after outcome review, and a strong
+  low-risk Desire executing at Suggest trust with no repeated backend attempt after
+  timeout. Core, Brain, CLI, tests, and Site type checks pass; 38 graphs, node
+  defaults, architecture/remote-safety, and `git diff --check` pass. Existing
+  non-blocking node documentation and editor-field notices remain reported.
+- The live migration dry-run scanned 64 records and proposed holding 33 incomplete
+  contracts, with zero activations. No migration, production build replacement,
+  service restart, live external execution, or physical test was performed.
+  Natural-language model quality, measured live token savings, deployment, and
+  hardware behavior remain unverified. Details and original reproduction:
+  `desire-to-robot-outcome-review-2026-09-08.md`. No commit or push was requested.
+
+### 2026-09-09 — Runtime compatibility and failed Controller admission
+
+- Baseline: the served validator did not contain the node outputs used by the
+  current graphs. Graph loading concealed that validation error as a missing
+  workflow, and Full mode repeatedly admitted the same invalid Controller.
+- Consolidated named and explicit-file loading in `graph-streaming.ts`; removed
+  the duplicate loader, catch-to-null handling, invalid-custom fallback, and
+  redundant caller errors. Configuration failures retain their cause through
+  Coordinator, which now honors the existing retryable error contract.
+- The existing Robot Operator validates only a fresh selected Controller before
+  admission. Correcting the graph or changing its selection reconsiders admission
+  through existing service events. Active executions still resume directly;
+  selected child failures do not disable subsequent Controller decisions.
+- The normal Site build now emits a checker using that same compiled validator
+  and existing executable identity. `start.sh` checks source/build agreement and
+  selected graph contracts before starting services. Custom graph precedence is
+  preserved. No second runtime, scheduler, store, build publisher, cooldown,
+  model instruction, or motion restriction was introduced.
+- Independent review caught an import-order regression and inconsistent retry
+  metadata; both were reproduced and corrected at their owners. Registry loading
+  is deferred until validation, preserving node initialization and test isolation.
+- Verification: 216 durable tests, eight launcher tests, the Coordinator contract,
+  all 38 graphs, Core/Brain/scripts/tests/Site type checks, architecture guard,
+  and an isolated Site build pass. The actual compiled checker passes matching,
+  mismatched-source, invalid-output, and valid-custom-override scenarios. Existing
+  Vite mixed static/dynamic import warnings remain unsuppressed.
+- Evidence and commands: `/tmp/metahuman-runtime-build-i0rqXlWh/README.md`.
+  Unrelated Agency/worktree changes were preserved. This repair did not replace
+  the installed Site build, restart services, issue robot commands, change
+  firmware, or verify physical behavior. No commit or push was requested.

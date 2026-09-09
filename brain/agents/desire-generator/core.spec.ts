@@ -7,7 +7,7 @@ import {
   parseReinforcementResponse,
   validateCandidateSources,
 } from '@metahuman/core'
-import { formatAgencyReview, parseDesireGeneratorArgs, selectRecentUserRequests } from './core.js'
+import { formatAgencyReview, parseDesireGeneratorArgs, selectRecentUserRequests, selectUniqueDesireCandidates } from './core.js'
 
 const ROOT = path.resolve(import.meta.dirname, '../../..')
 
@@ -21,6 +21,7 @@ test('generator model contracts fail closed while accepting an intentional empty
     sourceId: 'goal-1',
     risk: 'none',
     suggestedAction: 'Read the notes',
+    outcomeKey: 'summarize_notes', completionCriteria: 'A report summarizes the notes with references',
   }]))
   assert.equal(candidates[0].source, 'persona_goal')
   assert.throws(() => parseDesireCandidates('not json'), /not valid JSON/)
@@ -62,10 +63,26 @@ test('generator accepts only an explicit profile selector', () => {
   assert.throws(() => parseDesireGeneratorArgs(['--single-user']), /accepts only/)
 })
 
+test('equivalent outcomes deduplicate across active records and within one generated batch', () => {
+  const candidate = parseDesireCandidates(JSON.stringify([{
+    title: 'Review notes', description: 'Review notes', reason: 'A requested report',
+    source: 'user_request', sourceId: 'request-1', risk: 'none', suggestedAction: 'Write a report',
+    outcomeKey: 'summarize_notes', completionCriteria: 'A report references the notes',
+  }]))[0]
+  const paraphrase = { ...candidate, title: 'Make a briefing from the notes', sourceId: 'request-2' }
+  const separate = { ...candidate, title: 'Check a route', outcomeKey: 'document_route', sourceId: 'request-3' }
+  assert.deepEqual(selectUniqueDesireCandidates([candidate, paraphrase, separate], []), [candidate, separate])
+  const existing = { ...candidate, id: 'existing', status: 'pending' as const, strength: 0.8 }
+  assert.deepEqual(selectUniqueDesireCandidates([paraphrase, separate], [existing]), [separate])
+  assert.throws(() => parseDesireCandidates(JSON.stringify([{ ...candidate, completionCriteria: '' }])), /finite completion condition/)
+  assert.throws(() => parseDesireCandidates(JSON.stringify(Array(6).fill(candidate))), /at most 5/)
+})
+
 test('generator rejects model candidates whose claimed source was not present', () => {
   const candidate = parseDesireCandidates(JSON.stringify([{
     title: 'Review notes', description: 'Review notes', reason: 'Important',
     source: 'persona_goal', risk: 'none', suggestedAction: 'Read',
+    outcomeKey: 'summarize_notes', completionCriteria: 'A report summarizes the notes with references',
     sourceId: 'goal-1',
   }]))
   const inputs = {
@@ -115,7 +132,7 @@ test('Desire Agent reads bounded stable user-request evidence only when it runs'
   assert.deepEqual(selectRecentUserRequests(messages, 5), selected)
 })
 
-test('Agency Review names actual model calls, changed desires, strengths, reasons, and evidence', () => {
+test('Agency Review narrative stays compact while operational detail remains in audit data', () => {
   const content = formatAgencyReview({
     reviewedAt: '2026-09-06T00:03:12.000Z',
     freshEvidenceCount: 2,
@@ -156,9 +173,8 @@ test('Agency Review names actual model calls, changed desires, strengths, reason
     generationSkippedReason: null,
   })
 
-  assert.match(content, /ollama\/qwen3\.5:9b \(agent routing, persona role, 5\.21s, 4239 tokens\)/)
-  assert.match(content, /Understand the owner \[desire-1\]: 0\.1888 → 0\.2688 \(\+0\.0800\)/)
-  assert.match(content, /Evidence \(user_request:request-1\): Please learn this preference/)
-  assert.match(content, /Old idea \[desire-2\]: 0\.2000 → 0\.1985 \(-0\.0015\)/)
-  assert.doesNotMatch(content, /grew stronger|faded slightly/)
+  assert.match(content, /2 new evidence items/)
+  assert.match(content, /1 reinforced/)
+  assert.ok(content.length < 400)
+  assert.doesNotMatch(content, /qwen|4239|Please learn|Understand the owner|0\.1888/)
 })

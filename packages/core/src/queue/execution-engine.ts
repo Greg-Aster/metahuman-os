@@ -40,6 +40,7 @@ import { openExecutionStore } from '../durable-execution/storage.js';
 import { executionWorkInput, relayExecutionOutbox } from '../durable-execution/coordinator-outbox.js';
 import { canWriteMemory } from '../cognitive-mode.js';
 import type { GraphExecutionState } from '../graph-executor.js';
+import { GraphConfigurationError } from '../graph-streaming.js';
 
 const DEFERRED = Symbol('deferred-work-completion');
 
@@ -387,7 +388,6 @@ export class ExecutionEngine {
       const user = getUsers().find(candidate => candidate.username === task.username);
       if (!user) throw new Error(`Environment bridge user not found: ${task.username}`);
       const loaded = await loadGraphForMode(graphName, user.username);
-      if (!loaded) throw new Error(`Environment graph not found: ${graphName}`);
       const conversationInput = (observation.text ?? [])
         .filter((event: any) => event?.source === 'player')
         .map((event: any) => typeof event?.text === 'string' ? event.text.trim() : '')
@@ -671,10 +671,14 @@ export class ExecutionEngine {
         return;
       }
       const conflict = normalized instanceof ExecutionConflictError;
+      let configurationError: GraphConfigurationError | undefined;
+      for (let cause: unknown = normalized; cause instanceof Error; cause = cause.cause) {
+        if (cause instanceof GraphConfigurationError) { configurationError = cause; break; }
+      }
       const failure = {
-        code: conflict ? 'execution_conflict' : normalized instanceof WorkOutcomeUnknownError ? 'outcome_unknown' : 'handler_failed',
+        code: configurationError ? 'workflow_configuration_invalid' : conflict ? 'execution_conflict' : normalized instanceof WorkOutcomeUnknownError ? 'outcome_unknown' : 'handler_failed',
         message: normalized.message,
-        retryable: !conflict && !(normalized instanceof WorkOutcomeUnknownError),
+        retryable: !configurationError && !conflict && !(normalized instanceof WorkOutcomeUnknownError),
       };
       // Re-running an unchanged job cannot reconcile an immutable version or
       // receipt conflict. Preserve its execution and report the failed work.

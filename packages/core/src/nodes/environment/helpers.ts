@@ -1,3 +1,4 @@
+import { projectDesireAwareness } from '../../agency/lifecycle-policy.js'
 import {
   ENVIRONMENT_MOTION_CLASSES,
   normalizeEnvironmentVisualInspectionTarget,
@@ -191,6 +192,7 @@ export function projectRobotStatusContext(value: unknown): unknown {
       ? projectSelectorEvidence({
           objectiveId: task.objectiveId,
           executionId: task.executionId,
+          executionStatus: task.executionStatus,
           completionCriteria: task.completionCriteria,
           objective: task.objective,
           instruction: task.instruction,
@@ -213,7 +215,8 @@ export function projectRobotStatusContext(value: unknown): unknown {
         }, { remaining: 20 }, 0, 3) ?? null
       : null,
     agency: agency
-      ? projectSelectorEvidence({ activeDesires: agency.activeDesires }, { remaining: 24 }, 0, 4) ?? null
+      ? { purpose: 'Pending work for Desire Agent; never a body instruction or permission to act.',
+          activeDesires: projectDesireAwareness(agency.activeDesires) }
       : null,
   };
 }
@@ -275,8 +278,8 @@ function selectorCapabilityRules(capabilities: EnvironmentCapabilities): string[
     actions.has('robotCommand')
       ? Object.keys(commandDescriptions).length > 0
         ? actions.has('robotMotionPlan')
-          ? 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. For a multi-step objective, select a command whenever its described effect is an appropriate current step, then reassess after feedback. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail; use movementRequest only when no description covers that current movement. State the matched catalog effect in taskDecision.reason.'
-          : 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. For a multi-step objective, select a command whenever its described effect is an appropriate current step, then reassess after feedback. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail. State the matched catalog effect in taskDecision.reason.'
+          ? 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. For a multi-step objective, select a command whenever its described effect is an appropriate current step, then reassess after feedback. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail; use movementRequest only when no description covers that current movement.'
+          : 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. For a multi-step objective, select a command whenever its described effect is an appropriate current step, then reassess after feedback. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail.'
         : actions.has('robotMotionPlan')
           ? 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects; use movementRequest when a named effect cannot be identified confidently.'
           : 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects.'
@@ -678,7 +681,6 @@ export interface EnvironmentSelectorJsonSchemaInput {
   actions?: readonly string[];
   robotCommands?: readonly string[];
   actionRouteSelected?: boolean;
-  taskLifecycleSelected?: boolean;
   requireAction?: boolean;
   requireProgress?: boolean;
   requireAutonomousConsequence?: boolean;
@@ -689,8 +691,8 @@ export interface EnvironmentSelectorJsonSchemaInput {
  * It constrains output to the current adapter capability contract without
  * encoding scene content or phrase-specific behavior.
  *
- * Ollama's structured decoder reliably enforces this flat schema. Core validates
- * route consistency before Robot Status Out persists the model-authored decision.
+ * Core validates the returned structure and route consistency before any effect
+ * or objective update is committed, independently of provider schema support.
  */
 export function buildEnvironmentSelectorJsonSchema(
   input: EnvironmentSelectorJsonSchemaInput = {},
@@ -726,42 +728,23 @@ export function buildEnvironmentSelectorJsonSchema(
       },
     },
   };
-  const actionTaskDecisionObjectSchema = {
-    ...taskDecisionObjectSchema,
+  const nonActionTaskDecisionConstraint = {
+    required: ['outcome'],
+    properties: { outcome: { type: 'string', enum: nonActionOutcomes } },
+  };
+  const actionTaskDecisionConstraint = {
+    required: ['objectiveComplete'],
     properties: {
-      ...taskDecisionObjectSchema.properties,
-      outcome: { type: 'string', enum: ['act'] },
       objectiveComplete: { type: 'boolean', enum: [false] },
     },
   };
-  const taskLifecycleDisabled = input.taskLifecycleSelected === false;
-  const nonActionTaskDecisionConstraint = taskLifecycleDisabled
-    ? { type: 'null' }
-    : {
-        required: ['outcome'],
-        properties: {
-          outcome: { type: 'string', enum: nonActionOutcomes },
-        },
-      };
-  const actionTaskDecisionConstraint = taskLifecycleDisabled
-    ? { type: 'null' }
-    : {
-        required: ['outcome', 'objectiveComplete'],
-        properties: {
-          outcome: { type: 'string', enum: ['act'] },
-          objectiveComplete: { type: 'boolean', enum: [false] },
-        },
-      };
-  const generatedMovementTaskDecisionConstraint = taskLifecycleDisabled
-    ? { type: 'null' }
-    : {
-        required: ['outcome', 'objectiveComplete'],
-        properties: {
-          outcome: { type: 'string', enum: ['act'] },
-          objectiveComplete: { type: 'boolean', enum: [false] },
-          motionClass: { type: 'string', enum: ['body_local'] },
-        },
-      };
+  const generatedMovementTaskDecisionConstraint = {
+    ...actionTaskDecisionConstraint,
+    properties: {
+      ...actionTaskDecisionConstraint.properties,
+      motionClass: { type: 'string', enum: ['body_local'] },
+    },
+  };
   const progressBranches: Record<string, unknown>[] = [];
   const autonomyWorkBranches: Record<string, unknown>[] = [];
   const outputRouteBranches: Record<string, unknown>[] = [{
@@ -795,38 +778,34 @@ export function buildEnvironmentSelectorJsonSchema(
     progressBranches.push(generatedMovementBranch);
     autonomyWorkBranches.push(generatedMovementBranch);
   }
-  if (!taskLifecycleDisabled) {
-    progressBranches.push({
-      properties: {
-        actions: { maxItems: 0 },
-        movementRequest: { type: 'null' },
-        taskDecision: {
-          required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis', 'completionEvidence'],
-          properties: {
-            outcome: { type: 'string', enum: ['complete'] },
-            objectiveComplete: { type: 'boolean', enum: [true] },
-            requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
-            completionEvidence: { type: 'string', minLength: 1, maxLength: 1_000 },
-          },
+  progressBranches.push({
+    properties: {
+      actions: { maxItems: 0 },
+      movementRequest: { type: 'null' },
+      taskDecision: {
+        required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis', 'completionEvidence'],
+        properties: {
+          outcome: { type: 'string', enum: ['complete'] },
+          objectiveComplete: { type: 'boolean', enum: [true] },
+          requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
+          completionEvidence: { type: 'string', minLength: 1, maxLength: 1_000 },
         },
       },
-    });
-  }
+    },
+  });
   const autonomyResponseBranch = {
     properties: {
       response: { type: 'string', minLength: 1 },
       actions: { maxItems: 0 },
       movementRequest: { type: 'null' },
-      taskDecision: taskLifecycleDisabled
-        ? { type: 'null' }
-        : {
-            required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis'],
-            properties: {
-              outcome: { type: 'string', enum: ['complete'] },
-              objectiveComplete: { type: 'boolean', enum: [true] },
-              requiredCompletionBasis: { type: 'string', enum: ['response'] },
-            },
-          },
+      taskDecision: {
+        required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis'],
+        properties: {
+          outcome: { type: 'string', enum: ['complete'] },
+          objectiveComplete: { type: 'boolean', enum: [true] },
+          requiredCompletionBasis: { type: 'string', enum: ['response'] },
+        },
+      },
     },
   };
   const autonomyBranches = [...autonomyWorkBranches, autonomyResponseBranch];
@@ -838,9 +817,7 @@ export function buildEnvironmentSelectorJsonSchema(
     ...(movementSupported
       ? [{ properties: { movementRequest: { type: 'object' } } }]
       : []),
-    ...(input.taskLifecycleSelected === false
-      ? []
-      : [{ properties: { taskDecision: { type: 'object' } } }]),
+    { properties: { taskDecision: { type: 'object' } } },
   ];
   const routeConstraints: Record<string, unknown>[] = [
     { anyOf: outputRouteBranches },
@@ -892,18 +869,7 @@ export function buildEnvironmentSelectorJsonSchema(
         : { type: 'null' },
       taskDecision: {
         description: 'Durable objective state only when this pass creates, advances, completes, or otherwise changes an objective.',
-        ...(input.taskLifecycleSelected === true
-          ? {
-              anyOf: [
-                { type: 'null' },
-                input.requireAction === true
-                  ? actionTaskDecisionObjectSchema
-                  : taskDecisionObjectSchema,
-              ],
-            }
-          : input.taskLifecycleSelected === false
-            ? { type: 'null' }
-            : { anyOf: [{ type: 'null' }, taskDecisionObjectSchema] }),
+        anyOf: [{ type: 'null' }, taskDecisionObjectSchema],
       },
     },
   };
@@ -1069,8 +1035,8 @@ export function validateEnvironmentSelectorOutput(
       'selector output must include a non-empty response, action, movementRequest, or taskDecision',
     );
   }
-  if (decision && physicalWorkSelected && (decision.outcome !== 'act' || decision.objectiveComplete)) {
-    errors.push('physical work requires taskDecision outcome=act and objectiveComplete=false');
+  if (decision && physicalWorkSelected && decision.objectiveComplete) {
+    errors.push('a newly selected action cannot establish objective completion before its result');
   }
   if (decision && !physicalWorkSelected && decision.outcome === 'act') {
     errors.push('taskDecision outcome=act requires an action or movementRequest');

@@ -39,7 +39,9 @@ test('Desire Generation gives the selected model its complete typed output contr
             source: 'persona_goal',
             sourceId: 'goal-1',
             risk: 'none',
-            suggestedAction: 'Consider the current context',
+            suggestedAction: 'Produce a report on a selected landmark',
+            outcomeKey: 'document_landmark',
+            completionCriteria: 'A saved report describes the landmark with source references',
           }]),
           model: 'test-model',
           modelId: 'test-model',
@@ -62,6 +64,8 @@ test('Desire Generation gives the selected model its complete typed output contr
     'sourceId',
     'risk',
     'suggestedAction',
+    'outcomeKey',
+    'completionCriteria',
   ])
   assert.deepEqual(variants[0].properties.source.enum, ['persona_goal'])
   assert.deepEqual(variants[0].properties.sourceId.enum, ['goal-1'])

@@ -146,7 +146,7 @@ You are an intelligent reviewer, not a simple pass/fail checker. Analyze the exe
 
 **Goal Types**:
 - **one_time**: Single achievement, then done (e.g., "buy a car"). Mark completed when done.
-- **recurring**: Ongoing without end. Mark continue after each cycle.
+- **recurring**: One finite cycle. Mark completed when its criteria are satisfied and stop. Another cycle requires fresh evidence and a newly reviewed plan.
 - **long_running**: Takes weeks/months with milestones (e.g., "hike the PCT"). SPECIAL HANDLING REQUIRED.
 
 **For LONG_RUNNING Goals**:
@@ -160,7 +160,7 @@ You are an intelligent reviewer, not a simple pass/fail checker. Analyze the exe
 - Each plan execution covers ONE milestone, not the entire goal
 
 ## Verdict Options
-- **completed**: The desire is FULLY satisfied. For long_running: ONLY if completionCriteria is met!
+- **completed**: The desire is FULLY satisfied. ONLY if the approved plan completionCriteria is met, for every goal type.
 - **continue**: Keep pursuing. For long_running: Current milestone done, advance to next.
 - **retry**: Failed or incomplete. Try again with improved approach. You MUST provide specific lessons and suggestions.
 - **escalate**: Needs human intervention - external resources, permissions, or decisions required.
@@ -249,7 +249,7 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Review
   "notifyUser": true/false,
   "userMessage": "Message for user if notifyUser is true",
   "milestoneAdvance": true/false - for long_running: set true if current milestone completed and should advance to next,
-  "completionCriteriaMet": true/false - for long_running: set true ONLY if the ultimate completion criteria is actually met
+  "completionCriteriaMet": true/false - set true ONLY if the approved completion criteria is verified by returned evidence
 }`;
 
 interface DesireOutcomeReviewOptions {
@@ -276,7 +276,7 @@ export async function runDesireOutcomeReview(
 
   // Build goal type and milestone context for long-running goals
   const goalType = desire.goalType || 'one_time';
-  const completionCriteria = desire.completionCriteria;
+  const completionCriteria = desire.plan?.completionCriteria;
   const currentMilestone = desire.milestones?.[desire.goalProgress?.currentMilestone || 0];
   const totalMilestones = desire.milestones?.length || 0;
   const completedMilestones = desire.goalProgress?.completedMilestones || 0;
@@ -364,6 +364,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
 
     const outcomeReview: DesireOutcomeReview = {
       id: `outcome-${desire.id}-${Date.now()}`,
+      planId: desire.plan?.id,
+      planVersion: desire.plan?.version,
+      executionStartedAt: execution.startedAt,
       verdict: reviewResult.verdict,
       reasoning: reviewResult.reasoning,
       successScore: reviewResult.successScore,
@@ -404,6 +407,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       details: {
         desireId: desire.id,
         title: desire.title,
+        planId: desire.plan?.id,
+        planVersion: desire.plan?.version,
+        executionStartedAt: execution.startedAt,
         verdict: reviewResult.verdict,
         successScore: reviewResult.successScore,
         failureCategory: reviewResult.failureCategory,

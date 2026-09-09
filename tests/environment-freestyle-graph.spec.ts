@@ -82,7 +82,7 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.equal(orchestrator.data.properties?.maxTokens, 768);
   const intentPrompt = String(orchestrator.data.properties?.systemPrompt);
   assert.match(intentPrompt, /needsResponse exposes user-visible natural-language expression/i);
-  assert.match(intentPrompt, /needsRobotStatus exposes the canonical current snapshot/i);
+  assert.match(intentPrompt, /needsRobotStatus exposes .*task snapshot with its execution state/i);
   assert.match(intentPrompt, /Routes are independent/i);
   assert.match(intentPrompt, /Infer which information and capabilities are relevant/i);
   assert.deepEqual(parseEnvironmentIntentRouting(JSON.stringify({
@@ -93,7 +93,6 @@ test('Environment Mode uses one route-only orchestrator before selected context 
     needsEnvironment: true,
     needsVision: false,
     needsAction: true,
-    needsTaskLifecycle: false,
   })), {
     needsResponse: true,
     needsConversationHistory: false,
@@ -102,7 +101,6 @@ test('Environment Mode uses one route-only orchestrator before selected context 
     needsEnvironment: true,
     needsVision: false,
     needsAction: true,
-    needsTaskLifecycle: false,
   });
   assert.throws(
     () => parseEnvironmentIntentRouting('{"needsResponse":true}'),
@@ -121,8 +119,9 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /actions and movementRequest are exclusive/i);
   assert.match(
     String(contextBuilder.data.properties?.systemPrompt),
-    /outcome act means that actions or movementRequest is non-empty and objectiveComplete is false/i,
+    /taskDecision describes progress toward the whole objective independently/i,
   );
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Keep objectiveComplete false when selecting work whose result is still pending/i);
 
   assert.equal(graph.nodes.some(node => node.data.nodeType === 'instruction_resolver'), false);
   assert.equal(hasEdge(userInput.id, 'message', orchestrator.id, 'message'), true);

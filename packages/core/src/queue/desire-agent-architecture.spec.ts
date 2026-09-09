@@ -52,7 +52,7 @@ test('Desire Agent is the sole public trigger and lifecycle admission owner', ()
     'packages/core/src/api/handlers/agency-workflows.ts',
     'packages/core/src/nodes/response/response-action-router.node.ts',
     'brain/agents/desire-planner/core.ts',
-    'packages/core/src/queue/desire-execution-handler.ts',
+    'packages/core/src/nodes/agency/desire-executor.node.ts',
     'packages/core/src/queue/desire-outcome-handler.ts',
   ]) {
     const contents = source(caller)
