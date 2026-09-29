@@ -1,5 +1,9 @@
 # Robot resource budget: MetaHuman findings
 
+The later [distributed foundation review](2026-09-28-distributed-robot-foundation.md)
+records the owner's wireless, interchangeable-host and shared coordination
+requirements. It extends deployment planning without changing these measurements.
+
 Read-only source audit at `b57d205895d785d96194b9b9893f7c0b07838447`.
 The owner's requested system budget lives in the sibling Ainekio repository:
 [complete budget](https://github.com/Greg-Aster/Ainekio-bot/blob/main/docs/v2-12servo/RESOURCE_BUDGET.md) and
