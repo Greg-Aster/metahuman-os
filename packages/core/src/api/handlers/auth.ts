@@ -5,6 +5,7 @@
  * Works for both web (via Astro adapter) and mobile (via nodejs-mobile).
  */
 
+import { randomUUID } from 'node:crypto';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { getUser, getUserByUsername, authenticateUser, listUsers, createUser, hasOwner, updateUserMetadata, getProfileStorageConfig, deleteUser, updatePassword, verifyUserPassword, updateUsername } from '../../users.js';
@@ -14,9 +15,13 @@ import { isWorkCoordinatorOwner } from '../../queue/work-coordinator-ownership.j
 import { initializeProfile } from '../../profile.js';
 import { unlockProfile, lockProfile, getEncryptionStatus } from '../../encryption-manager.js';
 import { audit } from '../../audit.js';
+import { createLogger } from '../../logger.js';
 import { getSession } from '../../sessions.js';
 import { generateRecoveryCodes, saveRecoveryCodes, verifyRecoveryCode } from '../../recovery-codes.js';
 import { getProfilePaths } from '../../paths.js';
+import { importProfileSyncBundle, saveProfileSyncConfig, validateProfileSyncBundle, validateProfileSyncConfig } from '../../profile-sync.js';
+
+const profileSyncLogger = createLogger('profile-sync');
 
 /**
  * POST /api/auth/login - Authenticate user
@@ -548,104 +553,168 @@ export async function handleRegister(req: UnifiedRequest): Promise<UnifiedRespon
 /**
  * POST /api/auth/sync-user - Create local user from server sync
  *
- * Creates a user account locally after syncing credentials from server.
- * IDENTICAL for web and mobile - ONE implementation used by both.
+ * Fetches and validates the remote profile through Node before creating a local
+ * account. The browser only contacts its local server, including over a tunnel.
+ * Authenticated memory sync remains finite Work Coordinator work.
  *
  * Accepts optional profileStorage config to specify custom profile location.
  */
 export async function handleCreateSyncUser(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const requestId = randomUUID();
+  const startedAt = Date.now();
+  let stage = 'validation';
+  let source: string | undefined;
+  const report = (event: string, level: 'info' | 'error', extra: Record<string, unknown> = {}) => {
+    // Only operational fields: never request bodies, credentials, remote response
+    // bodies, full source URLs (which may contain secrets), or profile contents.
+    const details = { requestId, stage, source, elapsedMs: Date.now() - startedAt, ...extra };
+    profileSyncLogger[level](event, details);
+    audit({ level, category: 'data', event, details, actor: 'system' });
+  };
+  const fail = (status: number, code: string, error: string): UnifiedResponse => {
+    report('profile_sync_bootstrap_failed', 'error', { status, code });
+    return { status, error };
+  };
+  report('profile_sync_bootstrap_started', 'info');
   const { body } = req;
 
-  const { username, password, displayName, role: requestedRole, profileStorage } = (body || {}) as {
+  const { username, password, serverUrl, profileStorage } = (body || {}) as {
     username?: string;
     password?: string;
-    displayName?: string;
-    role?: string;
+    serverUrl?: string;
     profileStorage?: ProfileStorageConfig;
   };
 
-  if (!username || !password) {
-    return {
-      status: 400,
-      error: 'Username and password are required',
-    };
+  if (typeof username !== 'string' || !username.trim() || typeof password !== 'string' || !password) {
+    return fail(400, 'MISSING_CREDENTIALS', 'Username and password are required');
   }
 
-  // Check if user already exists (by username, not ID)
-  let user = getUserByUsername(username);
+  let config;
+  try {
+    config = validateProfileSyncConfig({ serverUrl, username, password });
+    source = new URL(config.serverUrl).origin;
+  } catch (error) {
+    return fail(400, 'INVALID_CONFIG', (error as Error).message);
+  }
 
-  if (user) {
-    // User exists - verify credentials
-    const verified = authenticateUser(username, password);
-    if (!verified) {
-      return {
-        status: 409,
-        error: 'User exists with different credentials',
-      };
+  let exceptionStatus = 500;
+  try {
+    stage = 'local-identity';
+    // Verify the local identity before contacting a remote server or writing data.
+    let user = getUserByUsername(username);
+    if (user) {
+      if (!verifyUserPassword(username, password)) {
+        return fail(409, 'LOCAL_CREDENTIAL_MISMATCH', 'User exists with different credentials');
+      }
     }
 
-    // Update profileStorage if provided (allows changing profile location)
-    if (profileStorage) {
-      updateUserMetadata(user.id, { profileStorage });
-    }
-  } else {
-    // Create new user
-    // Security: Synced users only get 'owner' if no owner exists locally
-    // This prevents a remote profile from claiming ownership of the local device
-    const effectiveRole = hasOwner() ? 'standard' : ((requestedRole as any) || 'owner');
-
-    user = createUser(username, password, effectiveRole, {
-      displayName: displayName || username,
+    let bundle;
+    let remoteUser: { username: string; role: 'owner' | 'standard' | 'guest'; metadata?: { displayName?: string } };
+    exceptionStatus = 502;
+    stage = 'remote-login';
+    const login = await fetch(`${config.serverUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: config.username, password }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(30_000),
     });
-
-    if (requestedRole === 'owner' && effectiveRole === 'standard') {
-      console.log(`[auth-handler] Synced user ${username} downgraded from owner to standard (local owner exists)`);
+    if (!login.ok) return fail(502, `HTTP_${login.status}`, `Remote login failed (${login.status}). Check the source URL and credentials.`);
+    const authentication = await login.json();
+    if (!authentication.success || authentication.user?.username !== config.username ||
+        !['owner', 'standard', 'guest'].includes(authentication.user?.role)) {
+      return fail(502, 'REMOTE_IDENTITY_MISMATCH', 'Remote login did not return the requested profile identity');
     }
+    remoteUser = authentication.user;
 
-    // Set profileStorage if provided (must be done after creation)
+    stage = 'remote-download';
+    const download = await fetch(`${config.serverUrl}/api/profile-sync/export-priority`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: config.username, password }),
+      redirect: 'error',
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!download.ok) return fail(502, `HTTP_${download.status}`, `Remote profile download failed (${download.status})`);
+    stage = 'bundle-validation';
+    bundle = validateProfileSyncBundle(await download.json(), { expectedSourceUsername: config.username });
+    if (bundle.files.length === 0) return fail(502, 'EMPTY_BUNDLE', 'Remote profile contains no files to import');
+
+    exceptionStatus = 500;
+    stage = 'local-setup';
+    if (!user) {
+      // Local ownership is never granted by a remote role claim.
+      user = createUser(username, password, hasOwner() ? 'standard' : remoteUser.role, {
+        displayName: remoteUser.metadata?.displayName || username,
+      });
+    }
+    // Custom profile storage remains resolved by the canonical storage owners.
     if (profileStorage) {
       updateUserMetadata(user.id, { profileStorage });
     }
 
-    // Initialize profile
-    try {
-      await initializeProfile(username);
-    } catch (e) {
-      console.warn('[auth-handler] Profile init during sync failed:', e);
+    const storage = getProfileStorageConfig(username);
+    if (storage?.encryption?.type && storage.encryption.type !== 'none') {
+      if (storage.encryption.useLoginPassword) {
+        const unlock = await unlockProfile(user.id, password);
+        if (!unlock.success) return fail(423, 'UNLOCK_FAILED', unlock.error || 'Local encrypted profile could not be unlocked');
+      } else if (!(await getEncryptionStatus(user.id)).unlocked) {
+        return fail(423, 'PROFILE_LOCKED', 'Unlock the local encrypted profile before importing');
+      }
     }
+    await initializeProfile(username);
+    stage = 'profile-import';
+    const imported = await importProfileSyncBundle(username, bundle, { expectedSourceUsername: config.username });
+    if (!imported.success || imported.imported === 0) {
+      return fail(500, 'IMPORT_INCOMPLETE', `Profile import incomplete: ${imported.errors.join('; ') || 'No files imported'}`);
+    }
+    stage = 'save-config';
+    await saveProfileSyncConfig(username, config);
+
+    // Create session
+    stage = 'session';
+    const session = createSession(user.id, user.role);
+    // Setup verified storage before session creation; select it through the same
+    // session owner as login so the subsequent memory job can be admitted.
+    if (isWorkCoordinatorOwner()) selectAuthenticatedSession(session.id);
+
+    report('profile_sync_bootstrap_completed', 'info', { status: 200, importedFiles: imported.imported });
+
+    // Return response WITH cookie set (important for browser-based mobile apps)
+    return {
+      status: 200,
+      data: {
+        success: true,
+        sessionId: session.id,
+        user: {
+          id: user.id,
+          username: user.username,
+          role: user.role,
+        },
+      },
+      cookies: [{
+        action: 'set' as const,
+        name: 'mh_session',
+        value: session.id,
+        options: {
+          httpOnly: true,
+          sameSite: 'lax' as const,
+          path: '/',
+          maxAge: 60 * 60 * 24 * 7, // 7 days
+        },
+      }],
+    };
+  } catch (error) {
+    // Error messages and stacks can embed source URLs or remote payloads. Keep
+    // terminal/audit diagnostics to the operation and a machine error code.
+    const cause = error instanceof Error && error.cause ? error.cause : error;
+    const rawCode = cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined;
+    const code = typeof rawCode === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(rawCode)
+      ? rawCode
+      : error instanceof Error && error.name === 'TimeoutError' ? 'TIMEOUT' : 'OPERATION_FAILED';
+    const context = exceptionStatus === 502 ? 'Cannot download remote profile' : 'Local profile setup incomplete';
+    return fail(exceptionStatus, code, `${context}: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
-
-  // Create session
-  const session = createSession(user.id, user.role);
-  // Synced storage may still require an unlock. /auth/me establishes readiness.
-  if (isWorkCoordinatorOwner()) selectAuthenticatedSession(null);
-
-  console.log(`[auth-handler] User ${username} synced, session: ${session.id.slice(0, 8)}...`);
-
-  // Return response WITH cookie set (important for browser-based mobile apps)
-  return {
-    status: 200,
-    data: {
-      success: true,
-      sessionId: session.id,
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-      },
-    },
-    cookies: [{
-      action: 'set' as const,
-      name: 'mh_session',
-      value: session.id,
-      options: {
-        httpOnly: true,
-        sameSite: 'lax' as const,
-        path: '/',
-        maxAge: 60 * 60 * 24 * 7, // 7 days
-      },
-    }],
-  };
 }
 
 /**

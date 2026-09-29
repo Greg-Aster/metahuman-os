@@ -482,10 +482,11 @@ export function captureEventWithDetails(content: string, opts: CaptureEventOptio
     }
   }
 
-  // Check for duplicate content (skip if already saved recently)
-  // This prevents the same question/message from being saved multiple times
+  // Durable producers deduplicate by their persisted identity above. Distinct
+  // identities may legitimately have the same text, including imported records.
+  // Keep recent-content suppression for captures without a producer identity.
   const skipDedup = opts.metadata?.skipDedup === true;
-  if (!skipDedup && isDuplicateContent(content)) {
+  if (!idempotencyKey && !skipDedup && isDuplicateContent(content)) {
     return {
       eventId: 'duplicate',
       filePath: '',

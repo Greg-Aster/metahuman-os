@@ -1,6 +1,6 @@
 /** Browser adapter for the canonical server-side Profile Sync agent. */
 
-import { apiFetch, normalizeUrl, remoteFetch } from './api-config'
+import { apiEventSource, apiFetch, normalizeUrl } from './api-config'
 
 export interface RemoteSyncProgress {
   phase: 'authenticating' | 'queued' | 'running' | 'downloading' | 'complete' | 'error'
@@ -26,36 +26,8 @@ export interface RemoteSyncConfig {
   lastMemorySyncAt?: string
 }
 
-interface QueueTaskView {
-  id: string
-  status: 'queued' | 'running' | 'completed' | 'failed'
-  state: string
-  error?: string
-}
-
 async function responseData(response: Response): Promise<Record<string, any>> {
   return await response.json().catch(() => ({}))
-}
-
-export async function testRemoteServerConnection(
-  serverUrl: string,
-  username: string,
-  password: string,
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    const response = await remoteFetch(`${normalizeUrl(serverUrl)}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    })
-    const data = await responseData(response)
-    if (!response.ok || data.success === false) {
-      return { success: false, error: data.error || `Remote server returned ${response.status}` }
-    }
-    return { success: true }
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : 'Connection failed' }
-  }
 }
 
 export async function configureRemoteSyncServer(
@@ -63,12 +35,10 @@ export async function configureRemoteSyncServer(
   username: string,
   password: string,
 ): Promise<{ success: boolean; error?: string }> {
-  const connection = await testRemoteServerConnection(serverUrl, username, password)
-  if (!connection.success) return connection
   const response = await apiFetch('/api/profile-sync/config', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ serverUrl, username, password }),
+    body: JSON.stringify({ serverUrl: normalizeUrl(serverUrl), username, password }),
   })
   const data = await responseData(response)
   if (!response.ok || data.success === false) {
@@ -92,18 +62,12 @@ export async function clearRemoteSyncConfig(): Promise<void> {
   }
 }
 
-async function readTask(taskId: string): Promise<QueueTaskView> {
-  const response = await apiFetch(`/api/unified-queue/tasks/${encodeURIComponent(taskId)}`)
-  const data = await responseData(response)
-  if (!response.ok || !data.task) throw new Error(data.error || `Could not read sync task (${response.status})`)
-  return data.task as QueueTaskView
-}
-
 export async function runProfileSyncAgent(
   args: string[] = [],
   onProgress?: (progress: RemoteSyncProgress) => void,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal } = {},
 ): Promise<RemoteSyncResult> {
+  if (options.signal?.aborted) return { success: false, error: 'Stopped waiting for Profile Sync' }
   const response = await apiFetch('/api/unified-queue/trigger/profile-sync', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -114,26 +78,38 @@ export async function runProfileSyncAgent(
     return { success: false, error: data.error || `Could not queue Profile Sync (${response.status})` }
   }
   const taskId = String(data.taskId)
-  const timeoutMs = options.timeoutMs ?? 5 * 60_000
-  const deadline = Date.now() + timeoutMs
   onProgress?.({ phase: 'queued', message: `Profile Sync queued as ${taskId}` })
-  while (Date.now() < deadline) {
-    if (options.signal?.aborted) return { success: false, taskId, error: 'Stopped waiting for Profile Sync' }
-    const task = await readTask(taskId)
-    if (task.status === 'completed') {
-      onProgress?.({ phase: 'complete', message: 'Profile Sync completed' })
-      return { success: true, taskId }
+  return new Promise(resolve => {
+    const stream = apiEventSource(`/api/unified-queue/tasks/${encodeURIComponent(taskId)}/stream`)
+    let settled = false
+    const finish = (success: boolean, error?: string) => {
+      if (settled) return
+      settled = true
+      stream.close()
+      options.signal?.removeEventListener('abort', abort)
+      onProgress?.({ phase: success ? 'complete' : 'error', message: error || 'Profile Sync completed' })
+      resolve({ success, taskId, ...(error ? { error } : {}) })
     }
-    if (task.status === 'failed') {
-      const error = task.error || `Profile Sync ${task.state}`
-      onProgress?.({ phase: 'error', message: error })
-      return { success: false, taskId, error }
+    const abort = () => finish(false, `Stopped waiting for Profile Sync ${taskId}; the queued job may still be running`)
+    stream.onmessage = event => {
+      let message: { type?: string; data?: { taskId?: string; message?: string } }
+      try {
+        message = JSON.parse(event.data)
+        if (!message || typeof message.type !== 'string') throw new Error('Invalid task event')
+      } catch {
+        finish(false, 'Profile Sync returned an invalid task event')
+        return
+      }
+      if (message.type === 'queued_task_completed' && message.data?.taskId === taskId) {
+        finish(true)
+      } else if (message.type === 'error') {
+        finish(false, message.data?.message || 'Profile Sync failed')
+      } else if (message.type === 'queued_task_started') {
+        onProgress?.({ phase: 'running', message: 'Profile Sync is running' })
+      }
     }
-    onProgress?.({
-      phase: task.status === 'running' ? 'running' : 'queued',
-      message: task.status === 'running' ? 'Profile Sync is running' : 'Profile Sync is waiting to run',
-    })
-    await new Promise(resolve => setTimeout(resolve, 1000))
-  }
-  return { success: false, taskId, error: `Profile Sync is still running as ${taskId}` }
+    stream.onerror = () => finish(false, `Lost the status connection for Profile Sync ${taskId}; completion is unconfirmed`)
+    options.signal?.addEventListener('abort', abort, { once: true })
+    if (options.signal?.aborted) abort()
+  })
 }
