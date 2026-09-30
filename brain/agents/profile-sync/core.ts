@@ -119,7 +119,12 @@ function assertNotAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError()
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+async function fetchWithTimeout<T>(
+  url: string,
+  init: RequestInit,
+  consume: (response: Response) => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   assertNotAborted(signal)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(new DOMException('Profile sync request timed out', 'TimeoutError')), PROFILE_SYNC_REQUEST_TIMEOUT_MS)
@@ -127,7 +132,8 @@ async function fetchWithTimeout(url: string, init: RequestInit, signal?: AbortSi
   const abort = () => controller.abort(signal?.reason ?? abortError())
   signal?.addEventListener('abort', abort, { once: true })
   try {
-    return await fetch(url, { ...init, signal: controller.signal })
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    return await consume(response)
   } finally {
     clearTimeout(timeout)
     signal?.removeEventListener('abort', abort)
@@ -158,16 +164,17 @@ export async function authenticateWithServer(
   signal?: AbortSignal,
 ): Promise<AuthResult> {
   try {
-    const response = await fetchWithTimeout(`${normalizedServerUrl(serverUrl)}/api/auth/login`, {
+    return await fetchWithTimeout<AuthResult>(`${normalizedServerUrl(serverUrl)}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
+    }, async response => {
+      if (!response.ok) return { success: false, error: await responseError(response, 'Authentication') }
+      const data = await response.json() as { success?: boolean; sessionId?: string; session?: string; error?: string }
+      const sessionId = data.sessionId || data.session
+      if (!data.success || !sessionId) return { success: false, error: data.error || 'Authentication returned no session' }
+      return { success: true, sessionId }
     }, signal)
-    if (!response.ok) return { success: false, error: await responseError(response, 'Authentication') }
-    const data = await response.json() as { success?: boolean; sessionId?: string; session?: string; error?: string }
-    const sessionId = data.sessionId || data.session
-    if (!data.success || !sessionId) return { success: false, error: data.error || 'Authentication returned no session' }
-    return { success: true, sessionId }
   } catch (error) {
     return { success: false, error: (error as Error).message }
   }
@@ -180,13 +187,14 @@ export async function fetchProfileBundle(
   signal?: AbortSignal,
 ): Promise<BundleResult> {
   try {
-    const response = await fetchWithTimeout(`${normalizedServerUrl(serverUrl)}/api/profile-sync/export-priority`, {
+    return await fetchWithTimeout<BundleResult>(`${normalizedServerUrl(serverUrl)}/api/profile-sync/export-priority`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
+    }, async response => {
+      if (!response.ok) return { success: false, error: await responseError(response, 'Profile download') }
+      return { success: true, bundle: await response.json() as ProfileSyncBundle }
     }, signal)
-    if (!response.ok) return { success: false, error: await responseError(response, 'Profile download') }
-    return { success: true, bundle: await response.json() as ProfileSyncBundle }
   } catch (error) {
     return { success: false, error: (error as Error).message }
   }
@@ -198,14 +206,15 @@ export async function fetchCredentials(
   signal?: AbortSignal,
 ): Promise<CredentialsResult> {
   try {
-    const response = await fetchWithTimeout(`${normalizedServerUrl(serverUrl)}/api/profile-sync/credentials`, {
+    return await fetchWithTimeout<CredentialsResult>(`${normalizedServerUrl(serverUrl)}/api/profile-sync/credentials`, {
       method: 'GET',
       headers: { Cookie: `mh_session=${sessionId}` },
+    }, async response => {
+      if (response.status === 403) return { status: 'unavailable' }
+      if (!response.ok) return { status: 'failed', error: await responseError(response, 'Credential download') }
+      const data = await response.json() as { credentials?: SyncableCredentials }
+      return data.credentials ? { status: 'available', credentials: data.credentials } : { status: 'unavailable' }
     }, signal)
-    if (response.status === 403) return { status: 'unavailable' }
-    if (!response.ok) return { status: 'failed', error: await responseError(response, 'Credential download') }
-    const data = await response.json() as { credentials?: SyncableCredentials }
-    return data.credentials ? { status: 'available', credentials: data.credentials } : { status: 'unavailable' }
   } catch (error) {
     return { status: 'failed', error: (error as Error).message }
   }
@@ -219,15 +228,18 @@ export async function fetchMemories(
   signal?: AbortSignal,
 ): Promise<MemoriesResult> {
   try {
-    const response = await fetchWithTimeout(`${normalizedServerUrl(serverUrl)}/api/profile-sync/memories`, {
+    return await fetchWithTimeout<MemoriesResult>(`${normalizedServerUrl(serverUrl)}/api/profile-sync/memories`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password, ...options }),
+    }, async response => {
+      if (!response.ok) return { success: false, error: await responseError(response, 'Memory download') }
+      const data = await response.json() as { memories?: EpisodicEvent[]; hasMore?: boolean; total?: number }
+      if (!Array.isArray(data.memories) || data.memories.length > options.limit || typeof data.hasMore !== 'boolean') {
+        return { success: false, error: 'Memory download returned an invalid page' }
+      }
+      return { success: true, memories: data.memories, hasMore: data.hasMore, total: data.total }
     }, signal)
-    if (!response.ok) return { success: false, error: await responseError(response, 'Memory download') }
-    const data = await response.json() as { memories?: EpisodicEvent[]; hasMore?: boolean; total?: number }
-    if (!Array.isArray(data.memories)) return { success: false, error: 'Memory download returned an invalid page' }
-    return { success: true, memories: data.memories, hasMore: data.hasMore === true, total: data.total }
   } catch (error) {
     return { success: false, error: (error as Error).message }
   }
@@ -337,6 +349,7 @@ export async function syncUserProfile(
   const result = emptyResult()
   assertNotAborted(options.signal)
   const config = await dependencies.loadConfig(username)
+  assertNotAborted(options.signal)
   if (!config) {
     result.errors.push(`No sync server configured for ${username}`)
     onProgress?.({ phase: 'error', message: result.errors[0] })
@@ -345,6 +358,7 @@ export async function syncUserProfile(
 
   onProgress?.({ phase: 'authenticating', message: 'Authenticating with the remote profile server' })
   const auth = await dependencies.authenticate(config.serverUrl, config.username, config.password, options.signal)
+  assertNotAborted(options.signal)
   if (!auth.success || !auth.sessionId) {
     result.errors.push(auth.error || 'Remote authentication failed')
     onProgress?.({ phase: 'error', message: result.errors[0] })
@@ -354,6 +368,7 @@ export async function syncUserProfile(
   if (!options.memoriesOnly) {
     onProgress?.({ phase: 'profile', message: 'Downloading the validated profile bundle' })
     const bundle = await dependencies.fetchBundle(config.serverUrl, config.username, config.password, options.signal)
+    assertNotAborted(options.signal)
     if (!bundle.success || !bundle.bundle) {
       result.errors.push(bundle.error || 'Profile download failed')
     } else {
@@ -370,10 +385,12 @@ export async function syncUserProfile(
         result.errors.push((error as Error).message)
       }
     }
+    assertNotAborted(options.signal)
 
     if (!options.skipConfig) {
       onProgress?.({ phase: 'credentials', message: 'Synchronizing profile credentials' })
       const remoteCredentials = await dependencies.fetchCredentials(config.serverUrl, auth.sessionId, options.signal)
+      assertNotAborted(options.signal)
       if (remoteCredentials.status === 'failed') {
         result.errors.push(remoteCredentials.error || 'Credential download failed')
       } else if (remoteCredentials.status === 'available' && remoteCredentials.credentials) {
@@ -406,6 +423,7 @@ export async function syncUserProfile(
         days: options.days,
         since,
       }, options.signal)
+      assertNotAborted(options.signal)
       if (!page.success || !page.memories) {
         result.errors.push(page.error || 'Memory download failed')
         break
@@ -415,6 +433,7 @@ export async function syncUserProfile(
         break
       }
       for (const rawMemory of page.memories) {
+        assertNotAborted(options.signal)
         try {
           const memory = validateRemoteMemory(rawMemory)
           const outcome = captureRemoteMemory(memory, config.serverUrl, dependencies.captureMemory)
@@ -441,6 +460,7 @@ export async function syncUserProfile(
     if (result.errors.length === 0 && !options.days) memoryCompletedAt = startedAt
   }
 
+  assertNotAborted(options.signal)
   if (result.errors.length === 0) {
     const completedAt = dependencies.now().toISOString()
     await dependencies.updateCheckpoint(username, completedAt, memoryCompletedAt)

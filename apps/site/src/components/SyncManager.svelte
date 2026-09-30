@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+  import { onMount, createEventDispatcher } from 'svelte';
   import {
     configureRemoteSyncServer,
-    testRemoteServerConnection,
     getRemoteSyncConfig,
     clearRemoteSyncConfig,
     runProfileSyncAgent,
@@ -25,7 +24,6 @@
   let serverUsername = '';
   let serverPassword = '';
   let isServerConfigured = false;
-  let isTestingConnection = false;
   let connectionTestResult: { success: boolean; message: string } | null = null;
   let isSavingConfig = false;
   let showServerConfig = false;
@@ -73,56 +71,6 @@
     { id: 'memories', label: 'Memories', description: 'Episodic memories, conversations, and inner dialogue', enabled: true, estimatedSize: 'Variable' },
   ];
 
-  const scifiMessages = [
-    'Synchronizing the stack...', 'Backing up your ghost...', 'Preventing ghost hack vulnerabilities...',
-    'Updating wetware protocols...', 'Verifying wetware integrity...', 'Jacking into the matrix...',
-    'Decking through ICE barriers...', 'Flatlining countermeasures...', 'Riding the razorgirl protocol...',
-    'Burning chrome signatures...', 'Replicating memory engrams...', 'Voight-Kampff verification active...',
-    'Processing baseline data...', 'Retiring obsolete sectors...', 'Diving into the net...',
-    'Securing Section 9 protocols...', 'Laughing Man encryption active...', 'Puppet master handshake...',
-    'Stand Alone Complex sync...', 'Entering the Metaverse...', 'Gargoyle mode engaged...',
-    'Snow Crash firewall active...', 'Hiro Protagonist protocol...', 'Cyberspace handshake complete...',
-    'Neural link established...', 'Uploading consciousness fragments...', 'Downloading identity backup...',
-    'Meat-to-metal bridge active...', 'Chrome extensions syncing...', 'Biochip verification...',
-    'Street samurai mode...', 'Netrunner protocol engaged...', 'Braindance sync in progress...',
-    'Augmentation sync active...', 'UNATCO uplink established...', 'Nano-augmentation verified...',
-    'Red pill accepted...', 'Downloading kung fu...', 'Nebuchadnezzar uplink...',
-    'Zion mainframe sync...', 'Sentinels bypassed...', 'Stack backup initiated...',
-    'Cortical stack sync...', 'Sleeve transfer protocol...', 'DHF pattern verified...',
-    'Envoy conditioning active...', 'fsociety protocol active...', 'Dark Army bypass engaged...',
-    'E Corp firewall penetrated...', 'Ansible connection stable...', 'Gom jabbar test passed...',
-    'Spice flow initiated...', 'Mentat calculations complete...', 'Holographic archive syncing...',
-    'Quantum entanglement verified...', 'Tachyon burst received...', 'Subspace relay active...',
-    'Warp signature locked...', 'Replicator patterns cached...', 'Meatspace tether stable...',
-    'Digital exocortex syncing...', 'Neuroweave calibration...', 'Psycho-pass clearance verified...',
-    'Memory palace reconstruction...', 'Synaptic bridge established...', 'Ego backup confirmed...',
-    'Identity matrix verified...', 'Personality substrate sync...', 'Cognitive mesh active...',
-    'Mind-state serialization...', 'Ghost protocol engaged...', 'Soul backup in progress...',
-    'Digital twin synchronizing...', 'Memetic payload delivered...', 'Consciousness partition active...',
-  ];
-
-  let currentMessageIndex = 0;
-  let currentMessage = scifiMessages[0];
-  let messageInterval: ReturnType<typeof setInterval> | null = null;
-
-  $: if (isSyncing && !messageInterval) {
-    currentMessageIndex = Math.floor(Math.random() * scifiMessages.length);
-    currentMessage = scifiMessages[currentMessageIndex];
-    messageInterval = setInterval(() => {
-      currentMessageIndex = Math.floor(Math.random() * scifiMessages.length);
-      currentMessage = scifiMessages[currentMessageIndex];
-    }, 10000);
-  } else if (!isSyncing && messageInterval) {
-    clearInterval(messageInterval);
-    messageInterval = null;
-  }
-
-  onDestroy(() => {
-    if (messageInterval) {
-      clearInterval(messageInterval);
-    }
-  });
-
   onMount(async () => {
     await loadServerConfig();
     await loadSyncSettings();
@@ -164,23 +112,6 @@
     }
   }
 
-  async function handleTestConnection() {
-    if (!serverUrl || !serverUsername || !serverPassword) {
-      connectionTestResult = { success: false, message: 'Please fill in all fields' };
-      return;
-    }
-    isTestingConnection = true;
-    connectionTestResult = null;
-    try {
-      const result = await testRemoteServerConnection(serverUrl, serverUsername, serverPassword);
-      connectionTestResult = { success: result.success, message: result.success ? 'Connection successful!' : result.error || 'Connection failed' };
-    } catch (err) {
-      connectionTestResult = { success: false, message: `Error: ${err instanceof Error ? err.message : 'Unknown error'}` };
-    } finally {
-      isTestingConnection = false;
-    }
-  }
-
   async function handleSaveConfig() {
     if (!serverUrl || !serverUsername || !serverPassword) {
       connectionTestResult = { success: false, message: 'Please fill in all fields' };
@@ -192,7 +123,7 @@
       if (result.success) {
         isServerConfigured = true;
         showServerConfig = false;
-        connectionTestResult = { success: true, message: 'Server configured successfully!' };
+        connectionTestResult = { success: true, message: 'Server saved. Use Sync Now to connect and import data.' };
         await loadServerConfig();
       } else {
         connectionTestResult = { success: false, message: result.error || 'Failed to save configuration' };
@@ -330,7 +261,7 @@
           </div>
 
           <div class="flex items-center gap-1 font-mono text-sm text-emerald-400 drop-shadow-[0_0_10px_rgba(0,255,136,0.3)]">
-            <span>{currentMessage}</span>
+            <span>{remoteSyncMessage || 'Syncing...'}</span>
             <span class="animate-blink">_</span>
           </div>
 
@@ -379,17 +310,17 @@
               <div class="px-5 pb-4 flex flex-col gap-3">
                 <div class="flex flex-col gap-1.5">
                   <label class="text-xs font-medium text-white/70" for="serverUrl">Server URL</label>
-                  <input type="url" id="serverUrl" class="px-3 py-2.5 bg-black/30 border border-white/10 rounded-md text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed" placeholder="https://mh.example.com" bind:value={serverUrl} disabled={isSavingConfig || isTestingConnection} />
+                  <input type="url" id="serverUrl" class="px-3 py-2.5 bg-black/30 border border-white/10 rounded-md text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed" placeholder="https://mh.example.com" bind:value={serverUrl} disabled={isSavingConfig} />
                 </div>
 
                 <div class="flex flex-col gap-1.5">
                   <label class="text-xs font-medium text-white/70" for="serverUsername">Username</label>
-                  <input type="text" id="serverUsername" class="px-3 py-2.5 bg-black/30 border border-white/10 rounded-md text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed" placeholder="your-username" bind:value={serverUsername} disabled={isSavingConfig || isTestingConnection} />
+                  <input type="text" id="serverUsername" class="px-3 py-2.5 bg-black/30 border border-white/10 rounded-md text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed" placeholder="your-username" bind:value={serverUsername} disabled={isSavingConfig} />
                 </div>
 
                 <div class="flex flex-col gap-1.5">
                   <label class="text-xs font-medium text-white/70" for="serverPassword">Password</label>
-                  <input type="password" id="serverPassword" class="px-3 py-2.5 bg-black/30 border border-white/10 rounded-md text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed" placeholder={isServerConfigured ? '••••••••' : 'your-password'} bind:value={serverPassword} disabled={isSavingConfig || isTestingConnection} />
+                  <input type="password" id="serverPassword" class="px-3 py-2.5 bg-black/30 border border-white/10 rounded-md text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-500/50 disabled:opacity-50 disabled:cursor-not-allowed" placeholder={isServerConfigured ? '••••••••' : 'your-password'} bind:value={serverPassword} disabled={isSavingConfig} />
                 </div>
 
                 {#if connectionTestResult}
@@ -400,11 +331,8 @@
                 {/if}
 
                 <div class="flex gap-2 mt-1">
-                  <button class="flex-1 px-3 py-2.5 rounded-md text-[13px] font-medium cursor-pointer transition-all bg-white/5 border border-white/20 text-white/80 hover:bg-white/10 hover:border-white/30 disabled:opacity-50 disabled:cursor-not-allowed" on:click={handleTestConnection} disabled={!serverUrl || !serverUsername || !serverPassword || isTestingConnection || isSavingConfig}>
-                    {isTestingConnection ? 'Testing...' : 'Test Connection'}
-                  </button>
                   <button class="flex-1 px-3 py-2.5 rounded-md text-[13px] font-medium cursor-pointer transition-all bg-gradient-to-br from-emerald-500 to-emerald-600 border-0 text-[#1a1a2e] hover:shadow-[0_0_15px_rgba(0,255,136,0.3)] disabled:opacity-50 disabled:cursor-not-allowed" on:click={handleSaveConfig} disabled={!serverUrl || !serverUsername || !serverPassword || isSavingConfig}>
-                    {isSavingConfig ? 'Saving...' : 'Save & Connect'}
+                    {isSavingConfig ? 'Saving...' : 'Save Server'}
                   </button>
                   {#if isServerConfigured}
                     <button class="flex-[0.5] px-3 py-2.5 rounded-md text-[13px] font-medium cursor-pointer transition-all bg-red-400/10 border border-red-400/30 text-red-400 hover:bg-red-400/20" on:click={handleClearConfig}>

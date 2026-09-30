@@ -351,58 +351,13 @@ export function apiEventSource(path: string): EventSource {
   return new EventSource(path);
 }
 
-/**
- * Normalize a URL to ensure it has a protocol (https://)
- *
- * Handles common user input mistakes:
- * - "example.local" -> "https://example.local"
- * - "http://..." -> "https://..." (upgrade to https)
- * - "https://..." -> unchanged
- * - Removes trailing slashes
- *
- * @param url - URL string that may or may not have protocol
- * @returns Normalized URL with https:// protocol
- */
+/** Normalize a sync source URL, preserving explicit HTTP for local servers. */
 export function normalizeUrl(url: string): string {
-  if (!url) return url;
-
-  let normalized = url.trim();
-
-  // Add https:// if no protocol
-  if (!normalized.match(/^https?:\/\//i)) {
-    normalized = `https://${normalized}`;
+  if (!url.trim()) return '';
+  const input = url.trim();
+  const normalized = new URL(/^https?:/i.test(input) ? input : `https://${input}`);
+  if (normalized.protocol !== 'http:' && normalized.protocol !== 'https:') {
+    throw new Error('Sync server URL must use http or https');
   }
-
-  // Upgrade http to https
-  if (normalized.startsWith('http://')) {
-    normalized = normalized.replace('http://', 'https://');
-  }
-
-  // Remove trailing slash
-  normalized = normalized.replace(/\/+$/, '');
-
-  return normalized;
-}
-
-/**
- * Fetch wrapper for REMOTE servers (external URLs)
- *
- * IMPORTANT: This is different from apiFetch() which is for LOCAL API calls.
- * Use this only for explicit sync operations to user-configured external servers.
- *
- * Uses standard fetch on both platforms.
- *
- * @param url - Full URL to fetch (will be normalized)
- * @param init - Fetch options
- * @returns Response object
- */
-export async function remoteFetch(url: string, init?: RequestInit): Promise<Response> {
-  // Normalize URL to ensure proper protocol
-  const normalizedUrl = normalizeUrl(url);
-
-  // Standard fetch for both web and React Native
-  return fetch(normalizedUrl, {
-    ...init,
-    credentials: init?.credentials ?? 'include',
-  });
+  return normalized.toString().replace(/\/+$/, '');
 }

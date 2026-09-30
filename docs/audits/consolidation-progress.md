@@ -3573,3 +3573,105 @@ Validation:
   installation provider; the test invocation ended, the path owner was corrected,
   and the provider suite subsequently passed with local fixtures. No live service
   was deliberately started or restarted, and no commit/publication was requested.
+
+## Profile Sync Transfer Repair and Desktop Network Trace - 2026-09-29
+
+Scope and owners:
+
+- Retained the finite Brain Profile Sync agent, Core bundle/config owner,
+  canonical memory writer, existing queue admission and Site bootstrap.
+- Findings and boundaries: `docs/audits/2026-09-29-profile-sync-repair.md`.
+
+Baseline and repair:
+
+- Reproduced silently omitted oversized exports, base64 JSON validation bypass,
+  response-body timeout/cancellation gaps, writes after cancellation, and invalid
+  pagination treated as completion. Repaired those paths without changing the
+  bundle version or adding a production dependency or competing executor.
+- A real HTTP fixture exposed a deeper persistence issue: transient content
+  deduplication discarded distinct identified records while sync reported success.
+  Core Memory now uses its durable identity check for identified producers.
+- Bootstrap now waits for the queued memory pull. Configured login sync uses its
+  incremental checkpoint and surfaces queue-admission failure.
+- Removed the superseded conditional branches and early-success behavior; no
+  production files were deleted. Updated setup documentation and focused tests.
+- Traced Network settings: the broadcast switch is mobile-only, desktop URLs do
+  not prove listener reachability, and canonical sync configuration selects an
+  outbound source rather than opening a listening server. Desktop LAN control,
+  periodic admission, full-profile coverage and two-way reconciliation are not
+  implemented by this bounded repair.
+
+Validation:
+
+- 28 focused tests pass. Loopback HTTP transfer through the shared router persisted
+  seven profile files and 103 synthetic memories across two pages; repeating the
+  pull deduplicated all 103 with no additional records.
+- Core/Brain/Site typechecks and Site production build pass. The compiled runtime
+  matches current source and validates 38 workflows. Architecture and remote-safety
+  checks show zero violations; diff whitespace check passes.
+- Built the existing shared agent package to restore missing generated type
+  declarations before implementation; did not alter dependencies.
+- Two extra conversation/buffer tests fail with the same admission-ID conflict
+  in both the changed tree and an isolated clean HEAD snapshot. They were not
+  weakened or included as passing checks. Full root build chain was not run.
+- Actual remote-user import, browser bootstrap and encrypted-volume transfer
+  remained unverified at this stage. No physical actions were requested or performed.
+
+Tunnel follow-up and login/manual sync:
+
+- Confirmed the owner's public tunnel now serves the source MetaHuman application
+  and requested account. Reproduced browser CORS rejection independently of
+  source reachability.
+- Repaired the existing auth bootstrap handler to use the supplied source URL
+  through Node and delegate validation/import/configuration to Core. Removed the
+  competing browser remote transfer and empty-account success path. Existing
+  accounts configure the source locally and execute the same queued agent.
+- Per Installation Owner instruction, kept login/manual admission and added no
+  periodic trigger. Replaced one-second task polling with the existing task SSE
+  stream; removed the decorative status interval and obsolete browser fetch helper.
+- 40 focused tests pass. An additional isolated shared-router integration passed
+  bootstrap, authentication selection, real queue/agent execution, durable memory
+  writes and checkpoint, and terminal SSE completion. Site typecheck (366 files),
+  production build and compiled runtime check pass; architecture has zero drift.
+- Installed the build and restarted the receiving application using its existing
+  launcher. Real-user import was initially awaiting credentials; the subsequent
+  successful transfer is recorded below. Desktop settings, tunnel configuration
+  and Wi-Fi are unchanged.
+
+Sync diagnostics follow-up:
+
+- Confirmed the owner's affected Firefox tab still called remote login directly;
+  its console showed CORS HTTP 403. The failing call bypassed the local server.
+- Added correlated bootstrap start/failure/completion records through the existing
+  Core logger and audit owner, plus safe browser failure-stage diagnostics.
+  Removed the bootstrap session-prefix console message and delayed success reload.
+- Three additional regressions verify audit/terminal correlation, safe network
+  error codes and completion counts without credentials or issued sessions.
+
+- Live confirmation: after reloading the affected tab, bootstrap imported 22
+  profile files. The owner logged into the newly imported local profile; the
+  canonical queued sync completed with 153 memories, zero errors and persisted
+  profile/memory checkpoints. The destination has 153 episodic JSON files.
+- The rebuilt running server records both local validation errors and remote
+  authentication rejection in terminal and audit logs. Core/Site typechecks,
+  production build, compiled runtime verification and architecture checks pass.
+
+Missing-buffer follow-up:
+
+- Verified buffers live inside each selected user profile. The source's real
+  buffers were non-empty, but the export omitted all four because its filename
+  filter accepted obsolete names. Episodic-memory success did not cover buffers.
+- Repaired the existing sync filter and reused per-profile buffer locking and
+  notification for imports. Removed obsolete/unknown buffer-name acceptance.
+- Two new failing-then-passing regressions use actual buffer-owner paths and prove
+  profile isolation, repeat import, held locks and live chat SSE delivery. The
+  focused rerun passes 34 tests; Core typecheck and architecture check pass.
+- The owner authorized direct desktop maintenance access. Applied the scoped
+  exporter repair over authenticated SSH, preserving all 320 pre-existing
+  changed worktree files. Desktop regression tests, Core typecheck, architecture,
+  Site build and compiled-runtime verification pass; its launcher restarted.
+- Live sync through the configured HTTPS tunnel completed through the existing
+  queue and per-task SSE. All four received buffer files match the desktop
+  byte-for-byte; the Q6A chat API returns 30 Conversation, 80 Inner, 30 System and
+  100 Robot messages. No scheduled remote polling was added. Temporary SSH
+  bootstrap delivery artifacts were removed; maintenance access remains usable.

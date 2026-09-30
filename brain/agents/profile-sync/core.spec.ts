@@ -3,6 +3,9 @@ import test from 'node:test'
 
 import type { CaptureResult, ProfileImportResult, ProfileSyncBundle } from '@metahuman/core'
 import {
+  fetchProfileBundle,
+  fetchMemories,
+  PROFILE_SYNC_REQUEST_TIMEOUT_MS,
   parseSyncOptions,
   syncUserProfile,
   type ProfileSyncDependencies,
@@ -180,4 +183,96 @@ test('an already-aborted execution performs no remote or persistence work', asyn
     /cancelled/,
   )
   assert.equal(calls, 0)
+})
+
+test('cancellation after a remote response prevents the next local write and checkpoint', async () => {
+  for (const phase of ['authenticate', 'bundle', 'credentials', 'memories'] as const) {
+    const controller = new AbortController()
+    const calls: string[] = []
+    const deps = dependencies({
+      authenticate: async () => {
+        if (phase === 'authenticate') controller.abort()
+        return { success: true, sessionId: 'session' }
+      },
+      fetchBundle: async () => {
+        if (phase === 'bundle') controller.abort()
+        return { success: true, bundle: BUNDLE }
+      },
+      importBundle: async () => { calls.push('profile'); return PROFILE_RESULT },
+      fetchCredentials: async () => {
+        if (phase === 'credentials') controller.abort()
+        return { status: 'available', credentials: {} }
+      },
+      applyCredentials: async () => { calls.push('credentials'); return { success: true, saved: [], errors: [] } },
+      fetchMemories: async () => {
+        controller.abort()
+        return { success: true, memories: [{ id: 'remote', timestamp: NOW.toISOString(), content: 'test', type: 'observation' }], hasMore: false }
+      },
+      captureMemory: () => { calls.push('memory'); return captureResult('local') },
+      updateCheckpoint: async () => { calls.push('checkpoint') },
+    })
+    await assert.rejects(syncUserProfile('alice', { signal: controller.signal }, undefined, deps), /cancelled/)
+    assert.deepEqual(calls, phase === 'authenticate' || phase === 'bundle' ? []
+      : phase === 'credentials' ? ['profile'] : ['profile', 'credentials'])
+  }
+})
+
+test('a cancelled profile-only import cannot publish a completed checkpoint', async () => {
+  const controller = new AbortController()
+  let checkpoints = 0
+  await assert.rejects(syncUserProfile('alice', { profileOnly: true, skipConfig: true, signal: controller.signal }, undefined, dependencies({
+    importBundle: async () => { controller.abort(); return PROFILE_RESULT },
+    updateCheckpoint: async () => { checkpoints++ },
+  })), /cancelled/)
+  assert.equal(checkpoints, 0)
+})
+
+test('request cancellation and timeout remain active until the response body is read', async t => {
+  for (const mode of ['cancel', 'timeout'] as const) {
+    await t.test(mode, async t => {
+      t.mock.timers.enable({ apis: ['setTimeout'] })
+      const controller = new AbortController()
+      let bodyStarted!: () => void
+      const reading = new Promise<void>(resolve => { bodyStarted = resolve })
+      let requestSignal: AbortSignal | undefined
+      let finishBody!: (value: typeof BUNDLE) => void
+      t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+        requestSignal = init.signal as AbortSignal
+        return {
+          ok: true,
+          json: () => new Promise((resolve, reject) => {
+            finishBody = resolve
+            requestSignal!.addEventListener('abort', () => reject(requestSignal!.reason), { once: true })
+            bodyStarted()
+          }),
+        }
+      })
+      const pending = fetchProfileBundle(CONFIG.serverUrl, 'alice', 'secret', controller.signal)
+      await reading
+      if (mode === 'cancel') controller.abort(new DOMException('Test cancelled', 'AbortError'))
+      else t.mock.timers.tick(PROFILE_SYNC_REQUEST_TIMEOUT_MS + 1)
+      const wasAborted = requestSignal?.aborted
+      // Settle the baseline implementation too, so a broken timeout cannot hang this test.
+      if (!wasAborted) finishBody(BUNDLE)
+      const result = await pending
+      assert.equal(wasAborted, true)
+      assert.equal(result.success, false)
+      assert.match(result.error || '', mode === 'cancel' ? /cancelled/ : /timed out/)
+    })
+  }
+})
+
+test('remote pagination must explicitly declare completion and respect the requested limit', async t => {
+  const memory = { id: 'remote', timestamp: NOW.toISOString(), content: 'test', type: 'observation' }
+  for (const page of [
+    { memories: [] },
+    { memories: [], hasMore: 'false' },
+    { memories: [memory, memory], hasMore: false },
+  ]) {
+    t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(page)))
+    const result = await fetchMemories(CONFIG.serverUrl, 'alice', 'secret', { offset: 0, limit: 1 })
+    assert.equal(result.success, false)
+    assert.match(result.error || '', /invalid page/)
+    t.mock.restoreAll()
+  }
 })

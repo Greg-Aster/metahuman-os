@@ -6,7 +6,7 @@
       "enabled": true,
       "startOnSystemBoot": true,
       "port": 9882,
-      "device": "cuda",
+      "device": "cpu",
       "langCode": "a"
     },
     "whisper": {

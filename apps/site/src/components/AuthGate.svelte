@@ -2,9 +2,10 @@
   import { onMount } from 'svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
-  import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, remoteFetch, normalizeUrl, isMobileApp } from '../lib/client/api-config';
+  import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, normalizeUrl, isMobileApp } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
   import { canSyncOnLogin } from '../lib/client/sync-settings';
+  import { getRemoteSyncConfig, runProfileSyncAgent } from '../lib/client/profile-sync';
   import { clearSecurityPolicy, fetchSecurityPolicy } from '../stores/security-policy';
 
   function storeSession(sessionId: string, username: string): void {
@@ -217,28 +218,23 @@
           return;
         }
 
-        // Profile is complete - proceed with login
-        // Check if auto-sync on login is enabled - trigger profile-sync agent in background
-        // Uses profile-sync to sync: persona, conversation buffer, and memories
-        // Flags:
-        //   --full: Ignore lastMemorySyncAt, do complete memory sync
-        //   --skip-config: Don't overwrite device-specific configs (models.json, etc.)
-        const shouldSync = await canSyncOnLogin();
-        if (shouldSync) {
-          // Fire-and-forget: agent runs in background while app loads
-          apiFetch('/api/unified-queue/trigger/profile-sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ args: ['--full', '--skip-config'] }),
-          })
-            .then(async response => {
-              const data = await response.json().catch(() => ({}));
-              if (!response.ok || !data.taskId) throw new Error(data.error || `Profile Sync trigger failed (${response.status})`);
-            })
-            .catch(err => console.warn('[AuthGate] Profile-sync trigger failed:', err));
-          successMessage = `LOGIN SUCCESS! Welcome back, ${data.user.username}. Syncing profile in background...`;
-        } else {
-          successMessage = `LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;
+        successMessage = `LOGIN SUCCESS! Welcome back, ${data.user.username}. Profile loaded and ready.`;
+        try {
+          if (await canSyncOnLogin() && (await getRemoteSyncConfig()).configured) {
+            // The agent owns incremental checkpoints; keep device configuration local.
+            const response = await apiFetch('/api/unified-queue/trigger/profile-sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ args: ['--skip-config'] }),
+            });
+            const queued = await response.json();
+            if (!response.ok || !queued.taskId) {
+              throw new Error(queued.error || `Profile Sync trigger failed (${response.status})`);
+            }
+            successMessage += ' Profile sync queued in the background.';
+          }
+        } catch (syncError) {
+          successMessage += ` Automatic sync could not start: ${syncError instanceof Error ? syncError.message : 'Unknown error'}. Use Sync Manager to retry.`;
         }
         error = ''; // Clear any previous errors
 
@@ -268,6 +264,7 @@
   async function handleSyncFromServer() {
     error = '';
     syncLoading = true;
+    let stage = 'bootstrap-request';
 
     try {
       if (!username || !password) {
@@ -276,146 +273,48 @@
         return;
       }
 
-      // Step 1: Authenticate with the remote server to verify credentials
-      // Uses remoteFetch which handles CORS on mobile via CapacitorHttp
-      const requestBody = { username, password };
       const normalizedSyncUrl = normalizeUrl(syncServerUrl);
-
-      const serverRes = await remoteFetch(`${normalizedSyncUrl}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!serverRes.ok) {
-        const errorText = await serverRes.text().catch(() => 'Unknown error');
-        error = `Server error (${serverRes.status}): ${errorText}`;
-        return;
-      }
-
-      const serverData = await serverRes.json();
-      if (!serverData.success || !serverData.user) {
-        error = serverData.error || 'Server login failed. Check credentials.';
-        return;
-      }
-
-      // Step 2: Download profile data from remote BEFORE creating local user
-      // This prevents empty profiles if download fails
-      error = '📥 SYNCING: Downloading profile data from server...';
-
-      let profileBundle = null;
-
-      try {
-        // Try priority export first (essential files only to avoid OOM)
-        error = '📥 SYNCING: Downloading essential profile data (persona, config, conversations)...';
-
-        // Use POST with credentials in body - avoids cross-origin cookie issues
-        const priorityRes = await remoteFetch(`${normalizedSyncUrl}/api/profile-sync/export-priority`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ username, password }),
-        });
-
-        if (priorityRes.ok) {
-          profileBundle = await priorityRes.json();
-          error = `📥 SYNCING: Downloaded ${profileBundle.stats?.totalFiles || 0} files from server (${Math.round((profileBundle.stats?.totalSize || 0) / 1024)}KB)`;
-        } else {
-          // Priority export failed - DO NOT create local user
-          const priorityError = await priorityRes.text().catch(() => 'Network error');
-          error = `SYNC FAILED: Cannot download profile from server (${priorityRes.status}). ${priorityError}`;
-          return;
-        }
-      } catch (profileErr) {
-        // Download failed - DO NOT create local user
-        error = `SYNC NETWORK ERROR: Cannot connect to server or download profile. ${profileErr instanceof Error ? profileErr.message : 'Connection failed'}. Check your network and server URL.`;
-        return;
-      }
-
-      // Profile downloaded successfully - NOW create local user
-      if (!profileBundle || !profileBundle.files || profileBundle.files.length === 0) {
-        error = 'SYNC FAILED: No profile data received from server.';
-        return;
-      }
-
-      // Step 3: Create the user locally ONLY after profile downloaded successfully
-      error = '👤 Creating local user account...';
-
+      error = 'SYNCING: Downloading and importing your remote profile...';
       const createRes = await apiFetch('/api/auth/sync-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username,
-          password,
-          displayName: serverData.user.displayName || serverData.user.username,
-          role: serverData.user.role,
-          serverUrl: syncServerUrl,
-        }),
+        body: JSON.stringify({ username, password, serverUrl: normalizedSyncUrl }),
       });
-
+      stage = 'bootstrap-response';
       const createData = await createRes.json();
-      if (!createData.success) {
-        error = createData.error || 'Failed to create local user account';
+      if (!createRes.ok || !createData.success) {
+        console.error('[profile-sync] bootstrap rejected; see local server log', { stage, status: createRes.status });
+        error = createData.error || 'Failed to import the remote profile';
         return;
       }
-
-      // Store session for authenticated import
       if (createData.sessionId) {
         storeSession(createData.sessionId, username);
       }
 
-      // Step 4: Import profile bundle locally
-      error = '💾 SYNCING: Importing profile files to local storage...';
-
-      const importRes = await apiFetch('/api/profile-sync/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(profileBundle),
+      // Finish through the same finite agent used by authenticated sync.
+      // Its checkpoint and terminal task state prove the memory phase completed.
+      stage = 'memory-sync';
+      const syncResult = await runProfileSyncAgent(['--full', '--skip-config'], progress => {
+        error = `SYNCING: ${progress.message}`;
       });
-
-      if (!importRes.ok) {
-        const importError = await importRes.text().catch(() => 'Unknown import error');
-        error = `IMPORT FAILED: Cannot save profile data locally. Error (${importRes.status}): ${importError}. Your profile was not synced.`;
+      if (!syncResult.success) {
+        console.error('[profile-sync] memory sync incomplete; see local task log', { stage });
+        error = `PROFILE IMPORTED, BUT SYNC INCOMPLETE: ${syncResult.error || 'Profile Sync failed'}. Retry Sync from Server or use Sync Manager.`;
         return;
       }
 
-      const importData = await importRes.json();
-
-      if (!importData.success) {
-        error = `IMPORT FAILED: ${importData.error || 'Failed to save profile files'}. Your profile was not synced.`;
-        return;
-      }
-
-      // SUCCESS - profile actually synced
-      if (!importData.imported || importData.imported === 0) {
-        error = `SYNC INCOMPLETE: No files were imported. Your profile is empty.`;
-        return;
-      }
-
-      const configRes = await apiFetch('/api/profile-sync/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ serverUrl: normalizedSyncUrl, username, password }),
-      });
-      if (!configRes.ok) {
-        const configData = await configRes.json().catch(() => ({}));
-        error = `PROFILE IMPORTED, BUT SYNC CONFIGURATION FAILED: ${configData.error || configRes.status}. Configure the remote server in Sync Manager before syncing again.`;
-        return;
-      }
-
-      // SHOW SUCCESS MESSAGE
-      successMessage = `SYNC SUCCESS! Imported ${importData.imported} files from ${syncServerUrl}. Profile ready!`;
+      successMessage = `SYNC SUCCESS! Imported your profile and completed memory sync from ${normalizedSyncUrl}.`;
       error = ''; // Clear any previous errors
 
-      // SUCCESS - Actually synced profile data
-      // Give user a moment to see the success message
-      setTimeout(() => {
-        isAuthenticated = true;
-        window.location.reload();
-      }, 2000);
+      isAuthenticated = true;
+      window.location.reload();
     } catch (err) {
+      // Browser transport failures may never reach the server. Do not log the
+      // request, credentials, source URL, or arbitrary remote error payloads.
+      console.error('[profile-sync] sync request failed', {
+        stage,
+        errorType: err instanceof Error ? err.name : 'UnknownError',
+      });
       error = `SYNC FAILED: ${err instanceof Error ? err.message : 'Unknown error'}`;
     } finally {
       syncLoading = false;

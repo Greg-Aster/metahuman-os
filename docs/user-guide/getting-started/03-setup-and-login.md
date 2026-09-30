@@ -90,10 +90,35 @@ The owner controls profile visibility.
 Use **Sync from Server** when this device has no local copy of an account that
 already exists on another MetaHuman server.
 
-Provide the server URL, username, and password. The bootstrap authenticates
-against that server, creates the missing local profile, then queues the canonical
-Profile Sync agent. Later authenticated sync operations use the same bounded
-profile-sync owner and checkpointed memory persistence.
+Provide the server URL, username, and password. `localhost` always refers to the
+computer running the browser or sync agent; use the source computer's reachable
+LAN address or configured tunnel URL. A desktop started in the default local
+exposure mode accepts connections only on that desktop. A configured Cloudflare
+tunnel can forward to that desktop's local listener. The receiving device needs
+outbound HTTPS access to the tunnel; it does not need its own tunnel or a shared
+Wi-Fi network with the source. Keep the source MetaHuman server and tunnel running.
+See [Deployment and Remote Access](/user-guide#deployment) for exposure settings.
+
+The browser submits the source URL and credentials to its own local MetaHuman
+server. Node performs the remote requests, so source browser CORS permissions
+are not needed for the transfer. The bootstrap authenticates, downloads the validated
+priority bundle, creates the missing local profile, imports its files and saves
+the sync configuration. It then waits for the canonical Profile Sync agent to
+finish a full episodic-memory pull before reporting completion. Completion comes
+from the queue's event stream, without polling for task status. A failed job or
+lost status connection is shown as incomplete; already imported data remains available
+for an idempotent retry through Sync Manager.
+
+For an existing local account, use Sync Manager to save the source URL and
+credentials, then select **Sync Now**. Saving configuration does not prove
+connectivity; the queued sync reports remote authentication and transfer errors.
+
+Later login syncs use the memory checkpoint and preserve device configuration.
+The existing sync path pulls from one configured source. It transfers supported
+persona/configuration files, conversation buffers and episodic memories; it is
+not a complete filesystem backup or bidirectional conflict-resolution system.
+Sync runs on login when enabled and when requested manually. There is no periodic
+profile-sync schedule.
 
 A successful login to the remote server is not by itself proof that every local
 profile item reconciled. Review the sync result and local profile before relying
