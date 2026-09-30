@@ -106,7 +106,7 @@
         "label": "Action Result Interpretation Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Interpret the returned action and camera evidence against the originating instruction in verifiedCurrentAction, and the Current Execution objective when present. Keep two facts distinct: the returned terminal report says whether the sent action executed, while taskDecision.overallObjectiveState says whether the entire current execution objective has been achieved. A successfully completed action may leave the objective not_achieved. Attached robot-camera evidence proves only what is visible at its recorded time. Current Execution owns the objective and supplies prior context but is not new physical proof. Decide from meaning and evidence whether this result affects that objective; an observation may establish it even when captured during a different physical action. Return taskDecision as null when the result does not affect the current objective or no current objective exists. Do not restate, rename, broaden, or replace the objective because the parser carries it forward from the execution. Use achieved only when supplied evidence establishes the whole objective and state that evidence in completionEvidence; otherwise report not_achieved, step_failed, or awaiting_evidence. Do not choose, recommend, or dispatch another action. When communicating the result would be useful, use response for one concise, natural sentence; otherwise leave it empty. response is outward speech only, never an internal outcome token or workflow label. Return only the requested JSON.",
+          "message": "Interpret the returned action and camera evidence against the originating instruction in verifiedCurrentAction, and the Current Execution objective when present. Keep two facts distinct: the returned terminal report says whether the sent action executed, while taskDecision.overallObjectiveState says whether the entire current execution objective has been achieved. A successfully completed action may leave the objective not_achieved. Attached robot-camera evidence proves only what is visible at its recorded time. Current Execution owns the objective and supplies prior context but is not new physical proof. Decide from meaning and evidence whether this result affects that objective; an observation may establish it even when captured during a different physical action. Return taskDecision as null when the result does not affect the current objective or no current objective exists. Do not restate, rename, broaden, or replace the objective because the parser carries it forward from the execution. Use achieved only when supplied evidence establishes the whole objective and state that evidence in completionEvidence; otherwise report not_achieved, step_failed, or awaiting_evidence. Do not choose, recommend, or dispatch another action. When communicating the result would be useful, use response for one concise, natural sentence; otherwise leave it empty. response is outward speech only, never an internal outcome token or workflow label. Return only the requested JSON.\n\nObservation History supplies earlier image interpretations with their source times. Optional visualObservation records an interpretation of attached images independently of speech and goals.",
           "inputKey": ""
         }
       }
@@ -228,32 +228,39 @@
       }
     },
     {
-      "id": "updated-execution",
-      "type": "utilityNode",
+      "id": "observation-history",
+      "type": "contextNode",
       "position": {
-        "x": 2200,
-        "y": 20
+        "x": 490,
+        "y": 900
       },
       "data": {
-        "label": "Task After Result",
-        "nodeType": "execution_context",
+        "label": "Observation History",
+        "nodeType": "observation_history",
         "properties": {
-          "eventLimit": 16
+          "limit": 5
         }
       }
     },
     {
-      "id": "review-goal",
-      "type": "utilityNode",
+      "id": "save-observation",
+      "type": "outputNode",
       "position": {
-        "x": 2500,
-        "y": 20
+        "x": 1780,
+        "y": 720
       },
       "data": {
-        "label": "Review Unfinished Objective",
-        "nodeType": "workflow_call",
-        "properties": {
-          "graph": "robot-goal-review"
+        "label": "Save Visual Observation",
+        "nodeType": "save_visual_observation",
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "parser",
+              "output": "visualObservation",
+              "truthy": true
+            }
+          ]
         }
       }
     }
@@ -634,35 +641,80 @@
       }
     },
     {
-      "id": "durable-status-out-persisted-updated-execution-control",
-      "source": "status-out",
-      "target": "updated-execution",
-      "sourceHandle": "persisted",
-      "targetHandle": "control",
+      "id": "visual-history-observation-observation-observation-history-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "observation-history",
+      "targetHandle": "observation",
       "type": "default",
       "data": {
-        "type": "boolean",
-        "kind": "control",
-        "when": {
-          "output": "persisted",
-          "truthy": true
-        }
+        "type": "object"
       }
     },
     {
-      "id": "durable-updated-execution-hasActiveTask-review-goal-control",
-      "source": "updated-execution",
-      "target": "review-goal",
-      "sourceHandle": "needsGoalReview",
-      "targetHandle": "control",
+      "id": "visual-history-observation-history-observations-context-observationHistory",
+      "source": "observation-history",
+      "sourceHandle": "observations",
+      "target": "context",
+      "targetHandle": "observationHistory",
       "type": "default",
       "data": {
-        "type": "boolean",
-        "kind": "control",
-        "when": {
-          "output": "needsGoalReview",
-          "truthy": true
-        }
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-context-frames-parser-frames",
+      "source": "context",
+      "sourceHandle": "frames",
+      "target": "parser",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-context-frames-save-observation-frames",
+      "source": "context",
+      "sourceHandle": "frames",
+      "target": "save-observation",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-observation-observation-save-observation-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "save-observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-parser-visualObservation-save-observation-visualObservation",
+      "source": "parser",
+      "sourceHandle": "visualObservation",
+      "target": "save-observation",
+      "targetHandle": "visualObservation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-save-observation-observation-status-out-visualObservation",
+      "source": "save-observation",
+      "sourceHandle": "observation",
+      "target": "status-out",
+      "targetHandle": "visualObservation",
+      "type": "default",
+      "data": {
+        "type": "object"
       }
     }
   ]

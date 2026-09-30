@@ -10,8 +10,13 @@ Install and build from the repository root:
 
 ```bash
 pnpm install
-pnpm build
+pnpm verify
 ```
+
+`pnpm verify` runs workspace typechecks, architecture checks, registered tests and
+validators, then builds the Site. The server updater uses the same gate. For a
+routine local rebuild, `pnpm build` only builds the Site; run focused checks for
+the code you changed. `pnpm validate` runs the validator subset only.
 
 Launch the complete built system with:
 

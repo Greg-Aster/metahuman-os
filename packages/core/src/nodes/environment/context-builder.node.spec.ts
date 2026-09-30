@@ -82,6 +82,19 @@ const robotStatus = {
   agency: { activeDesires: [] },
 }
 
+test('selected dialogue reaches the selector without a second hidden history window or text cutoff', async () => {
+  const history = Array.from({ length: 8 }, (_, index) => ({
+    role: index % 2 ? 'assistant' : 'user',
+    content: `${index}: ${'Detail retained by Buffer History. '.repeat(8)}Final requirement ${index}.`,
+  }))
+  const result = await environmentContextBuilderNode.execute({
+    userInstruction: 'Continue that activity.',
+    conversationHistory: history,
+    routingAnalysis: { needsConversationHistory: true },
+  }, {}, {})
+  assert.deepEqual(JSON.parse(result.message).recentConversation, history)
+})
+
 test('Environment Context Builder packages only orchestrator-selected context and current-run vision', async () => {
   const result = await environmentContextBuilderNode.execute({
     observation: observation(),
@@ -98,6 +111,7 @@ test('Environment Context Builder packages only orchestrator-selected context an
       needsAction: true,
     },
     images: [{ type: 'image_url', image_url: { url: TEST_JPEG } }],
+    frames: [observation().visual],
     conversationHistory: [
       { role: 'user', content: 'What can you do?' },
       { role: 'assistant', content: 'I can use my advertised motions.' },
@@ -106,7 +120,6 @@ test('Environment Context Builder packages only orchestrator-selected context an
     robotStatus,
   }, { username: 'owner' }, {
     systemPrompt: 'Return one Environment decision.',
-    recentHistoryLimit: 4,
   })
 
   const envelope = JSON.parse(String(result.message))
@@ -136,6 +149,10 @@ test('Environment Context Builder packages only orchestrator-selected context an
 
 test('Environment Context Builder does not present a saved camera frame as current typed-chat evidence', async () => {
   const savedObservation = observation()
+  savedObservation.visuals = [
+    { ...savedObservation.visual!, id: 'older-a', timestamp: '2026-09-02T11:57:00.000Z' },
+    { ...savedObservation.visual!, id: 'older-b', timestamp: '2026-09-02T11:58:00.000Z' },
+  ]
   savedObservation.feedback = [{
     id: 'old-feedback',
     timestamp: '2026-09-02T11:59:00.000Z',
@@ -146,6 +163,7 @@ test('Environment Context Builder does not present a saved camera frame as curre
   savedObservation.metadata = { correlationId: 'old-cycle', actionId: 'old-action' }
   const imageSelection = await environmentImageInputNode.execute({
     visual: savedObservation.visual,
+    visuals: savedObservation.visuals,
     observationCurrent: false,
   }, {}, {})
   assert.equal(imageSelection.images.length, 1, 'A saved frame remains available with its recorded time')
@@ -166,19 +184,23 @@ test('Environment Context Builder does not present a saved camera frame as curre
       needsAction: false,
     },
     images: imageSelection.images,
+    frames: imageSelection.frames,
   }, { username: 'owner' }, {
     systemPrompt: 'Return one Environment decision.',
-    recentHistoryLimit: 4,
   })
 
   const staleEnvelope = JSON.parse(String(staleVision.message))
   assert.equal(staleEnvelope.evidenceAvailability.environmentObservation, 'saved')
   assert.equal(staleEnvelope.evidenceAvailability.currentVision, false)
-  assert.deepEqual(staleEnvelope.currentEnvironment.visualFrames, [])
+  assert.equal(staleEnvelope.currentEnvironment.visualFrames[0].id, savedObservation.visual!.id)
+  assert.equal(staleEnvelope.currentEnvironment.visualFrames[0].timestamp, savedObservation.visual!.timestamp)
+  assert.equal(staleEnvelope.currentEnvironment.visualFrames.length, 1, 'Metadata describes the selected image, not unselected candidates')
   assert.deepEqual(staleEnvelope.currentEnvironment.feedback, [])
   assert.equal('actionId' in staleEnvelope.currentEnvironment, false)
   assert.equal('correlationId' in staleEnvelope.currentEnvironment, false)
-  assert.deepEqual(staleVision.images, [])
+  assert.deepEqual(staleVision.images, imageSelection.images, 'Selected dated evidence is retained, not relabelled as current')
+  assert.match(staleVision.messages[1].content[0].text, /visualFrames times/)
+  assert.equal(staleVision.context.contextAdmission.actionContracts, true, 'A fresh capture remains available')
 
   const conversationOnly = await environmentContextBuilderNode.execute({
     instruction: 'A conversational turn.',
@@ -196,7 +218,7 @@ test('Environment Context Builder does not present a saved camera frame as curre
   const conversationEnvelope = JSON.parse(String(conversationOnly.message))
   assert.equal(conversationEnvelope.currentEnvironment, null)
   assert.equal(conversationOnly.messages.length, 2)
-  assert.deepEqual((conversationOnly.jsonSchema as any).properties.taskDecision.anyOf.map((branch: any) => branch.type),
+  assert.deepEqual((conversationOnly.jsonSchema as any).anyOf[0].properties.taskDecision.anyOf.map((branch: any) => branch.type),
     ['null', 'object'], 'Goal decisions belong to the informed selector even when no action route was selected')
 })
 
@@ -205,49 +227,46 @@ test('Environment selector schema exposes conversation, advertised action, and F
     actions: ['robotCommand', 'robotMotionPlan'],
     robotCommands: ['stand', '#1', '#2'],
   }) as any
-  const routes = schema.allOf[0].anyOf
-
-  assert.equal(routes.length, 3)
-  assert.deepEqual(routes[0].properties.actions, { maxItems: 0 })
+  const routes = schema.anyOf
+  assert.equal('properties' in schema, false, 'Provider union alternatives must be complete instead of sibling allOf refinements')
+  assert.equal('allOf' in schema, false)
+  assert.equal(routes.length, 4)
+  for (const route of routes) {
+    assert.equal(route.type, 'object')
+    assert.equal(route.additionalProperties, false)
+    assert.deepEqual(route.required, ['taskDecision', 'response', 'actions', 'movementRequest'])
+    assert.equal('allOf' in route, false)
+  }
+  assert.equal(routes[0].properties.actions.maxItems, 0)
   assert.deepEqual(routes[0].properties.movementRequest, { type: 'null' })
-  assert.equal(routes[0].properties.taskDecision.properties.outcome.enum.includes('act'), false)
-  assert.deepEqual(routes[1].properties.actions, { minItems: 1 })
-  assert.equal('outcome' in routes[1].properties.taskDecision.properties, false)
-  assert.deepEqual(routes[1].properties.taskDecision.properties.objectiveComplete.enum, [false])
-  assert.deepEqual(routes[2].properties.movementRequest, { type: 'object' })
-  assert.equal('outcome' in routes[2].properties.taskDecision.properties, false)
-  assert.deepEqual(routes[2].properties.taskDecision.properties.objectiveComplete.enum, [false])
-  assert.deepEqual(routes[2].properties.taskDecision.properties.motionClass.enum, ['body_local'])
-
-  const meaningfulOutputs = schema.allOf[1].anyOf
-  assert.deepEqual(meaningfulOutputs[0].properties.response, { type: 'string', minLength: 1 })
-  assert.deepEqual(meaningfulOutputs[1].properties.actions, { type: 'array', minItems: 1 })
-  assert.deepEqual(meaningfulOutputs[2].properties.movementRequest, { type: 'object' })
-  assert.deepEqual(meaningfulOutputs[3].properties.taskDecision, { type: 'object' })
-  assert.deepEqual(schema.properties.taskDecision.anyOf[0], { type: 'null' })
-  assert.equal(schema.properties.taskDecision.anyOf[1].type, 'object')
+  assert.equal(routes[0].properties.response.minLength, 1)
+  assert.equal(routes[0].properties.taskDecision.anyOf[1].properties.outcome.enum.includes('act'), false)
+  assert.deepEqual(routes[0].properties.taskDecision.anyOf[0], { type: 'null' })
+  assert.equal(routes[1].properties.actions.maxItems, 0)
+  assert.deepEqual(routes[1].properties.movementRequest, { type: 'null' })
+  assert.equal(routes[1].properties.response.maxLength, 0)
+  assert.equal(routes[1].properties.taskDecision.type, 'object', 'A silent non-action output requires a meaningful objective decision')
+  assert.equal(routes[2].properties.actions.minItems, 1)
+  assert.equal(routes[2].properties.actions.maxItems, 1)
+  assert.deepEqual(routes[2].properties.movementRequest, { type: 'null' })
+  assert.equal(routes[3].properties.actions.maxItems, 0)
+  assert.equal(routes[3].properties.movementRequest.type, 'object')
+  assert.deepEqual(routes[3].properties.taskDecision.anyOf[1].properties.motionClass.enum, ['body_local'])
+  for (const route of routes.slice(2)) {
+    assert.deepEqual(route.properties.taskDecision.anyOf[0], { type: 'null' })
+    assert.ok(route.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('continue'))
+    assert.ok(route.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('act'))
+    assert.equal(route.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('complete'), false)
+  }
 
   const standaloneSchema = buildEnvironmentSelectorJsonSchema({
     actions: ['robotCommand', 'robotMotionPlan'],
-    robotCommands: ['stand'],
+    robotCommands: ['stand', '#1', '#2'],
     requireAction: true,
   }) as any
-  assert.deepEqual(standaloneSchema.properties.taskDecision.anyOf.map((branch: any) => branch.type), ['null', 'object'])
-  assert.equal(standaloneSchema.allOf[1].anyOf.length, 4)
-  const standaloneActionBranches = standaloneSchema.allOf.find((constraint: any) => (
-    constraint.anyOf?.length === 2
-    && constraint.anyOf.every((branch: any) => (
-      branch.properties?.actions?.minItems === 1
-      || branch.properties?.movementRequest?.type === 'object'
-    ))
-  )).anyOf
-  assert.equal(standaloneActionBranches.length, 2)
-  assert.ok(standaloneActionBranches.every((branch: any) => (
-    !('type' in branch.properties.taskDecision)
-    && !('outcome' in branch.properties.taskDecision.properties)
-  )), 'Movement permits a null decision or the model-selected ongoing objective outcome')
-  assert.equal(standaloneSchema.properties.response.type, 'string')
-  assert.match(standaloneSchema.properties.response.description, /never substitutes/i)
+  assert.deepEqual(standaloneSchema.anyOf, routes.slice(2),
+    'A selected action route retains the same preset/freestyle contracts and optional goals')
+  assert.match(standaloneSchema.anyOf[0].properties.response.description, /never substitutes/i)
 })
 
 test('Environment Image Input distinguishes a saved view from evidence for a specific action', async () => {

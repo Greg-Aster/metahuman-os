@@ -7,6 +7,7 @@ import test from 'node:test'
 import { setAuditEnabled } from './audit.js'
 import { encrypt, initializeEncryption, lockProfile } from './encryption.js'
 import {
+  episodicSourceHash,
   scanEpisodicMemoryRecords,
   updateEpisodicMemoryMetadata,
   type EpisodicEvent,
@@ -194,4 +195,33 @@ test('Core can bound a newest-first episodic scan for finite agents', t => {
     'evt-newest',
     'evt-middle',
   ])
+})
+
+test('Curator can mark only the source revision it reviewed and preserves its content', t => {
+  const { username, episodic } = profile(t)
+  const original = event('evt-curation')
+  const file = path.join(episodic, 'memory.json')
+  fs.writeFileSync(file, JSON.stringify(original))
+  const sourceHash = episodicSourceHash(original)
+  const update = {
+    username, relativePath: 'memory.json', expectedId: original.id,
+    metadata: {
+      curated: true as const, curatedAt: '2026-09-09T12:00:00.000Z',
+      curatorRecordId: original.id, curatorRecordFile: '2026-08-29-evt-curation.json',
+      curatorSourceHash: sourceHash, curatorPolicyVersion: 2,
+      curationStatus: 'accepted' as const,
+    },
+  }
+  const result = updateEpisodicMemoryMetadata(update)
+  assert.equal(result.event.content, original.content)
+  assert.deepEqual(result.event.tags, original.tags)
+  assert.equal(episodicSourceHash(result.event), sourceHash)
+  assert.equal(updateEpisodicMemoryMetadata(update).event.metadata?.curated, true)
+  assert.throws(() => updateEpisodicMemoryMetadata({ ...update, tags: ['changed'] } as any), /Curator contract/)
+  assert.throws(() => updateEpisodicMemoryMetadata({
+    ...update, metadata: { ...update.metadata, cognitiveMode: 'dual' },
+  } as any), /Curator contract/)
+  fs.writeFileSync(file, JSON.stringify({ ...original, content: 'An edited source needs another review.' }))
+  assert.throws(() => updateEpisodicMemoryMetadata(update), /source changed after Curator review/)
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).metadata.curated, undefined)
 })

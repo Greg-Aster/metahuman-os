@@ -1,120 +1,156 @@
-/**
- * Factory Reset API Handler
- *
- * POST to reset the system to factory defaults.
- * DESTRUCTIVE: Deletes all memories, logs, and chat history.
- * Works for both web (Astro) and mobile (nodejs-mobile).
- */
+/** Profile memory reset through the canonical storage and lifecycle owners. */
+import fs from 'node:fs'
+import type { UnifiedRequest, UnifiedResponse } from '../types.js'
+import { successResponse } from '../types.js'
+import { audit } from '../../audit.js'
+import { getUserByUsername } from '../../users.js'
+import { getProfilePaths } from '../../paths.js'
+import { validateProfileDeletion, deleteProfileData } from '../../storage-client.js'
+import { acquireLock, profileMemoryResetLockName, type LockHandle } from '../../locks.js'
+import { listTrainingProcesses } from '../../training-process.js'
+import { ensureQueueSystemStarted, getQueueSystem } from '../../queue/queue-system.js'
+import type { UnifiedQueueManager } from '../../queue/unified-queue-manager.js'
+import { openExecutionStore } from '../../durable-execution/storage.js'
+import { ExecutionCheckpointer } from '../../durable-execution/checkpointer.js'
+import { clearBufferForUser, type CanonicalBufferMode } from '../../conversation-buffer.js'
+import { flushRecentToolCache } from '../../recent-tools-cache.js'
+import { clearIndexCache } from '../../vector-index.js'
+import { clearMemoryCaptureCache } from '../../memory.js'
+import { getAgencyHistoryResetPaths } from '../../agency/storage.js'
+import { createTTSDeliveryQueueStore } from '../../tts/delivery-queue.js'
 
-import type { UnifiedRequest, UnifiedResponse } from '../types.js';
-import { successResponse, forbiddenResponse } from '../types.js';
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import { systemPaths, getProfilePaths } from '../../paths.js';
+const BUFFER_MODES: CanonicalBufferMode[] = ['conversation', 'inner', 'system', 'robot']
 
-// Dynamic import for audit
-let audit: typeof import('../../audit.js').audit | null = null;
+export interface ResetFactoryDependencies {
+  coordinator(): Promise<UnifiedQueueManager>
+  cancelExecution(username: string, executionId: string, reason: string): void
+  trainingProcesses(): ReturnType<typeof listTrainingProcesses>
+  clearChatHistory(username: string): Promise<void>
+}
 
-async function ensureAudit(): Promise<void> {
-  if (!audit) {
-    const module = await import('../../audit.js');
-    audit = module.audit;
+const dependencies: ResetFactoryDependencies = {
+  coordinator: async () => (await ensureQueueSystemStarted()).queue,
+  cancelExecution: (username, executionId, reason) => getQueueSystem().cancelExecution(username, executionId, reason),
+  trainingProcesses: listTrainingProcesses,
+  clearChatHistory: async username => {
+    const { clearPersonaChatHistoryForUser } = await import('./persona-chat.js')
+    clearPersonaChatHistoryForUser(username)
+  },
+}
+
+function directoryEntries(directory: string): string[] {
+  try { return fs.readdirSync(directory) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
   }
 }
 
-async function emptyDirectory(dir: string, preserve: Set<string> = new Set()): Promise<void> {
+function deletionScope(username: string): string[] {
+  validateProfileDeletion(username, ['memory', 'state', 'logs', 'out/chat'])
+  const profile = getProfilePaths(username)
+  const preserved = new Set(['tasks', 'projects', 'README.md', 'schema.json'])
+  return [
+    ...getAgencyHistoryResetPaths(username),
+    ...directoryEntries(profile.memory).filter(name => !preserved.has(name)).map(name => `memory/${name}`),
+    ...directoryEntries(profile.state).filter(name => /^conversation-buffer(?:-|\.)/.test(name))
+      .map(name => `state/${name}`),
+    'state/recent-tools', 'state/response-buffers', 'logs', 'out/chat',
+  ]
+}
+
+/** POST /api/reset-factory. Reset only the confirmed, authenticated owner's memory. */
+export async function handleResetFactory(req: UnifiedRequest, deps = dependencies): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) return { status: 401, error: 'Authentication required' }
+  if (req.user.role !== 'owner') return { status: 403, error: 'Only owners can reset profile memory' }
+  if (req.signal?.aborted) return { status: 409, error: 'Reset request was cancelled before deletion' }
+  const username = req.user.username
+  if (req.body?.confirmToken !== 'CONFIRM_FACTORY_RESET' || req.body?.confirmUsername !== username) {
+    return { status: 400, error: 'Confirm the signed-in profile by entering its exact username' }
+  }
+  const user = getUserByUsername(username)
+  if (!user || user.id !== req.user.userId || user.role !== 'owner') {
+    return { status: 403, error: 'The authenticated profile no longer matches this reset request' }
+  }
+  let admission: LockHandle | undefined
+  let reset: LockHandle | undefined
+  let store: ReturnType<typeof openExecutionStore> | undefined
+  let started = false
   try {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    await Promise.all(entries.map(async (entry) => {
-      if (preserve.has(entry.name)) return;
-      const fullPath = path.join(dir, entry.name);
-      await fs.rm(fullPath, { recursive: true, force: true });
-    }));
-  } catch (error) {
-    // If the directory is missing we recreate it later. Ignore ENOENT.
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw error;
+    try {
+      admission = acquireLock('training-admission', { exitOnSignal: false })
+      reset = acquireLock(profileMemoryResetLockName(username), { exitOnSignal: false })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return { status: 409, error: 'A reset or training launch is in progress. Wait for it to finish and retry.' }
+      }
+      throw error
     }
-    await fs.mkdir(dir, { recursive: true });
+    const relativePaths = deletionScope(username)
+    const expectedPaths = validateProfileDeletion(username, relativePaths)
+    const configuredProfileRoot = getProfilePaths(username).root
+    const profileRoot = fs.realpathSync(configuredProfileRoot)
+    const assertStorageUnchanged = () => {
+      if (fs.realpathSync(getProfilePaths(username).root) !== profileRoot) throw new Error('Profile storage changed during reset')
+    }
+    const queue = await deps.coordinator()
+    try { queue.assertProfileIdle(username) }
+    catch (error) { return { status: 409, error: `${(error as Error).message}. Open Queue in the right sidebar, then retry.` } }
+    if (deps.trainingProcesses().some(process => !process.username || process.username === username)) {
+      return { status: 409, error: 'Stop this profile\'s training and wait for its worker to exit, then retry.' }
+    }
+    const [executionPath] = validateProfileDeletion(username, ['state/sessions/executions.sqlite', 'state/tts-queue.json'])
+    let checkpointer: ExecutionCheckpointer | undefined
+    if (fs.existsSync(executionPath)) {
+      store = openExecutionStore(username)
+      checkpointer = new ExecutionCheckpointer(store, { executionId: '', owner: 'profile-memory-reset', generation: 0 })
+      try { checkpointer.assertProfileHistoryCanBeReset(username) }
+      catch (error) { return { status: 409, error: (error as Error).message } }
+    }
+    await flushRecentToolCache(configuredProfileRoot)
+    assertStorageUnchanged()
+    if (req.signal?.aborted) return { status: 409, error: 'Reset request was cancelled before deletion' }
+    audit({ level: 'warn', category: 'security', event: 'profile_memory_reset_started', actor: username,
+      details: { username } })
+    started = true
+    // The confirmed reset ends saved conversations as well as removing their
+    // history. Preflight excluded live writers and unresolved effects across the
+    // whole profile; cancellation stays with the existing Coordinator owner.
+    for (const execution of store?.list(username) ?? []) {
+      if (!['completed', 'failed', 'cancelled'].includes(execution.status)) {
+        deps.cancelExecution(username, execution.executionId, 'Profile memory reset confirmed by owner')
+      }
+    }
+    const executionsDeleted = checkpointer?.resetProfileHistory(username) ?? 0
+    queue.forgetProfileHistory(username)
+    if (store) for (const id of store.retirements()) store.acknowledgeRetirement(id)
+    await deps.clearChatHistory(username)
+    clearMemoryCaptureCache(username)
+    assertStorageUnchanged()
+    createTTSDeliveryQueueStore(username).resetHistory()
+    await deleteProfileData(username, relativePaths, expectedPaths)
+    for (const mode of BUFFER_MODES) {
+      assertStorageUnchanged()
+      if (!await clearBufferForUser(username, mode)) throw new Error(`Failed to clear the ${mode} buffer`)
+    }
+    clearIndexCache()
+    audit({ level: 'warn', category: 'security', event: 'profile_memory_reset_completed', actor: username,
+      details: { username, executionsDeleted } })
+    return successResponse({ success: true, username, executionsDeleted })
+  } catch (error) {
+    const message = (error as Error).message
+    audit({ level: 'error', category: 'security', event: 'profile_memory_reset_failed', actor: username,
+      details: { username, deletionStarted: started, error: message } })
+    return { status: 500, error: started
+      ? `Memory reset is incomplete; some data may have been removed. Resolve the error and retry: ${message}`
+      : `Memory reset could not start: ${message}` }
+  } finally {
+    store?.close()
+    reset?.release()
+    admission?.release()
   }
 }
 
-async function ensureDirectory(dir: string): Promise<void> {
-  await fs.mkdir(dir, { recursive: true });
-}
-
-/**
- * POST /api/reset-factory - Reset to factory defaults
- * DESTRUCTIVE OPERATION - requires owner role and confirmation token
- */
-export async function handleResetFactory(req: UnifiedRequest): Promise<UnifiedResponse> {
-  try {
-    await ensureAudit();
-
-    // Require owner role
-    if (req.user.role !== 'owner') {
-      return forbiddenResponse('Only owners can perform factory reset');
-    }
-
-    const { confirmToken } = req.body || {};
-
-    // Require explicit confirmation token
-    if (confirmToken !== 'CONFIRM_FACTORY_RESET') {
-      return {
-        status: 400,
-        error: 'Confirmation required',
-        data: {
-          hint: 'Include {"confirmToken": "CONFIRM_FACTORY_RESET"} in request body',
-          warning: 'This operation will DELETE ALL memories, logs, and chat history permanently',
-        },
-      };
-    }
-
-    // Get profile paths for the user
-    const profilePaths = getProfilePaths(req.user.username);
-    const MEMORY_DIR = profilePaths.memory;
-    const LOGS_DIR = path.join(systemPaths.logs);
-    const CHAT_ARCHIVE_DIR = path.join(profilePaths.out, 'chat');
-
-    // Log critical security event
-    if (audit) {
-      audit({
-        level: 'error',
-        category: 'security',
-        event: 'factory_reset_executed',
-        details: {
-          confirmed: true,
-          warning: 'ALL DATA WILL BE DELETED',
-          username: req.user.username,
-        },
-        actor: req.user.username,
-      });
-    }
-
-    await ensureDirectory(MEMORY_DIR);
-    await ensureDirectory(LOGS_DIR);
-    await ensureDirectory(CHAT_ARCHIVE_DIR);
-
-    await emptyDirectory(MEMORY_DIR, new Set(['README.md', 'schema.json']));
-    await emptyDirectory(LOGS_DIR);
-    await emptyDirectory(CHAT_ARCHIVE_DIR);
-
-    return successResponse({ success: true });
-  } catch (error) {
-    console.error('[reset-factory] Failed:', error);
-    return {
-      status: 500,
-      error: (error as Error).message,
-    };
-  }
-}
-
-/**
- * GET /api/reset-factory - Method not allowed
- */
-export async function handleResetFactoryGet(req: UnifiedRequest): Promise<UnifiedResponse> {
-  return {
-    status: 405,
-    error: 'Method not allowed',
-  };
+export async function handleResetFactoryGet(_req: UnifiedRequest): Promise<UnifiedResponse> {
+  return { status: 405, error: 'Method not allowed' }
 }

@@ -4,11 +4,13 @@
  */
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
+import { createHash } from 'node:crypto';
+import { episodicSourceHash } from '../../memory.js';
 import { callLLM } from '../../model-router.js';
 import { renderPromptTemplate } from '../prompt-template.js';
-import type { CuratedMemory, CuratorItemResult, EpisodicMemory } from './contracts.js';
+import { CURATOR_POLICY_VERSION, type CuratedMemory, type CuratorItemResult, type EpisodicMemory } from './contracts.js';
 
-const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a memory curator preparing training data for a personal AI assistant.
+const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You review source memories for a personal model's training dataset.
 
 PERSONA CONTEXT:
 {{personaSummary}}
@@ -16,11 +18,13 @@ PERSONA CONTEXT:
 COGNITIVE MODE: {{cognitiveMode}}
 MEMORY TYPE: {{memoryType}}
 
-Convert this memory into a conversational exchange suitable for training.
+Review the memory for correctness, useful task behavior, and fidelity to its source.
+The cognitive mode describes where it came from; it does not change the author of a message.
 
 When both a user message and assistant response are supplied, evaluate that
 exact exchange. Copy both messages without rewriting or synthesizing content.
-Only standalone non-conversation memories may require a synthesized prompt.
+For a standalone memory, synthesize only a useful prompt; keep its answer faithful
+to the source. Do not invent facts or treat a generated reflection as human testimony.
 
 === QUALITY CRITERIA ===
 
@@ -32,28 +36,20 @@ REJECT (suitableForTraining=false) if ANY of these apply:
    - Self-referential loops ("you ok home", "test test", repeated greetings)
    - Model confusion (mixing personas, contradicting identity)
 
-2. SYSTEM ARTIFACTS:
-   - Raw JSON, XML, or code blocks (unless the conversation IS about code)
-   - Tool syntax, function calls, or API responses
-   - Error messages, stack traces, or debug output
-   - System prompts or internal instructions leaked
+2. UNINTENDED ARTIFACTS:
+   - Leaked private instructions or unrelated diagnostic output
+   - Incorrect or malformed structured output for the task requested
+   - Preserve valid code, tool use, JSON, and concise replies when the task requires them
 
 3. LOW-QUALITY EXCHANGES:
-   - Empty or near-empty responses (< 5 words total)
-   - Single word replies without context ("ok", "yes", "no")
+   - Empty responses or replies with insufficient context to judge their meaning
    - Incomplete thoughts cut off mid-sentence
    - Responses that don't address the user's message
 
-4. SELF-AWARE AI ARTIFACTS:
-   - "As an AI/LLM/assistant, I..." disclaimers
-   - Explaining model limitations or training cutoffs
-   - Refusing to engage for safety reasons (unless persona-appropriate)
-   - Meta-commentary about being trained or fine-tuned
-
-5. DUPLICATE INDICATORS:
-   - Exact repetition of a previous exchange
-   - Same question asked multiple times with minor variations
-   - Greeting exchanges that add no unique value
+Do not reject appropriate refusals, honest uncertainty, model limitations, or short
+answers solely for their style or length. Do not claim corpus-wide duplication from
+one memory; the dataset owner performs deduplication. Do not claim factual verification
+when no evidence is supplied. Flag uncertain factual claims for downstream review.
 
 ACCEPT (suitableForTraining=true) if:
 - Natural, coherent conversation that reflects the persona
@@ -69,7 +65,7 @@ Respond with JSON:
   "userMessage": "Clean user message (extracted or synthesized)",
   "assistantResponse": "Clean assistant response (extracted or synthesized)",
   "context": "Additional context if helpful",
-  "flags": ["contamination", "system-artifact", "low-quality", "ai-disclaimer", "duplicate"],
+  "flags": ["contamination", "unintended-artifact", "insufficient-context", "unverified-claim"],
   "rejectionReason": "If rejected, explain why in 1 sentence",
   "suitableForTraining": true/false
 }`;
@@ -146,9 +142,9 @@ export function parseCuratorResponse(
   }
 
   const mode = cognitiveMode(memory);
-  const sourceUserMessage = memory.content.trim();
-  const sourceAssistantResponse = memory.response?.trim();
-  const hasSourceExchange = Boolean(sourceUserMessage && sourceAssistantResponse);
+  const sourceUserMessage = memory.content;
+  const sourceAssistantResponse = memory.response;
+  const hasSourceExchange = Boolean(sourceUserMessage.trim() && sourceAssistantResponse?.trim());
   return {
     id: memory.id,
     originalTimestamp: memory.timestamp,
@@ -167,6 +163,16 @@ export function parseCuratorResponse(
     ...mode,
     memoryType: typeof memory.type === 'string' && memory.type.trim() ? memory.type.trim() : 'conversation',
     sourceMemoryIds: memory.sourceMemoryIds?.length ? [...memory.sourceMemoryIds] : [memory.id],
+    provenance: {
+      policyVersion: CURATOR_POLICY_VERSION,
+      sourceHashes: memory.sourceHashes ?? { [memory.id]: episodicSourceHash(memory) },
+      kind: hasSourceExchange ? 'recorded-exchange' : 'synthetic-exchange',
+      ...(typeof memory.metadata?.sessionId === 'string' && memory.metadata.sessionId.trim()
+        ? { sessionId: memory.metadata.sessionId } : {}),
+      ...([-1, 0, 1].includes(Number(memory.metadata?.reinforcementSignal))
+        && memory.metadata?.reinforcementSignal !== undefined
+        ? { reinforcementSignal: Number(memory.metadata.reinforcementSignal) } : {}),
+    },
   };
 }
 
@@ -219,9 +225,19 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       continue;
     }
 
-    // Skip memories with negative feedback - user explicitly marked these as bad
-    // They should not influence training data
-    if (memory.metadata?.reinforcementSignal === -1 || memory.tags?.includes('feedback')) continue;
+    // Retain a durable rejection so feedback remains visible and does not recur
+    // as pending work. Negative examples are not positive SFT demonstrations.
+    if (memory.metadata?.reinforcementSignal === -1 || memory.tags?.includes('feedback')) {
+      const curated = parseCuratorResponse(JSON.stringify({
+        suitableForTraining: false, conversationalEssence: 'Feedback excluded from positive demonstrations',
+        rejectionReason: 'Feedback records and negatively rated outputs are excluded from positive SFT examples.',
+        flags: ['feedback'],
+      }), memory);
+      const originalMemoryPaths = memoryPaths(memory);
+      curatedResults.push({ success: true, disposition: 'rejected', curated,
+        originalMemoryPath: originalMemoryPaths[0]!, originalMemoryPaths, memoryId: memory.id });
+      continue;
+    }
 
     let sourceCognitiveMode: CuratedMemory['cognitiveMode'];
     try {
@@ -269,6 +285,8 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       });
 
       const curated = parseCuratorResponse(response.content, memory);
+      curated.provenance!.promptHash = createHash('sha256').update(systemPrompt + '\n' + userPrompt).digest('hex');
+      if (response.model) curated.provenance!.model = response.model;
       const originalMemoryPaths = memoryPaths(memory);
 
       // Log rejections for debugging

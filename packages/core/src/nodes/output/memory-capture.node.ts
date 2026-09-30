@@ -35,8 +35,8 @@ function admittedEntries(inputs: Record<string, any>): ConversationMessage[] {
       throw new Error(`Conversation memory entry ${index + 1} must be an object`);
     }
     const role = rawEntry.role as ConversationMessage['role'];
-    const content = typeof rawEntry.content === 'string' ? rawEntry.content.trim() : '';
-    if (!CONVERSATION_ROLES.has(role) || !content) {
+    const content = typeof rawEntry.content === 'string' ? rawEntry.content : '';
+    if (!CONVERSATION_ROLES.has(role) || !content.trim()) {
       throw new Error(`Conversation memory entry ${index + 1} must contain a user or assistant message`);
     }
     return {
@@ -55,6 +55,7 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'entry', type: 'message', optional: true, description: 'One Conversation Buffer-admitted entry' },
     { name: 'entries', type: 'array', optional: true, description: 'Ordered Conversation Buffer-admitted entries' },
+    { name: 'passthrough', type: 'any', optional: true, description: 'Forward only after the admitted entries have been saved' },
   ],
   outputs: [
     { name: 'saved', type: 'boolean', description: 'Whether every admitted entry was saved' },
@@ -64,17 +65,19 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
     { name: 'eventPath', type: 'string', optional: true },
     { name: 'eventPaths', type: 'array' },
     { name: 'results', type: 'array' },
+    { name: 'passthrough', type: 'any' },
   ],
   description: 'Saves each admitted user or assistant entry as its own long-term conversation memory.',
 
   execute: async (inputs, context) => {
+    const passthrough = inputs.passthrough ?? null;
     if (context.composeTarget === 'inner') {
-      return { saved: false, savedCount: 0, eventIds: [], eventPaths: [], results: [], reason: 'Inner compose uses the Inner Dialogue Memory Saver' };
+      return { saved: false, savedCount: 0, eventIds: [], eventPaths: [], results: [], passthrough, reason: 'Inner compose uses the Inner Dialogue Memory Saver' };
     }
 
     const entries = admittedEntries(inputs);
     if (entries.length === 0) {
-      return { saved: false, savedCount: 0, eventIds: [], eventPaths: [], results: [], reason: 'No admitted conversation entries' };
+      return { saved: false, savedCount: 0, eventIds: [], eventPaths: [], results: [], passthrough, reason: 'No admitted conversation entries' };
     }
 
     const username = typeof context.username === 'string'
@@ -88,7 +91,7 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
 
     const memoryWritesAllowed = context.recordPersonaMemory ?? context.allowMemoryWrites ?? false;
     if (memoryWritesAllowed !== true) {
-      return { saved: false, savedCount: 0, eventIds: [], eventPaths: [], results: [], reason: 'Persona Memory writes disabled' };
+      return { saved: false, savedCount: 0, eventIds: [], eventPaths: [], results: [], passthrough, reason: 'Persona Memory writes disabled' };
     }
 
     const cognitiveMode = context.cognitiveMode || 'dual';
@@ -121,6 +124,7 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
       eventPath: results[0]?.filePath,
       eventPaths: results.map(result => result.filePath),
       results,
+      passthrough,
     };
   },
 });

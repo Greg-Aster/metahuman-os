@@ -3,6 +3,30 @@ import test from 'node:test';
 
 import type { EnvironmentObservation } from '../../environment-interface/index.js';
 import { environmentActionParserNode } from './action-parser.node.js';
+import { buildEnvironmentSelectorJsonSchema, validateEnvironmentSelectorOutput } from './helpers.js';
+
+test('one model-owned outcome defines objective completion independently of speech and physical routes', () => {
+  const taskDecision = {
+    objective: 'Sustain an interaction',
+    completionCriteria: 'The participants conclude the interaction.',
+    outcome: 'continue', reason: 'The interaction has begun and is ongoing.',
+    continuationPolicy: 'none', requiredCompletionBasis: 'user_input',
+  };
+  const choice = { response: 'We can begin.', actions: [], movementRequest: null, taskDecision };
+  const continued = validateEnvironmentSelectorOutput(JSON.stringify(choice));
+  assert.deepEqual(continued.errors, []);
+  assert.equal(continued.value?.taskDecision?.objectiveComplete, false);
+  const completed = validateEnvironmentSelectorOutput(JSON.stringify({
+    ...choice, taskDecision: { ...taskDecision, outcome: 'complete', reason: 'The participants concluded it.' },
+  }));
+  assert.deepEqual(completed.errors, []);
+  assert.equal(completed.value?.taskDecision?.objectiveComplete, true);
+  const contradictory = validateEnvironmentSelectorOutput(JSON.stringify({
+    ...choice, taskDecision: { ...taskDecision, outcome: 'complete', objectiveComplete: false },
+  }));
+  assert.equal(contradictory.valid, false, 'The model contract has no second completion switch');
+  assert.equal(JSON.stringify(buildEnvironmentSelectorJsonSchema()).includes('objectiveComplete'), false);
+});
 
 const observation: EnvironmentObservation = {
   environmentId: 'robot-environment',
@@ -107,7 +131,8 @@ test('objective progress is independent of action choice but dispatch is not com
           actions: freestyle ? [] : [{ type: 'robotCommand', command: 'stand' }],
           movementRequest: freestyle ? { description: 'Extend a front leg and return it.' } : null,
           taskDecision: { objective: 'Locate a target and greet it.', outcome, reason: 'Another step toward the same objective.',
-            objectiveComplete: false, continuationPolicy: 'none', requiredCompletionBasis: 'visual_observation' },
+            completionCriteria: 'The target is identified and the greeting has completed.',
+            continuationPolicy: 'none', requiredCompletionBasis: 'visual_observation' },
         }),
         observation: { ...observation, capabilities: { ...observation.capabilities, actions: ['robotCommand', 'robotMotionPlan'] } },
         sessionId: observation.sessionId,
@@ -126,9 +151,9 @@ test('objective progress is independent of action choice but dispatch is not com
       movementRequest: null,
       taskDecision: {
         objective: 'Stand upright.',
+        completionCriteria: 'The standing command has completed.',
         outcome: 'complete',
         reason: 'Standing is the selected consequence.',
-        objectiveComplete: true,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'action_result',
         motionClass: 'open_loop_displacement',
@@ -162,7 +187,6 @@ test('a task decision must author its durable objective', async () => {
       taskDecision: {
         outcome: 'act',
         reason: 'Standing is the selected consequence.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
         motionClass: 'open_loop_displacement',
@@ -192,9 +216,9 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
       movementRequest: null,
       taskDecision: {
         objective: 'Take the requested picture.',
+        completionCriteria: 'The requested new image is received.',
         outcome: 'act',
         reason: 'No image content is attached.',
-        objectiveComplete: false,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         actionPurpose: 'information_gain',
@@ -215,9 +239,9 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
       movementRequest: null,
       taskDecision: {
         objective: 'Wave until the requested visual condition is established.',
+        completionCriteria: 'The requested hand is visible in a correlated observation.',
         outcome: 'act',
         reason: 'The user requested a picture.',
-        objectiveComplete: false,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         actionPurpose: 'information_gain',
@@ -236,7 +260,7 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
         objective: 'Wave until the requested visual condition is established.',
         outcome: 'act',
         reason: 'The visual stopping condition is not yet satisfied.',
-        objectiveComplete: false,
+        completionCriteria: 'The requested hand is visible in a correlated observation.',
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         motionClass: 'open_loop_displacement',
@@ -262,7 +286,6 @@ test('the repaired 9B selector contract preserves capture and bounded visual lif
         objective: 'Establish whether a hand is visible.',
         outcome: 'continue',
         reason: 'No hand is visible in the current correlated frame.',
-        objectiveComplete: false,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         motionClass: 'body_local',
@@ -291,9 +314,9 @@ test('action purpose and evidence remain on the validated LLM decision', async (
       movementRequest: { description: 'Shift into one bounded expressive posture.' },
       taskDecision: {
         objective: 'Express a posture that fits the current situation.',
+        completionCriteria: 'The chosen expressive posture has completed.',
         outcome: 'act',
         reason: 'The posture change is an expressive consequence.',
-        objectiveComplete: false,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         motionClass: 'body_local',
@@ -338,9 +361,9 @@ test('the spiky-friend head-tilt case requires a structured advertised action ra
       movementRequest: null,
       taskDecision: {
         objective: 'Express curiosity about the newly observed spiky object.',
+        completionCriteria: 'The chosen expressive gesture has completed.',
         outcome: 'act',
         reason: 'The correlated image provides the object evidence and the advertised curious command expresses the chosen response.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
         motionClass: 'body_local',
@@ -362,9 +385,9 @@ test('the spiky-friend head-tilt case requires a structured advertised action ra
       movementRequest: null,
       taskDecision: {
         objective: 'Express curiosity about the newly observed spiky object.',
+        completionCriteria: 'The chosen expressive gesture has completed.',
         outcome: 'act',
         reason: 'A head tilt would express curiosity.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
         motionClass: 'body_local',
@@ -383,9 +406,9 @@ test('the Environment selector contract has no unconsumed escalation output', as
       actions: [],
       movementRequest: null,
       taskDecision: {
-        outcome: 'report',
+        outcome: 'complete',
         reason: 'A reflective response is the selected consequence.',
-        objectiveComplete: true,
+        completionCriteria: 'The reflective response has been expressed.',
         continuationPolicy: 'none',
         requiredCompletionBasis: 'response',
         actionPurpose: 'expression',

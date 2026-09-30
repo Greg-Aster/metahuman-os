@@ -11,19 +11,21 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { systemPaths } from '../../paths.js';
 import { audit } from '../../audit.js';
-import { safeWriteJSON } from '../../safe-file.js';
-import { stopTrainingProcesses } from '../../training-process.js';
+import { stopTrainingProcesses, readTrainingOperations } from '../../training-process.js';
 import {
-  ensureProfileTrainingConfig,
+  readTrainingDataSettings,
+  updateTrainingDataSettings,
   readProfileTrainingConfig,
   updateProfileTrainingConfig,
 } from '../../training-config.js';
-import { launchTrainingJob, type TrainingLaunchRequest } from '../../training-launch.js';
+import { launchTrainingJob, validateTrainingLaunchConfig, type TrainingLaunchRequest } from '../../training-launch.js';
+import { parseTrainingDataSettings } from '../../training-schema.js';
 
 /**
  * GET /api/training-config - Get training configuration
  */
 export async function handleGetTrainingConfig(req: UnifiedRequest): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) return { status: 401, error: 'Authentication required' };
   try {
     const { user } = req;
 
@@ -57,8 +59,16 @@ export async function handleUpdateTrainingConfig(req: UnifiedRequest): Promise<U
   if (Object.prototype.hasOwnProperty.call(body, 'automatic')) {
     return { status: 400, error: 'Use /api/training/automatic to update automatic training policy' };
   }
+  if (Object.prototype.hasOwnProperty.call(body, 'data')) {
+    return { status: 400, error: 'Use /api/training-data to update training data settings' };
+  }
 
   try {
+    const allowed = ['base_model', 'num_train_epochs', 'max_samples', 'monthly_training', 'days_recent', 'old_samples', 'lora_rank', 'lora_alpha', 'learning_rate', 'per_device_train_batch_size', 'gradient_accumulation_steps', 'max_seq_length', 'quantization', 'skipGguf', 'load_in_4bit', 'mode_filter', 'trainingTarget'];
+    if (Object.keys(body).some(key => !allowed.includes(key))) return { status: 400, error: 'Unsupported training setting' };
+    const validation = validateTrainingLaunchConfig({ ...readProfileTrainingConfig(user.username), ...body });
+    if (validation) return { status: 400, error: validation };
+    if (body.trainingTarget !== undefined && !['ollama', 'vllm'].includes(body.trainingTarget)) return { status: 400, error: 'Invalid training target' };
     const updatedConfig = updateProfileTrainingConfig(user.username, {
       ...(body as Record<string, unknown>),
       lastUpdated: new Date().toISOString(),
@@ -78,236 +88,46 @@ export async function handleUpdateTrainingConfig(req: UnifiedRequest): Promise<U
 }
 
 /**
- * GET /api/training-data - Get training data configuration
- * Returns the authenticated profile's unified training-data settings.
+ * The connected controls and training pipeline share one validated data contract.
  */
 export async function handleGetTrainingData(req: UnifiedRequest): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) return { status: 401, error: 'Authentication required' };
   try {
-    const unified = readProfileTrainingConfig(req.user.username) as Record<string, any>;
-
-    // Convert unified format to legacy format for backwards compatibility
-    const config = {
-      curator: unified.curator || getDefaultTrainingDataConfig().curator,
-      collection: {
-        maxDays: unified.data?.maxDays || 999999,
-        maxSamplesPerSource: unified.data?.maxSamplesPerSource || 3000,
-        includePersona: unified.data?.includePersona ?? true,
-      },
-      memoryTypes: unified.data?.memoryTypes || getDefaultTrainingDataConfig().memoryTypes,
-      phases: unified.phases || getDefaultTrainingDataConfig().phases,
-    };
-
-    return successResponse({
-      success: true,
-      config,
-    });
+    return successResponse({ success: true, config: readTrainingDataSettings(req.user.username) });
   } catch (error) {
-    console.error('[training-data-handler] Error:', error);
-    return {
-      status: 500,
-      error: (error as Error)?.message || 'Failed to load training data configuration',
-    };
+    return { status: 500, error: (error as Error).message };
   }
 }
 
-/**
- * POST /api/training-data - Update training data configuration (owner only)
- * Updates the authenticated profile's unified training-data settings.
- */
 export async function handleUpdateTrainingData(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const { body } = req;
-
-  if (!body || typeof body !== 'object') {
-    return { status: 400, error: 'Invalid configuration data' };
+  if (!req.user.isAuthenticated) return { status: 401, error: 'Authentication required' };
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) return { status: 400, error: 'Invalid training data settings' };
+  if (Object.keys(req.body).some(key => !['objective', 'includePersona', 'memoryTypes', 'maxSyntheticPercent', 'evaluationPercent', 'seed'].includes(key))) {
+    return { status: 400, error: 'Unsupported training data setting' };
   }
-
+  let validated;
   try {
-    const trainingConfigPath = ensureProfileTrainingConfig(req.user.username);
-
-    // Load current unified config or create empty
-    let unified: Record<string, any> = {};
-    if (fs.existsSync(trainingConfigPath)) {
-      unified = JSON.parse(fs.readFileSync(trainingConfigPath, 'utf-8'));
-    }
-
-    // Initialize data section if missing
-    if (!unified.data) {
-      unified.data = {
-        maxDays: 999999,
-        maxSamplesPerSource: 3000,
-        max_samples: 3000,
-        includePersona: true,
-        memoryTypes: getDefaultTrainingDataConfig().memoryTypes,
-      };
-    }
-
-    // Update curator settings if provided
-    if (body.curator) {
-      unified.curator = unified.curator || {};
-      if (typeof body.curator.batchSize === 'number' && body.curator.batchSize > 0) {
-        unified.curator.batchSize = body.curator.batchSize;
-      }
-      if (typeof body.curator.qualityThreshold === 'number') {
-        unified.curator.qualityThreshold = Math.max(0, Math.min(10, body.curator.qualityThreshold));
-      }
-      if (typeof body.curator.temperature === 'number') {
-        unified.curator.temperature = Math.max(0, Math.min(2, body.curator.temperature));
-      }
-    }
-
-    // Update collection settings (mapped to data section)
-    if (body.collection) {
-      if (typeof body.collection.maxDays === 'number' && body.collection.maxDays > 0) {
-        unified.data.maxDays = body.collection.maxDays;
-      }
-      if (typeof body.collection.maxSamplesPerSource === 'number' && body.collection.maxSamplesPerSource > 0) {
-        unified.data.maxSamplesPerSource = body.collection.maxSamplesPerSource;
-      }
-      if (typeof body.collection.includePersona === 'boolean') {
-        unified.data.includePersona = body.collection.includePersona;
-      }
-    }
-
-    // Update memory types (mapped to data.memoryTypes)
-    if (body.memoryTypes?.enabled && Array.isArray(body.memoryTypes.enabled)) {
-      unified.data.memoryTypes = unified.data.memoryTypes || {};
-      unified.data.memoryTypes.enabled = body.memoryTypes.enabled;
-    }
-
-    if (body.memoryTypes?.percentages && typeof body.memoryTypes.percentages === 'object') {
-      unified.data.memoryTypes = unified.data.memoryTypes || {};
-      unified.data.memoryTypes.percentages = unified.data.memoryTypes.percentages || {};
-      for (const [type, value] of Object.entries(body.memoryTypes.percentages)) {
-        if (typeof value === 'number') {
-          unified.data.memoryTypes.percentages[type] = Math.max(0, Math.min(100, value));
-        }
-      }
-    }
-
-    safeWriteJSON(trainingConfigPath, unified);
-
-    // Return legacy format for backwards compatibility
-    const config = {
-      curator: unified.curator || getDefaultTrainingDataConfig().curator,
-      collection: {
-        maxDays: unified.data?.maxDays || 999999,
-        maxSamplesPerSource: unified.data?.maxSamplesPerSource || 3000,
-        includePersona: unified.data?.includePersona ?? true,
-      },
-      memoryTypes: unified.data?.memoryTypes || getDefaultTrainingDataConfig().memoryTypes,
-      phases: unified.phases || getDefaultTrainingDataConfig().phases,
-    };
-
-    return successResponse({
-      success: true,
-      config,
-      message: 'Training data configuration updated successfully',
-    });
+    validated = parseTrainingDataSettings(req.body);
   } catch (error) {
-    console.error('[training-data-handler] Update error:', error);
-    return {
-      status: 500,
-      error: (error as Error)?.message || 'Failed to update training data configuration',
-    };
+    return { status: 400, error: (error as Error).message };
   }
-}
-
-function getDefaultTrainingDataConfig() {
-  return {
-    curator: {
-      batchSize: 100,
-      qualityThreshold: 6.0,
-      temperature: 0.3,
-    },
-    collection: {
-      maxDays: 999999,
-      maxSamplesPerSource: 3000,
-      includePersona: true,
-    },
-    memoryTypes: {
-      enabled: [
-        'conversation',
-        'observation',
-        'reflection',
-        'reflection_summary',
-        'inner_dialogue',
-        'decision',
-        'dream',
-        'journal',
-        'curiosity_question',
-        'summary',
-      ],
-      priorities: {
-        therapy_session: 10,
-        conversation: 9,
-        inner_dialogue: 8,
-        reflection: 7,
-        reflection_summary: 7,
-        decision: 6,
-        observation: 5,
-        curiosity_question: 4,
-        dream: 3,
-        journal: 3,
-        summary: 2,
-      },
-      percentages: {
-        conversation: 40,
-        observation: 25,
-        therapy_session: 15,
-        reflection: 5,
-        reflection_summary: 3,
-        inner_dialogue: 3,
-        dream: 3,
-        curiosity_question: 3,
-        decision: 2,
-        journal: 1,
-        summary: 0,
-      },
-    },
-    phases: {
-      description: 'Recommended configurations for different training phases',
-      phase1_conservative: {
-        curator: { batchSize: 50, maxSamplesPerSource: 1000 },
-        expectedSamples: '~800-1200',
-        processingTime: '~15 mins',
-      },
-      phase2_optimal: {
-        curator: { batchSize: 100, maxSamplesPerSource: 3000 },
-        expectedSamples: '~2500-3000',
-        processingTime: '~30 mins',
-      },
-      phase3_maximum: {
-        curator: { batchSize: 150, maxSamplesPerSource: 5000 },
-        expectedSamples: '~4000-5000',
-        processingTime: '~45-60 mins',
-      },
-    },
-  };
+  try {
+    const config = updateTrainingDataSettings(req.user.username, validated);
+    return successResponse({ success: true, config, message: 'Training data settings saved' });
+  } catch (error) {
+    return { status: 500, error: (error as Error).message };
+  }
 }
 
 /**
  * GET /api/training/[operation] - Read training operation status file.
  */
 export async function handleGetTrainingOperation(req: UnifiedRequest): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) return { status: 401, error: 'Authentication required' };
   try {
     const operation = req.params?.operation || req.params?.id;
-    const statusFile = path.join(process.cwd(), 'logs/status', `${operation}.json`);
-
-    if (!operation || !fs.existsSync(statusFile)) {
-      return { status: 404, error: 'Training operation not found' };
-    }
-
-    const status = JSON.parse(fs.readFileSync(statusFile, 'utf-8'));
-    const lastHeartbeat = new Date(status.lastHeartbeat);
-    const now = new Date();
-    const minutesSinceHeartbeat = (now.getTime() - lastHeartbeat.getTime()) / 60000;
-    status.isHung = minutesSinceHeartbeat > 2 && status.overallStatus === 'running';
-
-    if (status.startedAt) {
-      const started = new Date(status.startedAt);
-      status.elapsedSeconds = Math.floor((now.getTime() - started.getTime()) / 1000);
-    }
-
+    const status = readTrainingOperations(req.user.username).find(item => item.operation === operation);
+    if (!status) return { status: 404, error: 'Training operation not found' };
     return successResponse(status);
   } catch (error) {
     return { status: 500, error: (error as Error).message };
@@ -345,7 +165,7 @@ export async function handleLaunchTraining(req: UnifiedRequest): Promise<Unified
  */
 export async function handleCancelTraining(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    const stopped = stopTrainingProcesses();
+    const stopped = stopTrainingProcesses(req.user.username);
     if (stopped.length === 0) {
       return { status: 404, data: { success: false, error: 'No training process is running' } };
     }

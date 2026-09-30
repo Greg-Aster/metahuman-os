@@ -76,7 +76,7 @@ export class EventBusServer {
       });
 
       // Create WebSocket server
-      const wss = new WebSocketServer({ server: httpServer });
+      const wss = new WebSocketServer({ server: httpServer, verifyClient: ({ origin }: { origin: string }) => !origin });
       this.httpServer = httpServer;
       this.wss = wss;
 
@@ -116,7 +116,7 @@ export class EventBusServer {
         reject(error);
       });
 
-      httpServer.listen(port, () => {
+      httpServer.listen(port, '127.0.0.1', () => {
         const address = httpServer.address();
         const boundPort = typeof address === 'object' && address ? address.port : port;
         console.log(`${LOG_PREFIX} ========================================`);

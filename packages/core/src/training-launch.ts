@@ -1,24 +1,62 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 
 import { audit } from './audit.js'
 import { getProfilePaths } from './path-builder.js'
 import { systemPaths } from './paths.js'
 import { safeWriteJSON } from './safe-file.js'
+import { acquireLock, assertProfileMemoryAvailable } from './locks.js'
+import { DEFAULT_TRAINING_MODEL, DEFAULT_VLLM_TRAINING_MODEL } from './model-defaults.js'
+import { parseTrainingDataSettings, type CognitiveMode } from './training-schema.js'
 import {
   readProfileTrainingConfig,
   updateProfileTrainingConfig,
 } from './training-config.js'
 import {
   listTrainingProcesses,
-  releaseTrainingProcess,
+  finalizeTrainingProcess,
   trackTrainingProcess,
+  stopTrainingProcesses, readTrainingHistoryForUser, listUnconfirmedTrainingCleanup,
   type TrainingProcessName,
 } from './training-process.js'
 
 export type TrainingMethod = 'local-lora' | 'remote-lora' | 'fine-tune'
 export type TrainingTarget = 'ollama' | 'vllm'
+
+export function listTrainingBaseModels(username: string) {
+  const saved = readProfileTrainingConfig(username).base_model
+  return [...new Set([saved, DEFAULT_TRAINING_MODEL, DEFAULT_VLLM_TRAINING_MODEL])]
+    .filter((model): model is string => typeof model === 'string' && Boolean(model.trim()))
+    .map(model => ({ id: model, name: model, description: model === saved ? 'Saved training base' : 'Unquantized Qwen 3.5 training weights',
+      size: 'Depends on precision', vram: 'Depends on sequence length and batch size', license: 'See the source model card' }))
+}
+
+export async function getTrainingCapabilities(username: string) {
+  const execute = promisify(execFile)
+  const info = { hasLocalGPU: false, gpuModel: null as string | null, vramGB: null as number | null,
+    freeVramGB: null as number | null, hasUnsloth: false, trainingEnvironmentError: null as string | null,
+    hasRunpodKey: false, hasPreviousModel: false,
+    hasS3Configured: Boolean(process.env.RUNPOD_S3_ACCESS_KEY && process.env.RUNPOD_S3_SECRET_KEY) }
+  const { hasRunpodCredentials } = await import('./runpod-config.js')
+  info.hasRunpodKey = hasRunpodCredentials(username)
+  if (process.env.METAHUMAN_MOBILE === 'true') return info
+  try {
+    const { stdout } = await execute('nvidia-smi', ['--query-gpu=name,memory.total,memory.free', '--format=csv,noheader,nounits'], { timeout: 5000 })
+    const [name, total, free] = stdout.trim().split('\n')[0].split(',').map(value => value.trim())
+    if (!name || !Number.isFinite(Number(total)) || !Number.isFinite(Number(free))) throw new Error('Invalid GPU capability response')
+    Object.assign(info, { hasLocalGPU: true, gpuModel: name, vramGB: Number(total) / 1024, freeVramGB: Number(free) / 1024 })
+  } catch (error) { info.trainingEnvironmentError = (error as Error).message }
+  try {
+    await execute(path.join(systemPaths.root, 'venv/bin/python3'), [path.join(systemPaths.root, 'docker/runpod-trainer/train_unsloth.py'), '--check-environment'],
+      { timeout: 30000, maxBuffer: 1024 * 1024, env: { ...process.env, UNSLOTH_SKIP_SYSTEM_INSTALL: '1' } })
+    info.hasUnsloth = true
+  } catch (error) { info.trainingEnvironmentError = 'Training environment check failed: ' + (error as Error).message.slice(-3000) }
+  const { listTrainingCandidates } = await import('./adapters.js')
+  info.hasPreviousModel = listTrainingCandidates(username).some(candidate => candidate.review?.decision === 'accepted')
+  return info
+}
 
 export interface TrainingRunpodConfig {
   apiKey: string
@@ -41,6 +79,8 @@ export interface TrainingLaunchConfig {
   max_seq_length: number
   quantization: string
   skipGguf?: boolean
+  load_in_4bit?: boolean
+  mode_filter?: CognitiveMode
 }
 
 export interface TrainingLaunchRequest {
@@ -59,6 +99,8 @@ export type TrainingLaunchResult = {
   status: 200
   pid: number
   agentName: TrainingProcessName
+  runLabel: string
+  logFile: string
   message: string
 } | {
   success: false
@@ -109,12 +151,14 @@ export function validateTrainingLaunchConfig(value: unknown): string | null {
   if (typeof config.learning_rate !== 'number' || !Number.isFinite(config.learning_rate) || config.learning_rate <= 0 || config.learning_rate > 1) {
     return 'learning_rate must be greater than 0 and no more than 1'
   }
-  if (!nonEmptyString(config.quantization) || !/^[A-Za-z0-9_.-]{1,32}$/.test(config.quantization)) {
-    return 'quantization is invalid'
+  if (!nonEmptyString(config.quantization) || !['f16', 'bf16', 'q8_0', 'q6_k', 'q5_k_m', 'q5_k_s', 'q4_k_m', 'q4_k_s', 'q4_0'].includes(config.quantization.toLowerCase())) {
+    return 'Select a supported GGUF quantization'
   }
   if (config.skipGguf !== undefined && typeof config.skipGguf !== 'boolean') {
     return 'skipGguf must be a boolean'
   }
+  if (config.load_in_4bit !== undefined && typeof config.load_in_4bit !== 'boolean') return 'load_in_4bit must be a boolean'
+  if (config.mode_filter !== undefined && !['dual', 'agent', 'emulation', 'environment'].includes(String(config.mode_filter))) return 'mode_filter is invalid'
   if (config.monthly_training !== undefined && typeof config.monthly_training !== 'boolean') {
     return 'monthly_training must be a boolean'
   }
@@ -148,12 +192,13 @@ export function validateTrainingLaunchRequest(value: unknown): string | null {
   if (trainingTarget !== 'ollama' && trainingTarget !== 'vllm') {
     return `Invalid training target: ${String(trainingTarget)}`
   }
-  if (trainingTarget === 'vllm' && method !== 'remote-lora') {
-    return 'vLLM artifacts require remote LoRA training'
-  }
 
   const configError = validateTrainingLaunchConfig(request.trainingConfig)
   if (configError) return configError
+  const config = request.trainingConfig as TrainingLaunchConfig
+  if (trainingTarget === 'ollama' && config.skipGguf === true) return 'Ollama review requires GGUF export; select vLLM to keep only native weights'
+  if (method !== 'fine-tune' && (!config.lora_rank || !config.lora_alpha)) return 'LoRA rank and alpha must be positive for LoRA training'
+  if (method === 'fine-tune' && config.load_in_4bit) return 'Full fine-tuning requires unquantized training weights'
 
   if (method === 'remote-lora' || method === 'fine-tune') {
     const runpod = request.runpodConfig
@@ -189,6 +234,8 @@ export function trainingLaunchConfigForProfile(
     max_seq_length: effective.max_seq_length as number,
     quantization: effective.quantization as string,
     skipGguf: effective.skipGguf as boolean | undefined,
+    load_in_4bit: effective.load_in_4bit as boolean | undefined,
+    mode_filter: effective.mode_filter as CognitiveMode | undefined,
   }
   const error = validateTrainingLaunchConfig(selected)
   if (error) throw new Error(`Profile training configuration is not launchable: ${error}`)
@@ -197,15 +244,9 @@ export function trainingLaunchConfigForProfile(
 
 export function buildTrainingEnvironmentOverrides(
   request: TrainingLaunchRequest,
-  includePersona: boolean,
 ): NodeJS.ProcessEnv {
   const overrides: NodeJS.ProcessEnv = {
-    METAHUMAN_INCLUDE_PERSONA: includePersona ? '1' : '0',
-    METAHUMAN_BASE_MODEL: request.trainingConfig.base_model,
-    METAHUMAN_MAX_SAMPLES: request.trainingConfig.max_samples === null
-      ? ''
-      : String(request.trainingConfig.max_samples),
-    METAHUMAN_DISABLE_S3: request.advancedSettings?.enableS3Upload === false ? '1' : '0',
+    METAHUMAN_DISABLE_S3: request.advancedSettings?.enableS3Upload === true ? '0' : '1',
     METAHUMAN_SKIP_PREPROCESSING: request.advancedSettings?.enablePreprocessing === false ? '1' : '0',
   }
   if (request.runpodConfig) {
@@ -214,6 +255,33 @@ export function buildTrainingEnvironmentOverrides(
     overrides.RUNPOD_TEMPLATE_ID = request.runpodConfig.templateId
   }
   return overrides
+}
+
+/** Freeze precisely the engine and data controls admitted for this run. */
+export function buildTrainingEngineConfig(request: TrainingLaunchRequest, profile: Record<string, unknown>): Record<string, unknown> {
+  const error = validateTrainingLaunchRequest(request)
+  if (error) throw new Error(error)
+  const config = request.trainingConfig
+  if (!['bfloat16', 'float16'].includes(String(profile.dtype ?? 'bfloat16'))) throw new Error('Training dtype must be bfloat16 or float16')
+  if (!['adamw_torch', 'adamw_8bit'].includes(String(profile.optimizer ?? 'adamw_torch'))) throw new Error('Training optimizer must be adamw_torch or adamw_8bit')
+  const dropout = profile.lora_dropout ?? 0
+  if (typeof dropout !== 'number' || !Number.isFinite(dropout) || dropout < 0 || dropout >= 1) throw new Error('LoRA dropout must be from 0 to less than 1')
+  return {
+    ...config,
+    training_mode: request.method === 'fine-tune' ? 'full_finetune' : 'lora',
+    trainingTarget: request.trainingTarget ?? 'ollama',
+    data: parseTrainingDataSettings(profile.data ?? {}),
+    dtype: profile.dtype ?? 'bfloat16',
+    optimizer: profile.optimizer ?? 'adamw_torch',
+    lora_dropout: profile.lora_dropout ?? 0,
+    load_in_4bit: config.load_in_4bit === true,
+    load_in_16bit: config.load_in_4bit !== true,
+    chat_template: 'native', train_on_responses_only: true,
+    gguf_conversion: {
+      enabled: request.trainingTarget !== 'vllm' && config.skipGguf !== true,
+      quantization_type: config.quantization,
+    },
+  }
 }
 
 function terminateDetachedProcess(pid: number): void {
@@ -230,9 +298,22 @@ function terminateDetachedProcess(pid: number): void {
 
 /**
  * The one process-admission owner used by manual training now and Sleep-triggered
- * automatic training in the next phase.
+ * automatic training through the finite Sleep workflow.
  */
-export function launchTrainingJob(username: string, request: TrainingLaunchRequest): TrainingLaunchResult {
+export interface AutomaticTrainingAdmission { sessionId: string; cutoff: string; deadline: string }
+
+export function launchTrainingJob(username: string, request: TrainingLaunchRequest, automatic?: AutomaticTrainingAdmission): TrainingLaunchResult {
+  let lock
+  try { lock = acquireLock('training-admission', { exitOnSignal: false }) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { success: false, status: 409, error: 'Another training launch is being admitted' }
+    throw error
+  }
+  try { return admitTrainingJob(username, request, automatic) } finally { lock.release() }
+}
+
+function admitTrainingJob(username: string, request: TrainingLaunchRequest, automatic?: AutomaticTrainingAdmission): TrainingLaunchResult {
+  assertProfileMemoryAvailable(username)
   const requestError = validateTrainingLaunchRequest(request)
   if (requestError) return { success: false, status: 400, error: requestError }
 
@@ -249,6 +330,7 @@ export function launchTrainingJob(username: string, request: TrainingLaunchReque
       error: `${running.name} is already running with PID ${running.pid}`,
     }
   }
+  if (listUnconfirmedTrainingCleanup().length) return { success: false, status: 409, error: 'A previous training run has unconfirmed RunPod cleanup. Resolve it in that profile\'s Training History before another launch.' }
 
   const agentMap: Record<TrainingMethod, string> = {
     'local-lora': 'full-cycle-local.ts',
@@ -267,43 +349,34 @@ export function launchTrainingJob(username: string, request: TrainingLaunchReque
   }
 
   const profilePaths = getProfilePaths(username)
+  const engineConfig = buildTrainingEngineConfig(request, readProfileTrainingConfig(username))
+  if (automatic) engineConfig.automaticAdmission = automatic
+  engineConfig.datasetCutoff = automatic?.cutoff ?? new Date().toISOString()
   const shouldConvertToGguf = trainingTarget !== 'vllm' && !launchConfig.skipGguf
-  const { monthly_training, days_recent, old_samples, ...sharedTrainingConfig } = launchConfig
-  const updatedProfileConfig = updateProfileTrainingConfig(username, {
-    ...sharedTrainingConfig,
-    ...(method === 'fine-tune' ? { monthly_training, days_recent, old_samples } : {}),
+  updateProfileTrainingConfig(username, {
+    ...launchConfig,
     trainingTarget,
     gguf_conversion: {
       enabled: shouldConvertToGguf,
       quantization_type: launchConfig.quantization,
     },
   })
-  const profileData = updatedProfileConfig.data
-  const includePersona = !profileData
-    || typeof profileData !== 'object'
-    || Array.isArray(profileData)
-    || (profileData as Record<string, unknown>).includePersona !== false
 
   if ((method === 'remote-lora' || method === 'fine-tune') && runpodConfig) {
     safeWriteJSON(path.join(profilePaths.etc, 'runpod.json'), runpodConfig)
   }
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const workDirectory = path.join(systemPaths.root, 'metahuman-runs', username, timestamp.slice(0, 10), timestamp)
+  fs.mkdirSync(workDirectory, { recursive: true, mode: 0o700 })
+  const engineConfigPath = path.join(workDirectory, 'config.json')
+  fs.writeFileSync(engineConfigPath, JSON.stringify(engineConfig, null, 2) + '\n', { mode: 0o600, flag: 'wx' })
   const agentName = agentFileName.replace('.ts', '') as TrainingProcessName
   const logPath = path.join(systemPaths.logs, 'run', `${agentName}-${timestamp}.log`)
   fs.mkdirSync(path.dirname(logPath), { recursive: true })
   const logStream = fs.openSync(logPath, 'w')
 
   const agentArgs = ['--username', username]
-  if (method === 'fine-tune') {
-    agentArgs.push('--base-model', launchConfig.base_model)
-    if (launchConfig.monthly_training) {
-      agentArgs.push('--monthly')
-      if (launchConfig.days_recent) agentArgs.push('--days-recent', String(launchConfig.days_recent))
-      if (launchConfig.old_samples !== undefined) agentArgs.push('--old-samples', String(launchConfig.old_samples))
-    }
-    if (launchConfig.max_samples) agentArgs.push('--max', String(launchConfig.max_samples))
-  }
 
   const trainingEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -312,10 +385,13 @@ export function launchTrainingJob(username: string, request: TrainingLaunchReque
       path.join(systemPaths.root, 'packages/cli/node_modules'),
       path.join(systemPaths.root, 'apps/site/node_modules'),
     ].join(':'),
-    ...buildTrainingEnvironmentOverrides(request, includePersona),
+    ...buildTrainingEnvironmentOverrides(request),
+    METAHUMAN_TRAINING_CONFIG_PATH: engineConfigPath,
+    METAHUMAN_TRAINING_RUN_LABEL: timestamp,
   }
 
-  const child = spawn(tsxPath, [agentPath, ...agentArgs], {
+  // Run the worker directly so the tracked PID is its real process identity.
+  const child = spawn(process.execPath, ['--import', 'tsx', agentPath, ...agentArgs], {
     stdio: ['ignore', logStream, logStream],
     cwd: systemPaths.root,
     env: trainingEnv,
@@ -343,19 +419,15 @@ export function launchTrainingJob(username: string, request: TrainingLaunchReque
     if (launchEnded) return
     launchEnded = true
     closeLog()
-    releaseTrainingProcess(agentName, childPid)
     const endedAt = new Date().toISOString()
     let historyWriteError: string | undefined
     try {
-      fs.appendFileSync(logPath, `\n[training-lifecycle] ${JSON.stringify({
-        status: event === 'training_completed' ? 'completed' : 'failed',
-        endedAt,
-        agent: agentName,
-        method,
-        pid: childPid,
-        username,
-        ...details,
-      })}\n`)
+      finalizeTrainingProcess(agentName, childPid, {
+        status: details.signal === 'SIGTERM' || details.signal === 'SIGINT' ? 'cancelled' : event === 'training_completed' ? 'completed' : 'failed',
+        exitCode: details.exitCode as number | null | undefined,
+        signal: details.signal as NodeJS.Signals | null | undefined,
+        error: details.error as string | undefined,
+      })
     } catch (error) {
       historyWriteError = error instanceof Error ? error.message : String(error)
       console.error('[training] Failed to persist terminal lifecycle marker:', error)
@@ -384,7 +456,7 @@ export function launchTrainingJob(username: string, request: TrainingLaunchReque
   })
 
   try {
-    trackTrainingProcess(agentName, childPid)
+    trackTrainingProcess(agentName, childPid, { username, runLabel: timestamp, logFile: path.basename(logPath), workDirectory })
   } catch (error) {
     launchEnded = true
     terminateDetachedProcess(childPid)
@@ -420,6 +492,28 @@ export function launchTrainingJob(username: string, request: TrainingLaunchReque
     status: 200,
     pid: childPid,
     agentName,
+    runLabel: timestamp,
+    logFile: path.basename(logPath),
     message: `Training agent ${agentName} started with PID ${childPid}`,
   }
+}
+
+/** Await the persisted terminal receipt, including provider cleanup after cancellation. */
+export async function waitForTrainingJob(username: string, pid: number, runLabel: string, signal: AbortSignal): Promise<void> {
+  let cancellationStartedAt: number | undefined
+  const cancel = () => {
+    cancellationStartedAt ??= Date.now()
+    if (listTrainingProcesses().some(item => item.pid === pid && item.username === username && item.runLabel === runLabel)) stopTrainingProcesses(username)
+  }
+  signal.addEventListener('abort', cancel, { once: true })
+  if (signal.aborted) cancel()
+  try {
+    while (listTrainingProcesses().some(item => item.pid === pid && item.runLabel === runLabel)) {
+      if (cancellationStartedAt && Date.now() - cancellationStartedAt > 180_000) throw new Error('Training cancellation did not finish within three minutes; its process and cleanup receipts remain visible in Training History')
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    const run = readTrainingHistoryForUser(username).find(item => item.pid === pid && item.runLabel === runLabel)
+    if (!run || run.status !== 'completed') throw new Error(run?.error ?? 'Training ended without successful completion')
+    signal.throwIfAborted()
+  } finally { signal.removeEventListener('abort', cancel) }
 }

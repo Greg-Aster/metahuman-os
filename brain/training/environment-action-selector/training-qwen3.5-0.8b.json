@@ -1,8 +1,7 @@
 {
   "owner": "environment-action-selector",
   "base_model": "unsloth/Qwen3.5-0.8B",
-  "chat_template": "chatml",
-  "system_prompt": "loaded from each exact system-owned training record",
+  "chat_template": "native",
   "require_exact_messages": true,
   "train_on_responses_only": true,
   "development_fold_count": 4,
@@ -21,7 +20,6 @@
   "gradient_accumulation_steps": 8,
   "generation_max_new_tokens": 384,
   "optimizer": "paged_adamw_8bit",
-  "force_eager_attention": false,
   "seed": 42,
   "gguf_conversion": {
     "enabled": false

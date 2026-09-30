@@ -1,4 +1,5 @@
-import { defineNode } from '../types.js'
+import { defineNode, NodeInputValidationError } from '../types.js'
+import { visualObservationOutput } from '../environment/visual-observation-output.js'
 import type { RobotOperatorDecision } from './decision-parser.node.js'
 import {
   ROBOT_AUTONOMY_EXECUTOR_TASK_ID,
@@ -63,7 +64,7 @@ function taskChoiceDescription(tasks: RobotAutonomyTaskDescriptor[]): string {
 export function buildRobotAutonomyControllerJsonSchema(tasks: unknown) {
   const catalog = availableTasks(tasks)
   const taskIds = catalog.map(task => task.id)
-  return {
+  const decision = {
     type: 'object',
     additionalProperties: false,
     required: [...REQUIRED_FIELDS],
@@ -97,15 +98,31 @@ export function buildRobotAutonomyControllerJsonSchema(tasks: unknown) {
       },
     },
   } as const
+  const alternative = (ids: string[], requiresInstruction: boolean) => ({
+    ...decision,
+    properties: {
+      ...decision.properties,
+      taskId: { ...decision.properties.taskId, enum: ids },
+      instruction: { ...decision.properties.instruction, ...(requiresInstruction ? { minLength: 1 } : {}) },
+    },
+  })
+  // Complete alternatives are understood by the existing provider grammars.
+  // Only an Executor selection requires an instruction; agents and silence
+  // retain their existing optional context and outward-expression contracts.
+  return { anyOf: [
+    alternative([...taskIds.filter(id => id !== ROBOT_AUTONOMY_EXECUTOR_TASK_ID), ROBOT_AUTONOMY_NO_TASK_ID], false),
+    ...(taskIds.includes(ROBOT_AUTONOMY_EXECUTOR_TASK_ID)
+      ? [alternative([ROBOT_AUTONOMY_EXECUTOR_TASK_ID], true)] : []),
+  ] }
 }
 
 /** Shared choice contract for initial autonomy and result-driven continuation. */
-export function parseRobotAutonomyChoice(responseValue: unknown, taskCatalog: unknown) {
+export function parseRobotAutonomyChoice(responseValue: unknown, taskCatalog: unknown, frames: import('../../environment-interface/types.js').EnvironmentVisualFrame[] = []) {
   const parsed = parseJson(responseValue)
   const tasks = availableTasks(taskCatalog)
-  const invalid = (error: string): never => { throw new Error(error) }
+  const invalid = (error: string): never => { throw new NodeInputValidationError('response', error) }
   if (!isRecord(parsed)) return invalid('Robot autonomy controller result was not a JSON object.')
-  if (Object.keys(parsed).length !== REQUIRED_FIELDS.size || Object.keys(parsed).some(field => !REQUIRED_FIELDS.has(field))) {
+  if ([...REQUIRED_FIELDS].some(field => !(field in parsed)) || Object.keys(parsed).some(field => !REQUIRED_FIELDS.has(field) && field !== 'visualObservation')) {
     return invalid('Robot autonomy controller result contains unexpected or missing fields.')
   }
 
@@ -132,6 +149,7 @@ export function parseRobotAutonomyChoice(responseValue: unknown, taskCatalog: un
     ? { task, reason, observationSummary, ...(instruction ? { instruction } : {}) }
     : null
   return {
+    visualObservation: visualObservationOutput(parsed.visualObservation, frames),
     decisionReceipt: {
       taskId,
       reason,
@@ -150,10 +168,12 @@ export const robotAutonomyControllerParserNode = defineNode({
   name: 'Validate Autonomy Decision',
   category: 'operator',
   inputs: [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact images supplied to the controller model' },
     { name: 'response', type: 'any', description: 'Strict JSON from the Robot Autonomy Controller LLM' },
     { name: 'availableTasks', type: 'array', description: 'Exact task catalog supplied to the controller LLM' },
   ],
   outputs: [
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of the selected task' },
     { name: 'decisionReceipt', type: 'object', description: 'Validated record of the LLM selection and its supplied rationale' },
     { name: 'taskDecision', type: 'object', description: 'Catalog-backed finite agent selection, or null when no agent task was selected' },
     { name: 'executorDecision', type: 'object', description: 'High-level embodied intention only when Robot Autonomy Executor was selected' },
@@ -163,6 +183,6 @@ export const robotAutonomyControllerParserNode = defineNode({
   propertySchemas: {},
   description: 'Validates one LLM-owned Full-mode decision against the exact task catalog it received. It does not select or execute work.',
   async execute(inputs) {
-    return parseRobotAutonomyChoice(inputs.response, inputs.availableTasks)
+    return parseRobotAutonomyChoice(inputs.response, inputs.availableTasks, inputs.frames)
   },
 })

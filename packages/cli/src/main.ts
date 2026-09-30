@@ -1502,11 +1502,19 @@ async function main() {
       case 'voice-server':
         await voiceServerCommand(args);
         break;
+      case 'terminal': {
+        const terminal = await import('@metahuman/core/terminal');
+        if (args[0] === 'start') console.log(JSON.stringify(await terminal.startTerminalService(), null, 2));
+        else if (args[0] === 'stop') { await terminal.stopTerminalService(); console.log('Terminal agent stopped'); }
+        else if (args[0] === 'status') console.log(JSON.stringify(await terminal.getTerminalState(), null, 2));
+        else console.log('Usage: mh terminal <start|stop|status>');
+        break;
+      }
       case 'big-brother':
         if (args[0] === 'status') {
-          console.log(JSON.stringify(getBigBrotherSessionState(), null, 2));
+          console.log(JSON.stringify(await getBigBrotherSessionState(), null, 2));
         } else if (args[0] === 'stop') {
-          await stopBigBrotherSession('Stopped from the MetaHuman CLI');
+          await stopBigBrotherSession();
           console.log('✓ Big Brother session stopped');
         } else {
           console.log('Usage: mh big-brother <status|stop>');

@@ -22,6 +22,7 @@ function decisionContext(
     lastAction: status.lastAction,
     task: status.task,
     situation: status.situation,
+    ...(status.latestVisualObservation ? { latestVisualObservation: status.latestVisualObservation } : {}),
     agency: {
       activeDesires: status.agency.activeDesires.map(desire => ({
         id: desire.id,

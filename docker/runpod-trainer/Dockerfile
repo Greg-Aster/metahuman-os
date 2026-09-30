@@ -22,18 +22,12 @@ RUN sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/ssh
     sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
     sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
 
-# Python venv with current Qwen 3.5 / Unsloth dependencies.
+# The local setup script installs this same dependency contract.
+COPY requirements.txt /workspace/trainer-requirements.txt
 RUN python3 -m venv ${VENV_DIR} && \
     ${VENV_DIR}/bin/pip install --upgrade pip setuptools wheel && \
-    ${VENV_DIR}/bin/pip install --no-cache-dir \
-      unsloth \
-      "transformers>=5" \
-      datasets \
-      accelerate \
-      peft \
-      bitsandbytes \
-      torchvision \
-      pillow
+    ${VENV_DIR}/bin/pip install --no-cache-dir -r /workspace/trainer-requirements.txt && \
+    ${VENV_DIR}/bin/pip check
 
 # Training script
 COPY train_unsloth.py /workspace/train_unsloth.py

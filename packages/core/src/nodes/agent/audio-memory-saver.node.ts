@@ -70,9 +70,6 @@ const execute: NodeExecutor = async (inputs, context) => {
     links: [{ type: 'source', target: relativePath }],
     metadata: { producer: 'audio-organizer', audioId },
   })
-  if (capture.encryptionFallback) {
-    throw new Error(capture.encryptionWarning || 'Audio memory encryption was not applied')
-  }
   safeWriteJSON(metadataPath, { ...metadata, organized: true })
   return {
     success: true,

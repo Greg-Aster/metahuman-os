@@ -18,6 +18,68 @@ import type {
   ProviderResponse,
 } from './types.js';
 import { extractRunPodOutput, parseRunPodJobStatus } from './runpod-output.js';
+import { setTimeout as delay } from 'node:timers/promises';
+
+/** Pod transport shared by the maintained training lifecycle and its stop action. */
+export async function callRunpodGraphQL<T>(
+  apiKey: string,
+  query: string,
+  variables: Record<string, unknown> = {},
+  options: { signal?: AbortSignal; fetch?: typeof fetch } = {},
+): Promise<T> {
+  if (!apiKey.trim()) throw new Error('RunPod API key is required');
+  const response = await (options.fetch ?? fetch)('https://api.runpod.io/graphql', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, variables }),
+    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) throw new Error(`RunPod request failed with HTTP ${response.status}`);
+  const result = await response.json() as { data?: T; errors?: Array<{ message?: string }> };
+  if (result.errors?.length) throw new Error('RunPod rejected the request: ' + result.errors.map(error => error.message ?? 'Unknown error').join('; '));
+  if (!result.data) throw new Error('RunPod returned no result');
+  return result.data;
+}
+
+/** Confirm absence after termination; a mutation acknowledgement alone is insufficient. */
+export async function terminateTrainingPod(
+  apiKey: string, identity: { podId: string | null; podName: string },
+  options: { fetch?: typeof fetch; signal?: AbortSignal; pollIntervalMs?: number; attempts?: number } = {},
+): Promise<{ podId: string | null; confirmedAt: string }> {
+  if (!identity.podName.startsWith('metahuman-training-')) throw new Error('Invalid training pod identity');
+  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000);
+  const transport = { fetch: options.fetch, signal };
+  let podId = identity.podId;
+  if (!podId) {
+    const result = await callRunpodGraphQL<{ myself: { pods: Array<{ id: string; name: string }> } }>(apiKey,
+      'query RecoverTrainingPod { myself { pods { id name } } }', {}, transport);
+    if (!Array.isArray(result.myself?.pods)) throw new Error('RunPod did not return the account pod inventory');
+    const matches = result.myself.pods.filter(pod => pod.name === identity.podName);
+    if (matches.length > 1) throw new Error('More than one pod matches this training run; inspect RunPod before recovery');
+    podId = matches[0]?.id ?? null;
+  }
+  const confirmed = () => ({ podId, confirmedAt: new Date().toISOString() });
+  if (!podId) return confirmed();
+  const inspect = async () => {
+    const result = await callRunpodGraphQL<{ pod: { id: string; name: string } | null }>(apiKey,
+      'query InspectTrainingCleanup($id: String!) { pod(input: { podId: $id }) { id name } }', { id: podId }, transport);
+    if (!Object.hasOwn(result, 'pod')) throw new Error('RunPod returned no pod status');
+    if (result.pod && (result.pod.id !== podId || result.pod.name !== identity.podName)) throw new Error('RunPod identity differs from this training run');
+    return result.pod;
+  };
+  if (!await inspect()) return confirmed();
+  let mutationError: Error | undefined;
+  try {
+    const result = await callRunpodGraphQL<{ podTerminate: unknown }>(apiKey,
+      'mutation TerminateTrainingPod($id: String!) { podTerminate(input: { podId: $id }) }', { id: podId }, transport);
+    if (!Object.hasOwn(result, 'podTerminate')) throw new Error('RunPod returned no termination acknowledgement');
+  } catch (error) { mutationError = error as Error; }
+  for (let attempt = 0; attempt < (options.attempts ?? 12); attempt++) {
+    if (!await inspect()) return confirmed();
+    await delay(options.pollIntervalMs ?? 5000, undefined, { signal });
+  }
+  throw new Error('Pod termination remains unconfirmed' + (mutationError ? ': ' + mutationError.message : ''));
+}
 
 // ============================================================================
 // RunPod-Specific Types

@@ -446,10 +446,7 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
     const operatorConfig = username ? loadOperatorConfig(username, true) : null; // Skip cache for fresh config
     const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
     const useBigBrotherProp = properties?.useBigBrother ?? true;
-    const rawProvider = operatorConfig?.bigBrotherMode?.provider;
-    const preferredBackend = rawProvider === 'ollama' || rawProvider === 'openai'
-      ? 'open-interpreter'
-      : rawProvider;
+    const preferredBackend = operatorConfig?.bigBrotherMode?.provider;
 
     console.log(`${LOG_PREFIX} Big Brother config: enabled=${bigBrotherEnabled}, property=${useBigBrotherProp}`);
     console.log(`${LOG_PREFIX} Decision: ${bigBrotherEnabled && useBigBrotherProp ? '→ Using Big Brother' : '→ Using local LLM'}`);

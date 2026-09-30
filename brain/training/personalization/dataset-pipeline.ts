@@ -1,41 +1,24 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import {
+  audit, systemPaths, inspectTrainingDataset, readTrainingDataSettings,
+  selectPersonalizationDataset, trainingPersonaContext,
+  readTrainingDatasetHistory, trainingSampleContentHash,
+  type TrainingDatasetInspection,
+} from '@metahuman/core'
+import type { CognitiveMode, TrainingDataSettings } from '@metahuman/core/training-schema'
 
-import { audit, systemPaths } from '@metahuman/core'
-import { applySchemaBatch } from '@metahuman/core/schema-manager'
-import type {
-  CognitiveMode,
-  FormattedSample,
-  SchemaAppliedSample,
-} from '@metahuman/core/schema-manager'
-
-export type PersonalizationProgram =
-  | 'organizer'
-  | 'curator'
-  | 'curated-aggregator'
-  | 'mode-formatter'
-  | 'training-exporter'
-
-export interface ProgramRunOptions {
-  actor: string
-  captureOutput?: boolean
-  logPrefix: string
-}
-
-export type ProgramRunner = (
-  program: PersonalizationProgram,
-  args: string[],
-  options: ProgramRunOptions,
-) => Promise<number>
+export type PersonalizationProgram = 'organizer' | 'curator'
+export interface ProgramRunOptions { actor: string; captureOutput?: boolean; logPrefix: string; signal?: AbortSignal }
+export type ProgramRunner = (program: PersonalizationProgram, args: string[], options: ProgramRunOptions) => Promise<number>
 
 interface DatasetPipelineDependencies {
-  applySchema?: (
-    samples: FormattedSample[],
-    baseModel: string,
-  ) => SchemaAppliedSample[]
   runProgram?: ProgramRunner
+  inspection?: Pick<TrainingDatasetInspection, 'records' | 'sources' | 'cutoff' | 'errors'>
+  settings?: TrainingDataSettings
+  personaContext?: string
 }
 
 export interface PreparePersonalizationDatasetOptions {
@@ -43,33 +26,33 @@ export interface PreparePersonalizationDatasetOptions {
   baseModel: string
   captureProgramOutput?: boolean
   datasetPaths: string[]
-  format: 'input-output' | 'instruction'
   logPrefix: string
-  maxSamples?: number
+  maxSamples?: number | null
   modeFilter?: CognitiveMode
   olderSamples?: number
   outputRoot: string
   recentDays?: number
   skipPreprocessing?: boolean
-  skipValidation?: boolean
   username: string
+  cutoff?: string
+  signal?: AbortSignal
 }
 
 export interface PreparedPersonalizationDataset {
   datasetBytes: number
   datasetPaths: string[]
   sampleCount: number
+  evaluationPaths: string[]
+  evaluationCount: number
+  manifestPath: string
+  datasetId: string
+  systemPrompt?: string
 }
 
-const personalizationRoot = path.dirname(fileURLToPath(import.meta.url))
 const tsxPath = path.join(systemPaths.root, 'node_modules', '.bin', 'tsx')
-
 const programPaths: Record<PersonalizationProgram, string> = {
   organizer: path.join(systemPaths.brain, 'agents', 'organizer', 'cli.ts'),
   curator: path.join(systemPaths.brain, 'agents', 'curator', 'cli.ts'),
-  'curated-aggregator': path.join(personalizationRoot, 'curated-aggregator.ts'),
-  'mode-formatter': path.join(personalizationRoot, 'mode-formatter.ts'),
-  'training-exporter': path.join(personalizationRoot, 'training-exporter.ts'),
 }
 
 export function parsePositiveInteger(value: string, name: string): number {
@@ -108,6 +91,7 @@ export async function runPersonalizationProgram(
     const captureOutput = options.captureOutput === true
     const child = spawn(tsxPath, [programPath, ...args], {
       cwd: systemPaths.root,
+      signal: options.signal,
       stdio: captureOutput ? ['inherit', 'pipe', 'pipe'] : 'inherit',
     })
 
@@ -154,18 +138,11 @@ async function requireSuccessfulProgram(
     actor: options.actor,
     captureOutput: options.captureProgramOutput,
     logPrefix: options.logPrefix,
+    signal: options.signal,
   })
   if (exitCode !== 0) {
     throw new Error(`${program} failed with exit code ${exitCode}`)
   }
-}
-
-function readFormattedSamples(formattedPath: string): FormattedSample[] {
-  const parsed: unknown = JSON.parse(fs.readFileSync(formattedPath, 'utf8'))
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error('Personalization dataset preparation produced no formatted samples')
-  }
-  return parsed as FormattedSample[]
 }
 
 export async function preparePersonalizationDataset(
@@ -173,118 +150,72 @@ export async function preparePersonalizationDataset(
   dependencies: DatasetPipelineDependencies = {},
 ): Promise<PreparedPersonalizationDataset> {
   if (!options.username.trim()) throw new Error('username is required')
+  options.signal?.throwIfAborted()
   if (!options.baseModel.trim()) throw new Error('baseModel is required')
   if (options.datasetPaths.length === 0) throw new Error('At least one dataset path is required')
-  if (options.maxSamples !== undefined && (!Number.isSafeInteger(options.maxSamples) || options.maxSamples <= 0)) {
-    throw new Error('maxSamples must be a positive integer')
-  }
-  if (options.recentDays !== undefined && (
-    !Number.isSafeInteger(options.recentDays)
-    || options.recentDays < 1
-    || options.recentDays > 36_500
-  )) {
-    throw new Error('recentDays must be an integer from 1 to 36500')
-  }
-  if (options.olderSamples !== undefined && (
-    !Number.isSafeInteger(options.olderSamples)
-    || options.olderSamples < 0
-    || options.olderSamples > 1_000_000
-  )) {
-    throw new Error('olderSamples must be an integer from 0 to 1000000')
-  }
-
+  const cutoff = options.cutoff ?? process.env.METAHUMAN_DATASET_CUTOFF ?? new Date().toISOString()
+  if (!Number.isFinite(Date.parse(cutoff))) throw new Error('Dataset cutoff must be a valid timestamp')
+  const manifestPath = path.join(options.outputRoot, 'dataset-manifest.json')
+  if (fs.existsSync(manifestPath)) throw new Error('This run already has a frozen dataset; use a new run directory')
   const runProgram = dependencies.runProgram ?? runPersonalizationProgram
-  const applySchema = dependencies.applySchema ?? applySchemaBatch
-  const curatedPath = path.join(options.outputRoot, 'curated_memories.json')
-  const formattedPath = path.join(options.outputRoot, 'formatted_samples.json')
-  const schemaPath = path.join(options.outputRoot, 'schema_applied.json')
-
-  fs.mkdirSync(options.outputRoot, { recursive: true })
-
-  if (options.skipPreprocessing) {
-    console.log(`[${options.logPrefix}] Memory refinement skipped; using the existing Curator store`)
-  } else {
-    await requireSuccessfulProgram(
-      'organizer',
-      ['--username', options.username, '--all', '--limit', '500'],
-      options,
-      runProgram,
-    )
-    await requireSuccessfulProgram(
-      'curator',
-      ['--username', options.username, '--all'],
-      options,
-      runProgram,
-    )
+  const settings = dependencies.settings ?? readTrainingDataSettings(options.username)
+  if (!options.skipPreprocessing) {
+    await requireSuccessfulProgram('organizer', ['--username', options.username, '--all', '--limit', '500'], options, runProgram)
+    await requireSuccessfulProgram('curator', ['--username', options.username, '--all', '--cutoff', cutoff], options, runProgram)
   }
+  const inspection = dependencies.inspection ?? inspectTrainingDataset(options.username, Date.parse(cutoff))
+  options.signal?.throwIfAborted()
+  if (Date.parse(inspection.cutoff) !== Date.parse(cutoff)) throw new Error('Dataset inspection does not match its source cutoff')
+  const systemPrompt = dependencies.personaContext ?? trainingPersonaContext(options.username, settings)
+  const selected = selectPersonalizationDataset(inspection, settings, { ...options, personaContext: systemPrompt,
+    history: dependencies.inspection ? undefined : readTrainingDatasetHistory(options.username) })
+  if (selected.train.length === 0) throw new Error('No eligible training examples for the selected objective and source weights')
+  if (selected.evaluation.length === 0) throw new Error('No independent evaluation group is available; collect more reviewed sessions before training')
 
-  const aggregatorArgs = [
-    '--username', options.username,
-    '--output', curatedPath,
-  ]
-  if (options.maxSamples !== undefined) {
-    aggregatorArgs.push('--max', String(options.maxSamples))
+  // Messages stay unwrapped. The trainer owns exactly one tokenizer template and
+  // masks every token except the final assistant continuation.
+  const trainingText = selected.train.map(row => JSON.stringify(row)).join('\n') + '\n'
+  const evaluationText = selected.evaluation.map(row => JSON.stringify(row)).join('\n') + '\n'
+  const sha256 = (text: string) => createHash('sha256').update(text).digest('hex')
+  const trainSourceIds = [...new Set(selected.train.flatMap(row => row.metadata.sourceIds))].sort()
+  const evaluationSourceIds = [...new Set(selected.evaluation.flatMap(row => row.metadata.sourceIds))].sort()
+  if (trainSourceIds.some(id => evaluationSourceIds.includes(id))) throw new Error('Training and evaluation share a source identity')
+  const sourceHashes = Object.fromEntries([...selected.train, ...selected.evaluation]
+    .flatMap(row => Object.entries(row.metadata.sourceHashes)).sort(([a], [b]) => a.localeCompare(b)))
+  const snapshot = {
+    version: 2, baseModel: options.baseModel, cutoff: selected.cutoff, settings,
+    selection: { maxSamples: options.maxSamples === undefined ? 3000 : options.maxSamples, modeFilter: options.modeFilter ?? null,
+      recentDays: options.recentDays ?? 36500, olderSamples: options.olderSamples ?? 0 },
+    supervision: 'final-assistant-only',
+    systemPrompt: systemPrompt ?? null,
+    train: { sha256: sha256(trainingText), count: selected.train.length, sourceIds: trainSourceIds,
+      sampleIds: selected.train.map(row => row.id), groups: [...new Set(selected.train.map(row => row.metadata.group))], contentHashes: selected.train.map(trainingSampleContentHash) },
+    evaluation: { sha256: sha256(evaluationText), count: selected.evaluation.length, sourceIds: evaluationSourceIds,
+      sampleIds: selected.evaluation.map(row => row.id), groups: [...new Set(selected.evaluation.map(row => row.metadata.group))], contentHashes: selected.evaluation.map(trainingSampleContentHash) },
+    sourceHashes, excluded: selected.excluded, inspectionErrors: inspection.errors,
   }
-  if (options.modeFilter) {
-    aggregatorArgs.push('--mode', options.modeFilter)
+  const datasetId = sha256(JSON.stringify(snapshot))
+  const evaluationPaths: string[] = []
+  const destinations = options.datasetPaths.flatMap(file => [path.resolve(file), path.resolve(file.replace(/\.jsonl$/, '') + '.eval.jsonl')])
+  if (new Set(destinations).size !== destinations.length || destinations.some(file => fs.existsSync(file))) {
+    throw new Error('Dataset destinations must be distinct, unused paths')
   }
-  if (options.recentDays !== undefined) {
-    aggregatorArgs.push('--days-recent', String(options.recentDays))
+  for (const datasetPath of options.datasetPaths) {
+    const evaluationPath = datasetPath.replace(/\.jsonl$/, '') + '.eval.jsonl'
+    if (fs.existsSync(datasetPath) || fs.existsSync(evaluationPath)) throw new Error('Dataset output already exists: ' + datasetPath)
+    fs.mkdirSync(path.dirname(datasetPath), { recursive: true, mode: 0o700 })
+    fs.writeFileSync(datasetPath, trainingText, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    fs.writeFileSync(evaluationPath, evaluationText, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+    evaluationPaths.push(evaluationPath)
   }
-  if (options.olderSamples !== undefined) {
-    aggregatorArgs.push('--old-samples', String(options.olderSamples))
-  }
-  await requireSuccessfulProgram('curated-aggregator', aggregatorArgs, options, runProgram)
-
-  await requireSuccessfulProgram(
-    'mode-formatter',
-    ['--input', curatedPath, '--output', formattedPath],
-    options,
-    runProgram,
-  )
-
-  console.log(`[${options.logPrefix}] Applying schema for base model: ${options.baseModel}`)
-  const schemaAppliedSamples = applySchema(readFormattedSamples(formattedPath), options.baseModel)
-  if (schemaAppliedSamples.length === 0) {
-    throw new Error('Personalization schema application produced no samples')
-  }
-  fs.writeFileSync(schemaPath, JSON.stringify(schemaAppliedSamples, null, 2))
-
-  if (options.format === 'input-output') {
-    if (options.datasetPaths.length !== 1) {
-      throw new Error('input-output datasets require exactly one output path')
-    }
-    const exporterArgs = ['--input', schemaPath, '--output', options.datasetPaths[0]!]
-    if (options.skipValidation) exporterArgs.push('--skip-validation')
-    await requireSuccessfulProgram('training-exporter', exporterArgs, options, runProgram)
-  } else {
-    const jsonl = schemaAppliedSamples
-      .map(sample => JSON.stringify({
-        instruction: sample.input,
-        input: '',
-        output: sample.output,
-      }))
-      .join('\n')
-
-    for (const datasetPath of options.datasetPaths) {
-      fs.mkdirSync(path.dirname(datasetPath), { recursive: true })
-      fs.writeFileSync(datasetPath, jsonl)
-    }
-  }
-
-  const primaryDatasetPath = options.datasetPaths[0]!
-  const datasetBytes = fs.statSync(primaryDatasetPath).size
-  const sampleCount = fs.readFileSync(primaryDatasetPath, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .length
-  if (sampleCount !== schemaAppliedSamples.length) {
-    throw new Error(`Dataset record count ${sampleCount} does not match schema sample count ${schemaAppliedSamples.length}`)
-  }
-
+  fs.mkdirSync(options.outputRoot, { recursive: true, mode: 0o700 })
+  // The manifest is committed last; an interrupted preparation is never a
+  // complete dataset and cannot be submitted to a trainer.
+  fs.writeFileSync(manifestPath, JSON.stringify({ ...snapshot, datasetId }, null, 2) + '\n', { mode: 0o600, flag: 'wx' })
+  audit({ category: 'action', level: 'info', event: 'personalization_dataset_prepared', actor: options.actor,
+    details: { datasetId, training: selected.train.length, evaluation: selected.evaluation.length, excluded: selected.excluded } })
   return {
-    datasetBytes,
-    datasetPaths: [...options.datasetPaths],
-    sampleCount,
+    datasetBytes: Buffer.byteLength(trainingText), datasetPaths: [...options.datasetPaths], sampleCount: selected.train.length,
+    evaluationPaths, evaluationCount: selected.evaluation.length, manifestPath, datasetId, systemPrompt,
   }
 }

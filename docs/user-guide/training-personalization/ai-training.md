@@ -1,187 +1,90 @@
 # AI Training
 
-MetaHuman can train one personalized model artifact from the accepted records in
-your profile. Training is an explicit, resource-intensive operation; collecting
-memories does not by itself change the active model.
+MetaHuman saves conversations and inner dialogue as profile memories. Training uses reviewed examples derived from those memories. A completed run creates a **candidate**; it does not change model assignments.
 
-## Supported Personalization Workflows
+## Choose the learning objective
 
-- **Remote LoRA:** run
-  `pnpm exec tsx brain/training/personalization/full-cycle.ts --username NAME`.
-  It produces one vLLM safetensors adapter or one merged Ollama GGUF model.
-- **Local LoRA:** run
-  `pnpm exec tsx brain/training/personalization/full-cycle-local.ts --username NAME`.
-  It produces one local Ollama GGUF model plus its source adapter.
-- **Full fine-tune:** run
-  `pnpm exec tsx brain/training/personalization/fine-tune-cycle.ts --username NAME`.
-  It produces one fine-tuned model through the configured training backend.
+Open **Training → Training Wizard** and review **Training Data**.
 
-The Training Wizard exposes the same workflows in the web app. It checks local
-GPU and RunPod availability, edits the authenticated profile's
-`etc/training.json`, launches the selected job, and displays its status and
-logs. Root-level `etc/training.json` and `etc/runpod.json` files are installation
-seeds; they are not a shared mutable profile configuration.
+- **Human continuation** is the default for personal voice. Its prompt is an actual earlier assistant turn and its target is the next recorded human reply. It requires a chronological conversation with stable session identity.
+- **Assistant continuation** learns the recorded assistant/persona response to its actual user prompt. Cognitive mode does not reverse an exchange.
+- **Include persona** adds the current persona summary as frozen context.
+- **Source weights** control relative sampling. Zero excludes the source. Conversation starts at 100; other sources start at zero.
+- **Synthetic limit** caps model-generated targets within each split. It defaults to zero and cannot exceed 50 percent. Generated inner-dialogue, dream and reflection examples require the assistant objective, an enabled source weight and a nonzero synthetic limit.
+- **Evaluation percentage** reserves complete sessions for evaluation. Previous manifests preserve train/evaluation assignments even if you change the seed or percentage later.
 
-The **Automatic Training** tab stores a disabled-by-default admission and launch
-policy in the same profile configuration. Its controls include:
+Preview displays usable training/evaluation counts and exclusions. Legacy records without verifiable identity need another Curator review. Isolated, reversed or unrelated turns are excluded instead of paired by guessing. Invalid records are reported individually; locked profile storage blocks processing.
 
-- minimum total and newly curated sample counts plus the cooldown;
-- local LoRA, remote LoRA, or remote full fine-tune and the output target;
-- base model, epochs, learning rate, batch size, gradient accumulation, context
-  length, and per-run sample cap;
-- LoRA rank and alpha, or the full-fine-tune recent/older-history window;
-- GGUF quantization, RunPod template and GPU type, preprocessing, and optional
-  S3 transfer; and
-- the same persona and memory-type composition used by the manual wizard.
+## Supported workflows
 
-The RunPod API key remains in the profile's canonical RunPod configuration and
-is not copied into or returned with the automatic policy. The readiness view is
-computed from the real Organizer and Curator state and profile-scoped
-completed-run history. The policy does not schedule or launch itself: Sleep
-Workflow admission is a separate next stage and is not currently installed.
+The wizard and these CLI entrypoints share the Core launcher and saved profile settings:
 
-There is no dual-adapter or adapter-merging runtime. Each completed run has one
-activation artifact. Historical learning is retained by building the next
-dataset from the canonical accepted conversation store. A full fine-tune may
-optionally retain every record inside a recent-day window plus an evenly
-distributed, bounded sample of older history. The per-run sample cap is applied
-after that selection and the configured memory-type composition.
+| Workflow | CLI | Output target |
+| --- | --- | --- |
+| Local LoRA | `pnpm exec tsx brain/training/personalization/full-cycle-local.ts --username NAME` | Ollama GGUF or vLLM adapter |
+| Remote LoRA | `pnpm exec tsx brain/training/personalization/full-cycle.ts --username NAME` | Ollama GGUF or vLLM adapter |
+| Remote full fine-tune | `pnpm exec tsx brain/training/personalization/fine-tune-cycle.ts --username NAME` | Ollama GGUF or native full model |
 
-## Dataset Ownership
+Use `--help` for CLI overrides. **Save training settings** makes wizard values available to the CLI. **Apply recommended preset** is an explicit action. A custom training base must be compatible native Hugging Face weights or a local weight directory. An Ollama inference tag is not a training base. Selecting a training backend does not change conversation or specialist model roles.
 
-The default full-cycle path is:
+The profile's `etc/training.json` owns data, manual settings and automatic policy. Root `etc/training.json` supplies initial defaults. Each launch freezes configuration before starting its worker. Later edits cannot change that run. `max_samples: null` means all eligible examples; a rolling window can retain recent examples plus a deterministic sample of older history. Every run starts from the selected base and replays selected examples; it does not implicitly advance to the last trained model.
 
-```text
-profile episodic user/assistant and inner-dialogue memories
-  -> Organizer metadata refinement
-  -> Curator accept/reject records
-  -> memory/curated/conversations
-  -> Curated Aggregator
-  -> cognitive-mode formatting
-  -> model-family schema
-  -> run-scoped training dataset
-```
+For local training, run `bin/setup-local-training` to install and check the pinned environment. The wizard checks the actual training venv and current GPU memory. The starting LoRA configuration uses a 4B model and 16-bit weights. Available memory, context, batch size, optimizer and concurrent inference determine whether it fits. Full fine-tuning needs substantially more memory.
 
-The conversation saver persists user and assistant messages separately. Curator
-pairs their durable turn identities, evaluates the exact exchange without
-rewriting it, saves one decision, and only then marks both source records.
-Standalone inner dialogue and other eligible memory types remain individual
-review units. Model or write failures therefore leave their sources retryable.
-A training run normally drains available uncurated memories first; set
-`METAHUMAN_SKIP_PREPROCESSING=1` only when you intentionally want to use the
-already accepted store without a new curation pass.
+Remote jobs require the profile's RunPod key, template, GPU type and an existing SSH key pair. `RUNPOD_SSH_KEY_PATH` selects the private key; its `.pub` file must exist. The template must provide the pinned environment from `docker/runpod-trainer`. The worker checks that environment before uploading private inputs. Review provider rates before launching.
 
-`METAHUMAN_MAX_SAMPLES` bounds the aggregated dataset. Set
-`METAHUMAN_MODE_FILTER` to `dual`, `agent`, `emulation`, or `environment` only when a run should
-use one mode; the default includes accepted records from every conversational
-mode.
+## Capture, curation and datasets
 
-## Configuration
+The four maintained conversation graphs save the admitted user turn before model execution and save the final assistant turn before delivery. Model failure does not remove the saved input. Inner-dialogue producers retain their existing buffer and memory saver owners. Exact retries reuse persisted identity; changed messages cannot silently reuse that identity.
 
-The authenticated profile's `etc/training.json` owns that profile's training
-parameters, including:
+`episodic memories → Organizer → Curator → verified review store → Core selection → frozen dataset → shared trainer`
 
-- base model and runtime target;
-- epoch, rank, learning-rate, batch, and sequence settings;
-- GGUF conversion and quantization settings;
-- Curator and dataset-composition settings when present;
-- the automatic-training policy when saved from the Automatic Training tab.
+Curator saves a decision before marking sources. Reviews retain source hashes, session identity and model provenance. Recorded exchanges retain exact text; feedback cannot silently become a positive demonstration. Manifests bind source hashes, groups, sample IDs, selection settings and dataset files.
 
-Primary user-authored memory types are included at 100%. The composition
-sliders control the amount of secondary model-generated material relative to
-that primary set. Persona inclusion controls whether the profile persona is
-provided as training context to runners that support it.
+The Python trainer applies the model's native template once. Only the final continuation is supervised; prompt and padding tokens are masked. Overlong examples fail visibly instead of being silently truncated. Independent evaluation compares the base and candidate and reloads serialized weights in a fresh process. Personalization holdouts do not select checkpoints.
 
-Remote jobs also require the authenticated profile's `etc/runpod.json`. Treat
-provider credentials as local secrets and do not commit them.
+## Automatic training during Sleep
 
-The selected model, available GPU memory, sequence length, precision, optimizer,
-and dataset size all affect resource needs. Do not rely on a fixed VRAM, time, or
-cost estimate; use the wizard's current capability checks and the provider's
-current pricing before launch.
+**Training → Automatic Training** is disabled by default. Enabling it authorizes one finite attempt in an eligible Sleep session, after Organizer and Curator succeed.
 
-## Output And Activation
+The policy includes minimum selected training examples, minimum new example IDs, cooldown, model settings, output target and maximum runtime. It uses Sleep's start time as the source cutoff. Failed attempts count toward cooldown.
 
-Run artifacts are profile-owned. A default internal profile commonly resolves
-LoRA artifacts under:
+Sleep owns the schedule. Manual and automatic runs share the admission lock. New user activity, a changed or ended Sleep session, cancellation, or the deadline stops the job. Automatic training leaves candidates for human review. Sleep records skipped admission and its reason visibly.
 
-```text
-profiles/USERNAME/out/adapters/DATE/RUN_LABEL/
-```
+## Review, assignment and rollback
 
-Full fine-tune artifacts instead resolve under:
+Open **Training → Training History** and choose a candidate.
 
-```text
-profiles/USERNAME/out/fine-tuned-models/DATE/RUN_LABEL/
-```
+1. Review status, independent losses, sample counts and artifact path. A failed quality gate cannot be accepted.
+2. Click **Prepare exact artifact**. Ollama imports the verified merged GGUF. vLLM LoRA needs the exact training base running with runtime adapter loading enabled. For a full vLLM model, use **Backend setup** to serve the displayed artifact path first. Preparation does not assign a role.
+3. Select a baseline model and backend. A baseline may use another configured backend; for example, compare a full vLLM candidate with an Ollama baseline. Enter three to eight representative prompts and run the comparison.
+4. Review every response, add notes, and accept or reject. Acceptance checks the artifacts and serving identity again.
+5. Open **Model Settings and rollback** to assign the accepted model to the intended role. Select a previous model there to roll back. Other roles remain unchanged.
 
-Custom and encrypted profiles resolve this logical output location elsewhere;
-use the profile storage owner rather than constructing the path yourself.
+A changed artifact or serving template blocks normal use and new assignment. Use **Suspend approval and start a new serving review** to prepare and compare the candidate again. Normal model dispatch checks the actual served artifact, including backend aliases. A lower held-out loss alone does not prove a better personal assistant. Representative task and persona review remains necessary.
 
-Remote training follows the requested training target:
+## History, monitoring and cancellation
 
-- **vLLM:** preserves and registers one safetensors adapter artifact. Backend
-  Settings owns loading and unloading it; training does not silently change the
-  serving backend.
-- **Ollama:** uses the single merged GGUF artifact, writes a Modelfile, records
-  it as active, and makes a best-effort `ollama create` call.
+Training History and Training Monitor read the same profile-owned run and terminal receipts. The wizard does not treat a disappeared process as success. Console access is limited to the current profile's runs.
 
-Local LoRA follows the Ollama path. Activation metadata is stored through the
-Core adapter owner; do not hand-edit it. Backend Settings is the canonical UI
-for inspecting and changing active Ollama or vLLM adapters.
+Cancellation stops worker and trainer/converter children, then waits for provider cleanup. Unconfirmed cleanup remains visible in Training History and blocks another launch. Use **Terminate remaining pod and verify cleanup** for explicit recovery. Provider inventory must confirm absence; a termination acknowledgement is insufficient. Ambiguous allocation is looked up by its exact saved run name and is not retried.
 
-## Optional S3 transfer
+Artifacts resolve through the profile owner under `out/adapters/DATE/RUN_LABEL/`. Each run retains `run.json`, frozen configuration, datasets and manifest, plus an `adapter/` or `model/` directory containing weights, tokenizer files and evaluation receipts. Review lives beside the run. Custom or encrypted profile paths may resolve outside the repository. Personal data, outputs, credentials and weights must not be committed.
 
-Remote training can upload completed model files to RunPod-compatible S3 before
-the GPU pod is released. Configure `RUNPOD_S3_ACCESS_KEY`,
-`RUNPOD_S3_SECRET_KEY`, `RUNPOD_S3_ENDPOINT`, and `RUNPOD_S3_BUCKET` in the
-local environment. If credentials are absent, or S3 is disabled for the run,
-the trainer uses the direct transfer path. Never commit these credentials.
+Optional S3 backup is off by default. When enabled, the verified candidate is downloaded, the GPU pod is terminated, and the existing S3 owner uploads the local artifact. Missing credentials or a failed requested backup are reported as failures.
 
-## Environment Action Selector Training
+## Troubleshooting and validation limits
 
-The repository also contains a separate maintainer workflow under
-`brain/training/environment-action-selector`. It trains a small system model to
-produce typed Environment actions. It is not profile personalization, does not
-consume personal profile data, and is not launched by the Training Wizard.
+- Unlock a locked profile. Capture cannot fall back to plaintext. Repair invalid records or exclude their source type.
+- Insufficient independent examples require more representative sessions or adjusted selection settings. More epochs cannot fix missing data.
+- Local dependency failures appear in the wizard's venv check. Working inference does not prove training dependencies are installed.
+- Remote failures retain run and cleanup receipts. Inspect RunPod when recovery reports uncertainty.
+- Changed hashes, model paths or templates require preparation and review again. The system cannot silently substitute another artifact.
 
-Use its maintained validation and generation commands before considering a
-training run:
+Source and synthetic optimizer/reload tests do not establish useful personalization, remote-image deployment or production serving. Validate the selected model and backend on your task suite before relying on it.
 
-```bash
-pnpm validate:environment-action-selector
-pnpm generate:environment-action-selector-training
-pnpm train:environment-action-selector:0.8b -- --dry-run
-```
+## Environment Action Selector
 
-The current candidates are evaluation artifacts, not automatically deployable
-models. Deployment is a deliberate maintainer action only after evaluation;
-Core capability validation and the canonical Robot Status task record remain
-authoritative even when a candidate is accepted.
+The maintainer workflow under `brain/training/environment-action-selector` trains a typed action specialist. It is separate from personalization and retains development-fold evaluation while sharing the Python engine. It does not consume personal conversations and is not launched by this wizard.
 
-## Before Launching
-
-1. Confirm the intended profile and backend.
-2. Review the authenticated profile's `etc/training.json` and the Training
-   Wizard summary.
-3. Ensure the Curator has enough accepted, representative records.
-4. Confirm disk space, local GPU support, or remote-provider credentials.
-5. Preserve the currently working model until the new artifact is validated.
-
-## Troubleshooting
-
-- If curation fails, resolve that failure first; the full cycle will not claim a
-  valid dataset from an incomplete pass.
-- If local training cannot start, inspect CUDA/GPU availability and the run log
-  under `logs/run/`.
-- If remote training fails, inspect the run summary and RunPod configuration;
-  failed jobs do not activate a new artifact.
-- If Ollama model creation fails after training, the artifact remains recorded
-  as ready for loading. Inspect the generated Modelfile and load it from the
-  canonical backend controls.
-- If vLLM does not serve the new adapter, verify its compatible base model and
-  enable it from Backend Settings.
-
-Training completion proves that files were produced and registered. Evaluate
-the model's responses separately before treating the new artifact as a quality
-improvement.
+Use `pnpm validate:environment-action-selector` and its documented dry-run and evaluation commands. Training does not authorize physical actions or change Core capability and Robot Status ownership.

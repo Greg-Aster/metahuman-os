@@ -104,9 +104,12 @@ const { handleExecuteGraphStream } = await import('./execute-graph-stream.js');
 const { handlePersonaChat } = await import('./persona-chat.js');
 const { extractResponsePipelineResult, handleResponsePipeline } = await import('./response-pipeline.js');
 const { executeRobotAutonomyTriggerWork } = await import('../../queue/robot-autonomy-trigger-handler.js');
+// The public chat route requires authentication; its transport establishes this
+// profile context before entering the handler or consuming its response stream.
+const requestUser = { isAuthenticated: true, userId: username, username, role: 'owner' as const };
 const request = (): UnifiedRequest => ({
   method: 'POST', path: '/api/persona_chat',
-  user: { isAuthenticated: false, userId: 'anonymous', username: 'anonymous', role: 'guest' },
+  user: requestUser,
   body: { graph, message: 'Hello', mode: 'conversation', stream: false, sessionId: `fixture-${Math.random()}` },
 });
 
@@ -129,12 +132,12 @@ test('editor stream reports failure without a subsequent graph-complete event', 
   assert.ok(events.every(event => !event.includes('event: graph_complete')));
 });
 
-test('persona chat does not turn earlier generated text into successful completion after global failure', async () => {
+test('persona chat does not turn earlier generated text into successful completion after global failure', () => withUserContext(requestUser, async () => {
   returnedState = failed;
   const result = await handlePersonaChat(request());
   assert.equal(result.status, 500);
   assert.equal(result.error, failed.error!.message);
-});
+}));
 
 test('response pipeline preserves the global error when no node failed', () => {
   assert.throws(() => extractResponsePipelineResult(failed), error => error instanceof Error
@@ -223,16 +226,16 @@ test('editor waiting response preserves saved execution identity and is not comp
   assert.match(editor, /Execution saved and waiting/);
 });
 
-test('completed and waiting conversational text remains deliverable', async () => {
+test('completed and waiting conversational text remains deliverable', () => withUserContext(requestUser, async () => {
   for (const status of ['completed', 'waiting'] as const) {
     returnedState = { ...failed, status, error: undefined };
     const result = await handlePersonaChat(request());
     assert.equal(result.status, 200);
     assert.equal((result.data as any)?.response, 'A generated response before persistence failed.');
   }
-});
+}));
 
-test('waiting without a response is a saved execution, not a missing-output failure', async () => {
+test('waiting without a response is a saved execution, not a missing-output failure', () => withUserContext(requestUser, async () => {
   returnedState = { ...failed, status: 'waiting', error: undefined, nodes: new Map(), executionId: 'waiting-silent' };
   const result = await handlePersonaChat(request());
   assert.equal(result.status, 200);
@@ -240,9 +243,39 @@ test('waiting without a response is a saved execution, not a missing-output fail
   assert.ok(result.data.events.some((event: any) => event.data?.step === 'graph_waiting'
     && event.data.executionId === 'waiting-silent'));
   assert.ok(result.data.events.every((event: any) => event.type !== 'error' && event.type !== 'answer'));
-});
+}));
 
-test('existing conversational chunks remain streamed but a later failure is not a successful answer', async () => {
+test('chat distinguishes a committed input handoff from missing output and failed delivery', () => withUserContext(requestUser, async () => {
+  for (const state of ['completed', 'skipped', 'failed'] as const) {
+    const selection = { executionId: 'existing-execution', kind: 'user_steering' };
+    returnedState = { ...failed, status: state === 'failed' ? 'failed' : 'completed',
+      error: state === 'failed' ? new Error('Saved execution does not match the executable graph/schema/node versions') : undefined,
+      executionId: 'input-execution', nodes: new Map([
+        ['editable-handoff-id', { nodeId: 'editable-handoff-id', definition: { type: 'execution_event_out' },
+          status: state === 'skipped' ? 'skipped' : 'completed', inputs: { selection, message: 'Hello' }, outputs: { sent: true } }],
+      ]) };
+    for (const stream of [false, true]) {
+      const req = request();
+      req.body.stream = stream;
+      const response = await handlePersonaChat(req);
+      const events: any[] = stream ? [] : response.data?.events ?? [];
+      if (stream) for await (const chunk of response.stream!) events.push(JSON.parse(chunk.slice(6).trim()));
+      if (state === 'completed') {
+        assert.equal(response.status, 200);
+        assert.ok(events.some(event => event.type === 'progress' && event.data.step === 'input_forwarded'
+          && event.data.executionId === selection.executionId));
+        assert.ok(events.every(event => event.type !== 'answer' && event.type !== 'error'), 'No fabricated speech or completion');
+      } else {
+        const message = state === 'failed' ? returnedState.error!.message : 'Graph executed but produced no response';
+        if (stream) assert.ok(events.some(event => event.type === 'error' && event.data.message === message));
+        else { assert.equal(response.status, 500); assert.equal(response.error, message); }
+        assert.ok(events.every(event => event.data?.step !== 'input_forwarded'));
+      }
+    }
+  }
+}));
+
+test('existing conversational chunks remain streamed but a later failure is not a successful answer', () => withUserContext(requestUser, async () => {
   streamChunk = 'An earlier generated chunk.';
   try {
     for (const status of ['completed', 'failed'] as const) {
@@ -257,15 +290,15 @@ test('existing conversational chunks remain streamed but a later failure is not 
       assert.equal(events.some(event => event.type === 'error' && event.data.message === failed.error!.message), status === 'failed');
     }
   } finally { streamChunk = ''; }
-});
+}));
 
-test('existing conversational cancellation remains a cancellation event', async () => {
+test('existing conversational cancellation remains a cancellation event', () => withUserContext(requestUser, async () => {
   returnedState = { ...failed, error: new Error('CANCELLATION_REQUESTED') };
   const result = await handlePersonaChat(request());
   assert.equal(result.status, 200);
   assert.ok(result.data.events.some((event: any) => event.type === 'cancelled'));
   assert.ok(result.data.events.every((event: any) => event.type !== 'answer' && event.type !== 'error'));
-});
+}));
 
 test.after(() => {
   streamingMock.restore(); usersMock.restore(); coreMock.restore(); runtimeMock.restore(); eventBus.disconnect();

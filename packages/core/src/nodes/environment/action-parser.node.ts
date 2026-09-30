@@ -1,4 +1,5 @@
 import { defineNode, NodeInputValidationError } from '../types.js';
+import { visualObservationOutput } from './visual-observation-output.js';
 import type {
   EnvironmentAction,
   EnvironmentObservation,
@@ -130,6 +131,7 @@ export const environmentActionParserNode = defineNode({
   name: 'Environment Action Parser',
   category: 'environment',
   inputs: [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact images supplied by the context builder to this model call' },
     { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
     { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
@@ -137,6 +139,7 @@ export const environmentActionParserNode = defineNode({
     { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
   ],
   outputs: [
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of the task decision' },
     { name: 'actions', type: 'array', description: 'Parsed environment actions' },
     { name: 'firstAction', type: 'object', description: 'First parsed action' },
     { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
@@ -167,6 +170,7 @@ export const environmentActionParserNode = defineNode({
       `Environment Action Selector output is invalid: ${validation.errors.join('; ')}`,
     );
     const validated = validation.value;
+    const visualObservation = visualObservationOutput(validated.visualObservation, inputs.frames);
     const parsed = {
       ...validated,
       movementRequest: validated.movementRequest
@@ -259,6 +263,7 @@ export const environmentActionParserNode = defineNode({
       movementRequest,
       movementRequested,
       taskDecision,
+      visualObservation,
       actionAdmission,
       valid,
       hasActions: actions.length > 0,

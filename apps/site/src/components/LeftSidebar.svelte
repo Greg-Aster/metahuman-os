@@ -22,6 +22,7 @@
     { id: 'persona', label: 'Persona', icon: '👤', description: 'Identity & personality' },
     { id: 'voice', label: 'Voice', icon: '🎤', description: 'Audio & training' },
     { id: 'training', label: 'AI Training', icon: '🧠', description: 'LoRA adapters' },
+    { id: 'terminal', label: 'Terminal', icon: '⌨', description: 'Shells & provider sessions' },
     { id: 'system', label: 'System', icon: '⚙️', description: 'Settings & tools' },
   ];
 
@@ -294,7 +295,7 @@
     const currentlyEnabled = modelInfo?.personaSummary === 'enabled';
     const newState = !currentlyEnabled;
 
-    if (!newState && !modelInfo?.useAdapter && !modelInfo?.activeAdapter) {
+    if (!newState && !modelInfo?.useAdapter) {
       const proceed = confirm(
         'Disabling persona context removes personality, values, and memory grounding.\n\n' +
         'You have no active LoRA adapters or specialized models loaded.\n\n' +
@@ -961,7 +962,7 @@
 <div class="flex flex-col h-full p-4 gap-4">
   <!-- Menu Items -->
   <nav class="menu">
-    {#each menuItems as item}
+    {#each menuItems.filter(item => item.id !== 'terminal' || $isOwner) as item}
       <button
         class="menu-item"
         class:active={$activeView === item.id}

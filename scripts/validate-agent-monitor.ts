@@ -1,20 +1,35 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  clearAgentFailure,
-  getAgentFailures,
-  getAgentMonitorSnapshot,
-  recordAgentFailure,
-} from '@metahuman/core/agent-monitor';
-import { getAgentCatalogSnapshot, startAgentProcess } from '@metahuman/core';
-import { getQueueManager } from '@metahuman/core/queue';
-import {
-  getEnvironmentBridgeStatePath,
-  readEnvironmentBridgeState,
-} from '@metahuman/core/environment-interface';
-import { ROOT } from '@metahuman/core/paths';
-import { handleSetMonitorAgentVariable } from '../packages/core/src/api/handlers/monitor';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
 import type { UnifiedRequest } from '../packages/core/src/api/types';
+
+const SOURCE_ROOT = fileURLToPath(new URL('../', import.meta.url));
+const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-agent-monitor-'));
+// Register cleanup before setup/imports, including import and validation failures.
+process.once('exit', () => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+process.env.METAHUMAN_ROOT = runtimeRoot;
+
+function copyFixture(relative: string): void {
+  const destination = path.join(runtimeRoot, relative);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.copyFileSync(path.join(SOURCE_ROOT, relative), destination);
+}
+
+// Copy maintained configuration and executable entries for real catalog discovery.
+// Runtime state stays private; source assertions below inspect the actual repository.
+for (const file of ['etc/agents.json', 'etc/services.json']) copyFixture(file);
+for (const entry of fs.readdirSync(path.join(SOURCE_ROOT, 'brain/agents'), { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  for (const name of ['cli.ts', 'index.ts']) {
+    const relative = path.join('brain/agents', entry.name, name);
+    if (fs.existsSync(path.join(SOURCE_ROOT, relative))) copyFixture(relative);
+  }
+}
+for (const entry of fs.readdirSync(path.join(SOURCE_ROOT, 'brain/services'), { withFileTypes: true })) {
+  if (entry.isFile() && entry.name.endsWith('.ts')) copyFixture(path.join('brain/services', entry.name));
+}
 
 type Check = {
   name: string;
@@ -54,27 +69,6 @@ function ownerRequest(path: string, body: Record<string, unknown>): UnifiedReque
   };
 }
 
-async function withRestoredFiles<T>(files: string[], callback: () => Promise<T> | T): Promise<T> {
-  const snapshots = files.map(file => ({
-    file,
-    existed: fs.existsSync(file),
-    content: fs.existsSync(file) ? fs.readFileSync(file) : undefined,
-  }));
-
-  try {
-    return await callback();
-  } finally {
-    for (const snapshot of snapshots) {
-      if (snapshot.existed && snapshot.content !== undefined) {
-        fs.mkdirSync(path.dirname(snapshot.file), { recursive: true });
-        fs.writeFileSync(snapshot.file, snapshot.content);
-      } else if (!snapshot.existed && fs.existsSync(snapshot.file)) {
-        fs.unlinkSync(snapshot.file);
-      }
-    }
-  }
-}
-
 async function withSuppressedConsoleError<T>(callback: () => Promise<T>): Promise<T> {
   const original = console.error;
   console.error = () => {};
@@ -86,72 +80,71 @@ async function withSuppressedConsoleError<T>(callback: () => Promise<T>): Promis
 }
 
 async function runVariableChecks(): Promise<Check[]> {
+  const { readEnvironmentBridgeState } = await import('@metahuman/core/environment-interface');
+  const { handleSetMonitorAgentVariable } = await import('../packages/core/src/api/handlers/monitor');
   const checks: Check[] = [];
-  const bridgeStatePath = getEnvironmentBridgeStatePath();
-  const serviceConfigPath = path.join(ROOT, 'etc', 'services.json');
+  const enabledResponse = await handleSetMonitorAgentVariable(ownerRequest('/api/monitor/agent-variable', {
+    agent: 'environment-bridge',
+    key: 'deliveryEnabled',
+    value: true,
+  }));
+  const enabledData = enabledResponse.data as { agentData?: { variables?: Array<{ key: string; value: unknown; applyMode: string }> } } | undefined;
+  const enabledVariable = enabledData?.agentData?.variables?.find(variable => variable.key === 'deliveryEnabled');
+  checks.push(check(
+    'Environment Bridge action-delivery edit persists through monitor API',
+    enabledResponse.status === 200 && enabledVariable?.value === true && readEnvironmentBridgeState().enabled,
+    `status=${enabledResponse.status} value=${String(enabledVariable?.value ?? '')}`,
+  ));
+  checks.push(check(
+    'Environment Bridge action-delivery control is labeled live',
+    enabledVariable?.applyMode === 'live',
+    enabledVariable?.applyMode,
+  ));
 
-  await withRestoredFiles([bridgeStatePath, serviceConfigPath], async () => {
-    const enabledResponse = await handleSetMonitorAgentVariable(ownerRequest('/api/monitor/agent-variable', {
+  const adapterUrlResponse = await handleSetMonitorAgentVariable(ownerRequest(
+    '/api/monitor/agent-variable',
+    {
       agent: 'environment-bridge',
-      key: 'deliveryEnabled',
-      value: true,
-    }));
-    const enabledData = enabledResponse.data as { agentData?: { variables?: Array<{ key: string; value: unknown; applyMode: string }> } } | undefined;
-    const enabledVariable = enabledData?.agentData?.variables?.find(variable => variable.key === 'deliveryEnabled');
-    checks.push(check(
-      'Environment Bridge action-delivery edit persists through monitor API',
-      enabledResponse.status === 200 && enabledVariable?.value === true && readEnvironmentBridgeState().enabled,
-      `status=${enabledResponse.status} value=${String(enabledVariable?.value ?? '')}`,
-    ));
-    checks.push(check(
-      'Environment Bridge action-delivery control is labeled live',
-      enabledVariable?.applyMode === 'live',
-      enabledVariable?.applyMode,
-    ));
+      key: 'adapterUrl',
+      value: 'ws://127.0.0.1:8790/environment',
+    },
+  ));
+  checks.push(check(
+    'Environment Bridge persists its adapter URL',
+    adapterUrlResponse.status === 200,
+    'status=' + adapterUrlResponse.status,
+  ));
 
-    const adapterUrlResponse = await handleSetMonitorAgentVariable(ownerRequest(
-      '/api/monitor/agent-variable',
-      {
-        agent: 'environment-bridge',
-        key: 'adapterUrl',
-        value: 'ws://127.0.0.1:8790/environment',
-      },
-    ));
-    checks.push(check(
-      'Environment Bridge persists its adapter URL',
-      adapterUrlResponse.status === 200,
-      'status=' + adapterUrlResponse.status,
-    ));
-
-    const bootResponse = await handleSetMonitorAgentVariable(ownerRequest('/api/monitor/agent-variable', {
-      agent: 'maintenance-service',
-      key: 'startOnSystemBoot',
-      value: true,
-    }));
-    const bootData = bootResponse.data as { agentData?: { variables?: Array<{ key: string; value: unknown; applyMode: string }> } } | undefined;
-    const bootVariable = bootData?.agentData?.variables?.find(variable => variable.key === 'startOnSystemBoot');
-    const bootEnabledVariable = bootData?.agentData?.variables?.find(variable => variable.key === 'enabled');
-    checks.push(check(
-      'boot-manager variable edit persists through monitor API',
-      bootResponse.status === 200 && bootVariable?.value === true,
-      `status=${bootResponse.status} value=${String(bootVariable?.value ?? '')}`,
-    ));
-    checks.push(check(
-      'boot-manager start-on-boot enables service for startup',
-      bootResponse.status === 200 && bootEnabledVariable?.value === true,
-      `status=${bootResponse.status} enabled=${String(bootEnabledVariable?.value ?? '')}`,
-    ));
-    checks.push(check(
-      'boot-manager variable is labeled next-boot',
-      bootVariable?.applyMode === 'nextBoot',
-      bootVariable?.applyMode,
-    ));
-  });
+  const bootResponse = await handleSetMonitorAgentVariable(ownerRequest('/api/monitor/agent-variable', {
+    agent: 'maintenance-service',
+    key: 'startOnSystemBoot',
+    value: true,
+  }));
+  const bootData = bootResponse.data as { agentData?: { variables?: Array<{ key: string; value: unknown; applyMode: string }> } } | undefined;
+  const bootVariable = bootData?.agentData?.variables?.find(variable => variable.key === 'startOnSystemBoot');
+  const bootEnabledVariable = bootData?.agentData?.variables?.find(variable => variable.key === 'enabled');
+  checks.push(check(
+    'boot-manager variable edit persists through monitor API',
+    bootResponse.status === 200 && bootVariable?.value === true,
+    `status=${bootResponse.status} value=${String(bootVariable?.value ?? '')}`,
+  ));
+  checks.push(check(
+    'boot-manager start-on-boot enables service for startup',
+    bootResponse.status === 200 && bootEnabledVariable?.value === true,
+    `status=${bootResponse.status} enabled=${String(bootEnabledVariable?.value ?? '')}`,
+  ));
+  checks.push(check(
+    'boot-manager variable is labeled next-boot',
+    bootVariable?.applyMode === 'nextBoot',
+    bootVariable?.applyMode,
+  ));
 
   return checks;
 }
 
 async function runPreflightFailureChecks(): Promise<Check[]> {
+  const { clearAgentFailure, getAgentFailures } = await import('@metahuman/core/agent-monitor');
+  const { startAgentProcess } = await import('@metahuman/core');
   const checks: Check[] = [];
   const agentName = '__agent-monitor-missing-agent__';
   clearAgentFailure(agentName);
@@ -181,6 +174,15 @@ async function runPreflightFailureChecks(): Promise<Check[]> {
 }
 
 async function main() {
+  // Core binds paths at import time; setup must precede imports and event emission.
+  const { ROOT } = await import('@metahuman/core/paths');
+  assert.equal(ROOT, runtimeRoot);
+  const { eventBus } = await import('../packages/core/src/infrastructure/event-bus/client');
+  eventBus.disconnect();
+  const { clearAgentFailure, getAgentMonitorSnapshot, recordAgentFailure } =
+    await import('@metahuman/core/agent-monitor');
+  const { getAgentCatalogSnapshot } = await import('@metahuman/core');
+  const { getQueueManager } = await import('@metahuman/core/queue');
   const checks: Check[] = [];
   clearAgentFailure(SYNTHETIC_AGENT);
 
@@ -253,8 +255,8 @@ async function main() {
   ));
   checks.push(check(
     'Environment Bridge has runnable process source',
-    fs.existsSync(path.join(ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts'))
-      && fs.existsSync(path.join(ROOT, 'brain', 'agents', 'environment-bridge', 'index.ts')),
+    fs.existsSync(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts'))
+      && fs.existsSync(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'index.ts')),
   ));
 
   for (const legacyAgent of ['update-check', 'babysitter']) {
@@ -294,16 +296,16 @@ async function main() {
 
   checks.push(check(
     'Environment Bridge contains no environment-specific adapter implementation',
-    !fs.existsSync(path.join(ROOT, 'brain', 'agents', 'environment-bridge', 'adapters', 'megameal.ts'))
-      && sourceDoesNotContain(path.join(ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts'), /ainekio|megameal/i),
+    !fs.existsSync(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'adapters', 'megameal.ts'))
+      && sourceDoesNotContain(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts'), /ainekio|megameal/i),
   ));
   checks.push(check(
     'obsolete outbound environment nodes are removed',
-    !fs.existsSync(path.join(ROOT, 'packages', 'core', 'src', 'nodes', 'environment', 'connect.node.ts'))
-      && sourceDoesNotContain(path.join(ROOT, 'packages', 'core', 'src', 'nodes', 'schemas.ts'), /environment_connect/),
+    !fs.existsSync(path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'nodes', 'environment', 'connect.node.ts'))
+      && sourceDoesNotContain(path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'nodes', 'schemas.ts'), /environment_connect/),
   ));
 
-  const agentMonitorComponent = path.join(ROOT, 'apps', 'site', 'src', 'components', 'AgentMonitor.svelte');
+  const agentMonitorComponent = path.join(SOURCE_ROOT, 'apps', 'site', 'src', 'components', 'AgentMonitor.svelte');
   checks.push(check(
     'Agent Monitor UI does not truncate Agent Data variables',
     sourceDoesNotContain(agentMonitorComponent, /variables\.slice\(/),
@@ -324,13 +326,13 @@ async function main() {
       && sourceDoesNotContain(agentMonitorComponent, /setInterval\s*\(/),
   ));
 
-  const siteStylesheet = path.join(ROOT, 'apps', 'site', 'src', 'styles', 'tailwind.css');
+  const siteStylesheet = path.join(SOURCE_ROOT, 'apps', 'site', 'src', 'styles', 'tailwind.css');
   checks.push(check(
     'Agent Monitor legacy global CSS is removed',
     sourceDoesNotContain(siteStylesheet, /agent-monitor-container|agent-monitor-header|agent-card|agent-action-btn|agent-expand-toggle|agent-sparkline|agent-status-dot|agent-progress-bar|agent-progress-fill/),
   ));
 
-  const monitorStream = path.join(ROOT, 'packages', 'core', 'src', 'api', 'handlers', 'monitor-stream.ts');
+  const monitorStream = path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'api', 'handlers', 'monitor-stream.ts');
   checks.push(check(
     'monitor stream has no periodic reconciliation loop',
     sourceDoesNotContain(monitorStream, /setInterval\s*\(|scheduleReconciliation|reconciliationTimer/),
@@ -339,13 +341,13 @@ async function main() {
     'monitor stream subscribes to bridge state changes',
     sourceContains(monitorStream, /subscribeEnvironmentBridgeState\(scheduleSnapshot\)/),
   ));
-  const router = path.join(ROOT, 'packages', 'core', 'src', 'api', 'router.ts');
+  const router = path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'api', 'router.ts');
   checks.push(check(
     'legacy POST /api/agent route is removed',
     sourceDoesNotContain(router, /pattern:\s*['"]\/api\/agent['"]/),
   ));
 
-  const agentHandler = path.join(ROOT, 'packages', 'core', 'src', 'api', 'handlers', 'agent.ts');
+  const agentHandler = path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'api', 'handlers', 'agent.ts');
   checks.push(check(
     'agent restart uses boot-manager snapshot',
     sourceContains(agentHandler, /getAgentMonitorSnapshot\(\)\.bootAgents/),
@@ -355,13 +357,13 @@ async function main() {
     sourceDoesNotContain(agentHandler, /headless-watcher/),
   ));
 
-  const agentRunner = path.join(ROOT, 'packages', 'core', 'src', 'agent-process-runner.ts');
-  const agentRegistry = path.join(ROOT, 'packages', 'core', 'src', 'agent-monitor-registry.ts');
-  const agentResolver = path.join(ROOT, 'packages', 'core', 'src', 'agent-executable-resolver.ts');
-  const cli = path.join(ROOT, 'packages', 'cli', 'src', 'main.ts');
-  const bootstrap = path.join(ROOT, 'packages', 'core', 'src', 'agent-bootstrap.ts');
-  const environmentBridgeAgent = path.join(ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts');
-  const runtimeMode = path.join(ROOT, 'packages', 'core', 'src', 'runtime-mode.ts');
+  const agentRunner = path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'agent-process-runner.ts');
+  const agentRegistry = path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'agent-monitor-registry.ts');
+  const agentResolver = path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'agent-executable-resolver.ts');
+  const cli = path.join(SOURCE_ROOT, 'packages', 'cli', 'src', 'main.ts');
+  const bootstrap = path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'agent-bootstrap.ts');
+  const environmentBridgeAgent = path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts');
+  const runtimeMode = path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'runtime-mode.ts');
   checks.push(check(
     'shared agent process runner owns spawn lifecycle',
     sourceContains(agentRunner, /export async function startAgentProcess/)
@@ -433,7 +435,7 @@ async function main() {
   ));
   checks.push(check(
     'deprecated headless-watcher service is removed from startup resolvers',
-    !fs.existsSync(path.join(ROOT, 'brain', 'services', 'headless-watcher.ts'))
+    !fs.existsSync(path.join(SOURCE_ROOT, 'brain', 'services', 'headless-watcher.ts'))
       && sourceDoesNotContain(agentRunner, /headless-watcher/)
       && sourceDoesNotContain(bootstrap, /headless-watcher/)
       && sourceDoesNotContain(cli, /headless-watcher/),
@@ -445,7 +447,7 @@ async function main() {
       && sourceDoesNotContain(runtimeMode, /boredom-service|headless-watcher/),
   ));
 
-  const descriptorSource = path.join(ROOT, 'packages', 'core', 'src', 'agent-monitor-descriptors.ts');
+  const descriptorSource = path.join(SOURCE_ROOT, 'packages', 'core', 'src', 'agent-monitor-descriptors.ts');
   checks.push(check(
     'Robot Bridge monitor uses inbound session and stream state',
     sourceContains(descriptorSource, /getEnvironmentActionSubscriberCount/)
@@ -455,9 +457,9 @@ async function main() {
 
   checks.push(check(
     'active docs no longer instruct headless-watcher runtime use',
-    sourceDoesNotContain(path.join(ROOT, 'docs', 'user-guide', 'advanced-features', 'headless-mode.md'), /headless-watcher/)
-      && sourceDoesNotContain(path.join(ROOT, 'docs', 'user-guide', 'advanced-features', 'autonomous-agents.md'), /headless-watcher/)
-      && sourceDoesNotContain(path.join(ROOT, 'docs', 'user-guide', 'configuration-admin', 'configuration-files.md'), /headless-watcher/),
+    sourceDoesNotContain(path.join(SOURCE_ROOT, 'docs', 'user-guide', 'advanced-features', 'headless-mode.md'), /headless-watcher/)
+      && sourceDoesNotContain(path.join(SOURCE_ROOT, 'docs', 'user-guide', 'advanced-features', 'autonomous-agents.md'), /headless-watcher/)
+      && sourceDoesNotContain(path.join(SOURCE_ROOT, 'docs', 'user-guide', 'configuration-admin', 'configuration-files.md'), /headless-watcher/),
   ));
 
   recordAgentFailure({
@@ -518,7 +520,6 @@ async function main() {
 }
 
 main().catch(error => {
-  clearAgentFailure(SYNTHETIC_AGENT);
   console.error(error);
   process.exit(1);
 });

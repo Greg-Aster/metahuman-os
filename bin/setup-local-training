@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Setup script for local LoRA training environment
 
-set -e
+set -euo pipefail
 
 echo "🔧 Setting up local training environment..."
 echo ""
@@ -35,17 +35,11 @@ source "$VENV_DIR/bin/activate"
 echo "📦 Upgrading pip..."
 pip install --upgrade pip
 
-# Install Unsloth (this will automatically install compatible PyTorch version)
-echo "📦 Installing Unsloth (will auto-install PyTorch 2.8.0)..."
-pip install unsloth
-
-# Install additional dependencies
-echo "📦 Installing additional dependencies..."
-pip install datasets 'transformers>=5,<6' accelerate bitsandbytes
-
-# Install GGUF conversion dependencies
-echo "📦 Installing GGUF conversion tools..."
-pip install gguf protobuf sentencepiece mistral_common
+# Keep local and remote training on the same compatible versions.
+echo "📦 Installing the repository's training dependency contract..."
+python -m pip install -r "$ROOT_DIR/docker/runpod-trainer/requirements.txt"
+python -m pip check
+python "$ROOT_DIR/docker/runpod-trainer/train_unsloth.py" --check-environment
 
 echo ""
 echo "✅ Setup complete!"

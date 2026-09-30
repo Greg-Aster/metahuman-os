@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   buildTrainingEnvironmentOverrides,
+  buildTrainingEngineConfig,
   validateTrainingLaunchConfig,
   validateTrainingLaunchRequest,
   type TrainingLaunchConfig,
@@ -30,25 +31,25 @@ test('current manual launch configuration passes the canonical validator', () =>
   }), null)
 })
 
-test('remote training requires credentials and vLLM requires remote LoRA', () => {
+test('remote training requires credentials; local safetensors uses the shared trainer', () => {
   assert.match(validateTrainingLaunchRequest({
     method: 'remote-lora',
     trainingTarget: 'vllm',
     trainingConfig: config,
   }) || '', /RunPod/)
 
-  assert.match(validateTrainingLaunchRequest({
+  assert.equal(validateTrainingLaunchRequest({
     method: 'local-lora',
     trainingTarget: 'vllm',
     trainingConfig: config,
-  }) || '', /remote LoRA/)
+  }), null)
 })
 
 test('LoRA alpha is part of the launch contract', () => {
   assert.match(validateTrainingLaunchConfig({ ...config, lora_alpha: undefined }) || '', /lora_alpha/)
 })
 
-test('shared launch environment carries dataset, pipeline, persona, and RunPod controls', () => {
+test('transport environment carries explicit pipeline and RunPod controls', () => {
   const overrides = buildTrainingEnvironmentOverrides({
     method: 'remote-lora',
     trainingTarget: 'ollama',
@@ -62,12 +63,9 @@ test('shared launch environment carries dataset, pipeline, persona, and RunPod c
       enablePreprocessing: false,
       enableS3Upload: false,
     },
-  }, false)
+  })
 
   assert.deepEqual(overrides, {
-    METAHUMAN_INCLUDE_PERSONA: '0',
-    METAHUMAN_BASE_MODEL: 'Qwen/Qwen3.5-9B',
-    METAHUMAN_MAX_SAMPLES: '4321',
     METAHUMAN_DISABLE_S3: '1',
     METAHUMAN_SKIP_PREPROCESSING: '1',
     RUNPOD_GPU_TYPE: 'NVIDIA A100 80GB PCIe',
@@ -76,16 +74,40 @@ test('shared launch environment carries dataset, pipeline, persona, and RunPod c
   })
 })
 
-test('all-samples launch clears inherited per-run restrictions', () => {
+test('all-samples and persona choices are frozen in the engine config without environment defaults', () => {
   const overrides = buildTrainingEnvironmentOverrides({
     method: 'local-lora',
     trainingTarget: 'ollama',
     trainingConfig: { ...config, max_samples: null },
-  }, true)
+  })
 
-  assert.equal(overrides.METAHUMAN_INCLUDE_PERSONA, '1')
-  assert.equal(overrides.METAHUMAN_BASE_MODEL, 'Qwen/Qwen3.5-9B')
-  assert.equal(overrides.METAHUMAN_MAX_SAMPLES, '')
-  assert.equal(overrides.METAHUMAN_DISABLE_S3, '0')
+  assert.equal(overrides.METAHUMAN_DISABLE_S3, '1')
   assert.equal(overrides.METAHUMAN_SKIP_PREPROCESSING, '0')
+  const frozen = buildTrainingEngineConfig({ method: 'local-lora', trainingTarget: 'vllm',
+    trainingConfig: { ...config, max_samples: null, monthly_training: true, days_recent: 30, old_samples: 250 } },
+  { data: { includePersona: false, objective: 'assistant-continuation' } })
+  assert.equal(frozen.max_samples, null)
+  assert.equal(frozen.days_recent, 30)
+  assert.equal(frozen.old_samples, 250)
+  assert.equal((frozen.data as Record<string, unknown>).includePersona, false)
+  assert.equal((frozen.data as Record<string, unknown>).objective, 'assistant-continuation')
+  assert.deepEqual(frozen.gguf_conversion, { enabled: false, quantization_type: 'Q4_K_M' })
+  assert.equal(frozen.chat_template, 'native')
+  assert.equal(frozen.train_on_responses_only, true)
+})
+
+test('one engine config preserves selected hyperparameters for LoRA and full fine-tuning', () => {
+  for (const method of ['local-lora', 'remote-lora', 'fine-tune'] as const) {
+    const frozen = buildTrainingEngineConfig({ method, trainingTarget: 'ollama',
+      runpodConfig: { apiKey: 'fixture', templateId: 'fixture', gpuType: 'selected GPU' },
+      trainingConfig: { ...config, num_train_epochs: 1, learning_rate: 0.00002, quantization: 'Q8_0' } }, {})
+    assert.equal(frozen.training_mode, method === 'fine-tune' ? 'full_finetune' : 'lora')
+    assert.equal(frozen.num_train_epochs, 1)
+    assert.equal(frozen.learning_rate, 0.00002)
+    assert.equal(frozen.load_in_4bit, false)
+    assert.equal(frozen.load_in_16bit, true)
+    assert.deepEqual(frozen.gguf_conversion, { enabled: true, quantization_type: 'Q8_0' })
+  }
+  assert.match(validateTrainingLaunchRequest({ method: 'local-lora', trainingConfig: { ...config, lora_rank: 0 } }) ?? '', /positive/)
+  assert.match(validateTrainingLaunchRequest({ method: 'fine-tune', trainingConfig: { ...config, load_in_4bit: true } }) ?? '', /unquantized/)
 })

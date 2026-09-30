@@ -22,7 +22,8 @@ import {
   resolveProfileRoot as pathBuilderResolveProfileRoot,
   systemPaths,
 } from './path-builder.js'
-import { getProfileStorageConfig, type ProfileStorageConfig } from './users.js'
+import { getProfileStorageConfig, listUsers, type ProfileStorageConfig } from './users.js'
+import { assertProfileMemoryAvailable } from './locks.js'
 
 /**
  * File categories supported by the storage router
@@ -134,7 +135,7 @@ function isProfileReady(username: string): { ready: boolean; error?: string } {
   const encType = storageConfig?.encryption?.type
 
   if (encType === 'aes256') {
-    if (isProfileUnlocked(username)) {
+    if (isProfileUnlocked(pathBuilderResolveProfileRoot(username).root)) {
       return { ready: true }
     }
     return { ready: false, error: 'Profile is locked. Please unlock with your encryption password.' }
@@ -254,7 +255,7 @@ export function profileDataCodec(username: string): {
     const ready = isProfileReady(username)
     if (!ready.ready) throw new Error(ready.error)
     if (!isAesEncryptionEnabled(username)) return null
-    const key = getCachedKey(username)
+    const key = getCachedKey(pathBuilderResolveProfileRoot(username).root)
     if (!key) throw new Error('Profile is locked. Please unlock first.')
     return key
   }
@@ -283,6 +284,11 @@ export function profileDataCodec(username: string): {
 export function writeFileSync(request: WriteRequest): WriteResult {
   const { username, data, encoding = 'utf8' } = request
   const resolvedUsername = resolveUsername(username)
+  if (resolvedUsername && (request.category === 'memory'
+    || (request.category === 'config' && request.subcategory === 'desires'))) {
+    try { assertProfileMemoryAvailable(resolvedUsername) }
+    catch (error) { return { success: false, error: (error as Error).message } }
+  }
   const pathResponse = resolvePath(request)
 
   if (!pathResponse.success) {
@@ -314,7 +320,7 @@ export function writeFileSync(request: WriteRequest): WriteResult {
     let bytesWritten: number
 
     if (useAesEncryption) {
-      const key = getCachedKey(resolvedUsername!)
+      const key = getCachedKey(pathResponse.profileRoot!)
       if (!key) {
         return {
           success: false,
@@ -413,7 +419,7 @@ export function readFileSync(request: ReadRequest): ReadResult {
       const encryptedPath = filePath + ENCRYPTED_EXTENSION
 
       if (fs.existsSync(encryptedPath)) {
-        const key = getCachedKey(resolvedUsername!)
+        const key = getCachedKey(pathResponse.profileRoot!)
         if (!key) {
           return {
             success: false,
@@ -527,6 +533,53 @@ export async function deleteFile(request: StorageRequest): Promise<WriteResult> 
   }
 }
 
+/** Validate an explicit deletion set without following profile-child symlinks or storage fallbacks. */
+export function validateProfileDeletion(username: string, relativePaths: string[]): string[] {
+  const resolved = resolveProfileRoot(username)
+  if (!resolved.success || !resolved.profileRoot || resolved.error) {
+    throw new Error(resolved.error || 'Profile storage is unavailable')
+  }
+  const ready = isProfileReady(username)
+  if (!ready.ready) throw new Error(ready.error)
+  const root = fs.realpathSync(resolved.profileRoot)
+  const systemRoot = fs.realpathSync(systemPaths.root)
+  if (root === systemRoot || systemRoot.startsWith(root + path.sep)) {
+    throw new Error('Profile deletion cannot target system storage')
+  }
+  for (const user of listUsers()) {
+    if (user.username === username) continue
+    const configured = getProfileStorageConfig(user.username)?.path || getDefaultProfilePath(user.username)
+    const otherRoot = fs.existsSync(configured) ? fs.realpathSync(configured) : path.resolve(configured)
+    if (root === otherRoot || root.startsWith(otherRoot + path.sep) || otherRoot.startsWith(root + path.sep)) {
+      throw new Error('Profile deletion cannot target storage shared with another account')
+    }
+  }
+  return relativePaths.map(relative => {
+    if (!relative || path.isAbsolute(relative) || relative.split(/[\\/]/).some(part => !part || part === '.' || part === '..')) {
+      throw new Error('Deletion paths must name data inside the profile')
+    }
+    let target = root
+    for (const part of relative.split(/[\\/]/)) {
+      target = path.join(target, part)
+      try {
+        if (fs.lstatSync(target).isSymbolicLink()) throw new Error(`Reset cannot follow a symbolic link: ${relative}`)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
+    }
+    return target
+  })
+}
+
+/** Recursive deletion stays at the encryption-aware storage owner, with an explicit profile-local scope. */
+export async function deleteProfileData(username: string, relativePaths: string[], expectedPaths = validateProfileDeletion(username, relativePaths)): Promise<void> {
+  for (const [index, relative] of relativePaths.entries()) {
+    const [target] = validateProfileDeletion(username, [relative])
+    if (target !== expectedPaths[index]) throw new Error('Profile storage changed during reset; deletion stopped')
+    await fs.promises.rm(target, { recursive: true, force: true })
+  }
+}
+
 /**
  * List files in a storage directory.
  */
@@ -604,12 +657,13 @@ export function getStorageStatus(username?: string): {
   }
 
   const profileResponse = resolveProfileRoot(resolvedUsername)
+  const readiness = profileResponse.success ? isProfileReady(resolvedUsername) : { ready: false, error: profileResponse.error }
   return {
     configured: true,
-    available: profileResponse.success,
+    available: profileResponse.success && readiness.ready,
     path: storageConfig.path,
     type: storageConfig.type,
-    error: profileResponse.success ? undefined : profileResponse.error,
+    error: readiness.error,
   }
 }
 

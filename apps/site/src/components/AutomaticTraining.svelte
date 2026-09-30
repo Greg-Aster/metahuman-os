@@ -4,6 +4,7 @@
   import { apiFetch } from '../lib/client/api-config'
   import { DEFAULT_TRAINING_MODEL, DEFAULT_VLLM_TRAINING_MODEL } from '../lib/client/model-defaults'
   import TrainingDataControls from './TrainingDataControls.svelte'
+  import { parseTrainingDataSettings, type TrainingDataSettings } from '@metahuman/core/training-schema'
 
   type TrainingMethod = 'local-lora' | 'remote-lora' | 'fine-tune'
   type TrainingTarget = 'ollama' | 'vllm'
@@ -16,6 +17,7 @@
     minimumTrainableSamples: number
     minimumNewSamples: number
     cooldownHours: number
+    maxRuntimeMinutes: number
     baseModel: string
     epochs: number
     maxSamples: number | null
@@ -31,7 +33,6 @@
     quantization: string
     runpodTemplateId: string
     runpodGpuType: string
-    enablePreprocessing: boolean
     enableS3Upload: boolean
     updatedAt?: string
   }
@@ -59,7 +60,7 @@
     }
     integration: {
       owner: 'sleep-workflow'
-      triggerInstalled: false
+      triggerInstalled: true
       message: string
     }
   }
@@ -68,6 +69,7 @@
     hasLocalGPU: boolean
     gpuModel: string | null
     vramGB: number | null
+    trainingEnvironmentError: string | null
     hasUnsloth: boolean
     hasRunpodKey: boolean
     hasPreviousModel: boolean
@@ -82,44 +84,29 @@
     minimumTrainableSamples: 250,
     minimumNewSamples: 50,
     cooldownHours: 168,
+    maxRuntimeMinutes: 180,
     baseModel: DEFAULT_TRAINING_MODEL,
-    epochs: 5,
+    epochs: 1,
     maxSamples: 3000,
     useRollingWindow: false,
     recentDays: 30,
     olderSamples: 3000,
     loraRank: 16,
     loraAlpha: 32,
-    learningRate: 0.0003,
+    learningRate: 0.0001,
     batchSize: 1,
     gradientAccumulationSteps: 16,
     maxSequenceLength: 2048,
     quantization: 'Q4_K_M',
     runpodTemplateId: 'metahuman-runpod-trainer',
     runpodGpuType: 'NVIDIA H100 PCIe',
-    enablePreprocessing: true,
     enableS3Upload: false,
-  }
-
-  const defaultMemoryPercentages: Record<string, number> = {
-    conversation: 40,
-    observation: 25,
-    therapy_session: 15,
-    reflection: 5,
-    reflection_summary: 3,
-    inner_dialogue: 3,
-    dream: 3,
-    curiosity_question: 3,
-    decision: 2,
-    journal: 1,
-    summary: 0,
   }
 
   let status: AutomaticTrainingStatus | null = null
   let config: AutomaticTrainingConfig = { ...defaults }
   let capabilities: SystemCapabilities | null = null
-  let includePersona = true
-  let memoryPercentages = { ...defaultMemoryPercentages }
+  let dataSettings = parseTrainingDataSettings()
   let useAllSamples = false
   let lastSampleCap = 3000
 
@@ -145,9 +132,6 @@
   }
 
   function handleMethodChange() {
-    if (config.trainingTarget === 'vllm' && config.method !== 'remote-lora') {
-      config = { ...config, trainingTarget: 'ollama' }
-    }
     if (config.method !== 'fine-tune' && (config.loraRank < 1 || config.loraAlpha < 1)) {
       config = { ...config, loraRank: 16, loraAlpha: 32 }
     }
@@ -190,14 +174,14 @@
       config = {
         ...config,
         baseModel: vllm ? DEFAULT_VLLM_TRAINING_MODEL : DEFAULT_TRAINING_MODEL,
-        epochs: 5,
+        epochs: 1,
         maxSamples: 3000,
         useRollingWindow: false,
         recentDays: 30,
         olderSamples: 3000,
         loraRank: 16,
         loraAlpha: 32,
-        learningRate: 0.0003,
+        learningRate: 0.0001,
         batchSize: 1,
         gradientAccumulationSteps: 16,
         maxSequenceLength: 2048,
@@ -234,6 +218,7 @@
         hasLocalGPU: body.hasLocalGPU === true,
         gpuModel: typeof body.gpuModel === 'string' ? body.gpuModel : null,
         vramGB: typeof body.vramGB === 'number' ? body.vramGB : null,
+        trainingEnvironmentError: body.trainingEnvironmentError ?? null,
         hasUnsloth: body.hasUnsloth === true,
         hasRunpodKey: body.hasRunpodKey === true,
         hasPreviousModel: body.hasPreviousModel === true,
@@ -251,12 +236,7 @@
       const response = await apiFetch('/api/training-data')
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || 'Failed to load training-data composition')
-      if (typeof body.config?.collection?.includePersona === 'boolean') {
-        includePersona = body.config.collection.includePersona
-      }
-      if (body.config?.memoryTypes?.percentages) {
-        memoryPercentages = { ...defaultMemoryPercentages, ...body.config.memoryTypes.percentages }
-      }
+      dataSettings = parseTrainingDataSettings(body.config)
     } catch (cause) {
       dataError = cause instanceof Error ? cause.message : 'Failed to load training-data composition'
     } finally {
@@ -293,13 +273,11 @@
       const response = await apiFetch('/api/training-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          collection: { includePersona },
-          memoryTypes: { percentages: memoryPercentages },
-        }),
+        body: JSON.stringify(dataSettings),
       })
       const body = await response.json()
       if (!response.ok) throw new Error(body.error || 'Failed to save training-data composition')
+      dataSettings = parseTrainingDataSettings(body.config)
       dataSavedMessage = 'Training-data composition saved for manual and automatic runs.'
     } catch (cause) {
       dataError = cause instanceof Error ? cause.message : 'Failed to save training-data composition'
@@ -308,13 +286,8 @@
     }
   }
 
-  function handlePersonaChange(event: CustomEvent<boolean>) {
-    includePersona = event.detail
-    dataSavedMessage = ''
-  }
-
-  function handlePercentagesChange(event: CustomEvent<Record<string, number>>) {
-    memoryPercentages = event.detail
+  function handleDataSettingsChange(event: CustomEvent<TrainingDataSettings>) {
+    dataSettings = event.detail
     dataSavedMessage = ''
   }
 
@@ -418,6 +391,11 @@
             <small class="mt-2 block text-sm text-gray-500">Required after the latest completed run.</small>
           </div>
           <div class="form-group">
+            <label class="form-label" for="max-runtime">Maximum training time (minutes)</label>
+            <input id="max-runtime" class="input-field" type="number" min="1" max="720" bind:value={config.maxRuntimeMinutes} />
+            <small class="mt-2 block text-sm text-gray-500">Training cancels at this limit or when Sleep ends. Remote cleanup runs before the job finishes.</small>
+          </div>
+          <div class="form-group">
             <label class="form-label" for="cooldown-hours">Cooldown (hours)</label>
             <input id="cooldown-hours" class="input-field" type="number" min="1" max="8760" bind:value={config.cooldownHours} />
             <small class="mt-2 block text-sm text-gray-500">168 hours is one week.</small>
@@ -447,7 +425,7 @@
             <label class="form-label" for="automatic-target">Output target</label>
             <select id="automatic-target" class="select-field w-full" bind:value={config.trainingTarget}>
               <option value="ollama">Ollama / GGUF</option>
-              <option value="vllm" disabled={config.method !== 'remote-lora'}>vLLM / safetensors adapter</option>
+              <option value="vllm">vLLM / safetensors</option>
             </select>
           </div>
         </div>
@@ -481,6 +459,7 @@
           <div class="mt-4 text-sm text-amber-300">Capability inspection: {capabilityError}</div>
         {/if}
         {#if config.method === 'local-lora' && capabilities && (!capabilities.hasLocalGPU || !capabilities.hasUnsloth)}
+          {#if capabilities.trainingEnvironmentError}<p role="status" class="text-amber-400 text-sm break-words">{capabilities.trainingEnvironmentError}</p>{/if}
           <div class="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
             Local LoRA needs a supported NVIDIA GPU and the Unsloth environment. The policy can be saved, but this machine is not currently launch-ready.
           </div>
@@ -632,13 +611,7 @@
           <p class="mt-1 text-sm text-gray-500">Control refinement and optional artifact transport for each automatic run.</p>
         </div>
         <div class="space-y-4">
-          <label class="flex cursor-pointer items-start gap-3 text-sm text-gray-300">
-            <input type="checkbox" class="mt-0.5 h-4 w-4 accent-emerald-600" bind:checked={config.enablePreprocessing} />
-            <span>
-              <strong>Run Organizer and Curator first</strong>
-              <span class="mt-1 block text-gray-500">Drain the finite refinement stages before constructing the dataset.</span>
-            </span>
-          </label>
+          <p class="text-sm text-gray-400">Sleep runs Organizer and Curator before training. Pending or invalid records are excluded from the frozen batch.</p>
           <label class="flex cursor-pointer items-start gap-3 text-sm text-gray-300">
             <input type="checkbox" class="mt-0.5 h-4 w-4 accent-emerald-600" bind:checked={config.enableS3Upload} />
             <span>
@@ -668,8 +641,7 @@
       <div class="mb-5">
         <h4 class="m-0 text-lg font-semibold text-gray-100">Training-data composition</h4>
         <p class="mt-1 text-sm leading-relaxed text-gray-500">
-          This is the shared dataset composition used by both the manual wizard and automatic runs. Primary user-authored
-          memories remain fully represented; secondary model-generated memories are sampled as a percentage of primary data.
+          Manual and automatic runs share these settings. Examples are selected by objective, provenance, source weights, and the synthetic-data ceiling.
         </p>
       </div>
 
@@ -684,11 +656,9 @@
         <div class="p-6 text-center text-sm text-gray-500 animate-pulse">Loading training-data composition...</div>
       {:else}
         <TrainingDataControls
-          {includePersona}
-          percentages={memoryPercentages}
+          settings={dataSettings}
           disabled={dataSaving}
-          on:personaChange={handlePersonaChange}
-          on:percentagesChange={handlePercentagesChange}
+          on:settingsChange={handleDataSettingsChange}
         />
         <div class="mt-5 flex justify-end">
           <button type="button" class="btn-primary" on:click={saveTrainingDataConfig} disabled={dataSaving}>

@@ -69,7 +69,7 @@ assert.equal(ConversationBufferNode.id, 'conversation_buffer');
 assert.equal(InnerDialogueBufferNode.id, 'inner_dialogue_buffer');
 assert.equal(MemoryCaptureNode.id, 'memory_capture');
 assert.equal(InnerDialogueSaverNode.id, 'inner_dialogue_saver');
-assert.deepEqual(MemoryCaptureNode.inputs.map(input => input.name), ['entry', 'entries']);
+assert.deepEqual(MemoryCaptureNode.inputs.map(input => input.name), ['entry', 'entries', 'passthrough']);
 assert.deepEqual(InnerDialogueSaverNode.inputs.map(input => input.name), ['entry', 'entries', 'gate']);
 assert.equal(SystemBufferNode.id, 'system_buffer');
 assert.equal(RobotBufferNode.id, 'robot_buffer');
@@ -151,14 +151,18 @@ for (const fileName of fs.readdirSync(graphDirectory)) {
     node.data?.nodeType === 'tts' && node.data?.properties?.defaultMode === 'conversation'
   ));
   for (const tts of conversationTtsNodes) {
-    assert.equal(conversationBuffers.length, 1, `${fileName} must contain one Conversation Buffer`);
-    assert.ok(
-      edges.some((edge: any) => edge.source === conversationBuffers[0].id
-        && edge.sourceHandle === 'response'
-        && edge.target === tts.id
-        && edge.targetHandle === 'conversation'),
-      `${fileName} must speak the exact response retained by Conversation Buffer`,
-    );
+    // The typed entry port accepts either role. Identify the assistant owner by
+    // the saved response that actually reaches speech, not by its input port.
+    const connects = (source: string, sourceHandle: string, target: string, targetHandle: string) =>
+      edges.some((edge: any) => edge.source === source && edge.sourceHandle === sourceHandle
+        && edge.target === target && edge.targetHandle === targetHandle);
+    const responseBuffers = conversationBuffers.filter((buffer: any) =>
+      connects(buffer.id, 'response', tts.id, 'conversation') || conversationSavers.some((saver: any) =>
+        connects(buffer.id, 'entries', saver.id, 'entries')
+        && connects(buffer.id, 'response', saver.id, 'passthrough')
+        && connects(saver.id, 'passthrough', tts.id, 'conversation')));
+    assert.equal(responseBuffers.length, 1,
+      `${fileName} must speak the exact response retained by one conversation owner`);
   }
 
   const innerBuffers = nodes.filter((node: any) => node.data?.nodeType === 'inner_dialogue_buffer');

@@ -131,6 +131,7 @@ export async function createOllamaLoraModel(input: CreateOllamaLoraModelInput): 
   const adapters = await discoverOllamaLoraAdapters(input.profileOutPath, input.baseModel)
   const adapter = adapters.find(candidate => candidate.name === input.adapterName)
   if (!adapter) throw new Error(`LoRA adapter not found: ${input.adapterName}`)
+  if (fs.existsSync(path.join(path.dirname(adapter.path), 'run.json'))) throw new Error('Review this personalization candidate in Training History; it must use its verified GGUF and activation gate')
   if (adapter.unavailableReason) throw new Error(adapter.unavailableReason)
 
   const requestedName = input.modelName?.trim()
@@ -138,40 +139,7 @@ export async function createOllamaLoraModel(input: CreateOllamaLoraModelInput): 
     : buildOllamaLoraModelName(input.baseModel, adapter.name)
   if (!requestedName) throw new Error('The derived Ollama model name is invalid')
 
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-ollama-lora-'))
-  const modelfilePath = path.join(tempDir, 'Modelfile')
-  fs.writeFileSync(
-    modelfilePath,
-    buildOllamaLoraModelfile(input.baseModel, adapter.path, input.parameters),
-    { encoding: 'utf-8', mode: 0o600 },
-  )
-
-  try {
-    const env = { ...process.env }
-    if (input.endpoint?.trim()) env.OLLAMA_HOST = input.endpoint.trim()
-    const commandOptions = {
-      env,
-      timeout: 15 * 60 * 1000,
-      maxBuffer: 10 * 1024 * 1024,
-    }
-    try {
-      await execFileAsync('ollama', ['create', requestedName, '-f', modelfilePath], commandOptions)
-    } catch (firstError) {
-      const detail = ((firstError as Error & { stderr?: string }).stderr || (firstError as Error).message).trim()
-      if (!/experimental/i.test(detail)) throw firstError
-      await execFileAsync(
-        'ollama',
-        ['create', requestedName, '-f', modelfilePath, '--experimental'],
-        commandOptions,
-      )
-    }
-  } catch (error) {
-    const commandError = error as Error & { stderr?: string }
-    const detail = commandError.stderr?.trim() || commandError.message
-    throw new Error(`Ollama could not create ${requestedName}: ${detail}`)
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true })
-  }
+  await createFromModelfile(requestedName, buildOllamaLoraModelfile(input.baseModel, adapter.path, input.parameters), input.endpoint)
 
   audit({
     level: 'info',
@@ -190,4 +158,25 @@ export async function createOllamaLoraModel(input: CreateOllamaLoraModelInput): 
     adapterName: adapter.name,
     baseModel: input.baseModel,
   }
+}
+/** One packaging command for both compatible adapters and merged GGUF candidates. */
+async function createFromModelfile(modelName: string, modelfile: string, endpoint?: string): Promise<void> {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-ollama-import-'))
+  try {
+    const file = path.join(tempDir, 'Modelfile')
+    fs.writeFileSync(file, modelfile, { mode: 0o600 })
+    await execFileAsync('ollama', ['create', modelName, '-f', file], {
+      env: { ...process.env, ...(endpoint ? { OLLAMA_HOST: endpoint } : {}) },
+      timeout: 30 * 60_000, maxBuffer: 10 * 1024 * 1024,
+    })
+  } catch (error) {
+    const failure = error as Error & { stderr?: string }
+    throw new Error('Ollama import failed: ' + (failure.stderr?.trim() || failure.message))
+  } finally { fs.rmSync(tempDir, { recursive: true, force: true }) }
+}
+
+export async function createOllamaGgufModel(modelName: string, ggufPath: string, endpoint: string): Promise<void> {
+  if (sanitizeOllamaModelName(modelName) !== modelName) throw new Error('Invalid candidate model name')
+  if (!fs.statSync(ggufPath).isFile()) throw new Error('GGUF candidate is missing')
+  await createFromModelfile(modelName, 'FROM ' + JSON.stringify(path.resolve(ggufPath)) + '\n', endpoint)
 }

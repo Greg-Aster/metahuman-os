@@ -430,6 +430,8 @@ export function preflightVLLMArtifacts(
 
 export interface VLLMModel {
   id: string;
+  root?: string;
+  parent?: string | null;
   object: string;
   created: number;
   owned_by: string;
@@ -1291,6 +1293,27 @@ export class VLLMClient {
       console.warn(`${LOG_PREFIX} Failed to list models:`, error);
       return [];
     }
+  }
+
+  /** Stage an explicit candidate using vLLM's existing runtime LoRA transport. */
+  async loadLoraAdapter(name: string, directory: string, baseModel: string): Promise<void> {
+    const models = await this.listModels();
+    if (!models.some(model => !model.parent && model.root === baseModel)) {
+      throw new Error('vLLM must serve the exact training base before loading this adapter');
+    }
+    const response = await fetch(`${this.endpoint}/v1/load_lora_adapter`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lora_name: name, lora_path: directory }), signal: AbortSignal.timeout(120000),
+    });
+    if (!response.ok) throw new Error('vLLM could not stage the adapter: ' + await response.text());
+    const loaded = (await this.listModels()).find(model => model.id === name);
+    if (loaded?.root !== directory || loaded.parent !== baseModel) throw new Error('vLLM did not confirm the exact adapter and training base');
+  }
+
+  async tokenizerInfo(): Promise<{ chat_template?: string }> {
+    const response = await fetch(`${this.endpoint}/tokenizer_info`, { signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error('vLLM tokenizer inspection is unavailable; serving template verification is required');
+    return response.json();
   }
 
   /**

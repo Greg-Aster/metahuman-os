@@ -1,4 +1,5 @@
 import { defineNode } from '../types.js'
+import { visualObservationOutput } from '../environment/visual-observation-output.js'
 
 const OBJECTIVE_STATES = [
   'achieved',
@@ -100,10 +101,12 @@ export const robotActionResultParserNode = defineNode({
   name: 'Interpret Robot Action Result',
   category: 'operator',
   inputs: [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact images supplied to the result-review model' },
     { name: 'response', type: 'any', description: 'Strict JSON from the Robot Action Result LLM' },
     { name: 'execution', type: 'object', description: 'Checkpointed execution whose objective may be affected by this result' },
   ],
   outputs: [
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation, including results without an objective' },
     { name: 'taskDecision', type: 'object', description: 'Validated task effect, or null when the returned action was standalone' },
     { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
   ],
@@ -114,11 +117,12 @@ export const robotActionResultParserNode = defineNode({
     const parsed = parseJson(inputs.response)
     const invalid = (error: string): never => { throw new Error(error) }
     if (!isRecord(parsed)) return invalid('Robot action result was not a JSON object.')
-    if (Object.keys(parsed).length !== RESULT_FIELDS.size || Object.keys(parsed).some(field => !RESULT_FIELDS.has(field))) {
+    if ([...RESULT_FIELDS].some(field => !(field in parsed)) || Object.keys(parsed).some(field => !RESULT_FIELDS.has(field) && field !== 'visualObservation')) {
       return invalid('Robot action result contains unexpected or missing fields.')
     }
     const response = cleanText(parsed.response, 500)
-    if (parsed.taskDecision === null) return { taskDecision: null, response }
+    const visualObservation = visualObservationOutput(parsed.visualObservation, inputs.frames)
+    if (parsed.taskDecision === null) return { taskDecision: null, response, visualObservation }
     if (!isRecord(parsed.taskDecision)) return invalid('Robot action result taskDecision must be an object or null.')
     const decision = parsed.taskDecision
     if (Object.keys(decision).length !== TASK_FIELDS.size || Object.keys(decision).some(field => !TASK_FIELDS.has(field))) {
@@ -162,6 +166,7 @@ export const robotActionResultParserNode = defineNode({
         completionEvidence,
       },
       response,
+      visualObservation,
     }
   },
 })

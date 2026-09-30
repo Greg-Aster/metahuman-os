@@ -28,6 +28,8 @@ export interface GraphSchedulerContract {
   skippedState: 'explicit';
   sideEffectOrder: 'serial-topological';
   maxLoopIterations: number;
+  /** Explicit input tail to resume when new input arrives as this invocation finishes. */
+  eventInputNodeId?: string;
 }
 
 export const DEFAULT_GRAPH_SCHEDULER: GraphSchedulerContract = {

@@ -4,6 +4,11 @@ This document is the chronological evidence ledger for the MetaHuman cleanup and
 refactor. The canonical program, principles, scope, and completion criteria live
 in `docs/technical/REFACTOR_BLUEPRINT.md`.
 
+Entries are dated historical evidence, including descriptions of subsequently
+retired behavior. They do not override current maintained-source ownership or
+authorize new work. Search relevant entries as needed; routine repairs do not
+require rereading this ledger or repeating its recorded checks.
+
 ## Completed System-Wide Refactor Goal - 2026-08-24 to 2026-08-25
 
 The Installation Owner opened a repository-wide refactor under the Engineering
@@ -3245,3 +3250,326 @@ Validation:
   Unrelated Agency/worktree changes were preserved. This repair did not replace
   the installed Site build, restart services, issue robot commands, change
   firmware, or verify physical behavior. No commit or push was requested.
+
+### 2026-09-09 — Selector progress contract and saved validation feedback
+
+- Baseline: the shared selector rejected a selected action paired with an
+  incomplete `continue` objective because both schema and parser required `act`.
+  A separate malformed answer was repeatedly parsed from its saved model output
+  without returning the validation error to that model.
+- Repaired the existing selector contract, editable Environment/Autonomy prompts
+  and public graph copies. Action selection and objective progress are independent;
+  goals remain optional and pending work still cannot establish completion.
+- The existing graph scheduler now checkpoints typed input-validation feedback
+  and continues the same model and consumer in the same execution, preserving the
+  original context, objective, criteria, routing and settings. Valid answers need
+  no additional inference. Removed duplicate terminal error logging; intentional
+  interruption keeps its event and AbortError without repeated error stacks.
+- Independent review found and reverified two corrections: an already evaluated
+  sibling, including a skipped branch, cannot be invalidated by regeneration;
+  later child transport/checkpoint failures must retain their actual error rather
+  than an earlier parser error. Completed effects are not replayed, and cancellation
+  at saved feedback performs no further inference or dispatch.
+- Verification: 219 durable tests pass, including 24 actual saved-workflow and
+  17 executor tests; four Environment graph tests, 38 graph validations,
+  selector training validation, Core/Brain/tests/Site type checks, architecture,
+  isolated Site build and its compiled startup compatibility test pass. Updated
+  three obsolete assertions to verify the corrected contract, not act-only goals.
+  Existing node-documentation/editor-field and Vite warnings remain reported.
+- Evidence and commands: `/tmp/metahuman-selector-repair-vE0l4S/README.md`;
+  independent probes: `/tmp/metahuman-correction-review-3qa3JL/`. No new scheduler,
+  store, dependency, forced speech/motion, or physical retry was added. Concurrent
+  Agency/documentation changes were preserved; another actor committed shared
+  source during this repair. This repair did not stage, commit or push.
+- Separate hardware limitation: a host action receipt remains `started` without
+  terminal feedback. Available logs do not establish the missing ACK/DONE or
+  post-motion-capture cause. Authenticated gateway/serial evidence is still needed;
+  no timeout, fabricated completion, replay or firmware change was applied. No
+  installed build replacement, service restart or physical success is claimed.
+
+### 2026-09-09 — Selector provider contract and execution input continuity
+
+- Baseline: a later stalled execution made 70 selector calls without dispatch.
+  Independent probes proved that the installed Ollama grammar converter ignored
+  the shared selector schema's root `allOf` refinements. Replaced that encoding
+  with complete alternatives; kept all advertised presets, capture, freestyle,
+  optional objectives and speech, and the existing parser. Removed the obsolete
+  overlapping schema switches rather than weakening validation or raising limits.
+- Removed duplicate downstream conversation-window/text truncation. The history
+  node owns its configured window, and the intent LLM still chooses which context
+  the selector receives. Current Execution now exposes taskless waiting work and
+  each execution's actual input capability; Environment intent receives its own
+  current execution when resumed.
+- Parent workflows own result → received input → remaining objective ordering.
+  Removed the duplicate continuation tail from Action Result. Existing event/result
+  waits preserve input received during robot or specialist work. The existing
+  scheduler resumes the graph-declared input tail for late input without replaying
+  earlier decisions/effects. SQLite completion and input admission serialize;
+  committed duplicate handoffs return their receipt, and terminal executions
+  explicitly reject new input. Audit receipts alone do not restart model work.
+- The saved input entry is visible/configurable in the existing graph inspector;
+  runtime and authoring validation reject a missing, muted or conditional receiver.
+  Environment, Autonomy Executor, Controller and Goal Review use the same node
+  contracts. No parallel runtime, queue, store, physical timeout, forced motion,
+  phrase-specific routing or automatic physical retry was introduced.
+- Independent public-entrypoint and actual Coordinator-preemption probes pass,
+  including same-parent follow-up, duplicate wakes, specialist input, atomic
+  finalization and reopen. Detailed final check results and exact commands are
+  recorded in `/tmp/metahuman-decision-continuity-repair-m4WEqw/README.md` and
+  `/tmp/metahuman-selector-provider-review-Y5UHgs/README.md`; baseline and repaired
+  data flow are in `environment-followup-context-review-2026-09-09.md`.
+- Concurrent training/memory work was preserved. This repair does not cancel or
+  restart historical executions, replace the installed build, restart services,
+  edit firmware, or claim live recognition/waving. The original missing physical
+  terminal receipt remains unproven; the owner's cancellation released that wait.
+
+- Resumed verification initially passed 225/225 durable tests. Independent review
+  then reproduced duplicate user-message admission across the new input-memory
+  prefix and an execution handoff. The existing handoff now preserves the original
+  typed entry, key and timestamp through explicit User Input/Buffer connections.
+  The unchanged persistence owners keep one entry and one memory; a separate
+  identical-text request retains a fresh identity. The independent original probe
+  and maintained integration test both pass after repair.
+- Corrected test assumptions about the old direct input edge, typed entries always
+  being assistant responses, and chat handlers running without the authenticated
+  context provided by their real route. Assertions on delivery, failure, waiting,
+  cancellation and exact saved speech remain intact; independent review verified
+  these changes. No production auth/history-reset code was altered by this task.
+- The previous broad verification encountered concurrent source changes from the
+  memory-reset work, including Queue, response buffer and TTS. Compiled checks
+  passed for the 16:18 snapshot, but the later restart test correctly rejected a
+  changed executable. A stable-source full verification was still required. Exact
+  results and preserved failing logs remain in the existing evidence README.
+- After the other agent finished, stable-source verification passed all 226
+  durable tests, including new-process recovery. Corrected two stale build-test
+  assumptions: Dual Mode's former 21-node shape and direct Buffer → TTS wiring.
+  Tests now check the actual input save chain and saved-response speech route,
+  reject bypasses, and retain existing loop/failure/ownership assertions; an
+  independent reviewer verified both corrections. Production code was unchanged
+  by these test repairs. All build-chain typecheck packages, remaining validation
+  stages, architecture/remote-safety, graph artifact parity, exact-input capture,
+  isolated Site build and compiled compatibility pass on the same source. The
+  installed build and robot were not changed or tested physically.
+
+
+### 2026-09-09 — Bounded continuation identity and decision correction
+
+- Reproduced nested saved-workflow IDs exceeding Memory Capture's 512-character
+  contract, and empty Executor instructions terminating Controller/Goal Review
+  instead of returning to the existing model-output correction path.
+- Replaced recursively expanded occurrence IDs at the graph runtime owner with
+  bounded deterministic identities. Preserved checkpoint ancestry, specialist
+  return wrappers, existing receipts and executable-version checks. Aligned the
+  two decision schemas with their parsers and classified invalid model answers
+  for the existing correction mechanism; no additional scheduler/router, forced
+  action/speech, raised memory limit or new retry path.
+- All 230 durable tests, Core/tests types, 38 graphs, Environment/Dual checks, TTS
+  ownership/acknowledgement tests, architecture, diff check, isolated Site build
+  and compiled startup verification pass. Independent installed-provider grammar
+  review passed 281 cases with no blocker. Six action cycles, memory identities,
+  duplicate receipts and same-version process restart were exercised without
+  live robot/model effects. Findings and evidence:
+  `environment-followup-context-review-2026-09-09.md` and
+  `/tmp/metahuman-continuation-identity-14AiaV/README.md`. No service restart,
+  installed-build replacement or replay of historical failed work was performed.
+
+### 2026-09-09 — Conversation learning and training repair
+
+- Updated the research comparison with the supplied independent review before implementation. Baseline capture/idempotency, Curator, dataset, dependency and lifecycle failures are retained in `conversation-learning-training-review-2026-09-09.md`; final owners, removals and evidence are in `conversation-learning-training-repair-2026-09-09.md`.
+- Repaired exact durable capture, encrypted storage, source-hash curation, objective-aware chronological examples, deterministic replay and independent historical splits. Removed competing aggregation, formatter, exporter, schema, config and full-trainer paths. One shared trainer now verifies native-template supervision and serialized artifacts.
+- Core admission/process history and the existing Brain cycle serve UI, CLI and finite Sleep training. RunPod cleanup requires confirmed absence and exposes restart recovery. History provides actual serving comparisons, decisions, approval suspension, Model Settings and rollback. Role assignments own selection; legacy adapter flags and root writes from persona controls were removed.
+- Validation: 28 focused TypeScript files, 14 Curator tests, ten Python tests including two real GPU optimizer/reload cases, Core/Brain/CLI/Site type checks, isolated Astro build, 38 graphs, node defaults, security routes, user-path and architecture guardrails passed. Actual styled training components passed synthetic browser interaction and failure checks. A complete local launcher-to-terminal synthetic 0.8B LoRA job completed in 58 seconds, released its process and left its candidate unassigned.
+- The unrelated Environment image assertion in `providers/multimodal.spec.ts` still has a fixture mismatch reproduced from the starting revision. Existing node-documentation/editor-field and Vite warnings remain disclosed. Personal-data training, paid RunPod execution, Docker deployment, installed artifact serving, service restart and physical results are not claimed. Concurrent Environment/Robot/Flow Editor work was preserved. No commit or push was made.
+
+### 2026-09-09 — Profile memory reset repair
+
+- Baseline proved a disconnected settings request, missing confirmation, deletion
+  of shared session/process/audit storage, retained conversation and execution
+  history, and an unsupported model-reset promise. Findings and final evidence are
+  recorded in `factory-reset-review-2026-09-09.md`.
+- Repaired the existing Security Settings control and `/api/reset-factory` owner.
+  Storage owns confined deletion; Work Coordinator and the existing lock owner
+  exclude unfinished work and new admission; the checkpointer retires terminal
+  execution data; existing buffer/cache and speech owners clear their histories.
+  Exact account confirmation, storage checks and explicit incomplete-operation
+  errors replace the unsafe deletion path. No parallel reset service was added.
+- The UI and user guide state the retained account, persona, tasks, projects,
+  settings, training artifacts, shared security state and other profiles, and
+  link to existing Queue and AI Training controls. Model behavior is unchanged.
+- Validation passed: 12 reset regressions; focused owner tests including 30
+  recovery tests; Work Coordinator contract; Core/Site type checks; 14 security
+  checks; user-path and architecture/remote-safety guardrails; and 12 browser
+  checks through the actual authenticated HTTP route on synthetic data.
+- The Site build passed and updated the installed generated files while the
+  application was stopped. Correct route/token/label and removal of the obsolete
+  client URL were verified in that build. Existing Vite import warnings remain.
+  No real profile was reset, service restarted, physical result claimed, commit
+  created or push performed. Temporary probe processes were stopped, and
+  concurrent training/Environment/Graph Editor work was preserved.
+
+### 2026-09-09 — Reset conflict from expired execution ownership
+
+- A real reset returned 409 because a cancelled execution retained an owner ID
+  after its lease expired. Read-only inspection established that no unfinished
+  Coordinator work or unresolved dispatch explained the initial refusal.
+- Corrected the existing checkpointer's reset, direct retirement and retention
+  paths to honor the store's lease validity. Deletion rechecks ownership inside
+  its SQLite transaction; live writers and unresolved effects remain protected.
+  No manual database cleanup, synthetic cancellation or bypass was added.
+- All 13 reset tests, 22 store tests and 11 recovery tests passed, plus Core types,
+  architecture/remote-safety, the separate Site build, compiled runtime check and
+  diff checks. Failing baseline and corrected behavior are documented in the
+  factory reset audit. Concurrent code was preserved.
+- The verified build is ready in the Site package's ignored cache. A new
+  conversation became active, so installing it awaits an authorized restart.
+  No real memory reset, direct profile-state edit, commit or push was performed.
+
+### 2026-09-09 — Objective decision and selected-image continuity
+
+- Repaired the existing selector contract: model-authored objective/criteria come
+  before its outcome; the redundant model completion boolean is derived internally.
+  Optional goals, speech, preset/freestyle choices and model assignments remain.
+- Environment Context Builder receives the Image Input node's selected image and
+  matching frame metadata, retaining recorded time without discarding saved views.
+  Removed independent metadata selection and unrelated old-intent carry-forward;
+  Robot Status projects active goal/intent from one execution.
+- 233 durable tests, motion/vision/corpus/graph checks, types, architecture and an
+  isolated Site build pass. Independent review verified provider grammar and the
+  image correction. Repeated local-model selector/review calls kept a conversational
+  objective open; visual judgments still vary. No deployed or physical success is
+  claimed. Evidence is linked in the Environment follow-up audit's repair section.
+
+### 2026-09-10 — Saved-execution input handoff
+
+- Reproduced input routed into an older, incompatible execution and a successful
+  handoff misreported as missing chat output. Consolidated discovery/delivery/
+  resume checks at the existing graph contract; incompatible work stays visible
+  with its reason, without silently rewriting objectives or resetting history.
+- Existing chat handlers report committed handoffs as progress and finish their
+  UI tracking without requiring speech. Cancellation, original-input identity,
+  compatible continuation and LLM routing choices are preserved. No parallel
+  execution owner, dependency, prompt or behavioral restriction was introduced.
+- Independent review verified import order, authenticated handoff admission,
+  concurrent duplicate delivery and both chat terminal handlers. Findings and
+  verification evidence are in the Environment follow-up audit and
+  `/tmp/metahuman-handoff-repair-Q5YzpA/README.md`. The separate build does not
+  replace the running site; deployment and physical behavior remain unverified.
+- Final verification passes: 236 durable tests, UI/transport and Environment/Dual
+  contracts, Core/test/Site types, 38 valid graphs, architecture/remote safety,
+  isolated Site build, compiled-runtime compatibility and diff checks.
+
+### 2026-09-10 — Development-agent instruction consolidation
+
+- Baseline: root guidance mixed current authority with a 3,435-line history
+  ledger; obsolete provider instructions required blanket logging and referenced
+  retired modules. The root build explicitly registered the TTS delivery test twice.
+- Kept `AGENTS.md` as the shared instruction owner, reduced it from 294 to 180
+  lines, and replaced `CLAUDE.md`/`GEMINI.md` with five-line pointers. Root pointers
+  are eligible for version control; nested and machine-local settings stay ignored.
+- Added bounded discovery, acceptance/stop criteria, evidence reuse, task-scoped
+  diff review and concurrent-work isolation. Preserved ownership, deletion safety,
+  authorization, privacy and truthful validation requirements. Missing behavior
+  in an existing owner no longer implies an artificial deletion requirement.
+- Aligned the blueprint, audit protocol, indexes and this ledger on history versus
+  current policy. Removed the duplicated TTS registration from the durable suite;
+  `validate:tts-delivery-queue` remains its owner in the root build.
+- Validation passed: the same 48 explicit unique test files and 37 leaf commands
+  remain reachable from the root build; the duplicate now occurs once. Both files
+  in `pnpm validate:tts-delivery-queue` passed. Architecture/remote-safety guard
+  reported zero violations; policy JSON, guidance links, ignore boundaries and
+  scoped diff checks passed. No assertions, runtime logic or dependencies changed.
+- Full build and live-agent adoption/task-duration measurements were not run;
+  validation covers instructions, policy and the affected test command only.
+
+
+## Build and Verification Separation - 2026-09-10
+
+- Root `package.json` now makes `pnpm build` the Site build and preserves the old
+  complete chain as `pnpm verify`. Server Update calls `verify` before success;
+  its existing failure and concurrent-update tests remain enforced. Startup,
+  deployment, and agent guidance describe the command split.
+- TypeScript checks reuse separate ignored `node_modules/.cache/*.tsbuildinfo`
+  files. No compiler diagnostics were disabled, dependencies added, or parallel
+  validator runner introduced. Stateful checks remain sequential.
+- `scripts/validate-agent-monitor.ts` sets a temporary runtime root before Core
+  imports and disconnects the event bus. It copies maintained catalog fixtures
+  and reads source assertions from the repository. Removed the live-file
+  snapshot/restore helper. Its registered regression runs the validator once,
+  checks all 70 assertions completed, detects even restored installation writes,
+  and verifies temporary-state cleanup.
+- Evidence: Core typecheck passed at 8.50 seconds without caching, 8.94 seconds
+  populating its cache, and 3.66 seconds warm. The root Site build passed in
+  22.38 seconds with temporary output and the compiled runtime checker present.
+  The seven updater tests, update ownership guard, and monitor isolation test
+  passed. Final script typechecking passed after adding the write watcher.
+- Full `pnpm verify`: all workspace typechecks and architecture checks passed;
+  architecture reported zero violations. The durable-execution stage completed
+  with 228 passes and two failures in the unchanged-by-this-task
+  `packages/core/src/durable-execution/workflows.spec.ts`: equivalent editor-save
+  resume left an unexpected fixture command, and speech-only objective completion
+  retained its instruction. Its later validator chain and build were not reached;
+  relevant changed-owner checks and the Site build passed separately. No unrelated
+  workflow code or assertions were changed to make this gate pass.
+- Initial validation encountered sandbox child-process I/O restrictions and
+  temporary-output dependency resolution; affected checks passed after using
+  authorized process execution and linking installed dependencies for that output.
+  This is source/build evidence; no live update, deployment, or robot action ran.
+
+### 2026-09-10 — Agency history participates in memory reset
+
+- Baseline: memory deletion omitted Agency history because its canonical storage
+  lives under persona. The Dashboard continued to show older persisted desires.
+- The existing reset handler now consumes Agency-owned history paths, including
+  plans, reviews, executions, scratchpads, legacy records, migration backups,
+  generator history and metrics. Persona identity and Agency configuration remain.
+  Storage applies the existing reset exclusion to Agency writes; Agency persistence
+  propagates failures instead of silently accepting refused writes. The existing
+  Security Settings control and account guide explain the expanded scope.
+- All 15 reset regressions, focused Agency/storage tests, Core/Site types,
+  architecture/remote safety, Site build, and compiled runtime verification pass.
+  Twelve synthetic browser checks pass through the real authenticated reset route,
+  including Agency erasure, retained settings/other profiles and queue refresh.
+- The authorized live cleanup erased older Agency desires and their associated
+  history while preserving today's memories. The verified build was installed
+  while the Site was stopped; a separate launcher started it and HTTP readiness
+  was confirmed. Temporary test processes were stopped; no commit or push occurred.
+- Details and evidence boundaries are in the Agency follow-up section of
+  `factory-reset-review-2026-09-09.md`. Earlier chronological entries about pending
+  restart or read-only live-profile inspection describe their original operations.
+
+
+## 2026-09-15 — On-demand Terminal agent and session ownership
+
+- **Scope/owner:** `packages/core/src/terminal/` now owns PTYs, bounded screen
+  snapshots, provider admission/execution, and verified process-session cleanup;
+  `brain/services/terminal.ts` registers it with Agent Monitor. The feature is
+  disabled at boot by default, with no automatic restart or model use by the
+  service itself. Shell and provider sessions require an explicitly started agent.
+- **Baseline:** [terminal review](system-terminal-integration-review-2026-09-15.md)
+  documented unauthenticated localhost iframes, browser-owned shell lifetime,
+  discarded cleanup failures, late mount work, provider admission races, worker
+  polling, and a resurrected debug connection.
+- **Changes/removals:** replaced ttyd/iframes/port allocation with private Unix
+  IPC and owner-authenticated API streams, grouped and lazily loaded the UI,
+  removed the worker/transcript polling path, obsolete routes/configuration/tab
+  restoration, and bundled ttyd. The standalone debug page remains supported via
+  authenticated SSE; the internal bus is loopback-only and rejects browser origins.
+  Shared transport no longer exits ahead of service signal handlers. Provider
+  configuration resolves through the canonical installation root; failed provider
+  cleanup prevents committing a disable/provider change.
+- **Evidence:** real PTY retention, alternate-screen snapshots, resize, background
+  job cleanup, concurrent close, retained failed stops, provider overlap/cancel/
+  timeout/missing executable, logout stream revocation, offline crash recovery,
+  OS boot identity, and Agent Monitor launch/stop have isolated regression coverage
+  (22/22 terminal/transport/UI checks). Browser
+  component checks exercise start/create/failed close/hide/reopen/stop using
+  fixture responses. Core, Brain, CLI and Site typechecks, Site build, security
+  routes (14/14), Agent Monitor (70/70), and architecture checks passed; focused
+  process-runner/event-bus tests passed. The final validation results are recorded
+  in the task conversation after the last edits.
+- **Limits:** Linux process-session verification is required. Tests do not prove
+  a live installation restart or external provider completion. An initial fixture
+  test exposed a pre-existing cwd-based provider-config lookup and selected the
+  installation provider; the test invocation ended, the path owner was corrected,
+  and the provider suite subsequently passed with local fixtures. No live service
+  was deliberately started or restarted, and no commit/publication was requested.

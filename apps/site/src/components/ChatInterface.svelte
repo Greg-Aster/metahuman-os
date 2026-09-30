@@ -6,7 +6,6 @@
   import MessageList from './chat/MessageList.svelte';
   import ApprovalPrompt from './ApprovalPrompt.svelte';
   // Operator proposals are rendered inline by OperatorProposalCard.
-  import TerminalManager from './TerminalManager.svelte';
   import { canUseOperator, currentMode, isOwner } from '../stores/security-policy';
   import { yoloModeStore } from '../stores/navigation';
   import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
@@ -46,7 +45,6 @@
   let bigBrotherReady = false;
   let bigBrotherProviderLabel = 'Claude Code';
   let chatResponseHandle: ConnectionHandle | null = null;
-  let bigBrotherVisibilityHandle: ConnectionHandle | null = null;
   let chatResponseStream: EventSource | null = null;
   let activeChatTaskId: string | null = null;
   let reconcilingChatTaskId: string | null = null;
@@ -451,32 +449,6 @@
       } catch (error) {
         console.error('[big-brother] Failed to load config:', error);
       }
-
-      // Active Operator can escalate without a user pressing Send. Keep one
-      // lightweight owner-only listener so that path can reveal the same
-      // terminal split while the server-owned provider process is running.
-      try {
-        bigBrotherVisibilityHandle = connectionPool.request({
-          id: 'big-brother-visibility-stream',
-          name: 'Big Brother Terminal Visibility',
-          url: '/api/big-brother/terminal-events',
-          priority: ConnectionPriority.LOW,
-          viewDependency: 'chat',
-          defer: true,
-          onMessage: event => {
-            try {
-              const data = JSON.parse(event.data);
-              if (data.type === 'open_tab' || data.type === 'terminal_ready') {
-                terminalVisible = true;
-              }
-            } catch {
-              // Ignore malformed observer events; chat and terminal state remain server-owned.
-            }
-          },
-        });
-      } catch (error) {
-        console.warn('[big-brother] Could not subscribe to terminal visibility events:', error);
-      }
     }
 
     // Check LLM backend health status
@@ -729,8 +701,6 @@
     chatResponseStream?.close();
     queuedChatStreams.forEach(stream => stream.close());
     queuedChatStreams.clear();
-    bigBrotherVisibilityHandle?.close();
-    bigBrotherVisibilityHandle = null;
     disconnectAllBufferStreams();
     disconnectProposalsStream(); // Clean up proposals SSE stream
     activityApi.clearActivity();
@@ -889,7 +859,10 @@
           close();
           restorePassiveChatStreams();
         } else if (type === 'queued_task_completed') {
+          thinkingTraceApi.stop();
+          loading = false;
           close();
+          restorePassiveChatStreams();
         }
       } catch (err) {
         messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Failed to process queued response.'}`);
@@ -1753,9 +1726,6 @@
                 thinkingTraceApi.appendTrace(`[${timestamp()}] ✓ ${progressMsg}`, 15);
               } else if (data.step?.startsWith('big_brother_')) {
                 terminalVisible = true;
-                if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('metahuman:big-brother-session-starting'));
-                }
                 // Big Brother status updates - show prominent status WITH TIMESTAMPS
                 if (data.step === 'big_brother_init') {
                   thinkingTraceApi.setStatusLabel('🤖 Big Brother initializing...');
@@ -1825,6 +1795,15 @@
             pushGeneratedResponse(data.response, requestComposeTarget, { facet: data.facet });
 
             loading = false;
+            chatResponseStream?.close();
+            chatResponseStream = null;
+            restorePassiveChatStreams();
+          } else if (type === 'queued_task_completed') {
+            clearConnectionTracking();
+            activeChatTaskId = null;
+            thinkingTraceApi.stop();
+            loading = false;
+            reasoningStages = [];
             chatResponseStream?.close();
             chatResponseStream = null;
             restorePassiveChatStreams();
@@ -2224,7 +2203,6 @@
   function updateBigBrotherUiState() {
     const providerLabels: Record<string, string> = {
       'claude-code': 'Claude Code',
-      'open-interpreter': 'Open Interpreter',
       'aider': 'Aider',
       'gemini-cli': 'Gemini CLI',
       'qwen-code': 'Qwen Code',
@@ -2687,7 +2665,13 @@
         style={`height: ${terminalHeight}px; flex: none;`}
       >
         <div class="terminal-content">
-          <TerminalManager watchBigBrother={bigBrotherEnabled && (bigBrotherProvider === 'claude-code' || bigBrotherProvider === 'codex')} />
+          {#await import('./terminal/TerminalPanel.svelte')}
+            <p>Loading terminal…</p>
+          {:then module}
+            <svelte:component this={module.default} />
+          {:catch error}
+            <p role="alert">Unable to load terminal: {error.message}</p>
+          {/await}
         </div>
       </div>
     {/if}

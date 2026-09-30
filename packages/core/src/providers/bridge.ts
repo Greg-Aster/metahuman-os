@@ -166,7 +166,7 @@ export async function callProvider(
     const preferredBackend = operatorConfig?.bigBrotherMode?.provider;
     await ensureBackendsInitialized();
     const backend = preferredBackend
-      ? getBackend(preferredBackend) || getActiveBackend(username)
+      ? getBackend(preferredBackend)
       : getActiveBackend(username);
     const backendName = preferredBackend || backend?.name || 'Big Brother';
     const resolvedBackendId = backend?.id || preferredBackend
@@ -331,7 +331,7 @@ export async function callProvider(
         }
         throw new Error(`vLLM provider requested but active backend is ${backendConfig.activeBackend}. Switch the backend to vLLM or update the model role assignment.`);
       }
-      return callVLLMProvider(messages, options, backendConfig.vllm.endpoint, onProgress);
+      return callVLLMProvider(messages, options, backendConfig.vllm.endpoint, onProgress, options.model);
     }
 
     case 'mock':
@@ -542,6 +542,9 @@ async function callOllamaProvider(
   const backendConfig = loadBackendConfig();
   const ollamaConfig = backendConfig.ollama;
   const model = options.model || ollamaConfig.defaultModel;
+  const username = getUserContext()?.username;
+  const { assertTrainingModelApproved } = await import('../adapters.js');
+  await assertTrainingModelApproved(username, 'ollama', model);
   ollama.setEndpoint(ollamaConfig.endpoint);
   const imagePolicy = providerImagePolicyFromOptions(options)
   const contentInspection = inspectProviderMessages(messages, imagePolicy)
@@ -698,11 +701,12 @@ async function callVLLMProvider(
   messages: ProviderMessage[],
   options: ProviderOptions,
   endpoint: string,
-  onProgress?: ProviderProgressCallback
+  onProgress?: ProviderProgressCallback,
+  requestedModel?: string,
 ): Promise<ProviderResponse> {
   const backendConfig = loadBackendConfig();
-  // Always use the vLLM backend's configured model - vLLM only loads one model at startup
-  // and doesn't understand Ollama model names (e.g., qwen3.5:9b vs a Hugging Face model ID)
+  // Cross-backend routing uses the configured base. An explicit vLLM role may
+  // select a loaded LoRA name and must not be silently replaced by the base.
   let vllmStartConfig: VLLMConfig = buildVLLMStartConfig(backendConfig);
   const username = getUserContext()?.username;
   if (username) {
@@ -722,10 +726,13 @@ async function callVLLMProvider(
         loraDtype: loraConfig.loraDtype,
       };
     } catch (error) {
-      console.warn('[provider-bridge] Could not resolve vLLM LoRA configuration:', error);
+      throw new Error('Cannot resolve the configured vLLM adapters: ' + (error as Error).message);
     }
   }
-  const model = vllmStartConfig.servedModelName || backendConfig.vllm.model || options.model || 'default';
+  const baseModel = vllmStartConfig.servedModelName || backendConfig.vllm.model;
+  const model = requestedModel && ![backendConfig.vllm.model, vllmStartConfig.model].includes(requestedModel)
+    ? requestedModel : baseModel;
+  if (!model) throw new Error('No vLLM model is configured');
 
   // Log active backend once
   if (!backendLoggedOnce) {
@@ -785,10 +792,9 @@ async function callVLLMProvider(
     }
   }
 
-  onProgress?.({
-    phase: 'loading',
-    message: `Connecting to vLLM (${model})...`,
-  });
+  const { assertTrainingModelApproved } = await import('../adapters.js');
+  await assertTrainingModelApproved(username, 'vllm', model);
+  onProgress?.({ phase: 'loading', message: `Connecting to vLLM (${model})...` });
 
   // Temporarily set endpoint on vllm client
   const originalEndpoint = (vllm as any).endpoint;

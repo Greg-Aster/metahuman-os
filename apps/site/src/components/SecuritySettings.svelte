@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { statusRefreshTrigger } from '../stores/navigation';
+  import { activeView, rightSidebarOpen, statusRefreshTrigger } from '../stores/navigation';
   import ProfileDangerZone from './ProfileDangerZone.svelte';
   import ProfileCreation from './ProfileCreation.svelte';
   import { apiFetch } from '../lib/client/api-config';
@@ -66,8 +66,11 @@
   // Reference to ProfileDangerZone component for refreshing
   let profileDangerZone: any;
 
-  // Factory reset state
+  // Profile memory reset state
   let resettingFactory = false;
+  let resetUsername = '';
+  let resetError = '';
+  let resetComplete = false;
 
   onMount(async () => {
     await fetchCurrentUser();
@@ -535,19 +538,22 @@
   }
 
   async function resetFactorySettings() {
-    if (resettingFactory) return;
-    const confirmed = window.confirm('This will erase all memories, logs, and conversations, and restore factory defaults. This action cannot be undone. Continue?');
-    if (!confirmed) return;
-
+    if (resettingFactory || !currentUser || resetUsername !== currentUser.username) return;
     resettingFactory = true;
+    resetError = '';
+    resetComplete = false;
     try {
-      const res = await apiFetch('/api/factory-reset', { method: 'POST' });
-      if (!res.ok) throw new Error('Factory reset failed');
-      alert('Factory reset complete. The page will now reload.');
-      window.location.reload();
+      const res = await apiFetch('/api/reset-factory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmToken: 'CONFIRM_FACTORY_RESET', confirmUsername: resetUsername }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.success !== true) throw new Error(data.error || 'Memory reset failed');
+      resetComplete = true;
+      resetUsername = '';
     } catch (err) {
-      console.error('[SecuritySettings] Factory reset error:', err);
-      alert(`Factory reset failed: ${(err as Error).message}`);
+      resetError = err instanceof Error ? err.message : 'Memory reset failed';
     } finally {
       resettingFactory = false;
     }
@@ -1106,16 +1112,38 @@
         {/if}
       </div>
 
-      <!-- Factory Reset (Owner Only) -->
+      <!-- Profile Memory Reset (Owner Only) -->
       {#if currentUser.role === 'owner'}
         <div class="py-6 border-b border-red-500/30 first:pt-0 last:border-b-0 last:pb-0">
-          <h3 class="text-lg font-semibold text-red-800 dark:text-red-200 m-0 mb-3">⚠️ Factory Reset</h3>
+          <h3 class="text-lg font-semibold text-red-800 dark:text-red-200 m-0 mb-3">Reset profile memory</h3>
           <p class="text-sm text-red-700 dark:text-red-300 m-0 mb-4">
-            Delete all memories, conversations, and logs, and restore the default GPT-OSS base model. This action is permanent and cannot be undone.
+            Permanently clear memories, Agency desires and their plans, reviews and history,
+            conversation and inner-dialogue history, queued speech, saved workflow history, and profile logs for <strong>{currentUser.username}</strong>.
           </p>
-          <button class="btn-danger" on:click={resetFactorySettings} disabled={resettingFactory}>
-            {resettingFactory ? 'Resetting…' : 'Reset to Factory Settings'}
+          <p class="text-sm m-0 mb-4">
+            Your account, persona identity, tasks, projects, settings (including Agency settings), and previously generated training datasets and models remain.
+            Shared security logs and other profiles remain. This does not change a trained model's learned behavior.
+          </p>
+          <p class="text-sm m-0 mb-4">
+            Reset also ends inactive conversations and workflows waiting for input or authorization.
+            Finish or cancel running work before resetting.
+            <button class="underline" on:click={() => rightSidebarOpen.set(true)}>Open the right sidebar</button>
+            and choose Queue. Stop training in <button class="underline" on:click={() => activeView.set('training')}>AI Training</button>.
+          </p>
+          <label class="block text-sm mb-2" for="memory-reset-username">Type {currentUser.username} to confirm</label>
+          <input id="memory-reset-username" class="w-full p-2 mb-3 border rounded bg-white dark:bg-gray-800"
+            bind:value={resetUsername} autocomplete="off" spellcheck={false} disabled={resettingFactory} />
+          <button class="btn-danger" on:click={resetFactorySettings}
+            disabled={resettingFactory || resetUsername !== currentUser.username}>
+            {resettingFactory ? 'Resetting memory…' : 'Reset profile memory'}
           </button>
+          {#if resetError}
+            <p role="alert" class="text-red-700 dark:text-red-300 mt-3">{resetError}</p>
+          {/if}
+          {#if resetComplete}
+            <p role="status" class="mt-3">Memory reset completed for {currentUser.username}.</p>
+            <button class="underline" on:click={() => window.location.reload()}>Reload application</button>
+          {/if}
         </div>
       {/if}
     </div>

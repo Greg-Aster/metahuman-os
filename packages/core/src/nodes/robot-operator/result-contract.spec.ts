@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { NodeInputValidationError } from '../types.js'
+import { withVisualObservationSchema } from '../../visual-observation.js'
 import {
   ROBOT_ACTION_RESULT_JSON_SCHEMA,
   robotActionResultParserNode,
@@ -22,11 +24,19 @@ test('robot result parsers derive completion and expose instructions only for co
   assert.equal('continuationPolicy' in ROBOT_ACTION_RESULT_JSON_SCHEMA.properties.taskDecision, false)
   assert.equal('objective' in ROBOT_ACTION_RESULT_JSON_SCHEMA.properties.taskDecision, false)
   assert.equal('allOf' in ROBOT_GOAL_REVIEW_JSON_SCHEMA, false)
-  assert.equal('objectiveComplete' in ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties, false)
-  assert.equal('continuationPolicy' in ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties, false)
-  assert.equal('objective' in ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties, false)
-  assert.match(ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties.response.description, /outcome token/i)
-  assert.match(ROBOT_GOAL_REVIEW_JSON_SCHEMA.properties.outcome.description, /not spoken/i)
+  for (const branch of ROBOT_GOAL_REVIEW_JSON_SCHEMA.anyOf) {
+    assert.equal('objectiveComplete' in branch.properties, false)
+    assert.equal('continuationPolicy' in branch.properties, false)
+    assert.equal('objective' in branch.properties, false)
+    assert.match(branch.properties.response.description, /outcome token/i)
+    assert.match(branch.properties.outcome.description, /not spoken/i)
+    assert.equal(branch.properties.instruction.minLength,
+      branch.properties.taskId.enum.includes('robot-autonomy-executor') ? 1 : undefined)
+    assert.equal(branch.properties.completionEvidence.minLength,
+      branch.properties.outcome.enum.includes('complete') ? 1 : undefined)
+    assert.equal(branch.additionalProperties, false)
+    assert.deepEqual(branch.required.slice().sort(), Object.keys(branch.properties).sort())
+  }
 
   const actionResult = await robotActionResultParserNode.execute({
     response: JSON.stringify({
@@ -162,11 +172,16 @@ test('Robot Autonomy Controller exposes one contextual task choice from its supp
     tags: ['robot'],
   }]
   assert.deepEqual(
-    buildRobotAutonomyControllerJsonSchema(availableTasks).properties.taskId.enum,
-    ['robot-autonomy-executor', 'none'],
+    buildRobotAutonomyControllerJsonSchema(availableTasks).anyOf.flatMap(branch => branch.properties.taskId.enum),
+    ['none', 'robot-autonomy-executor'],
   )
   assert.equal('allOf' in buildRobotAutonomyControllerJsonSchema(availableTasks), false)
-  assert.equal('minLength' in buildRobotAutonomyControllerJsonSchema(availableTasks).properties.instruction, false)
+  for (const branch of buildRobotAutonomyControllerJsonSchema(availableTasks).anyOf) {
+    assert.equal(branch.properties.instruction.minLength,
+      branch.properties.taskId.enum.includes('robot-autonomy-executor') ? 1 : undefined)
+    assert.equal(branch.additionalProperties, false)
+    assert.deepEqual(branch.required.slice().sort(), Object.keys(branch.properties).sort())
+  }
 
   const executor = await robotAutonomyControllerParserNode.execute({
     response: JSON.stringify({
@@ -193,7 +208,8 @@ test('Robot Autonomy Controller exposes one contextual task choice from its supp
       }),
       availableTasks,
     }, {}, {}),
-    /requires one high-level instruction/,
+    (error: unknown) => error instanceof NodeInputValidationError && error.input === 'response'
+      && /requires one high-level instruction/.test(error.message),
   )
 
   const silent = await robotAutonomyControllerParserNode.execute({
@@ -224,4 +240,21 @@ test('Robot Autonomy Controller exposes one contextual task choice from its supp
     }, {}, {}),
     /outside its available catalog/,
   )
+})
+test('visual interpretations are independent of goal and speech outputs and identify the images actually supplied', async () => {
+  const frames = [{ id: 'image-a', timestamp: '2026-01-01T00:00:00Z', dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=' }]
+  const visualObservation = { summary: 'A small object is visible.', frameIds: ['image-a'], uncertainties: ['Its identity is uncertain.'] }
+  const response = JSON.stringify({ response: '', taskDecision: null, visualObservation })
+  const result = await robotActionResultParserNode.execute({ response, frames, execution: { task: null } }, {}, {})
+  assert.equal(result.taskDecision, null)
+  assert.equal(result.response, '')
+  assert.deepEqual(result.visualObservation, visualObservation)
+  await assert.rejects(robotActionResultParserNode.execute({ response, frames: [], execution: { task: null } }, {}, {}),
+    (error: unknown) => error instanceof NodeInputValidationError && /attached/.test(error.message))
+  await assert.rejects(robotActionResultParserNode.execute({ response: JSON.stringify({ response: '', taskDecision: null,
+    visualObservation: { ...visualObservation, frameIds: ['different-image'] } }), frames }, {}, {}), /attached/)
+  assert.deepEqual(withVisualObservationSchema(ROBOT_ACTION_RESULT_JSON_SCHEMA, []).properties.visualObservation, { type: 'null' })
+  const schema = withVisualObservationSchema(ROBOT_ACTION_RESULT_JSON_SCHEMA, frames)
+  assert.deepEqual(schema.properties.visualObservation.anyOf[1].properties.frameIds.items.enum, ['image-a'])
+  assert.equal(schema.required.includes('visualObservation'), false, 'The model may omit the optional observation output')
 })

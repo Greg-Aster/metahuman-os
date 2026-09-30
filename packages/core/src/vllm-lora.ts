@@ -138,7 +138,7 @@ export async function discoverVllmLoraAdapters(
 
         if (validation.hasSafetensors) {
           // Generate a unique name from the date/timestamp
-          const name = `${dateDir}`;  // Use just the date for simplicity
+          const name = timestampDir.name;
 
           adapters.push({
             name,
@@ -393,12 +393,13 @@ export async function getAdaptersToLoad(
   const config = getVllmLoraConfig(profileEtcPath);
   const discovered = await discoverVllmLoraAdapters(profileOutPath);
 
-  // Filter to only enabled and valid adapters
-  return discovered
-    .filter(a => config.enabledAdapters.includes(a.name)
-      && a.valid
-      && (!targetModel || isVllmLoraCompatibleWithModel(a.baseModel, targetModel)))
-    .map(a => ({ name: a.name, path: a.path }));
+  return config.enabledAdapters.map(name => {
+    const adapter = discovered.find(item => item.name === name);
+    if (!adapter || !adapter.valid || (targetModel && !isVllmLoraCompatibleWithModel(adapter.baseModel, targetModel))) {
+      throw new Error('Enabled LoRA is missing, invalid or incompatible: ' + name + '. Select the exact run in Backend settings.');
+    }
+    return { name: adapter.name, path: adapter.path };
+  });
 }
 
 /**

@@ -5,7 +5,7 @@ before starting it:
 
 ```bash
 pnpm install
-pnpm --dir apps/site build
+pnpm build
 ```
 
 ## Production

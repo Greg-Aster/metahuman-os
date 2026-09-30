@@ -3,17 +3,51 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { execFileSync } from 'node:child_process'
 
 import { CuratedMemorySaverNode, saveCuratedResults } from './curated-memory-saver.node.js'
 import { CuratorLLMNode, parseCuratorResponse } from './curator-llm.node.js'
 import { markCuratedResults, MemoryMarkerNode } from './memory-marker.node.js'
-import { buildCuratorPersonaSummary } from './persona-summary-loader.node.js'
-import { parseStoredCuratedMemory, type CuratedMemory, type CuratorItemResult, type EpisodicMemory } from './contracts.js'
+import { buildPersonaSummary } from '../../persona-summary.js'
+import { CURATOR_POLICY_VERSION, parseStoredCuratedMemory, type CuratedMemory, type CuratorItemResult, type EpisodicMemory } from './contracts.js'
 import { assembleCuratorSources } from './source-assembler.js'
 import { getDefaultPersonaCore } from '../../identity.js'
+import { episodicSourceHash, readCapturedEpisodicEvent } from '../../memory.js'
+import { setAuditEnabled } from '../../audit.js'
+import { systemPaths, registerProfileStorageConfigGetter } from '../../path-builder.js'
+import { getProfileStorageConfig } from '../../users.js'
+import { encrypt, initializeEncryption, lockProfile } from '../../encryption.js'
+import { curatedRecordFilename, readCuratedMemory, scanCuratedMemories, sourceCurationStatus } from './curated-store.js'
+import { UncuratedMemoryLoaderNode } from './uncurated-memory-loader.node.js'
+
+setAuditEnabled(false)
 
 const ROOT = path.resolve(import.meta.dirname, '../../../../..')
 const CURATED_AT = '2026-08-24T20:00:00.000Z'
+
+function profile(t: test.TestContext, encrypted = false) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-curator-'))
+  const username = 'curator-test'
+  const usersDb = systemPaths.usersDb
+  systemPaths.usersDb = path.join(root, 'users.json')
+  fs.writeFileSync(systemPaths.usersDb, JSON.stringify({ version: 1, users: [{
+    id: 'curator-test-owner', username, role: 'owner', metadata: { profileStorage: {
+      path: root, type: encrypted ? 'encrypted' : 'internal',
+      ...(encrypted ? { encryption: { type: 'aes256' } } : {}),
+    } },
+  }] }))
+  registerProfileStorageConfigGetter(getProfileStorageConfig)
+  const key = encrypted ? initializeEncryption(root, 'synthetic-test-password').key : undefined
+  const episodic = path.join(root, 'memory/episodic')
+  const curatedDir = path.join(root, 'memory/curated/conversations')
+  fs.mkdirSync(episodic, { recursive: true })
+  t.after(() => {
+    lockProfile(root)
+    systemPaths.usersDb = usersDb
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+  return { root, username, episodic, curatedDir, key }
+}
 
 function memory(id = 'memory-1'): EpisodicMemory {
   return {
@@ -41,6 +75,8 @@ function curated(id: string, suitableForTraining: boolean): CuratedMemory {
     cognitiveModeSource: 'metadata',
     memoryType: 'conversation',
     sourceMemoryIds: [id],
+    provenance: { policyVersion: CURATOR_POLICY_VERSION, kind: 'recorded-exchange',
+      sourceHashes: { [id]: episodicSourceHash(memory(id)) } },
   }
 }
 
@@ -145,7 +181,7 @@ test('Curator nodes preserve complete zero-work output contracts', async () => {
 })
 
 test('Curator persona context uses the canonical persona shape without fabricated fallback text', () => {
-  const summary = buildCuratorPersonaSummary(getDefaultPersonaCore())
+  const summary = buildPersonaSummary(getDefaultPersonaCore())
 
   assert.match(summary, /Name: MetaHuman/)
   assert.match(summary, /Core Values: autonomy, transparency, growth/)
@@ -242,16 +278,17 @@ test('Curator pairs interleaved turns by their durable idempotency identity', ()
   )
 })
 
-test('Curator commits every source record in a reviewed conversation pair', () => {
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-curator-pair-'))
+test('Curator commits every source record in a durably saved conversation pair', t => {
+  const { root: temporaryRoot, username, episodic } = profile(t)
   try {
     const sourcePaths = ['user', 'assistant'].map(id => {
-      const sourcePath = path.join(temporaryRoot, `${id}.json`)
+      const sourcePath = path.join(episodic, `${id}.json`)
       fs.writeFileSync(sourcePath, `${JSON.stringify(memory(id), null, 2)}\n`)
       return sourcePath
     })
     const pair = curated('pair-record', true)
     pair.sourceMemoryIds = ['user', 'assistant']
+    pair.provenance!.sourceHashes = Object.fromEntries(pair.sourceMemoryIds.map(id => [id, episodicSourceHash(memory(id))]))
     const result: CuratorItemResult = {
       success: true,
       disposition: 'accepted',
@@ -261,7 +298,10 @@ test('Curator commits every source record in a reviewed conversation pair', () =
       memoryId: pair.id,
     }
 
-    const marked = markCuratedResults([result])
+    assert.throws(() => markCuratedResults([result], username), /Cannot read Curator record/)
+    assert.equal(JSON.parse(fs.readFileSync(sourcePaths[0]!, 'utf8')).metadata.curated, undefined)
+    saveCuratedResults([result], username)
+    const marked = markCuratedResults([result], username)
     assert.equal(marked.markedCount, 1)
     assert.equal(marked.sourceMarkedCount, 2)
     assert.equal(marked.markedPaths.length, 2)
@@ -275,11 +315,8 @@ test('Curator commits every source record in a reviewed conversation pair', () =
   }
 })
 
-test('Curator saves before marking, is idempotent, and leaves failed items retryable', () => {
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-curator-'))
-  const episodicDir = path.join(temporaryRoot, 'episodic')
-  const curatedDir = path.join(temporaryRoot, 'curated')
-  fs.mkdirSync(episodicDir, { recursive: true })
+test('Curator saves before marking, is idempotent, and leaves failed items retryable', t => {
+  const { root: temporaryRoot, username, episodic: episodicDir, curatedDir } = profile(t)
 
   try {
     const sourcePaths = ['accepted', 'rejected', 'failed'].map(id => {
@@ -310,14 +347,14 @@ test('Curator saves before marking, is idempotent, and leaves failed items retry
       },
     ]
 
-    const firstSave = saveCuratedResults(results, curatedDir)
-    const secondSave = saveCuratedResults(results, curatedDir)
+    const firstSave = saveCuratedResults(results, username)
+    const secondSave = saveCuratedResults(results, username)
     assert.equal(firstSave.savedCount, 2)
     assert.equal(secondSave.savedCount, 2)
     assert.equal(fs.readdirSync(curatedDir).filter(name => name.endsWith('.json')).length, 2)
     assert.equal(fs.readdirSync(curatedDir).some(name => name.endsWith('.tmp')), false)
 
-    assert.throws(() => markCuratedResults(results), /left 1 memory record\(s\) retryable/)
+    assert.throws(() => markCuratedResults(results, username), /left 1 memory record\(s\) retryable/)
     const acceptedSource = JSON.parse(fs.readFileSync(sourcePaths[0], 'utf8'))
     const rejectedSource = JSON.parse(fs.readFileSync(sourcePaths[1], 'utf8'))
     const failedSource = JSON.parse(fs.readFileSync(sourcePaths[2], 'utf8'))
@@ -327,7 +364,7 @@ test('Curator saves before marking, is idempotent, and leaves failed items retry
     assert.equal(rejectedSource.metadata.curationStatus, 'rejected')
     assert.equal(failedSource.metadata.curated, undefined)
 
-    const retry = markCuratedResults(results.slice(0, 2))
+    const retry = markCuratedResults(results.slice(0, 2), username)
     assert.equal(retry.markedCount, 0)
     assert.equal(retry.alreadyMarkedCount, 2)
     assert.equal(JSON.parse(fs.readFileSync(sourcePaths[0], 'utf8')).metadata.curatedAt, CURATED_AT)
@@ -336,14 +373,16 @@ test('Curator saves before marking, is idempotent, and leaves failed items retry
   }
 })
 
-test('canonical and mobile Curator graphs use one save-then-mark path', () => {
+test('the maintained mobile build copies the canonical save-then-mark Curator graph', t => {
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-curator-mobile-build-'))
+  t.after(() => fs.rmSync(output, { recursive: true, force: true }))
+  execFileSync(process.execPath, [path.join(ROOT, 'apps/react-native/scripts/build-backend.mjs')], {
+    cwd: ROOT, env: { ...process.env, METAHUMAN_MOBILE_NODE_PROJECT: output },
+    timeout: 60000, stdio: 'pipe',
+  })
   const canonicalPath = path.join(ROOT, 'etc', 'cognitive-graphs', 'curator-mode.json')
   const mobilePath = path.join(
-    ROOT,
-    'apps',
-    'react-native',
-    'nodejs-assets',
-    'nodejs-project',
+    output,
     'etc',
     'cognitive-graphs',
     'curator-mode.json',
@@ -365,4 +404,79 @@ test('canonical and mobile Curator graphs use one save-then-mark path', () => {
   assert.equal(nodeTypes.includes('training_pair_generator'), false)
   assert.equal(nodeTypes.includes('training_pair_appender'), false)
   assert.equal(nodeTypes.includes('audit_logger'), false)
+})
+
+test('encrypted Curator load, save, mark and reload use the same profile storage', async t => {
+  const { username, root, episodic, key, curatedDir } = profile(t, true)
+  const source = memory('encrypted-source')
+  const sourcePath = path.join(episodic, 'source.json.enc')
+  fs.writeFileSync(sourcePath, JSON.stringify(encrypt(JSON.stringify(source), key!)))
+  const loaded = await UncuratedMemoryLoaderNode.execute({}, { userId: username }, {})
+  assert.equal(loaded.count, 1)
+  const reviewed = parseCuratorResponse(JSON.stringify({
+    conversationalEssence: 'A synthetic fixture exchange', suitableForTraining: true,
+  }), loaded.memories[0], CURATED_AT)
+  const item: CuratorItemResult = { success: true, disposition: 'accepted', curated: reviewed,
+    originalMemoryPath: sourcePath, memoryId: source.id }
+  saveCuratedResults([item], username)
+  assert.ok(fs.readdirSync(curatedDir).every(file => file.endsWith('.json.enc')))
+  assert.doesNotMatch(fs.readFileSync(path.join(curatedDir, curatedRecordFilename(reviewed) + '.enc'), 'utf8'), /synthetic fixture/)
+  assert.equal(markCuratedResults([item], username).markedCount, 1)
+  const durable = readCapturedEpisodicEvent(username, sourcePath)
+  assert.equal(durable.content, source.content)
+  assert.equal(sourceCurationStatus(username, durable).current, true)
+  assert.equal((await UncuratedMemoryLoaderNode.execute({}, { userId: username }, {})).count, 0)
+  assert.equal([...scanCuratedMemories(username)][0]?.status, 'record')
+  assert.equal(readCuratedMemory(username, curatedRecordFilename(reviewed)).provenance?.kind, 'recorded-exchange')
+  lockProfile(root)
+  await assert.rejects(() => UncuratedMemoryLoaderNode.execute({}, { userId: username }, {}), /locked/)
+  assert.throws(() => saveCuratedResults([item], username), /locked/)
+})
+
+test('changed source content and missing or obsolete decisions require another review', async t => {
+  const { username, episodic, curatedDir } = profile(t)
+  const source = memory('changed-source')
+  const sourcePath = path.join(episodic, 'source.json')
+  fs.writeFileSync(sourcePath, JSON.stringify(source))
+  const item: CuratorItemResult = { success: true, disposition: 'accepted', curated: curated(source.id, true),
+    originalMemoryPath: sourcePath, memoryId: source.id }
+  saveCuratedResults([item], username)
+  fs.writeFileSync(sourcePath, JSON.stringify({ ...source, content: 'The source was edited while its review ran.' }))
+  assert.throws(() => markCuratedResults([item], username), /Source changed/)
+  fs.writeFileSync(sourcePath, JSON.stringify(source))
+  markCuratedResults([item], username)
+  const savedSource = readCapturedEpisodicEvent(username, sourcePath)
+  assert.equal(sourceCurationStatus(username, savedSource).current, true)
+  assert.equal(sourceCurationStatus(username, { ...savedSource, content: 'changed' }).reason, 'source-changed')
+  assert.equal(sourceCurationStatus(username, { ...savedSource,
+    metadata: { ...savedSource.metadata, curatorPolicyVersion: 1 } }).reason, 'obsolete-policy')
+  fs.writeFileSync(path.join(curatedDir, curatedRecordFilename(item.curated!)), '{bad json')
+  assert.equal(sourceCurationStatus(username, savedSource).reason, 'invalid-record')
+  assert.equal((await UncuratedMemoryLoaderNode.execute({}, { userId: username }, {})).count, 1)
+})
+
+test('feedback is a visible rejection and never a positive demonstration', async t => {
+  const { username, episodic } = profile(t)
+  const source = { ...memory('negative-feedback'), metadata: { cognitiveMode: 'dual', reinforcementSignal: -1 } }
+  fs.writeFileSync(path.join(episodic, 'feedback.json'), JSON.stringify(source))
+  const loaded = await UncuratedMemoryLoaderNode.execute({}, { userId: username }, {})
+  assert.equal(loaded.count, 1)
+  const reviewed = await CuratorLLMNode.execute({ memories: loaded, personaSummary: 'Synthetic persona' }, { userId: username }, {})
+  assert.equal(reviewed.rejectedCount, 1)
+  assert.equal(reviewed.failedCount, 0)
+  assert.equal(reviewed.curatedMemories[0].curated.provenance.reinforcementSignal, -1)
+  saveCuratedResults(reviewed.curatedMemories, username)
+  assert.equal(markCuratedResults(reviewed.curatedMemories, username).rejectedCount, 1)
+  assert.equal((await UncuratedMemoryLoaderNode.execute({}, { userId: username }, {})).count, 0)
+})
+
+test('Curator never pairs unrelated sessionless or reverse-ordered legacy messages', () => {
+  const sources = [
+    { ...memory('assistant'), type: 'conversation', timestamp: '2026-08-24T18:00:00.000Z', path: '/tmp/a.json', metadata: { role: 'assistant' } },
+    { ...memory('user'), type: 'conversation', path: '/tmp/u.json', metadata: { role: 'user' } },
+  ]
+  assert.equal(assembleCuratorSources(sources).memories.length, 0)
+  const legacy = sources.map(source => ({ ...source, metadata: { ...source.metadata, sessionId: 'legacy' } }))
+  assert.equal(assembleCuratorSources(legacy).memories.length, 0)
+  assert.equal(assembleCuratorSources(legacy).deferredPaths.length, 2)
 })

@@ -7,6 +7,7 @@ export const environmentResultWaitNode = defineNode({
   inputs: [{ name: 'commands', type: 'array', description: 'Checkpointed commands from Environment Bridge Out' }],
   outputs: [
     { name: 'context', type: 'object', description: 'Correlated results and observations for the next workflow' },
+    { name: 'userInput', type: 'object', description: 'User input received during the action, with its ordered events and the returned observation; absent when no input arrived' },
     { name: 'events', type: 'array', description: 'Ordered events received while waiting' },
     { name: 'observation', type: 'object', description: 'Bridge observation correlated to the returned action' },
     { name: 'actionContext', type: 'object', description: 'Verified Coordinator action record' },
@@ -20,11 +21,12 @@ export const environmentResultWaitNode = defineNode({
     if (!pending.size || pending.has(undefined)) throw new Error('Robot result waiting requires identified commands')
     const events = []
     let resultContext: Record<string, unknown> = {}
+    let userInput: Record<string, unknown> | undefined
     while (pending.size) {
       const event = context.graphExecution.waitForEvent('robot_result')
       events.push(event)
       const payload = event.payload as Record<string, any>
-      if (event.kind === 'user_steering') resultContext = { ...resultContext, ...payload }
+      if (event.kind === 'user_steering') userInput = payload
       if (event.kind === 'physical_result' && event.actionId && pending.has(event.actionId)) {
         // Uncertainty is evidence for review, never evidence of completion.
         // The Coordinator retains the body reservation until reconciliation.
@@ -44,7 +46,8 @@ export const environmentResultWaitNode = defineNode({
       feedback: [...reports.values()], metadata: { ...base.metadata, actionId: [...reports.keys()].at(-1) } }
     if (!supplied) resultContext.environmentObservationCurrent = false
     if (resultContext.environmentObservation) resultContext.environmentActionContext = getEnvironmentActionContext(resultContext.environmentObservation as EnvironmentObservation)
-    return { context: { ...resultContext, executionEvents: events }, events,
+    const completedContext = { ...resultContext, executionEvents: events }
+    return { context: completedContext, userInput: userInput ? { ...userInput, ...completedContext } : undefined, events,
       observation: resultContext.environmentObservation, actionContext: resultContext.environmentActionContext }
   },
 })

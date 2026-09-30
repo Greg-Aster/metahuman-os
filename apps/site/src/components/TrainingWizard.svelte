@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, createEventDispatcher } from 'svelte';
+  const dispatch = createEventDispatcher<{ history: void }>();
   import { apiFetch } from '../lib/client/api-config';
   import { DEFAULT_TRAINING_MODEL, DEFAULT_VLLM_TRAINING_MODEL } from '../lib/client/model-defaults';
   import TrainingDataControls from './TrainingDataControls.svelte';
+  import { parseTrainingDataSettings, type TrainingDataSettings } from '@metahuman/core/training-schema';
 
   // Wizard state machine
   type WizardStep = 1 | 2 | 3 | 4 | 5;
@@ -13,6 +15,8 @@
     hasLocalGPU: boolean;
     gpuModel: string | null;
     vramGB: number | null;
+    freeVramGB: number | null;
+    trainingEnvironmentError: string | null;
     hasUnsloth: boolean;
     hasRunpodKey: boolean;
     hasPreviousModel: boolean;
@@ -48,6 +52,10 @@
     trainableSamples: number;
     estimatedTrainingSamples: number;
     latestCuratedAt: string | null;
+    obsoleteCuratedRecords: number;
+    invalidSourceRecords: number;
+    selection: { trainingSamples: number; evaluationSamples: number; objective: string; cutoff: string; excluded: Record<string, number> };
+    errors: string[];
   }
 
   interface TrainingConfig {
@@ -65,6 +73,7 @@
     max_seq_length: number;
     quantization: string;
     skipGguf: boolean;
+    load_in_4bit?: boolean;
   }
 
   interface BaseModelOption {
@@ -74,21 +83,18 @@
     description: string;
   }
 
-  const baseModelOptions: BaseModelOption[] = [
-    { value: DEFAULT_TRAINING_MODEL, label: 'Qwen 3.5 9B (Ollama)', targets: ['ollama'], description: 'Maintained 16-bit LoRA base; approximately 22GB VRAM before dataset-dependent overhead' },
-    { value: DEFAULT_VLLM_TRAINING_MODEL, label: 'Qwen 3.5 9B (vLLM)', targets: ['vllm'], description: 'Maintained Qwen 3.5 base for safetensors adapters' },
-  ];
+  let baseModelOptions: BaseModelOption[] = [];
 
   const loraConfigPresetOllama: TrainingConfig = {
     base_model: DEFAULT_TRAINING_MODEL,
-    num_train_epochs: 5,
+    num_train_epochs: 1,
     max_samples: 3000,
     monthly_training: true,
     days_recent: 30,
     old_samples: 3000,
     lora_rank: 16,
     lora_alpha: 32,
-    learning_rate: 0.0003,
+    learning_rate: 0.0001,
     per_device_train_batch_size: 1,
     gradient_accumulation_steps: 16,
     max_seq_length: 2048,
@@ -98,14 +104,14 @@
 
   const loraConfigPresetVllm: TrainingConfig = {
     base_model: DEFAULT_VLLM_TRAINING_MODEL,
-    num_train_epochs: 5,
+    num_train_epochs: 1,
     max_samples: 3000,
     monthly_training: true,
     days_recent: 30,
     old_samples: 3000,
     lora_rank: 16,
     lora_alpha: 32,
-    learning_rate: 0.0003,
+    learning_rate: 0.0001,
     per_device_train_batch_size: 1,
     gradient_accumulation_steps: 16,
     max_seq_length: 2048,
@@ -125,8 +131,8 @@
     lora_rank: 0,
     lora_alpha: 0,
     learning_rate: 0.00002,
-    per_device_train_batch_size: 4,
-    gradient_accumulation_steps: 8,
+    per_device_train_batch_size: 1,
+    gradient_accumulation_steps: 16,
     max_seq_length: 2048,
     quantization: 'Q4_K_M',
     skipGguf: false
@@ -140,6 +146,8 @@
     hasLocalGPU: false,
     gpuModel: null,
     vramGB: null,
+    freeVramGB: null,
+    trainingEnvironmentError: null,
     hasUnsloth: false,
     hasRunpodKey: false,
     hasPreviousModel: false
@@ -170,24 +178,17 @@
   let hasS3Configured = false;
 
   // Training data configuration
-  let includePersona = true;
-  let memoryPercentages: Record<string, number> = {
-    conversation: 40,
-    observation: 25,
-    therapy_session: 15,
-    reflection: 5,
-    reflection_summary: 3,
-    inner_dialogue: 3,
-    dream: 3,
-    curiosity_question: 3,
-    decision: 2,
-    journal: 1,
-    summary: 0,
-  };
+  let dataSettings = parseTrainingDataSettings();
+  let trainingDataSaving = false;
+  let trainingDataError = '';
+  let trainingDataLoadAttempted = false;
   let trainingDataConfigLoaded = false;
 
   // Training monitor state
   let trainingPid: number | null = null;
+  let trainingRunLabel = '';
+  let preferencesLoaded = false;
+  let settingsMessage = '';
   let trainingLogs: Array<{ timestamp: string; event: string; details?: any }> = [];
   let consoleLogs: string[] = [];
   let logsInterval: number | null = null;
@@ -211,9 +212,9 @@
   // Computed
   $: canProceed = (() => {
     switch (currentStep) {
-      case 1: return selectedMethod !== null;
+      case 1: return selectedMethod !== null && preferencesLoaded;
       case 2: return selectedMethod === 'local-lora' || runpodValid;
-      case 3: return datasetStats !== null;
+      case 3: return datasetStats !== null && trainingDataConfigLoaded && !trainingDataSaving && !trainingDataError;
       case 4: return true;
       case 5: return false;
       default: return false;
@@ -231,23 +232,42 @@
     }
   })();
 
-  $: if (selectedMethod) {
-    if (selectedMethod === 'fine-tune') {
-      trainingConfig = { ...fineTuneConfigPreset };
-    } else {
-      if (trainingTarget === 'vllm') {
-        trainingConfig = { ...loraConfigPresetVllm };
-      } else {
-        trainingConfig = { ...loraConfigPresetOllama };
+  function applyPreset() {
+    trainingConfig = { ...(selectedMethod === 'fine-tune' ? fineTuneConfigPreset : trainingTarget === 'vllm' ? loraConfigPresetVllm : loraConfigPresetOllama) };
+    settingsMessage = 'Preset applied. Save these settings to use them from the CLI.';
+  }
+
+  async function loadTrainingPreferences() {
+    try {
+      const response = await apiFetch('/api/training-config');
+      if (!response.ok) throw new Error('Could not load saved training settings');
+      const saved = await response.json();
+      const catalog = await apiFetch('/api/training-models');
+      const models = await catalog.json();
+      if (!catalog.ok || !models.success) throw new Error(models.error || 'Could not load training base models');
+      baseModelOptions = models.models.map((model: any) => ({ value: model.id, label: model.name, description: model.description, targets: ['ollama', 'vllm'] }));
+      for (const key of Object.keys(trainingConfig)) {
+        if (saved[key] !== undefined) (trainingConfig as any)[key] = saved[key];
       }
-    }
+      trainingConfig = { ...trainingConfig };
+      trainingTarget = saved.trainingTarget === 'vllm' ? 'vllm' : 'ollama';
+      preferencesLoaded = true;
+    } catch (err) { error = (err as Error).message; }
+  }
+
+  async function saveTrainingPreferences() {
+    settingsMessage = '';
+    try {
+      const response = await apiFetch('/api/training-config', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...trainingConfig, trainingTarget }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not save training settings');
+      settingsMessage = 'Training settings saved for the wizard and CLI.';
+    } catch (err) { settingsMessage = (err as Error).message; }
   }
 
   $: filteredBaseModels = baseModelOptions.filter(opt => opt.targets.includes(trainingTarget));
-
-  $: if (trainingTarget === 'vllm' && selectedMethod !== null && selectedMethod !== 'remote-lora') {
-    selectedMethod = null;
-  }
 
   $: usesLoRA = selectedMethod === 'local-lora' || selectedMethod === 'remote-lora';
 
@@ -262,6 +282,8 @@
           hasLocalGPU: data.hasLocalGPU || false,
           gpuModel: data.gpuModel || null,
           vramGB: data.vramGB || null,
+          freeVramGB: data.freeVramGB ?? null,
+          trainingEnvironmentError: data.trainingEnvironmentError ?? null,
           hasUnsloth: data.hasUnsloth || false,
           hasRunpodKey: data.hasRunpodKey || false,
           hasPreviousModel: data.hasPreviousModel || false
@@ -330,10 +352,6 @@
   }
 
   function selectMethod(method: TrainingMethod) {
-    if (trainingTarget === 'vllm' && method !== 'remote-lora') {
-      error = 'vLLM artifacts require Remote LoRA training.';
-      return;
-    }
     error = '';
     selectedMethod = method;
   }
@@ -342,63 +360,64 @@
     loading = true;
     error = '';
     try {
-      const res = await apiFetch('/api/training/dataset-stats');
-      if (!res.ok) throw new Error('Failed to load dataset stats');
-      datasetStats = await res.json();
+      const query = new URLSearchParams();
+      query.set('maxSamples', trainingConfig.max_samples == null ? 'all' : String(trainingConfig.max_samples));
+      if (trainingConfig.monthly_training) {
+        query.set('recentDays', String(trainingConfig.days_recent));
+        query.set('olderSamples', String(trainingConfig.old_samples));
+      }
+      const res = await apiFetch('/api/training/dataset-stats?' + query.toString());
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load dataset stats');
+      datasetStats = data;
     } catch (err) {
       console.error('[TrainingWizard] Failed to load dataset stats:', err);
-      error = 'Failed to load dataset statistics';
+      error = (err as Error).message;
     } finally {
       loading = false;
     }
   }
 
   async function loadTrainingDataConfig() {
+    trainingDataLoadAttempted = true;
+    trainingDataError = '';
     try {
       const res = await apiFetch('/api/training-data');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.config) {
-          if (typeof data.config.collection?.includePersona === 'boolean') {
-            includePersona = data.config.collection.includePersona;
-          }
-          if (data.config.memoryTypes?.percentages) {
-            memoryPercentages = { ...memoryPercentages, ...data.config.memoryTypes.percentages };
-          }
-          trainingDataConfigLoaded = true;
-        }
-      }
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load training data settings');
+      dataSettings = parseTrainingDataSettings(data.config);
+      trainingDataConfigLoaded = true;
     } catch (err) {
-      console.warn('[TrainingWizard] Failed to load training data config:', err);
+      trainingDataError = (err as Error).message;
+      trainingDataConfigLoaded = false;
     }
   }
 
   async function saveTrainingDataConfig() {
+    trainingDataSaving = true;
+    trainingDataError = '';
     try {
       const res = await apiFetch('/api/training-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          collection: { includePersona },
-          memoryTypes: { percentages: memoryPercentages },
-        }),
+        body: JSON.stringify(dataSettings),
       });
-      if (!res.ok) {
-        console.warn('[TrainingWizard] Failed to save training data config');
-      }
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Failed to save training data settings');
+      dataSettings = parseTrainingDataSettings(data.config);
+      trainingDataConfigLoaded = true;
+      await loadDatasetStats();
     } catch (err) {
-      console.warn('[TrainingWizard] Error saving training data config:', err);
+      trainingDataError = (err as Error).message;
+      trainingDataConfigLoaded = false;
+    } finally {
+      trainingDataSaving = false;
     }
   }
 
-  function handlePersonaChange(event: CustomEvent<boolean>) {
-    includePersona = event.detail;
-    saveTrainingDataConfig();
-  }
-
-  function handlePercentagesChange(event: CustomEvent<Record<string, number>>) {
-    memoryPercentages = event.detail;
-    saveTrainingDataConfig();
+  function handleDataSettingsChange(event: CustomEvent<TrainingDataSettings>) {
+    dataSettings = event.detail;
+    void saveTrainingDataConfig();
   }
 
   async function validateRunpod() {
@@ -418,7 +437,7 @@
       const data = await res.json();
       runpodValid = data.valid;
       if (runpodValid) {
-        localStorage.setItem('mh_runpod_config', JSON.stringify(runpodConfig));
+
       }
     } catch (err) {
       console.error('[TrainingWizard] RunPod validation failed:', err);
@@ -499,33 +518,21 @@
         if (statusData.success) {
           trainingPid = statusData.running ? statusData.pid : null;
           if (!statusData.running && !trainingComplete) {
-            trainingComplete = true;
             currentProgress = null;
-            const logText = consoleLogs.join('\n');
-            if (logText.includes('TRAINING FAILED') ||
-                logText.includes('training_success=false') ||
-                logText.includes('Remote training failed') ||
-                logText.includes('You need a GPU')) {
-              trainingFailed = true;
-              const gpuMatch = logText.match(/Unsloth cannot find any torch accelerator/);
-              const errorMatch = logText.match(/❌ TRAINING FAILED[^\n]*\n[^\n]*\n[^\n]*• Error: ([^\n]+)/);
-              if (gpuMatch) {
-                failureReason = 'GPU not detected on RunPod pod. This can happen with community cloud - try again.';
-              } else if (errorMatch) {
-                failureReason = errorMatch[1];
-              } else {
-                failureReason = 'Training process failed. Check console logs for details.';
-              }
-            } else {
-              trainingFailed = false;
-              failureReason = '';
-            }
+            const historyRes = await apiFetch('/api/training/history');
+            if (!historyRes.ok) throw new Error('Could not verify the terminal training result');
+            const history = await historyRes.json();
+            const run = history.runs?.find((item: any) => item.runLabel === trainingRunLabel);
+            trainingComplete = true;
+            trainingFailed = !run || run.status !== 'completed';
+            failureReason = trainingFailed ? (run?.error || 'No successful terminal receipt was found. Check Training History.') : '';
             stopLogsPolling();
           }
         }
       }
     } catch (err) {
       console.warn('[TrainingWizard] Failed to poll logs:', err);
+      settingsMessage = 'Monitoring could not verify the current result: ' + (err as Error).message;
     }
   }
 
@@ -566,9 +573,8 @@
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to cancel training');
       }
-      trainingPid = null;
-      stopLogsPolling();
-      alert('Training cancelled successfully');
+      settingsMessage = 'Cancellation requested. Waiting for worker and provider cleanup.';
+      await pollTrainingLogs();
     } catch (err) {
       alert((err as Error).message);
     } finally {
@@ -577,6 +583,10 @@
   }
 
   async function launchTraining() {
+    if (!trainingDataConfigLoaded || trainingDataSaving || trainingDataError) {
+      error = 'Load and save valid training data settings before launching.';
+      return;
+    }
     loading = true;
     error = '';
     try {
@@ -610,6 +620,8 @@
       }
       trainingComplete = false;
       trainingPid = data.pid || null;
+      trainingRunLabel = data.runLabel;
+      trainingFailed = false;
       startLogsPolling();
     } catch (err) {
       console.error('[TrainingWizard] Failed to launch training:', err);
@@ -631,6 +643,8 @@
 
   onMount(() => {
     detectCapabilities();
+    void loadTrainingPreferences();
+    void loadTrainingDataConfig();
     loadRunpodConfig();
     apiFetch('/api/session')
       .then(res => res.json())
@@ -640,22 +654,12 @@
         }
       })
       .catch(err => console.error('[TrainingWizard] Failed to fetch session:', err));
-    const saved = localStorage.getItem('mh_runpod_config');
-    if (saved) {
-      try {
-        const savedConfig = JSON.parse(saved);
-        if (!runpodConfigLoaded) {
-          runpodConfig = savedConfig;
-        }
-      } catch (err) {
-        console.error('[TrainingWizard] Failed to load saved RunPod config');
-      }
-    }
     apiFetch('/api/training/running')
       .then(res => res.json())
       .then(data => {
         if (data.success && data.running) {
           trainingPid = data.pid;
+          trainingRunLabel = data.runLabel || '';
           currentStep = 5;
           startLogsPolling();
         }
@@ -671,7 +675,8 @@
   }
 
   $: if (currentStep === 3 && !trainingDataConfigLoaded) {
-    loadTrainingDataConfig();
+    // Load failures remain visible until the user retries.
+    if (!trainingDataLoadAttempted) void loadTrainingDataConfig();
   }
 </script>
 
@@ -767,11 +772,9 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
           <!-- Local LoRA Training -->
           <button
-            class="p-6 rounded-xl border-2 transition-all text-left flex flex-col gap-4
-              {trainingTarget === 'vllm' ? 'cursor-not-allowed opacity-50 border-gray-700 bg-gray-900' : 'cursor-pointer'}
+            class="p-6 rounded-xl border-2 transition-all text-left flex flex-col gap-4 cursor-pointer
               {selectedMethod === 'local-lora' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600 hover:-translate-y-0.5'}"
             on:click={() => selectMethod('local-lora')}
-            disabled={trainingTarget === 'vllm'}
           >
             <div class="text-3xl">🏠 💻</div>
             <h3 class="text-xl m-0 text-gray-100">Local LoRA Training</h3>
@@ -779,7 +782,7 @@
 
             <div class="flex flex-col gap-2">
               <div class="text-sm flex items-center gap-2 {systemCapabilities.hasLocalGPU ? 'text-emerald-500' : ''}">
-                {systemCapabilities.hasLocalGPU ? '✅' : '❌'} NVIDIA GPU (24GB+ VRAM for Qwen 3.5 9B)
+                {systemCapabilities.hasLocalGPU ? '✅' : '❌'} NVIDIA GPU; 4B LoRA is the starting preset
               </div>
               <div class="text-sm flex items-center gap-2 {systemCapabilities.hasUnsloth ? 'text-emerald-500' : ''}">
                 {systemCapabilities.hasUnsloth ? '✅' : '❌'} Python + unsloth
@@ -788,9 +791,11 @@
 
             {#if systemCapabilities.hasLocalGPU && systemCapabilities.gpuModel}
               <div class="text-sm text-gray-500 pt-2 border-t border-gray-700">
-                Detected: {systemCapabilities.gpuModel} ({systemCapabilities.vramGB}GB)
+                Detected: {systemCapabilities.gpuModel} ({systemCapabilities.vramGB?.toFixed(1)} GB total, {systemCapabilities.freeVramGB?.toFixed(1)} GB free)
               </div>
             {/if}
+
+            {#if systemCapabilities.trainingEnvironmentError}<p class="text-sm text-amber-400 break-words">{systemCapabilities.trainingEnvironmentError}</p>{/if}
 
             <div class="flex items-center gap-2 text-emerald-500 font-semibold">
               <span>→</span>
@@ -818,7 +823,7 @@
             </div>
 
             <div class="text-sm text-gray-500 pt-2 border-t border-gray-700">
-              Cost: ~$2-10 per training session
+              Cost depends on the selected GPU and runtime
             </div>
 
             <div class="flex items-center gap-2 text-emerald-500 font-semibold">
@@ -829,11 +834,9 @@
 
           <!-- Full Fine-Tuning -->
           <button
-            class="p-6 rounded-xl border-2 transition-all text-left flex flex-col gap-4
-              {trainingTarget === 'vllm' ? 'cursor-not-allowed opacity-50 border-gray-700 bg-gray-900' : 'cursor-pointer'}
+            class="p-6 rounded-xl border-2 transition-all text-left flex flex-col gap-4 cursor-pointer
               {selectedMethod === 'fine-tune' ? 'border-emerald-600 bg-emerald-600/10' : 'border-gray-700 bg-gray-900 hover:border-emerald-600 hover:-translate-y-0.5'}"
             on:click={() => selectMethod('fine-tune')}
-            disabled={trainingTarget === 'vllm'}
           >
             <div class="text-3xl">🎯 🧠</div>
             <h3 class="text-xl m-0 text-gray-100">Full Fine-Tuning</h3>
@@ -843,13 +846,13 @@
               <div class="text-sm flex items-center gap-2 {systemCapabilities.hasRunpodKey ? 'text-emerald-500' : ''}">
                 {systemCapabilities.hasRunpodKey ? '✅' : '⚠️'} RunPod API key
               </div>
-              <div class="text-sm flex items-center gap-2 {systemCapabilities.hasPreviousModel ? 'text-emerald-500' : ''}">
-                {systemCapabilities.hasPreviousModel ? '✅' : '⚠️'} 1000+ samples recommended
+              <div class="text-sm flex items-center gap-2">
+                Requires memory for all weights and optimizer state
               </div>
             </div>
 
             <div class="text-sm text-gray-500 pt-2 border-t border-gray-700">
-              Builds on previous training runs
+              Trains the base model you select; evaluation gates acceptance
             </div>
 
             <div class="flex items-center gap-2 text-emerald-500 font-semibold">
@@ -961,7 +964,7 @@
           </div>
         {:else if datasetStats}
           <p class="text-base text-gray-500 mb-8 text-center">
-            Review the persisted memory pipeline. Training reads validated Curator records, not raw episodic files or a sample estimate.
+            Preview the reviewed examples available for your selected training target.
           </p>
 
           <div class="stats-grid mb-8">
@@ -970,12 +973,12 @@
               <div class="stat-label">Total Memories</div>
             </div>
             <div class="stat-card">
-              <div class="stat-value text-emerald-500">{datasetStats.trainableSamples.toLocaleString()}</div>
-              <div class="stat-label">Validated Training Samples</div>
+              <div class="stat-value text-emerald-500">{datasetStats.selection.trainingSamples.toLocaleString()}</div>
+              <div class="stat-label">Eligible Training Examples</div>
             </div>
             <div class="stat-card">
-              <div class="stat-value text-emerald-500">{datasetStats.recentMemories.toLocaleString()}</div>
-              <div class="stat-label">Recent (30 days)</div>
+              <div class="stat-value text-emerald-500">{datasetStats.selection.evaluationSamples.toLocaleString()}</div>
+              <div class="stat-label">Evaluation Examples</div>
             </div>
             <div class="stat-card">
               <div class="stat-value text-emerald-500">{datasetStats.oldestMemory ? new Date(datasetStats.oldestMemory).toLocaleDateString() : 'N/A'}</div>
@@ -1004,15 +1007,29 @@
               </div>
             </div>
             <p class="mt-3 text-sm leading-relaxed text-gray-500">
-              Launching with preprocessing enabled drains the same finite Organizer agent used by Sleep, then runs Curator,
-              the curated aggregator, cognitive-mode formatter, model schema adapter, and selected trainer.
+              Preprocessing organizes and reviews saved messages before freezing a dataset for this run.
+              Existing records with an old review policy or changed content are reviewed again.
             </p>
             {#if datasetStats.invalidCuratedRecords > 0}
               <div class="banner banner-warning mt-4">
                 {datasetStats.invalidCuratedRecords.toLocaleString()} existing Curator record(s) fail the current contract.
-                Curator must repair them before the dataset can be exported.
+                These records are excluded until Curator can review their sources again.
               </div>
             {/if}
+            {#if datasetStats.obsoleteCuratedRecords > 0 || datasetStats.invalidSourceRecords > 0}
+              <p class="text-sm text-amber-400 mt-3">{datasetStats.obsoleteCuratedRecords} reviews need renewal; {datasetStats.invalidSourceRecords} source files could not be read.</p>
+            {/if}
+            {#if datasetStats.selection.trainingSamples === 0 || datasetStats.selection.evaluationSamples === 0}
+              <p class="text-sm text-amber-400 mt-3">Training requires eligible examples and an independent evaluation group. Preprocessing may make additional reviewed data available.</p>
+            {/if}
+            <details class="mt-3 text-sm text-gray-500">
+              <summary class="cursor-pointer">Excluded examples and source errors</summary>
+              {#each Object.entries(datasetStats.selection.excluded).filter(([, count]) => count > 0) as [reason, count]}
+                <p class="mt-1">{reason.replaceAll('-', ' ')}: {count}</p>
+              {/each}
+              {#each datasetStats.errors as message}<p class="mt-1 break-all">{message}</p>{/each}
+            </details>
+            <button type="button" class="btn-secondary mt-3" on:click={loadDatasetStats}>Refresh dataset preview</button>
           </div>
 
           <div class="mb-8">
@@ -1055,9 +1072,8 @@
             </div>
           </div>
 
-          {#if selectedMethod === 'fine-tune'}
             <div class="mt-8">
-              <h4 class="text-lg mb-4 text-gray-100">Fine-Tune Dataset Window</h4>
+              <h4 class="text-lg mb-4 text-gray-100">Training Dataset Window</h4>
               <label class="flex items-center gap-3 cursor-pointer text-sm">
                 <input type="checkbox" class="w-5 h-5 cursor-pointer accent-emerald-600" bind:checked={trainingConfig.monthly_training} />
                 <span>Use a recent-data window plus a sample of older records</span>
@@ -1076,22 +1092,21 @@
                 </div>
               {/if}
             </div>
-          {/if}
-
           <!-- Training Data Controls -->
           <div class="mt-8 border-t border-gray-700 pt-6">
             <h4 class="text-lg mb-2 text-gray-100">Training Data Composition</h4>
             <p class="text-sm text-gray-500 mb-4 leading-relaxed">
-              Control what types of memories are used in training. By default, conversations and observations
-              are weighted higher for authentic voice. Increase reflections/dreams for more self-growth focus.
+              Choose whose replies to learn and which reviewed sources to include. These settings also apply to automatic training.
             </p>
             <TrainingDataControls
-              {includePersona}
-              percentages={memoryPercentages}
-              disabled={loading}
-              on:personaChange={handlePersonaChange}
-              on:percentagesChange={handlePercentagesChange}
+              settings={dataSettings}
+              disabled={loading || trainingDataSaving}
+              on:settingsChange={handleDataSettingsChange}
             />
+            {#if trainingDataError}
+              <p class="text-sm text-red-400 mt-3" role="alert">{trainingDataError}</p>
+              <button type="button" class="btn-secondary mt-2" on:click={loadTrainingDataConfig}>Reload data settings</button>
+            {/if}
           </div>
         {/if}
       </div>
@@ -1099,6 +1114,11 @@
     {:else if currentStep === 4}
       <!-- Step 4: Training Configuration -->
       <div class="max-w-[600px] mx-auto">
+        <div class="flex gap-3 mb-4">
+          <button class="btn-secondary" on:click={applyPreset}>Apply recommended preset</button>
+          <button class="btn-secondary" on:click={saveTrainingPreferences}>Save training settings</button>
+        </div>
+        {#if settingsMessage}<p role="status" class="mb-4">{settingsMessage}</p>{/if}
         <div class="p-6 rounded-xl mb-8 flex items-start gap-4 border-2
           {usesLoRA ? 'bg-emerald-600/10 border-emerald-600' : 'bg-orange-500/10 border-orange-500'}">
           <div class="text-3xl leading-none">{usesLoRA ? '🎯' : '🔥'}</div>
@@ -1107,10 +1127,9 @@
             <p class="m-0 text-sm text-gray-500 leading-relaxed">
               {#if usesLoRA}
                 LoRA (Low-Rank Adaptation) trains only a small set of adapter weights while freezing the base model.
-                This is faster, uses less VRAM, and is perfect for personalizing conversational style.
+                It uses less training memory than updating the full model. Evaluation determines whether the candidate improves your target task.
               {:else}
-                Full fine-tuning updates all model weights for maximum performance.
-                Requires high-end GPU (40GB+ VRAM) and longer training time (8-24 hours).
+                Full fine-tuning updates every model weight and needs substantially more GPU memory. It does not guarantee better results than LoRA.
               {/if}
             </p>
           </div>
@@ -1120,13 +1139,18 @@
           <div class="form-group">
             <label class="form-label" for="baseModel">Base Model</label>
             <select id="baseModel" class="select-field w-full" bind:value={trainingConfig.base_model}>
+              {#if !filteredBaseModels.some(model => model.value === trainingConfig.base_model)}
+                <option value={trainingConfig.base_model}>{trainingConfig.base_model} (custom)</option>
+              {/if}
               {#each filteredBaseModels as model}
                 <option value={model.value}>{model.label}</option>
               {/each}
             </select>
+            <label class="form-label mt-3" for="customTrainingModel">Model identifier or local model directory</label>
+            <input id="customTrainingModel" class="input-field" bind:value={trainingConfig.base_model} />
             <small class="block mt-2 text-sm text-gray-500">
               {#if trainingTarget === 'vllm'}
-                Models compatible with vLLM LoRA loading
+                Safetensors output. Serving must support this base model and adapter configuration.
               {:else if trainingTarget === 'ollama'}
                 Models that convert to GGUF format for Ollama
               {:else}
@@ -1138,10 +1162,10 @@
           <div class="form-group">
             <label class="form-label" for="epochs">Training Epochs</label>
             <div class="flex items-center gap-4">
-              <input type="range" id="epochs" class="flex-1" bind:value={trainingConfig.num_train_epochs} min="1" max="5" step="1" />
+              <input type="number" id="epochs" class="input-field flex-1" bind:value={trainingConfig.num_train_epochs} min="1" max="50" step="1" />
               <span class="font-semibold text-emerald-500 min-w-[80px]">{trainingConfig.num_train_epochs} epochs</span>
             </div>
-            <small class="block mt-2 text-sm text-gray-500">More epochs = better learning but longer training time</small>
+            <small class="block mt-2 text-sm text-gray-500">Start with a short run. More epochs can overfit; compare the held-out evaluation.</small>
           </div>
 
           <div class="form-group">
@@ -1152,7 +1176,7 @@
               class="input-field"
               bind:value={trainingConfig.max_samples}
               placeholder="Leave blank for all samples"
-              min="100"
+              min="1"
             />
             <small class="block mt-2 text-sm text-gray-500">Limit samples for faster testing</small>
           </div>
@@ -1163,60 +1187,36 @@
               {#if usesLoRA}
                 <div class="form-group">
                   <label class="form-label" for="loraRank">LoRA Rank</label>
-                  <select id="loraRank" class="select-field w-full" bind:value={trainingConfig.lora_rank}>
-                    <option value={8}>8 (Balanced)</option>
-                    <option value={16}>16 (Higher Capacity)</option>
-                    <option value={32}>32 (Maximum)</option>
-                  </select>
+                  <input id="loraRank" type="number" min="1" max="1024" step="1" class="input-field w-full" bind:value={trainingConfig.lora_rank} />
                   <small class="block mt-2 text-sm text-gray-500">Higher rank = more parameters but longer training</small>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="loraAlpha">LoRA Alpha</label>
+                  <input id="loraAlpha" type="number" min="1" max="4096" step="1" class="input-field w-full" bind:value={trainingConfig.lora_alpha} />
+                  <small class="block mt-2 text-sm text-gray-500">Controls the scale of the adapter update relative to its rank.</small>
                 </div>
               {/if}
 
               <div class="form-group">
                 <label class="form-label" for="learningRate">Learning Rate</label>
-                <select id="learningRate" class="select-field w-full" bind:value={trainingConfig.learning_rate}>
-                  {#if usesLoRA}
-                    <option value={0.0001}>1e-4</option>
-                    <option value={0.0002}>2e-4 (Recommended for LoRA)</option>
-                    <option value={0.0003}>3e-4</option>
-                  {:else}
-                    <option value={0.00001}>1e-5</option>
-                    <option value={0.00002}>2e-5 (Recommended for Fine-Tune)</option>
-                    <option value={0.00005}>5e-5</option>
-                  {/if}
-                </select>
+                <input id="learningRate" type="number" min="0.000000001" max="1" step="any" class="input-field w-full" bind:value={trainingConfig.learning_rate} />
                 <small class="block mt-2 text-sm text-gray-500">{usesLoRA ? 'LoRA uses higher learning rates' : 'Fine-tuning requires lower rates to preserve base model'}</small>
               </div>
 
-              {#if !usesLoRA}
                 <div class="form-group">
                   <label class="form-label" for="batchSize">Batch Size</label>
-                  <select id="batchSize" class="select-field w-full" bind:value={trainingConfig.per_device_train_batch_size}>
-                    <option value={2}>2</option>
-                    <option value={4}>4 (Recommended)</option>
-                    <option value={8}>8 (High VRAM)</option>
-                  </select>
-                  <small class="block mt-2 text-sm text-gray-500">Larger batch size requires more VRAM (40GB+ recommended)</small>
+                  <input id="batchSize" type="number" min="1" max="128" step="1" class="input-field w-full" bind:value={trainingConfig.per_device_train_batch_size} />
+                  <small class="block mt-2 text-sm text-gray-500">Larger batches require more GPU memory.</small>
                 </div>
 
                 <div class="form-group">
                   <label class="form-label" for="gradAccum">Gradient Accumulation Steps</label>
-                  <select id="gradAccum" class="select-field w-full" bind:value={trainingConfig.gradient_accumulation_steps}>
-                    <option value={4}>4</option>
-                    <option value={8}>8 (Recommended)</option>
-                    <option value={16}>16</option>
-                  </select>
+                  <input id="gradAccum" type="number" min="1" max="1024" step="1" class="input-field w-full" bind:value={trainingConfig.gradient_accumulation_steps} />
                   <small class="block mt-2 text-sm text-gray-500">Effective batch size = batch_size × accumulation_steps</small>
                 </div>
-              {/if}
-
               <div class="form-group">
                 <label class="form-label" for="contextWindow">Context Window</label>
-                <select id="contextWindow" class="select-field w-full" bind:value={trainingConfig.max_seq_length}>
-                  <option value={2048}>2048 tokens (~1500 words)</option>
-                  <option value={4096}>4096 tokens (~3000 words)</option>
-                  <option value={8192}>8192 tokens (~6000 words)</option>
-                </select>
+                <input id="contextWindow" type="number" min="128" max="262144" step="1" class="input-field w-full" bind:value={trainingConfig.max_seq_length} />
                 <small class="block mt-2 text-sm text-gray-500">Longer context = more VRAM required</small>
               </div>
 
@@ -1224,14 +1224,15 @@
                 <div class="form-group">
                   <label class="form-label" for="quantization">GGUF Quantization</label>
                   <select id="quantization" class="select-field w-full" bind:value={trainingConfig.quantization}>
-                    <option value="Q4_K_M">Q4_K_M (Balanced - 8GB, Recommended)</option>
-                    <option value="Q4_K_S">Q4_K_S (Smallest - 7GB)</option>
-                    <option value="Q5_K_M">Q5_K_M (Higher Quality - 10GB)</option>
-                    <option value="Q5_K_S">Q5_K_S (Medium - 9GB)</option>
-                    <option value="Q6_K">Q6_K (Very High Quality - 11GB)</option>
-                    <option value="Q8_0">Q8_0 (Highest Quality - 14GB)</option>
+                    {#if !['Q4_K_M', 'Q5_K_M', 'Q6_K', 'Q8_0'].includes(trainingConfig.quantization)}
+                      <option value={trainingConfig.quantization}>{trainingConfig.quantization} (saved setting)</option>
+                    {/if}
+                    <option value="Q4_K_M">Q4_K_M</option>
+                    <option value="Q5_K_M">Q5_K_M</option>
+                    <option value="Q6_K">Q6_K</option>
+                    <option value="Q8_0">Q8_0</option>
                   </select>
-                  <small class="block mt-2 text-sm text-gray-500">Higher quantization = better quality but larger file size</small>
+                  <small class="block mt-2 text-sm text-gray-500">This controls the exported serving model. Training uses unquantized weights by default.</small>
                 </div>
               {:else}
                 <div class="form-group">
@@ -1261,8 +1262,7 @@
                     </span>
                   </label>
                   <small class="pl-14 text-sm text-gray-500">
-                    Uses LLM curator to select high-quality conversations for training.
-                    Disabling may result in lower quality models.
+                    Run Organizer and Curator before this job. When disabled, training still uses only previously reviewed examples.
                   </small>
                 </div>
 
@@ -1275,19 +1275,17 @@
                         <div class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
                       </div>
                       <span class="text-sm flex items-center gap-2">
-                        Enable S3 Upload
+                        Back up verified candidate to S3
                         {#if !hasS3Configured}
                           <span class="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-500 font-semibold">⚙️ Not Configured</span>
-                        {:else if enableS3Upload}
-                          <span class="text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-500 font-semibold">✓ Saves ~55% Cost</span>
                         {/if}
                       </span>
                     </label>
                     <small class="pl-14 text-sm text-gray-500">
                       {#if hasS3Configured}
-                        Upload models to S3 instead of direct download. Pod terminates immediately after upload (~3min vs ~15min download).
+                        After downloading and verifying the candidate, terminate the pod and upload a backup through the configured S3 connection.
                       {:else}
-                        Configure S3 credentials in .env to enable this feature. See docs/S3-UPLOAD.md for setup instructions.
+                        Configure the documented RunPod S3 environment settings to enable backup.
                       {/if}
                     </small>
                   </div>
@@ -1335,7 +1333,7 @@
               <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
                 <span class="font-semibold text-gray-100">Dataset:</span>
                 <span class="text-gray-400">
-                  {datasetStats ? datasetStats.trainableSamples.toLocaleString() : 'N/A'} validated samples
+                  {datasetStats ? datasetStats.selection.trainingSamples.toLocaleString() : 'N/A'} eligible training samples
                 </span>
               </div>
 
@@ -1350,15 +1348,7 @@
                   <span class="text-gray-400">{runpodConfig.gpuType}</span>
                 </div>
 
-                <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
-                  <span class="font-semibold text-gray-100">Estimated Time:</span>
-                  <span class="text-gray-400">2-4 hours</span>
-                </div>
-
-                <div class="flex justify-between p-3 bg-gray-950 rounded-lg">
-                  <span class="font-semibold text-gray-100">Estimated Cost:</span>
-                  <span class="text-yellow-500 font-semibold">$5-15</span>
-                </div>
+                <p class="text-sm text-gray-500">Time and RunPod charges depend on the selected model, GPU, context and dataset. Review the provider rate before launching.</p>
               {/if}
             </div>
 
@@ -1404,7 +1394,7 @@
                 </div>
 
                 <h4 class="text-base font-semibold text-gray-100 mt-5 mb-1">🔧 Full Fine-Tune Cycle</h4>
-                <p class="text-sm text-gray-500 m-0 mb-2">Fine-tune the model-registry base model through the canonical remote workflow.</p>
+                <p class="text-sm text-gray-500 m-0 mb-2">Fine-tune the saved training base through the shared remote workflow.</p>
                 <div class="flex items-center gap-3 bg-black border border-gray-700 rounded-lg p-3 mb-3">
                   <code class="flex-1 font-mono text-sm text-green-400 break-all">pnpm exec tsx brain/training/personalization/fine-tune-cycle.ts --username {username || 'YOUR_USERNAME'}</code>
                   <button class="btn-primary btn-sm whitespace-nowrap" on:click={() => {
@@ -1421,6 +1411,7 @@
           </div>
         {:else}
           <!-- Training in progress or completed -->
+          {#if settingsMessage}<p role="status" class="mb-4">{settingsMessage}</p>{/if}
           <div class="flex items-center justify-between p-4 bg-gray-900 rounded-lg mb-6">
             {#if trainingPid}
               <div class="flex items-center gap-3 px-4 py-2 rounded-md font-semibold bg-emerald-600/10 text-emerald-500 border border-emerald-600/30">
@@ -1447,7 +1438,7 @@
                 <span>✅ Training Complete!</span>
               </div>
               <div class="flex gap-3 flex-wrap items-center">
-                <span class="text-sm text-gray-500">Manage the trained artifact in Backend Settings.</span>
+                <button class="btn-secondary btn-sm" on:click={() => dispatch('history')}>Review candidate in Training History</button>
                 <button class="btn-ghost btn-sm border border-gray-700" on:click={() => currentStep = 1}>
                   🔄 New Training
                 </button>
@@ -1527,7 +1518,7 @@
             {#if trainingPid}
               <div class="p-4 bg-emerald-600/5 border border-emerald-600/20 rounded-lg">
                 <p class="m-0 text-gray-500 text-sm">
-                  <strong>Note:</strong> The training process may take 30-60 minutes depending on dataset size.
+                  <strong>Note:</strong> Runtime depends on the selected model, data and hardware. Completion requires the saved worker result and confirmed provider cleanup.
                   You can navigate away and check back later.
                 </p>
               </div>

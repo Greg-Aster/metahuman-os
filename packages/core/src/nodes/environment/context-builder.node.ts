@@ -1,5 +1,6 @@
 import { defineNode } from '../types.js';
-import type { EnvironmentObservation } from '../../environment-interface/index.js';
+import { withVisualObservationSchema } from '../../visual-observation.js';
+import type { EnvironmentObservation, EnvironmentVisualFrame } from '../../environment-interface/index.js';
 import {
   buildEnvironmentSelectorEnvelope,
   buildEnvironmentSelectorJsonSchema,
@@ -13,10 +14,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function conversationMessages(
   value: unknown,
   includeRecent: boolean,
-  recentLimit: number,
   currentInstruction: string,
 ): Array<{ role: string; content: string }> {
-  if (!includeRecent || recentLimit <= 0) return [];
+  if (!includeRecent) return [];
   const candidates = Array.isArray(value)
     ? value
     : isRecord(value) && Array.isArray(value.messages)
@@ -35,7 +35,7 @@ function conversationMessages(
   // Do not send that same instruction twice when recent context is selected.
   const last = messages.at(-1);
   if (last?.role === 'user' && last.content === currentInstruction) messages.pop();
-  return messages.slice(-recentLimit);
+  return messages;
 }
 
 function relevantMemoryItems(value: unknown): string[] {
@@ -60,12 +60,14 @@ export const environmentContextBuilderNode = defineNode({
   name: 'Environment Context Builder',
   category: 'environment',
   inputs: [
+    { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
     { name: 'execution', type: 'object', optional: true, description: 'Checkpointed objective and execution events' },
     { name: 'observation', type: 'object', optional: true, description: 'Environment observation selected for this turn' },
     { name: 'observationCurrent', type: 'boolean', optional: true, description: 'Whether the observation directly triggered this graph execution' },
     { name: 'instruction', type: 'string', optional: true, description: 'Additional task instruction' },
     { name: 'userInstruction', type: 'string', optional: true, description: 'Current human-authored instruction, when present' },
     { name: 'images', type: 'array', optional: true, description: 'Validated model image content parts' },
+    { name: 'frames', type: 'array', optional: true, description: 'Frames selected alongside images, in the same order' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Shared rolling conversation history' },
     { name: 'memories', type: 'array', optional: true, description: 'Relevant long-term conversational memories' },
     { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona supplied once to the selector' },
@@ -73,6 +75,7 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
   ],
   outputs: [
+    { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
     { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
     { name: 'messages', type: 'array', description: 'Compact action-selector message array' },
     { name: 'jsonSchema', type: 'object', description: 'Provider schema constrained to currently advertised capabilities' },
@@ -86,7 +89,6 @@ export const environmentContextBuilderNode = defineNode({
   ],
   properties: {
     systemPrompt: '',
-    recentHistoryLimit: 4,
   },
   propertySchemas: {
     systemPrompt: {
@@ -94,15 +96,6 @@ export const environmentContextBuilderNode = defineNode({
       default: '',
       label: 'System Prompt',
       rows: 5,
-    },
-    recentHistoryLimit: {
-      type: 'slider',
-      default: 4,
-      label: 'Recent History Limit',
-      description: 'Maximum dialogue messages included when the context router marks the instruction as a follow-up.',
-      min: 0,
-      max: 12,
-      step: 1,
     },
   },
   description: 'Packages only the context selected by Intent Orchestrator for one Environment Action Selector call.',
@@ -141,15 +134,16 @@ export const environmentContextBuilderNode = defineNode({
     const replyToContent = directUserTurn && typeof context.replyToContent === 'string'
       ? context.replyToContent.trim().slice(0, 500)
       : '';
-    const recentHistoryLimit = Number.isInteger(properties?.recentHistoryLimit)
-      ? Math.max(0, Number(properties?.recentHistoryLimit))
-      : 4;
     const includeRecentHistory = routingAnalysis.needsConversationHistory === true
       && directUserTurn;
     const useImages = routingAnalysis.needsVision === true
-      && inputs.observationCurrent === true
       && images.length > 0;
     const selectedImages = useImages ? images : [];
+    const selectedFrames = useImages && Array.isArray(inputs.frames)
+      ? inputs.frames as EnvironmentVisualFrame[] : [];
+    const currentVision = useImages && inputs.observationCurrent === true;
+    const actionRouteSelected = routingAnalysis.needsAction === true
+      || (routingAnalysis.needsVision === true && !currentVision);
     const withoutUnselectedVision = effectiveObservation
       ? useImages
         ? effectiveObservation
@@ -165,7 +159,6 @@ export const environmentContextBuilderNode = defineNode({
     const history = conversationMessages(
       inputs.conversationHistory,
       includeRecentHistory,
-      recentHistoryLimit,
       rawInstruction,
     );
     const routedMemories = routingAnalysis.needsMemory === true ? inputs.memories : [];
@@ -178,15 +171,15 @@ export const environmentContextBuilderNode = defineNode({
     const renderedContent = (content: string) => selectedImages.length
       ? [{
           type: 'text' as const,
-          text: selectedImages.length === 1
-            ? `The attached image is what you currently see.\n${content}`
-            : `The attached images are what you saw at the corresponding visualFrames times.\n${content}`,
+          text: `The attached images are what you saw at the corresponding visualFrames times.\n${content}`,
         }, ...selectedImages]
       : content;
     const message = buildEnvironmentSelectorEnvelope({
       execution: inputs.execution ?? null,
       instruction: rawInstruction,
       observation: promptObservation,
+      visualFrames: selectedFrames,
+      observationHistory: environmentSelected && Array.isArray(inputs.observationHistory) ? inputs.observationHistory : [],
       recentConversation: history,
       memories: memoryItems,
       personaText,
@@ -195,18 +188,18 @@ export const environmentContextBuilderNode = defineNode({
       inputSource,
       routing: routingAnalysis as Record<string, boolean>,
       currentObservation: inputs.observationCurrent === true,
-      currentVisionAvailable: selectedImages.length > 0,
+      currentVisionAvailable: currentVision,
     });
     const jsonSchema = buildEnvironmentSelectorJsonSchema({
       actions: promptObservation?.capabilities.actions ?? [],
       robotCommands: promptObservation?.capabilities.robotCommands ?? [],
-      actionRouteSelected: routingAnalysis.needsAction === true
-        || (routingAnalysis.needsVision === true && selectedImages.length === 0),
+      actionRouteSelected,
     });
 
     return {
       message,
-      jsonSchema,
+      jsonSchema: withVisualObservationSchema(jsonSchema, selectedFrames),
+      frames: selectedFrames,
       messages: [
         { role: 'system', content: selectorContext },
         {
@@ -221,8 +214,8 @@ export const environmentContextBuilderNode = defineNode({
         text: effectiveObservation?.text ?? [],
         location,
         map,
-        visual: useImages ? effectiveObservation?.visual ?? null : null,
-        visuals: useImages ? effectiveObservation?.visuals ?? [] : [],
+        visual: selectedFrames.at(-1) ?? null,
+        visuals: selectedFrames,
         feedback: effectiveObservation?.feedback ?? [],
         conversationHistory: history,
         memories: Array.isArray(routedMemories)
@@ -241,8 +234,7 @@ export const environmentContextBuilderNode = defineNode({
         contextAdmission: {
           environment: Boolean(effectiveObservation),
           vision: useImages,
-          actionContracts: routingAnalysis.needsAction === true
-            || (routingAnalysis.needsVision === true && !useImages),
+          actionContracts: actionRouteSelected,
           selector: true,
         },
         imageSelection: {

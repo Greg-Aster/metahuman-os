@@ -30,6 +30,7 @@ import { submitInnerDialogue } from '../../buffer-admission.js';
 import { beginTTSUserTurn } from '../../tts/delivery-queue.js';
 import { getNodeExecutor } from '../../nodes/index.js';
 import { addScratchpadEntryToFolder, loadDesire, saveDesireManifest } from '../../agency/storage.js';
+import { getUserContext } from '../../context.js';
 // Early buffer save added - saves user message BEFORE graph to survive timeouts
 
 // ============================================================================
@@ -87,7 +88,16 @@ const executorsReadyPromise = (async () => {
 // ============================================================================
 
 function getHistoryKey(mode: Mode, sessionId: string): string {
-  return `${mode}:${sessionId}`;
+  const username = getUserContext()?.username;
+  if (!username) throw new Error('Chat history requires an authenticated profile');
+  return JSON.stringify([username, mode, sessionId]);
+}
+
+/** The reset endpoint clears only this profile's process-local chat projection. */
+export function clearPersonaChatHistoryForUser(username: string): void {
+  for (const key of histories.keys()) {
+    if (JSON.parse(key)[0] === username) histories.delete(key);
+  }
 }
 
 function getHistory(mode: Mode, sessionId: string): ConversationMessage[] {
@@ -455,14 +465,24 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
     const actionOnlyTurn = !responseText
       && bridgeOutput
       && bridgeOutput.status !== 'no_actions';
+    const inputHandoffs = [...graphState.nodes.values()].filter(node => (
+      node.definition?.type === 'execution_event_out'
+      && node.status === 'completed' && node.outputs?.sent === true
+    ));
 
     if (outputError) {
       yield push('error', { message: outputError });
       return;
     }
 
+    for (const handoff of inputHandoffs) {
+      yield push('progress', { step: 'input_forwarded', message: 'Input delivered to the selected execution',
+        executionId: handoff.inputs?.selection?.executionId, inputKind: handoff.inputs?.selection?.kind,
+        sourceExecutionId: graphState.executionId });
+    }
+
     if (!responseText && !actionOnlyTurn) {
-      if (waiting) return;
+      if (waiting || inputHandoffs.length) return;
       yield push('error', { message: 'Graph executed but produced no response' });
       return;
     }
@@ -625,7 +645,8 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     return badRequestResponse('Message is required');
   }
 
-  const trimmedMessage = message.trim();
+  if (!message.trim()) return badRequestResponse('Message is required');
+  const admittedMessage = message;
   const memoryTimestamp = new Date().toISOString();
   const memoryIdempotencyKey = `persona-chat:${sessionId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
   const inheritedTTSGeneration = typeof req.metadata?.ttsGeneration === 'number'
@@ -663,7 +684,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
             const questionToAnswer = unansweredQuestions[0];
             const newAnswer = {
               questionId: questionToAnswer.id,
-              answer: trimmedMessage,
+              answer: admittedMessage,
               answeredAt: now,
             };
 
@@ -705,7 +726,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
                 data: {
                   questionId: questionToAnswer.id,
                   question: questionToAnswer.text,
-                  answer: trimmedMessage,
+                  answer: admittedMessage,
                   answeredBy: user.username,
                 },
               }, user.username);
@@ -735,8 +756,8 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     }
   }
 
-  // Inner compose remains a separate private feed. Conversation turns are
-  // admitted by the selected conversational graph alongside its response.
+  // Inner compose remains a separate private feed. Conversational graphs save
+  // their input before cognition and save each response before final delivery.
   if (mode === 'inner' && isAuthenticated && user.username) {
     const userMessageMeta: Record<string, unknown> = {};
     if (replyToDesireId) userMessageMeta.replyToDesireId = replyToDesireId;
@@ -747,7 +768,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
     try {
       const innerInputAdmitted = await submitInnerDialogue(user.username, {
         role: 'thought',
-        content: trimmedMessage,
+        content: admittedMessage,
         meta: {
           type: 'user_thought',
           source: 'user',
@@ -769,7 +790,7 @@ export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedRes
   // Create streaming generator
   const streamGen = streamGraphExecution({
     mode,
-    message: trimmedMessage,
+    message: admittedMessage,
     sessionId,
     cognitiveMode,
     userContext: { userId: user.userId, username: user.username, role: user.role },

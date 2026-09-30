@@ -53,9 +53,14 @@ test('the canonical Inner Buffer nodes save an entry without an agent gateway', 
   }, options), true)
   assert.equal(await submitInnerDialogue(username, {
     role: 'thought',
-    content: 'A changed retry that must not replace the durable thought.',
+    content: originalContent,
     meta: { source: 'user', type: 'user_thought' },
   }, options), true)
+
+  await assert.rejects(submitInnerDialogue(username, {
+    role: 'thought', content: 'A conflicting retry.',
+    meta: { source: 'user', type: 'user_thought' },
+  }, options), /conflict|Buffer rejected/i)
 
   const buffer = loadBufferForUser(username, 'inner')
   assert.equal(buffer.messages.length, 1)

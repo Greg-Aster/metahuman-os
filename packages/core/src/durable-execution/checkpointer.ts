@@ -201,11 +201,17 @@ export class ExecutionCheckpointer extends SqliteSaver {
   }
 
   override async deleteThread(threadId: string): Promise<void> {
-    const state = this.store.get(threadId)
-    if (state.status === 'running' || state.status === 'waiting' || state.owner) {
-      throw new ExecutionConflictError('Cannot prune an active execution')
-    }
+    this.deleteTerminalThread(threadId)
+  }
+
+  private deleteTerminalThread(threadId: string): void {
     this.store.db.transaction(() => {
+      const state = this.store.get(threadId)
+      // An abandoned owner ID is not a live writer after assertLease rejects it.
+      if (!['completed', 'failed', 'cancelled'].includes(state.status)
+        || state.owner && (state.leaseUntil ?? 0) > Date.now()) {
+        throw new ExecutionConflictError('Cannot prune an active execution')
+      }
       if (this.store.db.prepare(`SELECT 1 FROM execution_outbox WHERE execution_id = ?
         AND status IN ('pending', 'admitted', 'accepted', 'outcome_unknown') LIMIT 1`).get(threadId)) {
         throw new ExecutionConflictError('Cannot prune an unresolved dispatch')
@@ -214,13 +220,38 @@ export class ExecutionCheckpointer extends SqliteSaver {
       this.store.db.prepare('INSERT INTO execution_retirements VALUES (?, ?)').run(threadId, Date.now())
       this.store.db.prepare('DELETE FROM checkpoints WHERE thread_id = ?').run(threadId)
       this.store.db.prepare('DELETE FROM executions WHERE execution_id = ?').run(threadId)
+      this.store.db.prepare('DELETE FROM execution_observations WHERE observation_id NOT IN (SELECT observation_id FROM execution_observation_refs)').run()
       this.store.db.prepare('DELETE FROM execution_blobs WHERE hash NOT IN (SELECT hash FROM execution_blob_refs)').run()
+    }).immediate()
+  }
+
+  /** Reset may end inactive workflows; a live writer or unresolved effect must finish first. */
+  assertProfileHistoryCanBeReset(username: string): void {
+    for (const state of this.store.list()) {
+      if (state.username !== username) throw new ExecutionConflictError('Execution storage contains another profile')
+      if (state.owner && (state.leaseUntil ?? 0) > Date.now()) {
+        throw new ExecutionConflictError(`${state.definition.graphId} has an active worker. Finish or cancel it in Queue before resetting memory`)
+      }
+      if (this.store.dispatches(state.executionId).some(effect =>
+        ['pending', 'admitted', 'accepted', 'outcome_unknown'].includes(effect.status))) {
+        throw new ExecutionConflictError(`${state.definition.graphId} has pending execution results. Resolve them in Queue before resetting memory`)
+      }
+    }
+  }
+
+  resetProfileHistory(username: string): number {
+    return this.store.db.transaction(() => {
+      this.assertProfileHistoryCanBeReset(username)
+      const records = this.store.list()
+      for (const record of records) this.deleteTerminalThread(record.executionId)
+      return records.length
     }).immediate()
   }
 
   async pruneTerminal(before: number, unfinishedWork = new Set<string>()): Promise<number> {
     const candidates = this.store.list().filter(state =>
-      ['completed', 'failed', 'cancelled'].includes(state.status) && !state.owner && state.updatedAt < before
+      ['completed', 'failed', 'cancelled'].includes(state.status)
+        && (!state.owner || (state.leaseUntil ?? 0) <= Date.now()) && state.updatedAt < before
         && !unfinishedWork.has(state.executionId))
     let count = 0
     for (const state of candidates) {

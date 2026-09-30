@@ -5,8 +5,7 @@
  *
  * NOTE: Startup config loading removed (2025-12-23)
  * All configs are user-specific and only loaded within authenticated user context.
- * Auto-start features (Open Interpreter, Big Brother) are triggered by user requests,
- * not server startup.
+ * Terminal-backed Big Brother execution uses the on-demand Terminal agent.
  */
 
 import { defineMiddleware } from 'astro:middleware';

@@ -9,7 +9,8 @@
     "activation": "demand",
     "skippedState": "explicit",
     "sideEffectOrder": "serial-topological",
-    "maxLoopIterations": 5
+    "maxLoopIterations": 5,
+    "eventInputNodeId": "input-events"
   },
   "last_modified": "2026-09-04T23:30:00.000Z",
   "nodes": [
@@ -216,7 +217,7 @@
         "label": "Autonomy Controller Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Choose my next Full-autonomy activity from the supplied context. This is one self-directed decision, so the absence of a new user request does not require me to wait. Consider the checkpointed objective and ordered execution results alongside the Robot Status display, recent Controller-selected task receipts, the most recent user turn and conversation, private reflection, verified robot actions, active desires, Environment Bridge facts, attached verified visual evidence, active persona, and every available task meaning together. Conversation is narrative context; Work Coordinator receipts identify which autonomous activities actually ran or failed, and statements of intention are not proof that an action occurred.\n\nSelect the capability whose described responsibility is useful now, not the first identifier and not a random or rotating choice. Robot Autonomy Executor realizes an already-chosen physical or sensing effect. Observer, reflection, curiosity, daydream, desire, reasoning, and other catalog tasks own the distinct work described for them. An unfinished objective may remain relevant without requiring the same activity again; its result lifecycle is handled after an action completes. Completion frees the next decision to follow other current context, persona, or desires.\n\nFor robot-autonomy-executor, instruction must describe the intended physical or sensing effect with relevant situational detail; do not use an internal label, choose a command, or write a movement plan. For a catalog agent, instruction may provide useful context for that agent's own task. For none, instruction may be empty. response is optional for every choice and may accompany it when speaking is useful. Do not invent physical facts. Return only the requested JSON.",
+          "message": "Choose my next Full-autonomy activity from the supplied context. This is one self-directed decision, so the absence of a new user request does not require me to wait. Consider the checkpointed objective and ordered execution results alongside the Robot Status display, recent Controller-selected task receipts, the most recent user turn and conversation, private reflection, verified robot actions, active desires, Environment Bridge facts, attached verified visual evidence, active persona, and every available task meaning together. Conversation is narrative context; Work Coordinator receipts identify which autonomous activities actually ran or failed, and statements of intention are not proof that an action occurred.\n\nSelect the capability whose described responsibility is useful now, not the first identifier and not a random or rotating choice. Robot Autonomy Executor realizes an already-chosen physical or sensing effect. Observer, reflection, curiosity, daydream, desire, reasoning, and other catalog tasks own the distinct work described for them. An unfinished objective may remain relevant without requiring the same activity again; its result lifecycle is handled after an action completes. Completion frees the next decision to follow other current context, persona, or desires.\n\nFor robot-autonomy-executor, instruction must describe the intended physical or sensing effect with relevant situational detail; do not use an internal label, choose a command, or write a movement plan. For a catalog agent, instruction may provide useful context for that agent's own task. For none, instruction may be empty. response is optional for every choice and may accompany it when speaking is useful. Do not invent physical facts. Return only the requested JSON.\n\nObservation History supplies earlier image interpretations with their source times. Optional visualObservation records an interpretation of attached images independently of speech and goals.",
           "inputKey": ""
         }
       }
@@ -381,14 +382,17 @@
       "id": "remaining-objective",
       "type": "default",
       "position": {
-        "x": 1550,
-        "y": 1900
+        "x": 2150,
+        "y": 2390
       },
       "data": {
         "nodeType": "execution_context",
         "label": "remaining-objective",
         "properties": {
           "eventLimit": 16
+        },
+        "activation": {
+          "mode": "always"
         }
       }
     },
@@ -396,14 +400,111 @@
       "id": "review-remaining-objective",
       "type": "default",
       "position": {
-        "x": 1800,
-        "y": 1900
+        "x": 2450,
+        "y": 2390
       },
       "data": {
         "nodeType": "workflow_call",
         "label": "review-remaining-objective",
         "properties": {
           "graph": "robot-goal-review"
+        }
+      }
+    },
+    {
+      "id": "input-events",
+      "type": "utilityNode",
+      "position": {
+        "x": 1550,
+        "y": 1850
+      },
+      "data": {
+        "nodeType": "execution_event_wait",
+        "label": "Receive Pending Input",
+        "properties": {
+          "drain": true,
+          "userGraph": "environment",
+          "autonomyGraph": "robot-autonomy-controller"
+        },
+        "activation": {
+          "mode": "always"
+        },
+        "comment": "Receives input admitted while preceding work ran. If later input arrives before this execution finishes, the runtime resumes here, preserving earlier action and review outputs."
+      }
+    },
+    {
+      "id": "continue-user-input",
+      "type": "utilityNode",
+      "position": {
+        "x": 1850,
+        "y": 1850
+      },
+      "data": {
+        "nodeType": "workflow_call",
+        "label": "Handle Received Input",
+        "properties": {},
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "invocation"
+          ]
+        },
+        "comment": "Calls the workflow selected by Receive Pending Input in this execution. No input means no child workflow or model call."
+      }
+    },
+    {
+      "id": "observation-history",
+      "type": "contextNode",
+      "position": {
+        "x": 380,
+        "y": 990
+      },
+      "data": {
+        "label": "Observation History",
+        "nodeType": "observation_history",
+        "properties": {
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "save-observation",
+      "type": "outputNode",
+      "position": {
+        "x": 1820,
+        "y": 810
+      },
+      "data": {
+        "label": "Save Visual Observation",
+        "nodeType": "save_visual_observation",
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "parser",
+              "output": "visualObservation",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "observation-status",
+      "type": "outputNode",
+      "position": {
+        "x": 2240,
+        "y": 810
+      },
+      "data": {
+        "label": "Update Latest Visual Status",
+        "nodeType": "robot_status_out",
+        "properties": {},
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "visualObservation"
+          ]
         }
       }
     }
@@ -861,38 +962,6 @@
       }
     },
     {
-      "id": "contextual-agent-result-result-remaining-objective-control",
-      "source": "agent-result",
-      "sourceHandle": "result",
-      "target": "remaining-objective",
-      "targetHandle": "control",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "kind": "control",
-        "when": {
-          "output": "result",
-          "truthy": true
-        }
-      }
-    },
-    {
-      "id": "contextual-selected-workflow-completed-remaining-objective-control",
-      "source": "selected-workflow",
-      "sourceHandle": "completed",
-      "target": "remaining-objective",
-      "targetHandle": "control",
-      "type": "default",
-      "data": {
-        "type": "boolean",
-        "kind": "control",
-        "when": {
-          "output": "completed",
-          "truthy": true
-        }
-      }
-    },
-    {
       "id": "contextual-remaining-objective-hasActiveTask-review-remaining-objective-control",
       "source": "remaining-objective",
       "sourceHandle": "needsGoalReview",
@@ -906,6 +975,200 @@
           "output": "needsGoalReview",
           "truthy": true
         }
+      }
+    },
+    {
+      "id": "input-events-invocation-continue-user-input-invocation",
+      "source": "input-events",
+      "sourceHandle": "invocation",
+      "target": "continue-user-input",
+      "targetHandle": "invocation",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "continue-user-input-completed-remaining-objective-control",
+      "source": "continue-user-input",
+      "sourceHandle": "completed",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "truthy": true,
+          "output": "completed"
+        }
+      }
+    },
+    {
+      "id": "input-events-invocation-remaining-objective-control",
+      "source": "input-events",
+      "sourceHandle": "invocation",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "data": {
+        "type": "object",
+        "kind": "control",
+        "when": {
+          "truthy": true,
+          "output": "invocation"
+        }
+      }
+    },
+    {
+      "id": "agent-result-result-input-events-control",
+      "source": "agent-result",
+      "sourceHandle": "result",
+      "target": "input-events",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "kind": "control",
+        "when": {
+          "output": "result",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "selected-workflow-completed-input-events-control",
+      "source": "selected-workflow",
+      "sourceHandle": "completed",
+      "target": "input-events",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "completed",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "agent-result-userInput-input-events-receivedInput",
+      "source": "agent-result",
+      "sourceHandle": "userInput",
+      "target": "input-events",
+      "targetHandle": "receivedInput",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-observation-observation-observation-history-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "observation-history",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-observation-history-observations-context-observationHistory",
+      "source": "observation-history",
+      "sourceHandle": "observations",
+      "target": "context",
+      "targetHandle": "observationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-context-frames-parser-frames",
+      "source": "context",
+      "sourceHandle": "frames",
+      "target": "parser",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-context-frames-save-observation-frames",
+      "source": "context",
+      "sourceHandle": "frames",
+      "target": "save-observation",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-observation-observation-save-observation-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "save-observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-parser-visualObservation-save-observation-visualObservation",
+      "source": "parser",
+      "sourceHandle": "visualObservation",
+      "target": "save-observation",
+      "targetHandle": "visualObservation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-observation-observation-observation-status-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "observation-status",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-save-observation-observation-observation-status-visualObservation",
+      "source": "save-observation",
+      "sourceHandle": "observation",
+      "target": "observation-status",
+      "targetHandle": "visualObservation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-observation-status-status-agent-dispatch-control",
+      "source": "observation-status",
+      "sourceHandle": "status",
+      "target": "agent-dispatch",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "kind": "control"
+      }
+    },
+    {
+      "id": "visual-history-observation-status-status-executor-dispatch-control",
+      "source": "observation-status",
+      "sourceHandle": "status",
+      "target": "executor-dispatch",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "kind": "control"
       }
     }
   ],

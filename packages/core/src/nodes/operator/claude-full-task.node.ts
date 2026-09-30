@@ -81,10 +81,7 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
 
     const userContext = getUserContext();
     const operatorConfig = userContext?.username ? loadFreshOperatorConfig(userContext.username) : null;
-    const rawProvider = operatorConfig?.bigBrotherMode?.provider;
-    const preferredBackend = rawProvider === 'ollama' || rawProvider === 'openai'
-      ? 'open-interpreter'
-      : rawProvider;
+    const preferredBackend = operatorConfig?.bigBrotherMode?.provider;
 
     emitProgress('big_brother_selecting', `🔍 Selecting backend: ${preferredBackend || 'default'}`);
 

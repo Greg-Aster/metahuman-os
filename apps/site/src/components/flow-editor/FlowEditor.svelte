@@ -558,12 +558,17 @@
     name?: string;
     description?: string;
     maxLoopIterations?: number;
+    eventInputNodeId?: string;
   }) {
     recordHistory(`graph:${Object.keys(patch).sort().join(',')}`, true);
     if (patch.name !== undefined) graphName = patch.name;
     if (patch.description !== undefined) graphDescription = patch.description;
     if (patch.maxLoopIterations !== undefined) {
       scheduler = { ...scheduler, maxLoopIterations: patch.maxLoopIterations };
+    }
+    if (patch.eventInputNodeId !== undefined) {
+      const { eventInputNodeId, ...rest } = scheduler;
+      scheduler = patch.eventInputNodeId ? { ...rest, eventInputNodeId: patch.eventInputNodeId } : rest;
     }
     notifyGraphChange();
   }

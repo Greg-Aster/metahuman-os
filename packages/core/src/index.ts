@@ -75,6 +75,8 @@ export * from './training-dataset';
 export * from './training-automation';
 export * from './training-config';
 export * from './training-launch';
+export { finalizeTrainingProcess } from './training-process.js';
+export type { TrainingProcessName } from './training-process.js';
 // Skills - exclude queueForApproval and getPendingApprovals (conflicts with policy)
 export type {
   SkillCategory,
@@ -147,11 +149,6 @@ export {
 export { parseThinkingBlocks } from './nodes/output/thinking-stripper.node.js';
 export * from './stt';
 export * from './voice-training';
-export {
-  getBigBrotherSessionState,
-  stopBigBrotherSession,
-  type BigBrotherSessionState,
-} from './big-brother-session.js';
 export * from './audio-manager';
 export * from './autonomy';
 export * from './environment-interface';
@@ -229,65 +226,22 @@ export * from './state';
 export * from './context-builder';
 export * from './curiosity-memory-sampling.js';
 
-// Schema manager - rename FormattedSample to avoid conflict with mode-validator
-export type {
-  ModelSchema,
-  CognitiveMode,
-  TrainingSampleMetadata,
-  CuratedSample,
-  FormattedSample as SchemaFormattedSample,
-  SchemaAppliedSample,
-} from './schema-manager.js';
-export {
-  detectModelFamily,
-  loadSchema,
-  applySchema,
-  applySchemaBatch,
-  listAvailableSchemas,
-  validateSchema,
-} from './schema-manager.js';
-
-// Mode validator - rename conflicting exports
-export type {
-  ValidationError,
-  ValidationResult as ModeValidationResult,
-  QualityMetrics,
-  FormattedSample as ValidatorFormattedSample,
-} from './mode-validator.js';
-export {
-  validateModeContamination,
-  calculateQualityMetrics,
-  validateJSONLine,
-  validateJSONLDataset,
-} from './mode-validator.js';
+export * from './training-schema.js';
 
 // Canonical durable Curator record contract used by training consumers.
 export type {
   CuratedMemory,
   CuratorDisposition,
   TrainingCuratedMemory,
+  CuratorProvenance,
 } from './nodes/curator/contracts.js';
 export {
   isTrainingCuratedMemory,
   parseStoredCuratedMemory,
+  CURATOR_POLICY_VERSION,
 } from './nodes/curator/contracts.js';
-
-// Model registry - rename ModelRegistry to avoid conflict with model-resolver
-export type {
-  ModelRegistryEntry,
-  ModelRegistry as TrainingModelRegistry,
-} from './model-registry.js';
-export {
-  loadTrainingRegistry,
-  saveModelRegistry,
-  getCurrentBaseModel,
-  getNextVersion,
-  registerTrainingRun,
-  resetToOriginalBase,
-  getTrainingHistory,
-  getLatestModel,
-  isUsingLocalModel,
-} from './model-registry.js';
+export { scanCuratedMemories, readCuratedMemory, sourceCurationStatus } from './nodes/curator/curated-store.js';
+export type { CuratedMemoryScanOutcome } from './nodes/curator/curated-store.js';
 
 export * from './system-activity';
 export * from './robot-operator';
@@ -445,7 +399,8 @@ export type { EncryptionStatus, UnlockResult, EncryptionCapabilities } from './e
 
 // Big Brother Mode - Escalation Backend Abstraction
 export * from './big-brother';
-export * from './big-brother-session';
+export { getBigBrotherSessionState, stopBigBrotherSession, executeInBigBrotherSession } from './terminal/client.js';
+export { parseBigBrotherTerminalEvent } from './terminal/providers/cli.js';
 // Escalation backend - exclude isEscalationAvailable (conflicts with big-brother), rename getActiveBackend
 export {
   type EscalationOptions,
@@ -465,7 +420,6 @@ export {
 } from './escalation-backend';
 // Export backends (auto-register on import)
 export * from './backends/claude-code-backend';
-export * from './backends/open-interpreter-backend';
 export * from './backends/aider-backend';
 export * from './backends/gemini-cli-backend';
 export * from './backends/qwen-code-backend';
@@ -611,7 +565,6 @@ export {
 
 // Escalation backends (Big Brother mode - external LLM tool executors)
 export * from './tool-executor-config.js';
-export * from './open-interpreter.js';
 export * from './cli-tool-adapters.js';
 
 // Phase 3 Connectors (data ingestion)

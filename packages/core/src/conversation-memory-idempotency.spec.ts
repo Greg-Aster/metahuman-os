@@ -27,7 +27,7 @@ test('Conversation Buffer entries are saved independently and replay idempotentl
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-conversation-memory-'))
   const username = `conversation-memory-${process.pid}`
   const timestamp = '2026-08-30T12:00:00.000Z'
-  const content = 'The same exact words can occur on both sides of a conversation.'
+  const content = '  The same exact words can occur on both sides of a conversation.\n'
   const originalFetch = globalThis.fetch
   const originalEventEmit = eventBus.emit.bind(eventBus)
   const originalRunPath = systemPaths.run
@@ -69,7 +69,7 @@ test('Conversation Buffer entries are saved independently and replay idempotentl
   const assistant = await admitAndSave('assistant', content, 'conversation:test:assistant')
   const replay = await admitAndSave(
     'assistant',
-    'A changed retry must not replace the exact durable assistant entry.',
+    content,
     'conversation:test:assistant',
   )
 
@@ -78,6 +78,7 @@ test('Conversation Buffer entries are saved independently and replay idempotentl
   assert.equal(replay.memory.saved, true)
   assert.equal(replay.admission.entries[0]?.content, content)
   assert.equal(replay.memory.results[0]?.deduplicated, true)
+  await assert.rejects(admitAndSave('assistant', 'A conflicting retry.', 'conversation:test:assistant'), /conflict|Buffer rejected/i)
 
   const buffer = loadBufferForUser(username, 'conversation')
   assert.equal(buffer.messages.length, 2)

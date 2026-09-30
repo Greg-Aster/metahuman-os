@@ -155,6 +155,10 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
       if (stderrFd !== undefined) fs.closeSync(stderrFd);
     }
 
+    // Observe spawn errors before inspecting pid, including waitForMs=0 callers.
+    child.once('error', error => {
+      recordAgentFailure({ agent: agentName, error: error.message, source });
+    });
     const pid = child.pid;
     if (!pid) {
       return failedStart(agentName, source, 'Failed to spawn process');

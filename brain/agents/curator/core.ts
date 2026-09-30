@@ -33,6 +33,7 @@ export interface CuratorOptions {
   limit?: number;
   maxBatches?: number;
   temperature?: number;
+  cutoff?: string;
 }
 
 export interface UserCuratorStats {
@@ -99,6 +100,10 @@ export function normalizeCuratorOptions(options: CuratorOptions): CuratorOptions
   if (options.temperature !== undefined) {
     normalized.temperature = boundedNumber(options.temperature, 'Curator temperature', 0, 1);
   }
+  if (options.cutoff !== undefined) {
+    if (!Number.isFinite(Date.parse(options.cutoff))) throw new Error('Curator cutoff must be a valid timestamp');
+    normalized.cutoff = new Date(options.cutoff).toISOString();
+  }
   return normalized;
 }
 
@@ -142,6 +147,12 @@ export function parseCuratorArgs(args: string[], environmentUsername?: string): 
       index += temperature.consumed;
       continue;
     }
+    const cutoff = optionValue(args, index, '--cutoff');
+    if (cutoff) {
+      parsed.cutoff = cutoff.value;
+      index += cutoff.consumed;
+      continue;
+    }
 
     throw new Error(`Unknown curator option: ${argument}`);
   }
@@ -150,7 +161,7 @@ export function parseCuratorArgs(args: string[], environmentUsername?: string): 
 }
 
 export async function loadCuratorGraph(
-  options: Pick<CuratorOptions, 'limit' | 'temperature'> = {},
+  options: Pick<CuratorOptions, 'limit' | 'temperature' | 'cutoff'> = {},
 ): Promise<SvelteFlowGraph> {
   const graphPath = path.join(systemPaths.etc, 'cognitive-graphs', 'curator-mode.json');
   const graph = validateSvelteFlowGraph(JSON.parse(await fs.readFile(graphPath, 'utf-8')));
@@ -158,6 +169,9 @@ export async function loadCuratorGraph(
   for (const node of graph.nodes) {
     if (node.data.nodeType === 'uncurated_memory_loader' && options.limit !== undefined) {
       node.data.properties = { ...node.data.properties, limit: options.limit };
+    }
+    if (node.data.nodeType === 'uncurated_memory_loader' && options.cutoff !== undefined) {
+      node.data.properties = { ...node.data.properties, cutoff: options.cutoff };
     }
     if (node.data.nodeType === 'curator_llm' && options.temperature !== undefined) {
       node.data.properties = { ...node.data.properties, temperature: options.temperature };
@@ -202,7 +216,7 @@ function addStats(total: UserCuratorStats, batch: UserCuratorStats): UserCurator
 
 export async function runCuratorForUser(
   username: string,
-  options: Pick<CuratorOptions, 'limit' | 'temperature'> = {},
+  options: Pick<CuratorOptions, 'limit' | 'temperature' | 'cutoff'> = {},
 ): Promise<UserCuratorStats> {
   if (!validUsername(username)) throw new Error(`Invalid username format: ${username}`);
 
@@ -232,6 +246,9 @@ export async function runCuratorForUser(
         const saver = graphResult.nodes.get('5')?.outputs;
         const marker = graphResult.nodes.get('8')?.outputs;
         if (!loader || !llm || !saver || !marker) throw new Error('Curator graph did not complete its canonical output path');
+        if (Array.isArray(loader.errors) && loader.errors.length > 0) {
+          console.warn(`[curator] Excluded ${loader.errors.length} invalid source records from this batch:`, loader.errors);
+        }
 
         const attempted = numericOutput(llm.count, 'attempted count');
         const sourceAttempted = numericOutput(llm.sourceCount ?? llm.count, 'source attempted count');
@@ -302,12 +319,14 @@ export async function runCycle(rawOptions: CuratorOptions = {}): Promise<Curator
     if (!validUsername(username)) throw new Error(`Invalid username format: ${username}`);
 
     const maximumBatches = options.all ? options.maxBatches ?? DEFAULT_MAX_BATCHES : 1;
+    const cutoff = options.cutoff ?? new Date().toISOString();
     let total = emptyStats();
 
     for (let batchNumber = 0; batchNumber < maximumBatches; batchNumber++) {
       const batch = await runCuratorForUser(username, {
         limit: options.limit ?? DEFAULT_BATCH_LIMIT,
         temperature: options.temperature,
+        cutoff,
       });
       total = addStats(total, batch);
       if (!options.all || !batch.hasMore) break;
@@ -358,6 +377,7 @@ export async function run(ctx: AgentContext, input: AgentInput): Promise<AgentRe
       limit: direct.limit !== undefined ? Number(direct.limit) : argumentOptions.limit,
       maxBatches: direct.maxBatches !== undefined ? Number(direct.maxBatches) : argumentOptions.maxBatches,
       temperature: direct.temperature !== undefined ? Number(direct.temperature) : argumentOptions.temperature,
+      cutoff: typeof direct.cutoff === 'string' ? direct.cutoff : argumentOptions.cutoff,
     });
     const result = await runCycle(options);
     return {

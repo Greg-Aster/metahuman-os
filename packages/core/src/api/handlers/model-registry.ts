@@ -11,6 +11,8 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
+import { assertTrainingModelApproved } from '../../adapters.js';
+import { safeWriteJSON } from '../../safe-file.js';
 import {
   getProfilePaths,
   systemPaths,
@@ -29,6 +31,7 @@ import {
 import {
   isModelRole,
   invalidateModelCache,
+  updateModelGlobalSettings,
   migrateModelRegistry,
   parseModelRegistry,
   type ModelRegistry,
@@ -178,7 +181,7 @@ function ensureUserRegistry(username: string): void {
         providers: { ...(systemRegistry.providers || {}) }
       };
     } catch (err) {
-      console.error('[model-registry] Failed to read system registry for initialization:', err);
+      throw new Error('Cannot initialize model registry: ' + (err as Error).message);
     }
   }
 
@@ -208,20 +211,10 @@ function readModelRegistry(username: string): ModelRegistry {
       return migration.registry;
     }
   } catch (e) {
-    console.error('[model-registry] Failed to read registry:', e);
+    throw new Error('Cannot read the profile model registry; existing assignments were preserved: ' + (e as Error).message);
   }
 
-  // This should rarely happen after ensureUserRegistry
-  console.warn('[model-registry] No registry found after initialization - returning empty');
-  return {
-    version: '1.0.0',
-    description: 'Unavailable user model registry',
-    globalSettings: {},
-    defaults: {},
-    models: {},
-    cognitiveModeMappings: {},
-    roleHierarchy: {},
-  };
+  throw new Error('Profile model registry is unavailable after initialization');
 }
 
 /**
@@ -230,7 +223,7 @@ function readModelRegistry(username: string): ModelRegistry {
 function writeModelRegistry(username: string, registry: ModelRegistry): void {
   const p = resolveModelsPath(username);
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(registry, null, 2));
+  safeWriteJSON(p, registry);
   // Invalidate model cache to force reload
   invalidateModelCache();
 }
@@ -606,6 +599,11 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
 
     // Ensure role list includes this role
     const entry = registry.models[modelId];
+    const trainingCandidate = await assertTrainingModelApproved(user.username, entry.provider, entry.model);
+    if (trainingCandidate) {
+      entry.metadata = { ...entry.metadata, trainingRunLabel: trainingCandidate.runLabel,
+        trainingActivatedAt: new Date().toISOString() };
+    }
     if (!Array.isArray(entry.roles)) {
       entry.roles = [];
     }
@@ -780,13 +778,7 @@ export async function handleUpdateModelSettings(req: UnifiedRequest): Promise<Un
       return { status: 400, error: 'globalSettings or modelId is required' };
     }
 
-    // Merge global settings
-    registry.globalSettings = {
-      ...(registry.globalSettings || {}),
-      ...globalSettings
-    };
-
-    writeModelRegistry(user.username, registry);
+    const savedSettings = updateModelGlobalSettings(user.username, globalSettings);
 
     await audit({
       category: 'data_change',
@@ -803,7 +795,7 @@ export async function handleUpdateModelSettings(req: UnifiedRequest): Promise<Un
     return successResponse({
       success: true,
       message: 'Global settings updated',
-      globalSettings: registry.globalSettings
+      globalSettings: savedSettings
     });
   } catch (error) {
     console.error('[model-registry] PUT error:', error);

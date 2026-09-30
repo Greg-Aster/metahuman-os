@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { audit } from './audit.js'
 import { storageClient, type StorageRequest } from './storage-client.js'
+import { touchBufferNotification, type CanonicalBufferMode } from './conversation-buffer.js'
+import { withBufferLock } from './buffer-locks.js'
 
 export const PROFILE_SYNC_BUNDLE_VERSION = '1.0.0'
 export const MAX_PROFILE_SYNC_FILES = 256
@@ -269,6 +271,10 @@ function normalizedBundlePath(value: unknown): string {
   return normalized
 }
 
+function profileBufferMode(relativePath: string): CanonicalBufferMode | undefined {
+  return /^state\/conversation-buffer-(conversation|inner|system|robot)\.json$/.exec(relativePath)?.[1] as CanonicalBufferMode | undefined
+}
+
 function isAllowedProfilePath(relativePath: string): boolean {
   if (relativePath.includes('/.backups/') || relativePath.startsWith('.backups/')) return false
   if (EXCLUDED_CONFIG_FILES.has(relativePath)) return false
@@ -277,11 +283,12 @@ function isAllowedProfilePath(relativePath: string): boolean {
     return TEXT_EXTENSIONS.has(extension) || PERSONA_BINARY_EXTENSIONS.has(extension)
   }
   if (relativePath.startsWith('etc/')) return TEXT_EXTENSIONS.has(extension)
-  return /^state\/conversation-buffer(?:\.[a-z0-9-]+)?\.json$/i.test(relativePath)
+  return profileBufferMode(relativePath) !== undefined
 }
 
 function decodeBundleFile(file: ProfileSyncFile): Buffer {
   let content: Buffer
+  const extension = path.posix.extname(file.path).toLowerCase()
   if (file.isBase64) {
     if (!/^[A-Za-z0-9+/]*={0,2}$/.test(file.content) || file.content.length % 4 !== 0) {
       throw new Error(`Invalid base64 content for ${file.path}`)
@@ -290,19 +297,22 @@ function decodeBundleFile(file: ProfileSyncFile): Buffer {
     if (content.toString('base64') !== file.content) throw new Error(`Invalid base64 content for ${file.path}`)
   } else {
     content = Buffer.from(file.content, 'utf8')
-    const extension = path.posix.extname(file.path).toLowerCase()
     if (!TEXT_EXTENSIONS.has(extension)) throw new Error(`Binary profile file must use base64: ${file.path}`)
+  }
+  if (content.byteLength > MAX_PROFILE_SYNC_FILE_BYTES) {
+    throw new Error(`Profile file exceeds ${MAX_PROFILE_SYNC_FILE_BYTES} bytes: ${file.path}`)
+  }
+  if (TEXT_EXTENSIONS.has(extension)) {
     if (content.includes(0)) throw new Error(`Profile text file contains binary data: ${file.path}`)
+    const text = content.toString('utf8')
+    if (!Buffer.from(text, 'utf8').equals(content)) throw new Error(`Profile text file is not valid UTF-8: ${file.path}`)
     if (extension === '.json') {
       try {
-        JSON.parse(file.content)
+        JSON.parse(text)
       } catch {
         throw new Error(`Profile JSON file is malformed: ${file.path}`)
       }
     }
-  }
-  if (content.byteLength > MAX_PROFILE_SYNC_FILE_BYTES) {
-    throw new Error(`Profile file exceeds ${MAX_PROFILE_SYNC_FILE_BYTES} bytes: ${file.path}`)
   }
   return content
 }
@@ -385,15 +395,18 @@ export async function importProfileSyncBundle(
       outcomes.push({ path: file.path, status: 'skipped', bytes: content.byteLength })
       continue
     }
-    const write = await dependencies.write({
+    const mode = profileBufferMode(file.path)
+    const persist = () => dependencies.write({
       ...storageRequestForProfileFile(username, file.path),
       data: content,
     })
-    if (!write.success) {
-      const error = `${file.path}: ${write.error || 'profile write failed'}`
+    const write = mode ? await withBufferLock(username, mode, 'profile_sync_import', persist) : await persist()
+    if (!write?.success) {
+      const error = `${file.path}: ${write?.error || (mode && !write ? 'Could not acquire profile buffer lock' : 'profile write failed')}`
       errors.push(error)
       outcomes.push({ path: file.path, status: 'failed', bytes: content.byteLength, error })
     } else {
+      if (mode) touchBufferNotification(username, mode)
       outcomes.push({ path: file.path, status: 'imported', bytes: content.byteLength })
     }
   }
@@ -578,14 +591,12 @@ export async function exportProfileSyncBundle(
   }
   const files: ProfileSyncFile[] = []
   let totalSize = 0
-  let excluded = collected.excluded
   for (const item of collected.files) {
     const read = await dependencies.read(item.storageRequest)
     if (!read.success || read.data === undefined) throw new Error(read.error || `Cannot read ${item.logicalPath}`)
     const content = Buffer.isBuffer(read.data) ? read.data : Buffer.from(read.data)
     if (content.byteLength > MAX_PROFILE_SYNC_FILE_BYTES) {
-      excluded++
-      continue
+      throw new Error(`Profile file exceeds ${MAX_PROFILE_SYNC_FILE_BYTES} bytes: ${item.logicalPath}`)
     }
     totalSize += content.byteLength
     if (totalSize > MAX_PROFILE_SYNC_BUNDLE_BYTES) {
@@ -593,17 +604,20 @@ export async function exportProfileSyncBundle(
     }
     const extension = path.posix.extname(item.logicalPath).toLowerCase()
     const isBase64 = !TEXT_EXTENSIONS.has(extension)
+    if (!isBase64 && !Buffer.from(content.toString('utf8'), 'utf8').equals(content)) {
+      throw new Error(`Profile text file is not valid UTF-8: ${item.logicalPath}`)
+    }
     files.push({
       path: item.logicalPath,
       content: isBase64 ? content.toString('base64') : content.toString('utf8'),
       isBase64: isBase64 || undefined,
     })
   }
-  return {
+  return validateProfileSyncBundle({
     version: PROFILE_SYNC_BUNDLE_VERSION,
     exportedAt: new Date().toISOString(),
     username,
     files,
-    stats: { totalFiles: files.length, totalSize, excludedFiles: excluded },
-  }
+    stats: { totalFiles: files.length, totalSize, excludedFiles: collected.excluded },
+  })
 }

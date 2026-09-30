@@ -46,7 +46,7 @@ The default registrations have specific, distinct triggers:
   autonomous modes.
 
 The sleep workflow runs one bounded sequence: organize memories, curate
-training memories, run the Desire Agent, dream from memories, review persona
+training memories, admit an eligible personalization candidate, run the Desire Agent, dream from memories, review persona
 learnings, and refresh the memory index. The Desire Agent reads persisted
 history and admits only the internal lifecycle stages required by current
 desire states. It has no conversation-message or independent timer trigger;
@@ -65,8 +65,10 @@ Audio Organizer and Profile Sync remain manual. Robot Operator owns its own
 robot and boredom timers through its persistent service contract; those are not
 duplicate Trigger Manager schedules.
 
-The sleep workflow does not silently start audio processing or model training.
-Those remain explicit owner-triggered controls.
+Model training runs only after the owner enables **Training → Automatic Training**
+and the selected-data, novelty, cooldown and runtime policy permits it. Wake or
+session cancellation stops the job; activation requires review. Audio processing
+remains manual. See [AI Training](/user-guide#ai-training).
 
 ## Mood persona routing
 

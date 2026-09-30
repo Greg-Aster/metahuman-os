@@ -2,7 +2,7 @@
  * Big Brother Mode - Escalation to External Agents
  *
  * When the operator gets stuck or encounters repeated failures, escalate to
- * a more capable agent (Claude Code, Open Interpreter, Aider, Gemini, etc.)
+ * a more capable agent (Claude Code, Codex, Aider, Gemini, etc.)
  * for guidance and assistance.
  *
  * "Big Brother" is a concept, not a specific tool. The actual backend used
@@ -10,7 +10,6 @@
  *
  * Supported backends:
  * - claude-code: Anthropic's Claude Code CLI
- * - open-interpreter: LLM-agnostic Python code interpreter
  * - aider: AI pair programming with git integration
  * - gemini-cli: Google Gemini CLI
  * - qwen-code: Local Qwen model CLI
@@ -234,13 +233,7 @@ export async function escalateToBigBrother(
 
   // Determine which backend to use
   // Priority: request.preferredBackend > config.provider > tool-executor config > default
-  let backendId = request.preferredBackend || bigBrotherConfig.provider;
-
-  // If using legacy provider names, map them
-  if (backendId === 'ollama' || backendId === 'openai') {
-    // These are now handled via open-interpreter with appropriate LLM proxy config
-    backendId = 'open-interpreter';
-  }
+  const backendId = request.preferredBackend || bigBrotherConfig.provider;
 
   audit({
     level: 'info',

@@ -646,6 +646,14 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
     }
   }
 
+  if (scheduler?.eventInputNodeId !== undefined) {
+    const receiver = Array.isArray(graph.nodes) ? graph.nodes.find((node: any) => node.id === scheduler.eventInputNodeId) : undefined;
+    if (typeof scheduler.eventInputNodeId !== 'string' || !receiver
+      || !getNode(receiver.data?.nodeType)?.execution.eventInput || receiver.data?.muted
+      || receiver.data?.activation?.mode !== 'always' || receiver.data?.activation?.when?.length) {
+      errors.push('Scheduler eventInputNodeId must identify an enabled execution-input node with Always activation');
+    }
+  }
   validateRegisteredNodeContracts(graph, errors);
 
   if (errors.length > 0) {

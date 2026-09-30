@@ -43,6 +43,6 @@ assert.doesNotMatch(updater, /getApiBaseUrlAsync/, 'mobile updates must not quer
 const serverUpdate = read('packages/core/src/api/handlers/server-update.ts')
 assert.match(serverUpdate, /execFile/, 'server updates must execute commands without a shell command string')
 assert.match(serverUpdate, /updateInProgress/, 'server updates must reject concurrent mutation')
-assert.match(serverUpdate, /runPnpm\(\['build'\]/, 'server updates must build before reporting success')
+assert.match(serverUpdate, /runPnpm\(\['verify'\]/, 'server updates must fully verify and build before reporting success')
 
 console.log('update-ownership.spec.ts passed')

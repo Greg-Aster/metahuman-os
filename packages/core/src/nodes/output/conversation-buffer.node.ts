@@ -32,7 +32,7 @@ function normalizeEntryIdentity(
   const idempotencyKey = explicitKey || (executionKey ? `${executionKey}:${entry.role}` : '');
   return {
     ...entry,
-    content: entry.content.trim(),
+    content: entry.content,
     timestamp: entryTimestamp(entry, context),
     meta: {
       ...meta,
@@ -48,15 +48,15 @@ function assistantResponseText(inputs: Record<string, any>): string {
     && typeof explicitEntry === 'object'
     && explicitEntry.role === 'assistant'
     && typeof explicitEntry.content === 'string'
-  ) return explicitEntry.content.trim();
+  ) return explicitEntry.content;
 
   const rawResponse = inputs.response ?? inputs.assistantResponse;
   return typeof rawResponse === 'string'
-    ? rawResponse.trim()
+    ? rawResponse
     : typeof rawResponse?.response === 'string'
-      ? rawResponse.response.trim()
+      ? rawResponse.response
       : typeof rawResponse?.content === 'string'
-        ? rawResponse.content.trim()
+        ? rawResponse.content
         : '';
 }
 
@@ -126,9 +126,9 @@ const execute: NodeExecutor = async (inputs, context) => {
     });
   } else {
     const userText = typeof inputs.userMessage === 'string'
-      ? inputs.userMessage.trim()
+      ? inputs.userMessage
       : '';
-    if (userText) {
+    if (userText.trim()) {
       entries.push({
         role: 'user',
         content: userText,
@@ -142,7 +142,7 @@ const execute: NodeExecutor = async (inputs, context) => {
         },
       });
     }
-    if (assistantResponse) {
+    if (assistantResponse.trim()) {
       entries.push({
         role: 'assistant',
         content: assistantResponse,
@@ -162,7 +162,7 @@ const execute: NodeExecutor = async (inputs, context) => {
   const admittedEntries: ConversationMessage[] = [];
   for (const rawEntry of entries) {
     if (!allowedRoles.has(rawEntry.role) || typeof rawEntry.content !== 'string' || !rawEntry.content.trim()) {
-      continue;
+      throw new Error('Conversation Buffer requires a non-empty user or assistant entry');
     }
     const entry = normalizeEntryIdentity(rawEntry, context);
     admittedEntries.push(await admitBufferEntry(username, 'conversation', entry, context.graphExecution));

@@ -40,7 +40,6 @@ export interface IngestedChunkOutcome {
   idempotencyKey: string
   eventId?: string
   filePath?: string
-  encryptionFallback?: boolean
   error?: string
 }
 
@@ -321,11 +320,7 @@ export async function ingestFile(
         idempotencyKey: key,
         eventId: capture.eventId,
         filePath: capture.filePath || undefined,
-        encryptionFallback: capture.encryptionFallback,
       })
-      if (capture.encryptionFallback) {
-        warnings.push(`Chunk ${index + 1} used the memory owner's reported encryption fallback`)
-      }
       dependencies.recordAction({
         skill: 'ingestor:capture',
         inputs: { file: fileName, chunk: index + 1, total: chunks.length, idempotencyKey: key },

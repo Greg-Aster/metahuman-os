@@ -56,7 +56,7 @@ function createDependencies(options: {
     runPnpm: async args => {
       pnpmCalls.push(args)
       if (args[0] === 'install' && options.installError) throw options.installError
-      if (args[0] === 'build') {
+      if (args[0] === 'verify') {
         if (options.waitForBuild) await options.waitForBuild()
         if (options.buildError) throw options.buildError
       }
@@ -114,7 +114,7 @@ test('server update refuses a diverged branch before fast-forward pull', async (
   }
 })
 
-test('server update installs changed dependencies and builds before reporting success', async () => {
+test('server update installs changed dependencies and fully verifies before reporting success', async () => {
   setAuditEnabled(false)
   try {
     const { dependencies, gitCalls, pnpmCalls } = createDependencies()
@@ -122,7 +122,7 @@ test('server update installs changed dependencies and builds before reporting su
     assert.equal(response.status, 200)
     assert.equal(response.data.success, true)
     assert.equal(response.data.restartRequired, true)
-    assert.deepEqual(pnpmCalls, [['install'], ['build']])
+    assert.deepEqual(pnpmCalls, [['install'], ['verify']])
     assert.equal(gitCalls.some(args => args.join(' ') === 'pull --ff-only'), true)
   } finally {
     setAuditEnabled(true)

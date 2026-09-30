@@ -268,6 +268,55 @@ test('the canonical executor resumes saved nodes with their persisted properties
   })
 })
 
+test('input admitted at finalization resumes only the graph-declared input tail, including after reopen', async () => {
+  let decisions = 0
+  const handled: string[] = []
+  const plan = testNode('test_input_tail_plan', [], [{ name: 'ready', type: 'boolean' }], async () => {
+    decisions++
+    return { ready: true }
+  })
+  const handle = testNode('test_input_tail_handle', [{ name: 'invocation', type: 'object' }], [], async inputs => {
+    handled.push(inputs.invocation.context.userMessage)
+    return {}
+  })
+  await withTestNodes([plan, handle], async () => {
+    const workflow = graph([{ id: 'plan', nodeType: plan.id },
+      { id: 'receive', nodeType: 'execution_event_wait', activation: { mode: 'always' } },
+      { id: 'handle', nodeType: handle.id }], [
+      { id: 'order', source: 'plan', sourceHandle: 'ready', target: 'receive', targetHandle: 'control',
+        data: { kind: 'control', when: { output: 'ready', truthy: true } } },
+      { id: 'input', source: 'receive', sourceHandle: 'invocation', target: 'handle', targetHandle: 'invocation' },
+    ])
+    workflow.scheduler.eventInputNodeId = 'receive'
+    workflow.nodes[1].data.properties = { drain: true, userGraph: 'environment' }
+    const filename = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-late-input-')), 'execution.sqlite')
+    let store = new ExecutionStore(filename)
+    const definition = executionDefinition(workflow)
+    const record = store.enter('test-user', definition, 'late-input', { graph: workflow, context: {} })
+    let lease = store.claim(record.executionId, definition)
+    // Graph completion is reported before the runtime's atomic settle. Exercise
+    // that exact gap, not just an event delivered while a node is still running.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const finished = await executeGraph(workflow, {}, event => {
+        if (event.type === 'graph_complete' && attempt < 2) store.deliverEvent(record.executionId, {
+          eventId: `late-${attempt}`, kind: 'user_steering', payload: { userMessage: `input-${attempt}` },
+        })
+      }, undefined, { store, lease, resume: attempt > 0 })
+      assert.equal(finished.status, 'completed', finished.error?.stack)
+      store.settle(lease, 'completed')
+      assert.equal(store.get(record.executionId).status, attempt < 2 ? 'waiting' : 'completed')
+      assert.equal(decisions, 1, 'Earlier decisions and effects never rerun for new input')
+      assert.deepEqual(handled, Array.from({ length: attempt }, (_, index) => `input-${index}`))
+      store.release(lease)
+      store.close()
+      if (attempt < 2) {
+        store = new ExecutionStore(filename)
+        lease = store.claim(record.executionId, definition)
+      }
+    }
+  })
+})
+
 test('model correction survives both feedback and corrected-output checkpoints without replaying committed effects', async () => {
   for (const crashAt of ['feedback', 'corrected-output']) {
     let modelCalls = 0

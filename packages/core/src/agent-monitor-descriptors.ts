@@ -188,9 +188,9 @@ export function defaultAgentCatalogEntry(id: string, kind: AgentKind): AgentCata
     priority: definition?.priority ?? 'normal',
     agentPath: defaultAgentPath(id),
     usesLLM: definition?.usesLLM ?? false,
-    startOnSystemBoot: persistent,
-    autoRestart: persistent,
-    maxRetries: persistent ? 3 : 1,
+    startOnSystemBoot: definition?.defaultService?.startOnSystemBoot ?? persistent,
+    autoRestart: definition?.defaultService?.autoRestart ?? persistent,
+    maxRetries: definition?.defaultService?.maxRetries ?? (persistent ? 3 : 1),
   };
 }
 

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getProfilePaths, systemPaths } from '../path-builder.js';
+import { assertProfileMemoryAvailable } from '../locks.js';
 
 export const TTS_DELIVERY_LEASE_MS = 20_000;
 export const TTS_DELIVERY_RETRY_DELAY_MS = 5_000;
@@ -350,6 +351,40 @@ export class TTSDeliveryQueueStore {
     };
   }
 
+  /** Explicit reset: forget speech text while fencing old synthesis and playback receipts. */
+  resetHistory(): void {
+    const paths = [this.queuePath, ...(this.fallbackPath && fs.existsSync(this.fallbackPath) ? [this.fallbackPath] : [])];
+    // Reset must not silently recover corrupt counters and reuse an old generation.
+    for (const file of paths) {
+      if (!fs.existsSync(file)) continue;
+      const value = JSON.parse(fs.readFileSync(file, 'utf8')) as TTSQueue;
+      if ([value.generation, value.interruptionRevision].some(counter =>
+        counter !== undefined && (!Number.isSafeInteger(counter) || counter < 0))) {
+        throw new Error('Cannot reset invalid speech delivery counters');
+      }
+    }
+    const previous = paths.map(file => this.loadQueue(file));
+    const queue = this.defaultQueue();
+    queue.generation = Math.max(...previous.map(value => value.generation ?? 0)) + 1;
+    queue.interruptionRevision = Math.max(...previous.map(value => value.interruptionRevision ?? 0)) + 1;
+    queue.lastInterruption = {
+      revision: queue.interruptionRevision, generation: queue.generation, reason: 'manual-stop',
+      interruptedAt: this.now(), interruptedCount: previous.reduce((count, value) => count + value.items.length, 0),
+      activeCount: previous.reduce((count, value) => count + value.items.filter(item => item.lease).length, 0),
+    };
+    // Every persisted copy must be cleared. ENOSPC cannot turn a partial reset into success.
+    for (const file of paths) atomicWriteJson(file, queue);
+    for (const file of paths) {
+      const prefix = path.basename(file) + '.';
+      for (const name of fs.readdirSync(path.dirname(file))) {
+        if (name.startsWith(prefix) && (name.includes('.corrupted-') || name.endsWith('.tmp'))) {
+          fs.unlinkSync(path.join(path.dirname(file), name));
+        }
+      }
+    }
+    this.notify();
+  }
+
   private defaultQueue(): TTSQueue {
     return {
       version: 3,
@@ -510,6 +545,7 @@ export function queueTTS(
   identity?: { id: string; createdAt: number },
 ): TTSQueueItem | null {
   if (!username || username === 'anonymous') return null;
+  assertProfileMemoryAvailable(username);
   return createTTSDeliveryQueueStore(username).enqueue(text, mode, source, expectedGeneration, identity);
 }
 

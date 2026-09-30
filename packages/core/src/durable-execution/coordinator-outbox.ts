@@ -31,17 +31,26 @@ export async function relayExecutionOutbox(
   stillActive: () => boolean = () => true,
 ): Promise<void> {
   const execution = store.get(executionId)
-  for (const effect of store.pendingDispatches().filter(item => item.executionId === executionId)) {
+  for (const pending of store.pendingDispatches().filter(item => item.executionId === executionId)) {
+    const input = pending.kind === 'execution_event'
+      ? pending.payload as { executionId: string; kind: string } : undefined
+    // Load the registry only for steering, before checking current admission.
+    // Cancellation does not resume a graph and remains independent of versions.
+    const resolveInputGraph = input?.kind === 'user_steering'
+      ? (await import('./graph-contract.js')).resolveExecutionGraph : undefined
     if (!stillActive()) return
     const runtimeId = getAuthenticatedRuntimeId()
     if (runtimeId && execution.originRuntimeId !== runtimeId) {
       const user = getCurrentlyActiveUser()
       if (!user || user.role === 'guest' || user.username !== execution.username) return
     }
+    const effect = store.dispatch(pending.effectId)
     if (effect.status !== 'pending') continue
     store.assertDispatchable(effect.effectId)
-    if (effect.kind === 'execution_event') {
-      const target = (effect.payload as { executionId: string }).executionId
+    if (input) {
+      const target = input.executionId
+      // The graph may have changed since the intent model saw its availability.
+      resolveInputGraph?.(store, target)
       store.deliverExecutionInput(effect.effectId)
       await relayExecutionOutbox(store, target, enqueue, stillActive)
       continue

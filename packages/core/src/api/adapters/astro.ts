@@ -124,6 +124,9 @@ export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
     headers[key] = value;
   });
 
+  const disconnect = new AbortController();
+  const signal = AbortSignal.any([request.signal, disconnect.signal]);
+
   // Call unified handler - SAME AS MOBILE
   const result = await handleHttpRequest({
     path: url.pathname,
@@ -133,44 +136,37 @@ export const astroHandler: AstroAPIRoute = async (context: AstroAPIContext) => {
     query,
     headers,
     cookieHeader: request.headers.get('cookie'),
-    signal: request.signal,
+    signal,
     resolvedUser,
     userContextEstablished: Boolean(resolvedUser?.isAuthenticated),
   });
 
   // Handle streaming responses (SSE)
   if (result.isStreaming && result.stream) {
+    const iterator = result.stream[Symbol.asyncIterator]();
+    const encoder = new TextEncoder();
+    let closed = false;
     const stream = new ReadableStream({
-      async start(controller) {
-        const encoder = new TextEncoder();
-        let closed = false;
+      async pull(controller) {
         try {
-          for await (const chunk of result.stream!) {
-            if (closed || request.signal.aborted) break;
-            try {
-              controller.enqueue(encoder.encode(chunk));
-            } catch (err) {
-              closed = true;
-              if (!(err instanceof TypeError && String(err.message).includes('Controller is already closed'))) {
-                console.error('[astro-adapter] Stream enqueue error:', err);
-              }
-              break;
-            }
+          const next = await iterator.next();
+          if (closed) return;
+          if (next.done) {
+            closed = true;
+            controller.close();
+          } else {
+            controller.enqueue(encoder.encode(next.value));
           }
-        } catch (err) {
-          if (!(err instanceof TypeError && String(err.message).includes('Controller is already closed'))) {
-            console.error('[astro-adapter] Stream error:', err);
-          }
-        } finally {
-          if (!closed) {
-            try {
-              controller.close();
-            } catch {}
-          }
+        } catch (error) {
+          if (!signal.aborted) console.error('[astro-adapter] Stream error:', error);
+          if (!closed) { closed = true; controller.error(error); }
+          disconnect.abort();
         }
       },
-      cancel() {
-        (result.stream as AsyncIterator<string> | undefined)?.return?.();
+      async cancel() {
+        closed = true;
+        disconnect.abort();
+        await iterator.return?.();
       },
     });
 

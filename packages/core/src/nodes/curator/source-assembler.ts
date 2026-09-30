@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { episodicSourceHash } from '../../memory.js'
 
 import type { EpisodicMemory } from './contracts.js'
 
@@ -22,7 +23,7 @@ function sourceIds(memory: EpisodicMemory): string[] {
   return memory.sourceMemoryIds?.length ? memory.sourceMemoryIds : [memory.id]
 }
 
-function conversationKey(memory: EpisodicMemory): string {
+function conversationKey(memory: EpisodicMemory): string | undefined {
   const idempotencyKey = memory.metadata?.idempotencyKey
   if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
     return `turn:${idempotencyKey.trim().replace(/:(?:user|assistant)$/i, '')}`
@@ -30,7 +31,7 @@ function conversationKey(memory: EpisodicMemory): string {
   const sessionId = memory.metadata?.sessionId
   return typeof sessionId === 'string' && sessionId.trim()
     ? `session:${sessionId.trim()}`
-    : 'session:__sessionless__'
+    : undefined
 }
 
 function normalizeLegacyConversation(
@@ -80,18 +81,21 @@ function pairConversation(
   return {
     id: pairId,
     timestamp: user.timestamp,
-    content: cleanRolePrefix(user.content, 'user'),
-    response: cleanRolePrefix(assistant.content, 'assistant'),
+    content: user.metadata?.idempotencyKey ? user.content : cleanRolePrefix(user.content, 'user'),
+    response: assistant.metadata?.idempotencyKey ? assistant.content : cleanRolePrefix(assistant.content, 'assistant'),
     type: 'conversation',
     path: user.path,
     sourcePaths: [...sourcePaths(user), ...sourcePaths(assistant)],
     sourceMemoryIds: [...userIds, ...assistantIds],
+    sourceHashes: { ...user.sourceHashes, ...assistant.sourceHashes },
     tags: [...new Set([...(user.tags ?? []), ...(assistant.tags ?? [])])],
     metadata: {
       ...(user.metadata ?? {}),
       ...(cognitiveMode ? { cognitiveMode } : {}),
       ...(sessionId ? { sessionId } : {}),
       pairedRoles: ['user', 'assistant'],
+      ...(assistant.metadata?.reinforcementSignal !== undefined
+        ? { reinforcementSignal: assistant.metadata.reinforcementSignal } : {}),
     },
   }
 }
@@ -107,16 +111,14 @@ export function assembleCuratorSources(
 ): CuratorSourceAssembly {
   const memories: Array<EpisodicMemory & { path: string }> = []
   const deferredPaths: string[] = []
-  const conversations = new Map<string, {
-    users: Array<EpisodicMemory & { path: string }>
-    assistants: Array<EpisodicMemory & { path: string }>
-  }>()
+  const conversations = new Map<string, Array<EpisodicMemory & { path: string }>>()
   const ordered = [...sources].sort((left, right) => {
     const time = Date.parse(left.timestamp) - Date.parse(right.timestamp)
     return time || left.path.localeCompare(right.path)
   })
 
-  for (const source of ordered) {
+  for (const original of ordered) {
+    const source = { ...original, sourceHashes: original.sourceHashes ?? { [original.id]: episodicSourceHash(original) } }
     const role = source.metadata?.role
     if (source.type !== 'conversation' || (role !== 'user' && role !== 'assistant')) {
       memories.push(normalizeLegacyConversation(source))
@@ -124,18 +126,36 @@ export function assembleCuratorSources(
     }
 
     const key = conversationKey(source)
-    const group = conversations.get(key) ?? { users: [], assistants: [] }
-    group[role === 'user' ? 'users' : 'assistants'].push(source)
+    if (!key) {
+      deferredPaths.push(...sourcePaths(source))
+      continue
+    }
+    const group = conversations.get(key) ?? []
+    group.push(source)
     conversations.set(key, group)
   }
 
-  for (const group of conversations.values()) {
-    const pairCount = Math.min(group.users.length, group.assistants.length)
-    for (let index = 0; index < pairCount; index++) {
-      memories.push(pairConversation(group.users[index]!, group.assistants[index]!))
+  for (const [key, group] of conversations) {
+    if (key.startsWith('turn:')) {
+      const users = group.filter(source => source.metadata?.role === 'user')
+      const assistants = group.filter(source => source.metadata?.role === 'assistant')
+      if (users.length === 1 && assistants.length === 1
+          && Date.parse(users[0]!.timestamp) <= Date.parse(assistants[0]!.timestamp)) {
+        memories.push(pairConversation(users[0]!, assistants[0]!))
+      } else deferredPaths.push(...group.flatMap(sourcePaths))
+      continue
     }
-    deferredPaths.push(...group.users.slice(pairCount).flatMap(sourcePaths))
-    deferredPaths.push(...group.assistants.slice(pairCount).flatMap(sourcePaths))
+    let pending: (EpisodicMemory & { path: string }) | undefined
+    for (const source of group) {
+      if (source.metadata?.role === 'user') {
+        if (pending) deferredPaths.push(...sourcePaths(pending))
+        pending = source
+      } else if (pending && Date.parse(pending.timestamp) < Date.parse(source.timestamp)) {
+        memories.push(pairConversation(pending, source))
+        pending = undefined
+      } else deferredPaths.push(...sourcePaths(source))
+    }
+    if (pending) deferredPaths.push(...sourcePaths(pending))
   }
   memories.sort((left, right) => {
     const time = Date.parse(left.timestamp) - Date.parse(right.timestamp)

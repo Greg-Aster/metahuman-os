@@ -11,6 +11,11 @@ that later feature work or newly discovered ownership debt is already resolved.
 Detailed audit findings belong under `docs/audits/`; chronological implementation
 evidence belongs in `docs/audits/consolidation-progress.md`.
 
+This protocol does not reopen the baseline program for each repair. Apply the
+bounded workflow, task scope, and validation reuse rules in root `AGENTS.md`.
+The progress ledger is searchable historical evidence, not current architecture
+authority or authorization to execute its old plans.
+
 ## Engineering Principles
 
 1. **Production quality.** Correct the canonical owner. Do not leave patches,
@@ -41,8 +46,8 @@ overlapping file, attribute the change, understand its intended owner and
 validation state, and preserve unrelated work.
 
 The program is behavior-preserving unless the Installation Owner explicitly
-requests a product change. An audit finding authorizes a scoped refactor ticket,
-not unrelated redesign.
+requests a product change. An audit finding may support a proposed scoped ticket;
+implementation still needs authorization in the current task.
 
 ## Target Architecture
 
@@ -83,7 +88,8 @@ packages/core
 
 ## Owner-by-Owner Method
 
-For each owner group:
+For each explicitly scoped owner group (a repair does not require auditing
+unrelated owners or restarting the repository-wide order below):
 
 1. inventory its entrypoints, public contracts, callers, registrations,
    configuration, state, side effects, tests, and runtime evidence;
@@ -91,17 +97,22 @@ For each owner group:
    `docs/technical/AUDIT_PROTOCOL.md`;
 3. identify duplicate ownership, inverted dependencies, bypasses, compatibility
    residue, dead paths, and missing validation;
-4. define one bounded implementation slice with a baseline, deletion set, and
+4. define one bounded implementation slice with a baseline, deletion set if any, and
    acceptance evidence;
-5. change the canonical owner, move its consumers, and remove the superseded path;
-6. run focused tests plus applicable type, build, architecture, remote-safety, and
-   runtime checks;
-7. record proven results and remaining unverified behavior in the progress ledger.
+5. change the canonical owner and affected consumers; remove what is superseded,
+   without requiring artificial deletions for missing behavior in that owner;
+6. obtain focused tests plus applicable type, build, architecture, remote-safety,
+   and runtime evidence, reusing valid results under `AGENTS.md`;
+7. record a concise result and remaining limitations in the progress ledger,
+   linking detailed findings instead of copying them. Stop at slice acceptance;
+   unrelated findings remain proposals for separately authorized work.
 
 Auditing and implementation remain separate passes. Suspected orphan code is
 deleted only after static references and real entrypoints or registrations agree.
 
 ## Repository-Wide Audit Order
+
+Use this order only for an explicitly requested repository-wide audit/refactor.
 
 1. Maintained-source boundary, remote safety, workspace entrypoints, and guardrails.
 2. Root package metadata, dependency ownership, lockfiles, and build configuration.

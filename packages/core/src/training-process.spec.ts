@@ -15,6 +15,7 @@ const {
   releaseTrainingProcess,
   stopTrainingProcesses,
   trackTrainingProcess,
+  finalizeTrainingProcess,
 } = await import('./training-process.js')
 
 after(() => {
@@ -84,4 +85,59 @@ test('removes a PID file that does not identify the expected training process', 
 test('rejects invalid PIDs without creating tracking state', () => {
   assert.throws(() => trackTrainingProcess('full-cycle-local', 1), /Invalid training process PID/)
   assert.deepEqual(listTrainingProcesses(), [])
+})
+
+test('an independent worker persists completion and a later launcher callback cannot overwrite it', async () => {
+  const owner = new URL('./training-process.ts', import.meta.url).href
+  const source = `
+    const { finalizeTrainingProcess } = await import(${JSON.stringify(owner)});
+    process.on('message', () => {
+      finalizeTrainingProcess('full-cycle-local', process.pid, { status: 'completed', exitCode: 0 });
+      process.disconnect();
+    });
+    process.send('ready');
+  `
+  const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source, 'full-cycle-local.ts'],
+    { detached: true, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] })
+  let stderr = ''
+  child.stderr!.on('data', data => { stderr += data })
+  await once(child, 'message')
+  assert.ok(child.pid)
+  const logFile = 'full-cycle-local-2030-01-01T00-00-00-000Z.log'
+  const logPath = path.join(testRoot, 'logs/run', logFile)
+  fs.mkdirSync(path.dirname(logPath), { recursive: true })
+  fs.writeFileSync(logPath, 'Synthetic training log\n')
+  trackTrainingProcess('full-cycle-local', child.pid, { username: 'fixture', runLabel: 'run-one', logFile })
+  child.send('finish')
+  await waitForExit(child)
+  assert.equal(child.exitCode, 0, stderr)
+  assert.equal(finalizeTrainingProcess('full-cycle-local', child.pid, { status: 'failed', exitCode: 1 }), false)
+  // A cancellation writer holding an earlier process receipt must not replace
+  // a terminal outcome that the worker has already published.
+  trackTrainingProcess('full-cycle-local', child.pid, { username: 'fixture', runLabel: 'run-one', logFile })
+  assert.equal(finalizeTrainingProcess('full-cycle-local', child.pid, { status: 'failed' }), false)
+  const markers = fs.readFileSync(logPath, 'utf8').split('\n').filter(line => line.startsWith('[training-lifecycle] '))
+  assert.equal(markers.length, 1)
+  assert.equal(JSON.parse(markers[0].slice('[training-lifecycle] '.length)).status, 'completed')
+  assert.deepEqual(listTrainingProcesses(), [])
+})
+
+test('cancellation respects profile ownership and retains the process while cleanup is running', async () => {
+  const child = spawn(process.execPath, ['-e',
+    "process.on('SIGTERM', () => setTimeout(() => process.exit(0), 200)); setInterval(() => {}, 1000); process.send('ready')", 'full-cycle.ts'],
+  { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
+  await once(child, 'message')
+  assert.ok(child.pid)
+  try {
+    trackTrainingProcess('full-cycle', child.pid, { username: 'owner' })
+    assert.deepEqual(stopTrainingProcesses('another-profile'), [])
+    assert.equal(listTrainingProcesses().length, 1)
+    const exited = waitForExit(child)
+    assert.equal(stopTrainingProcesses('owner').length, 1)
+    assert.ok(listTrainingProcesses()[0]?.cancelRequestedAt)
+    await exited
+    assert.deepEqual(listTrainingProcesses(), [])
+  } finally {
+    try { process.kill(-child.pid, 'SIGKILL') } catch {}
+  }
 })

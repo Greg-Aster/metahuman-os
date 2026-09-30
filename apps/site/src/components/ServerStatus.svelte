@@ -61,28 +61,12 @@
     };
   }
 
-  interface InterpreterInfo {
-    running: boolean;
-    healthy: boolean;
-    available: boolean;
-    enabled: boolean;
-    endpoint: string;
-    config?: {
-      safeMode?: boolean;
-      autoRun?: boolean;
-      maxIterations?: number;
-    };
-  }
-
   interface BigBrotherInfo {
     running: boolean;
     sessionOpen: boolean;
     healthy: boolean;
-    port: number;
-    pid: number | null;
     provider: string | null;
     phase: string;
-    endpoint: string;
   }
 
   interface EventBusInfo {
@@ -101,7 +85,6 @@
   let astroServers: AstroServer[] = [];
   let llmBackend: LLMBackendInfo | null = null;
   let localModels: LocalModelsInfo | null = null;
-  let interpreter: InterpreterInfo | null = null;
   let bigBrother: BigBrotherInfo | null = null;
   let eventBus: EventBusInfo | null = null;
   let loading = true;
@@ -199,36 +182,15 @@
       }
 
       try {
-        const interpreterResponse = await fetchStatusEndpoint('/api/interpreter-status');
-        if (interpreterResponse.ok) {
-          const data = await interpreterResponse.json();
-          interpreter = {
-            running: data.running ?? false,
-            sessionOpen: data.sessionOpen ?? false,
-            healthy: data.healthy ?? false,
-            available: data.available ?? false,
-            enabled: data.enabled ?? false,
-            endpoint: data.config?.endpoint || 'http://localhost:4325',
-            config: data.config,
-          };
-        }
-      } catch (error) {
-        reportStatusFetchFailure('interpreter', error);
-        interpreter = null;
-      }
-
-      try {
         const bigBrotherResponse = await fetchStatusEndpoint('/api/big-brother-status');
         if (bigBrotherResponse.ok) {
           const data = await bigBrotherResponse.json();
           bigBrother = {
             running: data.running ?? false,
+            sessionOpen: data.sessionOpen ?? false,
             healthy: data.healthy ?? false,
-            port: data.port ?? 3099,
-            pid: data.pid ?? null,
             provider: data.provider ?? null,
-            phase: data.phase || 'idle',
-            endpoint: data.endpoint || 'http://localhost:3099',
+            phase: data.phase || 'stopped',
           };
         }
       } catch (error) {
@@ -324,27 +286,6 @@
 
   function openBackendSettings() {
     window.dispatchEvent(new CustomEvent('mh-open-system-tab', { detail: { tab: 'backend' } }));
-  }
-
-  async function controlInterpreter(action: 'start' | 'stop' | 'restart') {
-    actionInProgress = `interpreter-${action}`;
-    try {
-      const response = await apiFetch('/api/interpreter-status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        alert(`Failed to ${action} Open Interpreter: ${data.error || 'Unknown error'}`);
-      } else {
-        setTimeout(fetchServerStatus, 2000);
-      }
-    } catch (error) {
-      alert(`Error ${action}ing Open Interpreter: ${(error as Error).message}`);
-    } finally {
-      actionInProgress = null;
-    }
   }
 
   async function controlBigBrother(action: 'stop') {
@@ -629,63 +570,6 @@
           {/if}
         </div>
 
-        <!-- Open Interpreter -->
-        <div class="border rounded-lg p-3 bg-white dark:bg-gray-800 transition-all hover:shadow-md dark:hover:shadow-black/30 {interpreter?.running ? 'border-2 border-violet-500/40 dark:border-violet-400/40 bg-violet-500/[0.02] dark:bg-violet-400/[0.03]' : 'border-violet-500/20 dark:border-violet-400/20'}">
-          <div class="mb-3">
-            <div class="flex items-start gap-3">
-              <span class="text-xl leading-none">
-                {#if !interpreter?.available}⚠️
-                {:else if interpreter?.running && interpreter?.healthy}🟢
-                {:else if interpreter?.running}🟡
-                {:else}🔴{/if}
-              </span>
-              <div class="flex-1 min-w-0">
-                <div class="font-semibold text-sm text-gray-900 dark:text-gray-100 mb-1">
-                  Open Interpreter
-                  <span class="inline-block px-1.5 py-0.5 ml-2 bg-violet-500/15 dark:bg-violet-400/20 text-violet-600 dark:text-violet-400 rounded text-[0.6rem] font-bold tracking-tight">Tool Executor</span>
-                  {#if interpreter?.enabled}
-                    <span class="inline-block px-1.5 py-0.5 ml-1 bg-emerald-500/15 dark:bg-emerald-400/20 text-emerald-600 dark:text-emerald-400 rounded text-[0.6rem] font-bold tracking-tight">ENABLED</span>
-                  {/if}
-                </div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">
-                  {interpreter?.endpoint || 'http://localhost:4325'}
-                  {#if interpreter?.running && interpreter?.config?.safeMode !== undefined}
-                    • {interpreter.config.safeMode ? 'Safe Mode' : 'Unrestricted'}
-                  {/if}
-                </div>
-              </div>
-            </div>
-          </div>
-          {#if interpreter?.available}
-            <div class="flex gap-2">
-              {#if interpreter?.running}
-                <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlInterpreter('stop')} disabled={actionInProgress !== null}>
-                  {actionInProgress === 'interpreter-stop' ? '...' : 'Stop'}
-                </button>
-                <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlInterpreter('restart')} disabled={actionInProgress !== null}>
-                  {actionInProgress === 'interpreter-restart' ? '...' : 'Restart'}
-                </button>
-              {:else}
-                <button class="flex-1 py-1.5 px-3 border-none rounded-md text-xs font-semibold cursor-pointer transition-all bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed" on:click={() => controlInterpreter('start')} disabled={actionInProgress !== null}>
-                  {actionInProgress === 'interpreter-start' ? '...' : 'Start'}
-                </button>
-              {/if}
-            </div>
-          {:else}
-            <div class="text-xs text-gray-500 dark:text-gray-400 italic p-2 text-center bg-black/5 dark:bg-white/5 rounded-md">Not installed - requires Python open-interpreter package</div>
-          {/if}
-          {#if interpreter?.running && interpreter?.config}
-            <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-black/10 dark:border-white/10">
-              {#if interpreter.config.autoRun}
-                <span class="inline-block px-2 py-1 bg-amber-500/10 dark:bg-amber-400/15 text-amber-600 dark:text-amber-400 rounded text-[0.7rem] font-medium">⚡ Auto-Run Enabled</span>
-              {/if}
-              {#if interpreter.config.maxIterations}
-                <span class="inline-block px-2 py-1 bg-violet-500/10 dark:bg-violet-400/15 text-violet-600 dark:text-violet-400 rounded text-[0.7rem] font-medium">Max Iterations: {interpreter.config.maxIterations}</span>
-              {/if}
-            </div>
-          {/if}
-        </div>
-
         <!-- Big Brother shared terminal session -->
         <div class="border rounded-lg p-3 bg-white dark:bg-gray-800 transition-all hover:shadow-md dark:hover:shadow-black/30 {bigBrother?.sessionOpen ? 'border-2 border-purple-500/40 dark:border-purple-400/40 bg-purple-500/[0.02] dark:bg-purple-400/[0.03]' : 'border-purple-500/20 dark:border-purple-400/20'}">
           <div class="mb-3">
@@ -703,10 +587,7 @@
                   {/if}
                 </div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">
-                  {bigBrother?.endpoint || 'http://localhost:3099'}
-                  {#if bigBrother?.sessionOpen && bigBrother?.pid}
-                    • PID: {bigBrother.pid}
-                  {/if}
+                  Managed by the Terminal agent
                 </div>
               </div>
             </div>

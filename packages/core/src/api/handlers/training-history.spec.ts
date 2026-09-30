@@ -7,7 +7,7 @@ import {
   parseTrainingConsoleLog,
   readTrainingHistory,
   readTrainingHistoryForUser,
-} from './training-history.js';
+} from '../../training-process.js';
 
 const MODIFIED_AT = new Date('2026-01-01T00:10:00.000Z');
 

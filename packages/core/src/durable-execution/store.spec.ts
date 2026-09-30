@@ -8,6 +8,7 @@ import { Annotation, Command, END, START, StateGraph, interrupt } from '@langcha
 import { ExecutionStore } from './store.js'
 import { ExecutionCheckpointer, type CheckpointConfig } from './checkpointer.js'
 import { type CheckpointTransition, type ExecutionDefinition } from './types.js'
+import type { VisualObservationRecord } from '../visual-observation.js'
 
 const definition: ExecutionDefinition = {
   graphId: 'test-workflow', graphHash: 'graph-v1', runtimeVersion: 'runtime-v1',
@@ -297,6 +298,39 @@ test('event identity, cursor and stale checkpoint updates are authoritative', as
   f.store.close()
 })
 
+test('input admission and completion serialize without discarding accepted input or reviving audit receipts', async () => {
+  const f = fixture()
+  const receiver = f.store.enter('test-user', definition, 'input-receiver', {
+    graph: { scheduler: { eventInputNodeId: 'receive' } }, context: {},
+  })
+  const receiverLease = f.store.claim(receiver.executionId, definition)
+  const intent = { effectId: 'handoff', kind: 'execution_event', payload: {
+    executionId: receiver.executionId, kind: 'user_steering', context: { userMessage: 'New instruction' },
+  } }
+  await checkpoint(f, { transitionId: 'input-handoff', dispatches: [intent] })
+  f.store.deliverExecutionInput(intent.effectId)
+  f.store.settle(receiverLease, 'completed')
+  assert.equal(f.store.get(receiver.executionId).status, 'waiting')
+  assert.equal(f.store.get(receiver.executionId).waitingReason, 'pending_input')
+  const saver = new ExecutionCheckpointer(f.store, receiverLease)
+  await saver.put({ configurable: { thread_id: receiver.executionId } }, {
+    v: 4, id: randomUUID(), ts: new Date().toISOString(), channel_versions: {}, versions_seen: {},
+    channel_values: { executionTransition: { transitionId: 'handled-input', processedEventIds: [intent.effectId] } },
+  }, { source: 'loop', step: 0, parents: {} })
+  f.store.settle(receiverLease, 'completed')
+  assert.equal(f.store.get(receiver.executionId).status, 'completed')
+  f.store.deliverExecutionInput(intent.effectId)
+  assert.equal(f.store.events(receiver.executionId).length, 1, 'Repeated handoff returns its committed receipt even after completion')
+  assert.throws(() => f.store.deliverEvent(receiver.executionId, {
+    eventId: 'too-late', kind: 'user_steering', payload: { userMessage: 'Another instruction' },
+  }), /finished before input admission/)
+  assert.equal(f.store.findEvent(receiver.executionId, 'too-late'), null, 'Rejected input was never acknowledged as delivered')
+  f.store.deliverEvent(receiver.executionId, { eventId: 'audit', kind: 'resume_result', payload: {} })
+  assert.equal(f.store.hasPendingInput(receiver.executionId), false)
+  assert.equal(f.store.get(receiver.executionId).status, 'completed', 'Audit receipts do not restart an execution')
+  f.store.close()
+})
+
 test('separate writers serialize event sequences and reject stale ownership', () => {
   const f = fixture()
   const other = new ExecutionStore(f.filename)
@@ -347,6 +381,46 @@ test('a result consumed by a live graph settles its unneeded resume intent', asy
   f.store.release(f.lease)
   assert.equal(await f.saver.pruneTerminal(Date.now() + 1), 1)
   f.store.close()
+})
+
+test('terminal retention honors lease expiry when a writer never releases ownership', async t => {
+  for (const status of ['completed', 'failed', 'cancelled'] as const) {
+    const f = fixture()
+    try {
+      if (status === 'cancelled') f.store.cancel(f.execution.executionId, { eventId: 'cancel', kind: 'user_cancelled', payload: {} })
+      else f.store.settle(f.lease, status)
+      const before = f.store.get(f.execution.executionId).leaseUntil! + 1
+      assert.equal(await f.saver.pruneTerminal(before), 0, 'A live writer still owns cleanup')
+      await assert.rejects(f.saver.deleteThread(f.execution.executionId), /active execution/)
+      const clock = t.mock.method(Date, 'now', () => before)
+      assert.throws(() => f.store.renew(f.lease), /Stale execution writer/)
+      assert.equal(await f.saver.pruneTerminal(before), 1, `${status} history must not be pinned by an expired lease`)
+      assert.equal(f.store.isRetired(f.execution.executionId), true)
+      clock.mock.restore()
+    } finally { f.store.close() }
+  }
+})
+
+test('lease expiry does not retire unfinished executions or unresolved effects', async t => {
+  const f = fixture()
+  try {
+    await checkpoint(f, { transitionId: 'unresolved', dispatches: [
+      { effectId: 'action', kind: 'coordinator_work', actionId: 'motion', payload: {} },
+    ] })
+    f.store.acknowledgeAdmission('action', 'job')
+    f.store.acceptAction('action')
+    const before = f.store.get(f.execution.executionId).leaseUntil! + 1
+    const clock = t.mock.method(Date, 'now', () => before)
+    assert.equal(await f.saver.pruneTerminal(before + 1), 0)
+    await assert.rejects(f.saver.deleteThread(f.execution.executionId), /active execution/)
+    clock.mock.restore()
+    f.store.cancel(f.execution.executionId, { eventId: 'cancel', kind: 'user_cancelled', payload: {} })
+    t.mock.method(Date, 'now', () => before)
+    assert.equal(await f.saver.pruneTerminal(before + 1), 0)
+    await assert.rejects(f.saver.deleteThread(f.execution.executionId), /unresolved dispatch/)
+    assert.throws(() => f.saver.assertProfileHistoryCanBeReset('test-user'), /pending execution results/)
+    assert.equal(f.store.dispatch('action').status, 'accepted')
+  } finally { f.store.close() }
 })
 
 test('uncertain-result correlation and retention survive separate instances', async () => {
@@ -603,4 +677,69 @@ test('structured node outputs are shared across checkpoints without losing activ
   assert.deepEqual(f.store.decodeDocument(duplicate), value, 'Retiring one execution cannot remove another execution\'s references')
   assert.equal(bytes(), storedOnce)
   f.store.close()
+})
+test('visual history retains correlated evidence across executions, restart, replay and terminal cleanup', async () => {
+  const f = fixture()
+  const sourceId = f.execution.executionId
+  const frames = ['before', 'after'].map((id, index) => ({
+    id, timestamp: `2026-01-01T00:00:0${index}.000Z`, dataUrl: `data:image/jpeg;base64,${'A'.repeat(5000)}`,
+    metadata: { actionId: index ? 'action-after' : 'action-before' },
+  }))
+  const record: VisualObservationRecord = {
+    observationId: `${sourceId}:save:visual-observation`, executionId: sourceId, occurrenceId: `${sourceId}:save`,
+    environmentId: 'fixture-robot', adapter: 'fixture-adapter', interpretedAt: '2026-01-01T00:00:02.000Z',
+    robotId: 'body-1', sessionId: 'source-session',
+    summary: 'A small object is visible beside the chair. '.repeat(120).trim(), changes: 'The object is now closer to the center.',
+    uncertainties: ['Its identity is uncertain.'], frameIds: frames.map(frame => frame.id),
+    frames: frames.map(frame => ({ id: frame.id, timestamp: frame.timestamp, actionId: frame.metadata.actionId })),
+  }
+  const transition: CheckpointTransition = { transitionId: 'save-observation', frames, observations: [record] }
+  let sourceConfig = await checkpoint(f, transition)
+  sourceConfig = await checkpoint(f, transition, sourceConfig)
+  const query = { environmentId: record.environmentId, adapter: record.adapter, robotId: record.robotId, sessionId: 'new-session', limit: 5 }
+  assert.deepEqual(f.store.observationHistory(sourceId, query), [record], 'Replay does not duplicate the observation')
+  assert.equal(f.store.task(sourceId), null, 'An observation does not require or create a task')
+  assert.equal(f.store.dispatches(sourceId).length, 0, 'Saving evidence does not dispatch work or speech')
+  assert.deepEqual(f.store.observationHistory(sourceId, { ...query, environmentId: 'other-robot' }), [])
+  assert.deepEqual(f.store.observationHistory(sourceId, { ...query, robotId: 'other-body' }), [], 'Bodies in the same room remain separate')
+  assert.deepEqual(f.store.observationHistory(sourceId, { ...query, robotId: null }), [], 'An unidentified body cannot claim another robot history')
+  const anotherProfile = f.store.create('other-user', definition)
+  assert.deepEqual(f.store.observationHistory(anotherProfile.executionId, query), [])
+  assert.throws(() => f.store.observationFrames(anotherProfile.executionId, record), /profile/)
+  await assert.rejects(checkpoint(f, { transitionId: 'changed-interpretation', observations: [{ ...record, summary: 'Invented replacement' }] }, sourceConfig), /identity reused/)
+  await assert.rejects(checkpoint(f, { transitionId: 'wrong-image', observations: [{ ...record,
+    observationId: `${sourceId}:other:visual-observation`, occurrenceId: `${sourceId}:other`, frameIds: ['unseen-image'] }] }, sourceConfig), /source image/)
+
+  const reader = f.store.create('test-user', definition)
+  const lease = f.store.claim(reader.executionId, definition)
+  const saver = new ExecutionCheckpointer(f.store, lease)
+  const readerFixture = { ...f, execution: reader, lease, saver, config: { configurable: { thread_id: reader.executionId }, durability: 'sync' as const } }
+  const selected = f.store.readObservationHistory(reader.executionId, query)
+  await checkpoint(f, { transitionId: 'finish-source', status: 'completed' }, sourceConfig)
+  f.store.release(f.lease)
+  await f.saver.deleteThread(sourceId)
+  // Cleanup may race the interval between the reader's node output and checkpoint.
+  const readerConfig = await checkpoint(readerFixture, { transitionId: 'load-history', status: 'waiting',
+    frames: selected.frames, retainedObservations: selected.observations })
+  assert.deepEqual(f.store.observationHistory(reader.executionId, query), [record])
+  assert.deepEqual(f.store.observationFrames(reader.executionId, record), frames)
+  assert.deepEqual(f.store.frame(reader.executionId, 'before'), frames[0])
+  assert.deepEqual(f.store.frame(reader.executionId, 'after'), frames[1])
+  await assert.rejects(saver.deleteThread(reader.executionId), /active execution/)
+  f.store.release(lease)
+  f.store.close()
+
+  const reopened = new ExecutionStore(f.filename)
+  const resumedLease = reopened.claim(reader.executionId, definition)
+  const resumedSaver = new ExecutionCheckpointer(reopened, resumedLease)
+  assert.deepEqual(reopened.observationHistory(reader.executionId, query), [record])
+  assert.deepEqual(reopened.observationFrames(reader.executionId, record), frames)
+  await checkpoint({ ...readerFixture, store: reopened, lease: resumedLease, saver: resumedSaver },
+    { transitionId: 'finish-reader', status: 'completed' }, readerConfig)
+  reopened.release(resumedLease)
+  await resumedSaver.deleteThread(reader.executionId)
+  assert.equal((reopened.db.prepare('SELECT COUNT(*) AS n FROM execution_observations').get() as { n: number }).n, 0)
+  assert.equal((reopened.db.prepare('SELECT COUNT(*) AS n FROM execution_blobs').get() as { n: number }).n, 0)
+  reopened.close()
+  fs.rmSync(f.directory, { recursive: true, force: true })
 })

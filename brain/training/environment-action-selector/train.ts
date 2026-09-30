@@ -135,7 +135,7 @@ async function runTrainer(
     '--skip-gguf',
   ]
   if (validationPath) {
-    childArguments.push('--eval-data', validationPath, '--skip-validation-generation')
+    childArguments.push('--eval-data', validationPath)
   }
   const child = spawn(PYTHON_PATH, childArguments, {
     cwd: REPOSITORY_ROOT,

@@ -43,9 +43,9 @@ function selectorJson(output: {
     ...output,
     taskDecision: {
       objective: 'Exercise the current frame-bound Environment action contract.',
+      completionCriteria: 'The frame-bound action has completed with correlated visual evidence.',
       outcome: 'act',
       reason: 'The selected action advances the current visual objective.',
-      objectiveComplete: false,
       continuationPolicy: informationGain ? 'bounded' : 'none',
       requiredCompletionBasis: informationGain ? 'visual_observation' : 'action_result',
       motionClass: informationGain ? 'target_relative' : 'open_loop_displacement',

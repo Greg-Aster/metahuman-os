@@ -240,63 +240,21 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
     let baseModel: string | null = null;
     let adapter: any = null;
     let adapterMode: 'none' | 'adapter' | 'merged' = 'none';
-    let useAdapter = false;
     let includePersonaSummary = false;
-    let adapterModelName: string | null = null;
-    let adapterMetaCfg: any = {};
-
-    try {
-      const username = isAuthenticated ? user.username : undefined;
-      const registry = loadModelRegistry(false, username);
-      const globalSettings = registry.globalSettings || {};
-
-      const defaults = registry.defaults as Record<string, string> | undefined;
-      const fallbackId = defaults?.fallback || 'default.fallback';
-      const fallbackModel = registry.models?.[fallbackId];
-      currentModel = fallbackModel?.model || null;
-      baseModel = fallbackModel?.baseModel || currentModel;
-
-      useAdapter = !!globalSettings.useAdapter;
-      includePersonaSummary = globalSettings.includePersonaSummary ?? true;
-
-      if (globalSettings.activeAdapter) {
-        if (typeof globalSettings.activeAdapter === 'string') {
-          adapterModelName = globalSettings.activeAdapter;
-        } else {
-          const activeAdapter = globalSettings.activeAdapter as { modelName?: string };
-          adapterModelName = activeAdapter.modelName ?? null;
-          adapterMetaCfg = activeAdapter;
-        }
+    if (isAuthenticated) {
+      const registry = loadModelRegistry(false, user.username);
+      const mapping = registry.cognitiveModeMappings?.[cognitiveMode];
+      const modelId = mapping?.persona === null ? undefined : mapping?.persona ?? registry.defaults?.persona;
+      const model = modelId ? registry.models?.[modelId] : undefined;
+      currentModel = model?.model ?? null;
+      includePersonaSummary = registry.globalSettings?.includePersonaSummary ?? true;
+      const active = getActiveAdapter(user.username, cognitiveMode);
+      if (active) {
+        currentModel = active.modelName;
+        baseModel = active.baseModel ?? null;
+        adapterMode = active.target === 'ollama' || active.trainingMethod === 'fine-tune' ? 'merged' : 'adapter';
+        adapter = { status: active.status, modelName: active.modelName, activatedAt: active.activatedAt, source: 'persona-role' };
       }
-    } catch {}
-
-    const active = getActiveAdapter();
-    const isMergedActive = !useAdapter && adapterModelName && currentModel && adapterModelName === currentModel;
-
-    if (useAdapter && adapterModelName) {
-      adapterMode = 'adapter';
-      const status = active?.status || 'configured';
-      adapter = {
-        status,
-        modelName: adapterModelName,
-        activatedAt: active?.activatedAt,
-        source: active ? 'active' : 'config',
-      };
-      if (active?.baseModel) baseModel = active.baseModel;
-    } else if (isMergedActive) {
-      adapterMode = 'merged';
-      adapter = {
-        status: 'merged',
-        modelName: adapterModelName,
-        activatedAt: adapterMetaCfg.activatedAt,
-        source: 'merged',
-      };
-    }
-
-    if (adapterMode !== 'adapter') {
-      baseModel = null;
-    } else if (!baseModel) {
-      baseModel = currentModel;
     }
 
     const personaSummaryStatus = includePersonaSummary ? 'enabled' : 'disabled';
@@ -642,7 +600,7 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       model: {
         current: currentModel,
         base: baseModel,
-        useAdapter,
+        useAdapter: adapter !== null,
         adapterMode,
         personaSummary: personaSummaryStatus,
         adapter,

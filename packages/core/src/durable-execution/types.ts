@@ -93,6 +93,9 @@ export interface CheckpointTransition {
   status?: ExecutionStatus
   task?: ExecutionObjective
   frames?: import('../environment-interface/types.js').EnvironmentVisualFrame[]
+  observations?: import('../visual-observation.js').VisualObservationRecord[]
+  /** History read by this node, retained with its output even if its source is pruned meanwhile. */
+  retainedObservations?: import('../visual-observation.js').VisualObservationRecord[]
 }
 
 export class ExecutionConflictError extends Error {

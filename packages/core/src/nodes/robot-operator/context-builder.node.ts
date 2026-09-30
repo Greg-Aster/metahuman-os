@@ -1,4 +1,5 @@
 import { projectDesireAwareness } from '../../agency/lifecycle-policy.js'
+import { withVisualObservationSchema } from '../../visual-observation.js';
 import type {
   EnvironmentObservation,
   EnvironmentVisualFrame,
@@ -129,11 +130,16 @@ function consolidatedInnerHistory(value: unknown): Array<Record<string, unknown>
 function selectedImageParts(
   images: unknown,
   frames: unknown,
-): Array<Record<string, unknown>> {
+): Array<{ image: Record<string, unknown>; frame: EnvironmentVisualFrame }> {
   if (!Array.isArray(images) || !Array.isArray(frames)) return [];
-  return images.slice(0, frames.length).filter((image): image is Record<string, unknown> => (
-    isRecord(image) && image.type === 'image_url'
-  ));
+  return images.flatMap((image, index) => {
+    const frame = frames[index];
+    if (!isRecord(image) || image.type !== 'image_url') return [];
+    if (!isRecord(frame) || !isRecord(image.image_url) || image.image_url.url !== frame.dataUrl) {
+      throw new Error('Selected image bytes do not match their source frame');
+    }
+    return [{ image, frame: frame as unknown as EnvironmentVisualFrame }];
+  });
 }
 
 function robotTrigger(
@@ -233,8 +239,6 @@ function autonomySelectorSchema(
       || (routingAnalysis.needsVision === true && !currentVisionAvailable),
     requireAction: routingAnalysis.needsAction === true
       || robotObserver?.requestedBy === 'boredom-movement',
-    requireProgress: true,
-    requireAutonomousConsequence: true,
   });
 }
 
@@ -297,6 +301,7 @@ function verifiedActionHistory(value: unknown): Array<Record<string, unknown>> {
 type RobotOperatorContextContract = 'environment' | 'delegation' | 'action_result' | 'goal_review' | 'autonomy_controller';
 
 const CONTEXT_OUTPUTS: NodeSlot[] = [
+  { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
   { name: 'messages', type: 'array', description: 'Multimodal messages for this workflow LLM' },
   { name: 'jsonSchema', type: 'object', description: 'Structured output contract for this workflow LLM' },
   { name: 'context', type: 'object', description: 'Inspectable context summary' },
@@ -306,6 +311,7 @@ const CONTEXT_OUTPUTS: NodeSlot[] = [
 ];
 
 const COMMON_CONTEXT_INPUTS: Record<string, NodeSlot> = {
+  observationHistory: { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
   execution: { name: 'execution', type: 'object', optional: true, description: 'Checkpointed task and ordered events from Current Execution' },
   instruction: { name: 'instruction', type: 'string', description: 'Graph-owned instructions for this one LLM task' },
   observation: { name: 'observation', type: 'object', optional: true, description: 'Environment Bridge observation supplied to this workflow' },
@@ -332,7 +338,7 @@ const COMMON_CONTEXT_INPUTS: Record<string, NodeSlot> = {
 };
 
 function contextInputs(...names: string[]): NodeSlot[] {
-  return ['execution', ...names].map(name => COMMON_CONTEXT_INPUTS[name]);
+  return ['execution', 'observationHistory', ...names].map(name => COMMON_CONTEXT_INPUTS[name]);
 }
 
 async function buildRobotOperatorContext(
@@ -415,12 +421,12 @@ async function buildRobotOperatorContext(
       seenMemories.add(key);
       return [memory];
     }).slice(0, 5);
-    const images = visionSelected && inputs.currentVisualEvidence === true
+    const selectedEvidence = visionSelected && inputs.currentVisualEvidence === true
       ? selectedImageParts(inputs.images, inputs.frames)
       : [];
-    const frames = (visionSelected && Array.isArray(inputs.frames) ? inputs.frames : [])
-      .filter((frame): frame is EnvironmentVisualFrame => isRecord(frame))
-      .map(frameSummary);
+    const images = selectedEvidence.map(item => item.image);
+    const selectedFrames = selectedEvidence.map(item => item.frame);
+    const frames = selectedFrames.map(frameSummary);
     const trigger = robotTrigger(observation, robotObserver);
     const plannerDecision = delegatedPlannerDecision(inputs.plannerDecision);
     const cycleId = cleanText(trigger.cycleId, 200);
@@ -518,6 +524,8 @@ async function buildRobotOperatorContext(
     const supportingMemoryContext = reflectionTrigger ? [] : memoryContext;
     const contextEnvelope = {
       execution: inputs.execution ?? null,
+      ...(environmentSelected && Array.isArray(inputs.observationHistory) && inputs.observationHistory.length
+        ? { observationHistory: inputs.observationHistory } : {}),
       ...(availableTasks.length ? { availableTasks } : {}),
       robotOperatorContext: {
         activePersona: personaText || null,
@@ -619,7 +627,8 @@ async function buildRobotOperatorContext(
         { role: 'system', content: instruction },
         { role: 'user', content: userContent },
       ],
-      jsonSchema: outputContract === 'delegation'
+      frames: selectedFrames,
+      jsonSchema: withVisualObservationSchema(outputContract === 'delegation'
         ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA
         : outputContract === 'action_result'
           ? buildRobotActionResultJsonSchema(inputs.execution)
@@ -632,7 +641,7 @@ async function buildRobotOperatorContext(
                 robotObserver,
                 routingAnalysis ?? {},
                 visualEvidenceVerified,
-              ),
+              ), selectedFrames),
       context: {
         instruction,
         stimulusInstruction,

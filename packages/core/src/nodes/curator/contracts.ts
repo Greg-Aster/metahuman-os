@@ -1,5 +1,19 @@
 export type CuratorDisposition = 'accepted' | 'rejected';
 
+// Increment when the review or source interpretation contract changes. Old
+// decisions remain readable but must be reviewed again before new training.
+export const CURATOR_POLICY_VERSION = 2;
+
+export interface CuratorProvenance {
+  policyVersion: number;
+  sourceHashes: Record<string, string>;
+  kind: 'recorded-exchange' | 'synthetic-exchange';
+  sessionId?: string;
+  reinforcementSignal?: number;
+  model?: string;
+  promptHash?: string;
+}
+
 export interface EpisodicMemory {
   id: string;
   timestamp: string;
@@ -9,6 +23,7 @@ export interface EpisodicMemory {
   path?: string;
   sourcePaths?: string[];
   sourceMemoryIds?: string[];
+  sourceHashes?: Record<string, string>;
   tags?: string[];
   metadata?: {
     cognitiveMode?: string;
@@ -33,6 +48,7 @@ export interface CuratedMemory {
   cognitiveModeSource: 'metadata' | 'legacy-default';
   memoryType: string;
   sourceMemoryIds: string[];
+  provenance?: CuratorProvenance;
 }
 
 export interface CuratorItemResult {
@@ -56,7 +72,7 @@ function storedString(record: Record<string, unknown>, key: string, source: stri
   if (typeof value !== 'string' || (!allowEmpty && !value.trim())) {
     throw new Error(`${source} has invalid ${key}`);
   }
-  return allowEmpty ? value : value.trim();
+  return allowEmpty || key === 'userMessage' || key === 'assistantResponse' ? value : value.trim();
 }
 
 /** Parse and normalize one durable Curator record at its public store boundary. */
@@ -95,6 +111,29 @@ export function parseStoredCuratedMemory(value: unknown, source = 'Curator recor
     : undefined;
   if (!suitableForTraining && !rejectionReason) throw new Error(`${source} has invalid rejectionReason`);
 
+  const sourceMemoryIds = Array.isArray(record.sourceMemoryIds)
+    && record.sourceMemoryIds.length > 0
+    && record.sourceMemoryIds.every(id => typeof id === 'string' && id.trim())
+    ? (record.sourceMemoryIds as string[]).map(id => id.trim())
+    : [storedString(record, 'id', source)];
+  let provenance: CuratorProvenance | undefined;
+  if (record.provenance !== undefined) {
+    const p = record.provenance as CuratorProvenance;
+    if (!p || typeof p !== 'object' || Array.isArray(p)
+        || !Number.isSafeInteger(p.policyVersion) || p.policyVersion < 1
+        || !['recorded-exchange', 'synthetic-exchange'].includes(p.kind)
+        || !p.sourceHashes || typeof p.sourceHashes !== 'object' || Array.isArray(p.sourceHashes)
+        || Object.keys(p.sourceHashes).length !== sourceMemoryIds.length
+        || sourceMemoryIds.some(id => typeof p.sourceHashes[id] !== 'string' || !/^[a-f0-9]{64}$/.test(p.sourceHashes[id]!))
+        || (p.sessionId !== undefined && (typeof p.sessionId !== 'string' || !p.sessionId.trim()))
+        || (p.reinforcementSignal !== undefined && ![-1, 0, 1].includes(p.reinforcementSignal))
+        || (p.model !== undefined && (typeof p.model !== 'string' || !p.model.trim()))
+        || (p.promptHash !== undefined && !/^[a-f0-9]{64}$/.test(p.promptHash))) {
+      throw new Error(`${source} has invalid provenance`);
+    }
+    provenance = { ...p, sourceHashes: { ...p.sourceHashes } };
+  }
+
   return {
     id: storedString(record, 'id', source),
     originalTimestamp,
@@ -109,11 +148,8 @@ export function parseStoredCuratedMemory(value: unknown, source = 'Curator recor
     cognitiveMode: mode ?? 'dual',
     cognitiveModeSource: modeSource ?? 'legacy-default',
     memoryType: storedString(record, 'memoryType', source),
-    sourceMemoryIds: Array.isArray(record.sourceMemoryIds)
-      && record.sourceMemoryIds.length > 0
-      && record.sourceMemoryIds.every(id => typeof id === 'string' && id.trim())
-      ? (record.sourceMemoryIds as string[]).map(id => id.trim())
-      : [storedString(record, 'id', source)],
+    sourceMemoryIds,
+    provenance,
   };
 }
 

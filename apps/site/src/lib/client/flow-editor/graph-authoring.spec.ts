@@ -82,6 +82,20 @@ test('connection validation reports type mismatches without blocking deliberate 
   assert.match(connectionTypeWarning([source, target], connection) || '', /object output.*string input/)
 })
 
+test('input entry settings report a deleted, muted or conditional receiver in the editor', () => {
+  const receiver = node('input', '', '')
+  ;(receiver.data.schema as any).execution = { eventInput: true, activation: 'any-input', requiredInputs: [] }
+  receiver.data.activation = { mode: 'always' }
+  const graph = { version: '1.0', name: 'Input', description: '', nodes: [receiver], edges: [],
+    scheduler: { ...DEFAULT_GRAPH_SCHEDULER, eventInputNodeId: receiver.id } }
+  assert.deepEqual(validateAuthoringGraph(graph).filter(issue => issue.level === 'error'), [])
+  for (const patch of [{ muted: true }, { activation: { mode: 'any-input' } }]) {
+    const invalid = { ...graph, nodes: [{ ...receiver, data: { ...receiver.data, ...patch } }] }
+    assert.ok(validateAuthoringGraph(invalid).some(issue => issue.nodeId === receiver.id && /Input receiver/.test(issue.message)))
+  }
+  assert.ok(validateAuthoringGraph({ ...graph, nodes: [] }).some(issue => /Input receiver/.test(issue.message)))
+})
+
 test('edge decoration and branch results explain selected paths', () => {
   const edge = decorateEdge({
     id: 'branch',

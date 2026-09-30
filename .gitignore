@@ -224,9 +224,11 @@ secrets/
 # ============================================
 # AI TOOL CONFIGURATIONS (Local settings, not tracked)
 # ============================================
-# AGENTS.md is tracked repository guidance, not machine-local configuration.
+# Root agent instructions are remote-safe governance; nested/local settings stay ignored.
 CLAUDE.md
 GEMINI.md
+!/CLAUDE.md
+!/GEMINI.md
 .ai-config/
 .Claude/
 .Gemini/

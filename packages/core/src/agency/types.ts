@@ -965,7 +965,7 @@ export interface AgencyLoggingConfig {
  * the Tool Catalog rather than duplicated configuration.
  */
 export interface AgencyExecutionConfig {
-  /** Preferred backend for desire execution (e.g., 'claude-code', 'codex', 'open-interpreter') */
+  /** Preferred backend for desire execution (e.g., 'claude-code', 'codex') */
   preferredBackend: string;
   /** Fallback backend if preferred is unavailable */
   fallbackBackend: string;

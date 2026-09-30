@@ -182,6 +182,15 @@ export function validateAuthoringGraph(graph: SvelteFlowGraph): AuthoringIssue[]
   const issues: AuthoringIssue[] = []
   validateScheduler(graph.scheduler, issues)
   const nodesById = new Map(graph.nodes.map(node => [node.id, node]))
+  if (graph.scheduler.eventInputNodeId !== undefined) {
+    const receiver = nodesById.get(graph.scheduler.eventInputNodeId)
+    const activation = receiver?.data?.activation as { mode?: string; when?: unknown[] } | undefined
+    if (!schemaFor(receiver)?.execution?.eventInput || receiver?.data?.muted
+      || activation?.mode !== 'always' || activation?.when?.length) {
+      issues.push({ level: 'error', nodeId: graph.scheduler.eventInputNodeId,
+        message: 'Input receiver must be an enabled execution-input node with Always activation.' })
+    }
+  }
 
   for (const node of graph.nodes) {
     const schema = schemaFor(node)

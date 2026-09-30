@@ -62,6 +62,29 @@ maintained React Native shell may use device-native speech recognition instead.
 Check each stage separately when diagnosing a failure. See
 [Voice Features](/user-guide#voice-features).
 
+## System Terminal
+
+Owners can open **Terminal** from the sidebar or the chat toolbar. Select
+**Start terminal**, then **New shell** or **Server log**. Starting the agent alone
+creates no shell. Server log displays the application log; it does not start
+other services.
+
+Shells belong to the Terminal agent. Hiding the panel, switching tabs, or
+reloading the page preserves their state. Reconnect restores the current screen
+and up to 2,000 lines of scrollback. A failed close leaves the session visible
+with its error so it can be retried. **Stop terminal** closes every owned session
+and provider invocation. Agent Monitor offers the same service lifecycle controls.
+
+The terminal is off by default and is not started by opening a panel or sending
+a Big Brother request. Start it before using Claude Code or Codex escalation.
+Chat-triggered escalation opens the panel; autonomous provider sessions can be
+viewed through the sidebar. Closing a provider session cancels that invocation;
+hiding its display does not. Provider sessions are read-only displays.
+
+Access uses the application's authenticated connection, including for remote
+browsers. No separate localhost terminal port is required. Logging out revokes
+access without terminating intentionally retained shells.
+
 ## Speech Output
 
 The speaker control enables or disables conversational speech. Generated audio is delivered through the TTS queue and played by the authenticated browser consumer. A healthy synthesis provider or completed audio file does not prove that the browser played it audibly; browser permission, the active output device, and the queue consumer also matter.

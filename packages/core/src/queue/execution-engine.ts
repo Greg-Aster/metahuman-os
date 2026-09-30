@@ -458,6 +458,11 @@ export class ExecutionEngine {
       });
     }
 
+    this.registerHandler('training.personalization', async (task, context) => {
+      const { runAutomaticTrainingForSleep } = await import('../training-automation.js');
+      return runAutomaticTrainingForSleep(task.username, String(task.input.sleepWorkflow?.sessionId ?? ''), context.signal);
+    });
+
     this.registerHandler('workflow.sleep', async (task, context) => {
       const config = loadSleepConfig(task.username);
       if (!config.enabled) return { skipped: true, reason: 'sleep_disabled' };

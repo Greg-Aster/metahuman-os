@@ -6,11 +6,14 @@
 - Refactor blueprint: [REFACTOR_BLUEPRINT.md](REFACTOR_BLUEPRINT.md)
 - Audit protocol: [AUDIT_PROTOCOL.md](AUDIT_PROTOCOL.md)
 - Architecture boundary contract: [ARCHITECTURE.md](ARCHITECTURE.md)
-- Consolidation progress: [../audits/consolidation-progress.md](../audits/consolidation-progress.md)
-- Maintained-source inventory: [../audits/maintained-source-inventory.md](../audits/maintained-source-inventory.md)
 
 ## Maintained Technical Evidence
 
+- Consolidation history: [../audits/consolidation-progress.md](../audits/consolidation-progress.md).
+  Dated findings and validation evidence, not current architecture authority or
+  standing work orders. Search task-relevant entries instead of rereading it all.
+- Maintained-source inventory: [../audits/maintained-source-inventory.md](../audits/maintained-source-inventory.md).
+  A generated snapshot; source policy and current files determine present scope.
 - Environment Mode performance ledger:
   [environment-mode-performance.md](environment-mode-performance.md)
 

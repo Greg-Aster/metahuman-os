@@ -1,6 +1,56 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
+  import { activeView, systemSection } from '../stores/navigation';
+  import type { TrainingCandidateSummary, TrainingCleanupReceipt } from '@metahuman/core/training-schema';
+  let candidates: TrainingCandidateSummary[] = [];
+  let cleanup: TrainingCleanupReceipt[] = [];
+  let selectedCandidate = '';
+  let baselineModel = '';
+  let baselineProvider: 'ollama' | 'vllm' = 'ollama';
+  let prompts = '';
+  let notes = '';
+  let checks: boolean[] = [];
+  let reviewBusy = false;
+  let reviewMessage = '';
+  $: candidate = candidates.find(item => item.runLabel === selectedCandidate);
+
+  function openModels() { systemSection.set('settings'); activeView.set('system'); }
+  function openBackend() { systemSection.set('backend'); activeView.set('system'); }
+  async function reviewAction(action: 'prepare' | 'test' | 'decide' | 'reopen', decision?: 'accepted' | 'rejected') {
+    if (!candidate) return;
+    reviewBusy = true;
+    reviewMessage = '';
+    try {
+      const response = await apiFetch('/api/training/history', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          action, runLabel: candidate.runLabel, baselineModel, baselineProvider, prompts: prompts.split('\n').filter(line => line.trim()),
+          reviewId: candidate.review?.id, decision, notes, checks,
+        }) });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Candidate review failed');
+      reviewMessage = action === 'prepare' ? 'Prepared ' + data.result.model + '. Run the review prompts next.'
+        : action === 'test' ? 'Review each comparison below before deciding.'
+        : action === 'reopen' ? 'Approval suspended. Prepare the artifact and run a fresh serving comparison.'
+        : decision === 'accepted' ? 'Accepted for use. Open Model Settings to assign a role or select a previous model.'
+        : 'Candidate rejected.';
+      if (action === 'test') checks = data.result.cases.map(() => false);
+    } catch (err) { reviewMessage = (err as Error).message; }
+    finally { reviewBusy = false; await loadTrainingHistory(); }
+  }
+
+  async function recoverCleanup(runLabel: string) {
+    reviewBusy = true;
+    reviewMessage = '';
+    try {
+      const response = await apiFetch('/api/training/history', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'recover-cleanup', runLabel }) });
+      const body = await response.json();
+      if (!response.ok || !body.success) throw new Error(body.error || 'Cleanup remains unconfirmed');
+      reviewMessage = 'RunPod cleanup confirmed at ' + body.result.confirmedAt;
+    } catch (err) { reviewMessage = (err as Error).message; }
+    finally { reviewBusy = false; await loadTrainingHistory(); }
+  }
 
   interface TrainingRun {
     id: string;
@@ -35,6 +85,7 @@
   let loadingLogs = false;
 
   async function loadTrainingHistory() {
+    if (reviewBusy) return;
     loading = true;
     error = '';
 
@@ -77,6 +128,8 @@
         const historyData = await historyRes.json();
         if (historyData.success) {
           pastRuns = historyData.runs || [];
+          candidates = historyData.candidates || [];
+          cleanup = historyData.cleanup || [];
         }
       }
     } catch (err) {
@@ -315,6 +368,93 @@
         <strong>⚠️ Error:</strong> {error}
       </div>
     {/if}
+
+
+    <section class="mb-8 rounded-xl border border-gray-700 p-5 space-y-4">
+      <h3 class="text-xl font-semibold">Candidate review</h3>
+      {#each cleanup as receipt}
+        <div class="border border-amber-600 rounded p-3 space-y-2">
+          <p>RunPod cleanup needs confirmation: {receipt.runLabel}. {receipt.error ?? ''}</p>
+          <p class="text-sm break-all">{receipt.podName}{receipt.podId ? ' · ' + receipt.podId : ''}</p>
+          <button class="px-3 py-2 rounded border border-amber-600 disabled:opacity-50" disabled={reviewBusy || !!currentRun} on:click={() => recoverCleanup(receipt.runLabel)}>Terminate remaining pod and verify cleanup</button>
+          <a class="underline ml-3" href="https://console.runpod.io/pods" target="_blank" rel="noreferrer">Inspect RunPod</a>
+        </div>
+      {/each}
+      <p class="text-sm text-gray-500">Training saves a candidate. Check it on the serving backend, compare representative prompts, then approve it for model-role assignment. Previous models remain available for rollback in Model Settings.</p>
+      <div class="flex flex-wrap gap-3">
+        <button class="px-3 py-2 rounded border border-gray-600" on:click={openBackend}>Backend setup</button>
+        <button class="px-3 py-2 rounded border border-gray-600" on:click={openModels}>Model Settings and rollback</button>
+      </div>
+      {#if candidates.length === 0}
+        <p>No candidate runs have been produced by the verified training pipeline yet.</p>
+      {:else}
+        <label class="block">Training run
+          <select class="block w-full mt-1 p-2 rounded bg-gray-900 text-white" bind:value={selectedCandidate} disabled={reviewBusy} on:change={() => { checks = []; notes = ''; reviewMessage = ''; }}>
+            <option value="">Choose a run</option>
+            {#each candidates as item}
+              <option value={item.runLabel}>{item.runLabel} — {item.status}{item.review?.decision ? ' / ' + item.review.decision : ''}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+      {#if candidate}
+        <p class="text-sm break-all">{candidate.method} · {candidate.baseModel} · {candidate.target}<br />Artifact: {candidate.candidateDirectory}</p>
+        {#if candidate.baselineLoss !== undefined && candidate.candidateLoss !== undefined}
+          <p class="text-sm">Held-out loss: base {candidate.baselineLoss.toFixed(4)} → serialized candidate {candidate.candidateLoss.toFixed(4)}. {candidate.trainingSamples} training and {candidate.evaluationSamples} evaluation examples. Gate: {candidate.qualityGate}.</p>
+        {/if}
+        {#if candidate.error}<p class="text-red-400">{candidate.error}</p>{/if}
+        {#if candidate.status === 'candidate'}
+          {#if candidate.review?.decision !== 'accepted'}
+            <p class="text-sm text-gray-500">Ollama imports this run's GGUF. vLLM LoRA needs the exact training base already running with runtime LoRA loading enabled. For a full model, set its artifact path in Backend setup first. Preparation does not assign a role.</p>
+            <button class="px-3 py-2 rounded bg-blue-700 text-white disabled:opacity-50" disabled={reviewBusy} on:click={() => reviewAction('prepare')}>Prepare exact artifact</button>
+            <label class="block">Baseline backend
+              <select class="block w-full mt-1 p-2 rounded bg-gray-900 text-white" bind:value={baselineProvider} disabled={reviewBusy}>
+                <option value="ollama">Ollama</option><option value="vllm">vLLM</option>
+              </select>
+            </label>
+            <p class="text-sm text-gray-500">The baseline may use another configured backend, so a full vLLM candidate can be compared with a base or previous model served by Ollama.</p>
+            <label class="block">Baseline model
+              <input class="block w-full mt-1 p-2 rounded bg-gray-900 text-white" bind:value={baselineModel} disabled={reviewBusy} placeholder="Installed base or previous accepted model" />
+            </label>
+            <label class="block">Three to eight representative prompts, one per line
+              <textarea class="block w-full mt-1 p-2 rounded bg-gray-900 text-white" rows="5" bind:value={prompts} disabled={reviewBusy} placeholder="Include a normal task, a correction, and an edge case."></textarea>
+            </label>
+            <button class="px-3 py-2 rounded bg-blue-700 text-white disabled:opacity-50" disabled={reviewBusy || !baselineModel || prompts.split('\n').filter(line => line.trim()).length < 3} on:click={() => reviewAction('test')}>Compare on serving backend</button>
+          {/if}
+          {#if candidate.review}
+            <p class="text-sm">Review {candidate.review.createdAt} · {candidate.review.model} · baseline {candidate.review.baselineProvider}/{candidate.review.baselineModel} · {candidate.review.decision ?? 'awaiting decision'}</p>
+            {#each candidate.review.cases as item, index}
+              <div class="border border-gray-700 rounded p-3 space-y-2">
+                <p class="font-semibold whitespace-pre-wrap">{item.prompt}</p>
+                <div class="grid gap-3 md:grid-cols-2">
+                  <div><strong>Baseline</strong><pre class="whitespace-pre-wrap text-sm mt-1">{item.baseline}</pre></div>
+                  <div><strong>Candidate</strong><pre class="whitespace-pre-wrap text-sm mt-1">{item.candidate}</pre></div>
+                </div>
+                {#if candidate.review.decision !== 'accepted' && !candidate.review.reopenedAt}
+                  <label class="flex items-center gap-2"><input type="checkbox" bind:checked={checks[index]} disabled={reviewBusy} />This candidate response meets my task and persona requirements.</label>
+                {/if}
+              </div>
+            {/each}
+            {#if candidate.review.reopenedAt}
+              <p>Approval is suspended. Run a fresh serving comparison above before deciding again.</p>
+            {:else if candidate.review.decision !== 'accepted'}
+              <label class="block">Review notes
+                <textarea class="block w-full mt-1 p-2 rounded bg-gray-900 text-white" rows="3" bind:value={notes} disabled={reviewBusy}></textarea>
+              </label>
+              <div class="flex gap-3">
+                <button class="px-3 py-2 rounded bg-emerald-700 text-white disabled:opacity-50" disabled={reviewBusy || !notes.trim() || checks.filter(Boolean).length !== candidate.review.cases.length} on:click={() => reviewAction('decide', 'accepted')}>Accept for role assignment</button>
+                <button class="px-3 py-2 rounded border border-red-600 disabled:opacity-50" disabled={reviewBusy || !notes.trim()} on:click={() => reviewAction('decide', 'rejected')}>Reject candidate</button>
+              </div>
+            {:else}
+              <p>{candidate.review.notes}</p>
+              <button class="px-3 py-2 rounded border border-gray-600 disabled:opacity-50" disabled={reviewBusy} on:click={() => reviewAction('reopen')}>Suspend approval and start a new serving review</button>
+            {/if}
+          {/if}
+        {/if}
+      {/if}
+      {#if reviewBusy}<p role="status">Working on candidate review…</p>{/if}
+      {#if reviewMessage}<p role="status" class="whitespace-pre-wrap">{reviewMessage}</p>{/if}
+    </section>
 
     <!-- Current Run Section -->
     {#if currentRun}

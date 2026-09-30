@@ -2,6 +2,8 @@ export { environmentBridgeStatusNode } from './status.node.js';
 export { environmentBridgeInputNode } from './bridge-input.node.js';
 export { environmentActionContextInputNode } from './action-context-input.node.js';
 export { environmentImageInputNode } from './image-input.node.js';
+export { observationHistoryNode } from './observation-history.node.js';
+export { saveVisualObservationNode } from './save-visual-observation.node.js';
 export { environmentFeedbackNode } from './feedback.node.js';
 export { environmentMapInputNode } from './map-input.node.js';
 export { environmentContextBuilderNode } from './context-builder.node.js';

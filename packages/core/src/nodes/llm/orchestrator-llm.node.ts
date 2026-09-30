@@ -160,7 +160,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   category: 'chat',
   inputs: [
     { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
-    { name: 'activeExecutions', type: 'array', optional: true, description: 'Existing objectives the user may steer, cancel, or leave separate from this turn' },
+    { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions, their optional objectives, original inputs and waiting state, available for steering or cancellation' },
     { name: 'execution', type: 'object', optional: true, description: 'Current execution facts for routing an internal intention' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
     { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
@@ -283,7 +283,8 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
       });
     }
 
-    // Build conversation context summary for the LLM
+    // Buffer History owns the window. Preserve its selected dialogue, including
+    // requirements at the end of a message and the retained latest user turn.
     const recentMessages = Array.isArray(conversationHistory)
       ? conversationHistory
         .filter((message: any) => (
@@ -291,11 +292,9 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
           && typeof message?.content === 'string'
           && message.content.trim()
         ))
-        .slice(-4)
         .map((message: any) => {
           const role = message.role === 'user' ? 'User' : 'Assistant';
-          const content = message.content.trim().substring(0, 150);
-          return `${role}: ${content}${message.content.trim().length > 150 ? '...' : ''}`;
+          return `${role}: ${message.content.trim()}`;
         }).join('\n')
       : '';
 
@@ -321,7 +320,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
         recentMessages,
         recentConversationSection: recentMessages ? `Recent conversation:\n${recentMessages}` : '',
         activeExecutionSection: Array.isArray(inputs.activeExecutions) && inputs.activeExecutions.length
-          ? `Existing executions: ${JSON.stringify(inputs.activeExecutions)}\nChoose executionDisposition new for a separate request or conversation, steer to update an existing objective, or cancel to end one. For steer/cancel, targetExecutionId must identify that execution. Route the unchanged input; do not rewrite its objective.` : '',
+          ? `Existing executions: ${JSON.stringify(inputs.activeExecutions)}\nChoose executionDisposition new for a separate request or conversation, steer to update an execution's instruction or objective where canSteer is true, or cancel to end it. For steer/cancel, targetExecutionId must identify that execution. Route the unchanged input; do not rewrite its objective.` : '',
       };
       const systemPrompt = renderPromptTemplate(
         properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
@@ -359,7 +358,9 @@ Adjust your routing based on this feedback. If memory search already failed, con
         if (active.length && !routing.executionDisposition) throw new Error('Intent must select how this input relates to existing executions');
         const transferred = routing.executionDisposition === 'steer';
         const target = routing.executionDisposition === 'steer' || routing.executionDisposition === 'cancel';
-        if (target && !active.some(item => item.executionId === routing.targetExecutionId)) throw new Error('Intent selected an unknown execution');
+        const selectedExecution = target ? active.find(item => item.executionId === routing.targetExecutionId) : undefined;
+        if (target && !selectedExecution) throw new Error('Intent selected an unknown execution');
+        if (transferred && !selectedExecution?.canSteer) throw new Error(selectedExecution?.resumeError || 'Selected execution has no input route');
         return {
           ...routing,
           continueHere: !transferred,

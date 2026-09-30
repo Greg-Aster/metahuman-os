@@ -8,8 +8,9 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { loadFreshOperatorConfig, saveUserConfig, invalidateOperatorConfig } from '../../config.js';
-import { getBigBrotherSessionState, stopBigBrotherSession } from '../../big-brother-session.js';
+import { getBigBrotherSessionState, stopBigBrotherSession } from '../../terminal/client.js';
 import { audit } from '../../audit.js';
+import { isBackendId } from '../../escalation-constants.js';
 
 const DEFAULT_CONFIG = {
   enabled: false,
@@ -99,17 +100,25 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     autoApplySuggestions,
     } = body || {};
 
+    if (provider !== undefined && !isBackendId(provider)) {
+      return { status: 400, error: 'Unsupported Big Brother provider. Choose a supported provider in Settings.' };
+    }
+
     // Load current config (fresh, no cache - critical for merge operations)
     const config = loadFreshOperatorConfig(user.username);
 
     const previousProvider = config.bigBrotherMode?.provider || 'claude-code';
     const previousEnabled = config.bigBrotherMode?.enabled ?? false;
+    const nextProvider = provider ?? previousProvider;
+    if (!isBackendId(nextProvider)) {
+      return { status: 400, error: 'The saved Big Brother provider is unavailable. Choose a supported provider in Settings.' };
+    }
 
     // Update Big Brother mode settings (preserve model if not provided)
     const existingModel = config.bigBrotherMode?.model;
     config.bigBrotherMode = {
       enabled: enabled ?? false,
-      provider: provider || 'claude-code',
+      provider: nextProvider,
       model: model || existingModel || 'sonnet',
       delegateAll: delegateAll ?? false,
       escalateOnStuck: escalateOnStuck ?? true,
@@ -119,20 +128,19 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
       autoApplySuggestions: autoApplySuggestions ?? false,
     };
 
-    // Save to operator.json
-    saveUserConfig('operator.json', config, user.username);
-    invalidateOperatorConfig(user.username);
-
-    const nextProvider = config.bigBrotherMode.provider;
     const nextEnabled = config.bigBrotherMode.enabled;
 
     // A provider change or disable always tears down the one shared session.
     if ((previousEnabled && !nextEnabled) || previousProvider !== nextProvider) {
-      const state = getBigBrotherSessionState();
+      const state = await getBigBrotherSessionState();
       if (state.sessionOpen || state.processRunning) {
-        await stopBigBrotherSession('Big Brother configuration changed');
+        await stopBigBrotherSession();
       }
     }
+
+    // Persist only after the prior provider has stopped successfully.
+    saveUserConfig('operator.json', config, user.username);
+    invalidateOperatorConfig(user.username);
 
     // Audit the change
     audit({

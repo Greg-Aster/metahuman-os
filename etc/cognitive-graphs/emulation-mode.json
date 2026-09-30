@@ -1,7 +1,13 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
-  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
   "name": "Emulation Mode (Intelligent Memory)",
   "description": "AI-driven memory routing - orchestrator determines tier, memory_router handles retrieval. Thinking blocks preserved for UI, stripped for memory.",
   "cognitiveMode": "emulation",
@@ -251,14 +257,42 @@
       },
       "width": 180,
       "height": 80
+    },
+    {
+      "id": "input-conversation-buffer",
+      "type": "cognitiveNode",
+      "position": {
+        "x": 310,
+        "y": 40
+      },
+      "data": {
+        "label": "Admit User Input",
+        "nodeType": "conversation_buffer",
+        "properties": {},
+        "comment": "Admits the exact user message before any model call."
+      }
+    },
+    {
+      "id": "input-memory-capture",
+      "type": "outputNode",
+      "position": {
+        "x": 570,
+        "y": 40
+      },
+      "data": {
+        "label": "Save User Input",
+        "nodeType": "memory_capture",
+        "properties": {},
+        "comment": "Durably saves the input before forwarding it to cognition. A generation failure must not lose the input."
+      }
     }
   ],
   "edges": [
     {
       "id": "e-1-message-7-message",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "7",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "message",
       "data": {
         "type": "string",
@@ -300,9 +334,9 @@
     },
     {
       "id": "e-1-message-8-userMessage",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "8",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "userMessage",
       "data": {
         "type": "string",
@@ -431,25 +465,69 @@
       }
     },
     {
-      "id": "e-1-message-15-userMessage",
-      "source": "1",
-      "target": "15",
-      "sourceHandle": "message",
-      "targetHandle": "userMessage",
-      "data": {
-        "type": "string",
-        "comment": "Current user input admitted by this graph"
-      }
-    },
-    {
       "id": "e-15-response-tts-conversation",
-      "source": "15",
+      "source": "14",
       "target": "tts-out",
-      "sourceHandle": "response",
+      "sourceHandle": "passthrough",
       "targetHandle": "conversation",
       "data": {
         "type": "string",
         "comment": "Speak the exact response retained by the Conversation Buffer"
+      }
+    },
+    {
+      "id": "capture-user-buffer",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "input-conversation-buffer",
+      "targetHandle": "userMessage",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "capture-user-entry",
+      "source": "1",
+      "sourceHandle": "entry",
+      "target": "input-conversation-buffer",
+      "targetHandle": "entry",
+      "type": "default",
+      "data": {
+        "type": "message"
+      }
+    },
+    {
+      "id": "capture-user-entries",
+      "source": "input-conversation-buffer",
+      "sourceHandle": "entries",
+      "target": "input-memory-capture",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "capture-user-forward",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "input-memory-capture",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "capture-response-forward",
+      "source": "15",
+      "sourceHandle": "response",
+      "target": "14",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "string"
       }
     }
   ]

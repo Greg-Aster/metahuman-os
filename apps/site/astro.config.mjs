@@ -35,7 +35,8 @@ function externalizeMetahumanCoreForClient() {
         // Allow the explicit browser-safe contracts to be bundled for client.
         if (id.includes('/nodes/schemas')
           || id.includes('/nodes/types')
-          || id.includes('/cognitive-graph-contract')) {
+          || id.includes('/cognitive-graph-contract')
+          || id.includes('/training-schema')) {
           return null; // Let Vite bundle this normally
         }
         // Return external with empty module to prevent bundling

@@ -11,7 +11,6 @@
 
 export const BACKEND_IDS = {
   CLAUDE_CODE: 'claude-code',
-  OPEN_INTERPRETER: 'open-interpreter',
   AIDER: 'aider',
   GEMINI_CLI: 'gemini-cli',
   QWEN_CODE: 'qwen-code',
@@ -19,3 +18,7 @@ export const BACKEND_IDS = {
 } as const;
 
 export type BackendId = (typeof BACKEND_IDS)[keyof typeof BACKEND_IDS];
+
+export function isBackendId(value: unknown): value is BackendId {
+  return Object.values(BACKEND_IDS).some(id => id === value);
+}

@@ -61,7 +61,7 @@ Supported backend paths include:
 - **vLLM** for larger local models and higher-throughput GPU inference.
 - **local-models service** for lighter CPU/mobile-friendly model and embedding work.
 - **remote/server providers** for connected MetaHuman servers or cloud-backed inference.
-- **Big Brother/operator backends** such as Claude Code, Open Interpreter, Codex, Aider, Qwen Code, or Gemini CLI for escalated reasoning and coding workflows.
+- **Big Brother/operator backends** such as Claude Code, Codex, Aider, Qwen Code, or Gemini CLI for escalated reasoning and coding workflows.
 
 The router can select models by role: persona, orchestrator, curator, coder, embeddings, training support, and other graph/node responsibilities. This lets one installation use different models for conversation, memory curation, code execution, summarization, and background agents.
 

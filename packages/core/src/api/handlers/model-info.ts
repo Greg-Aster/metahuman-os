@@ -8,34 +8,26 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { getActiveAdapter } from '../../adapters.js';
-import { loadModelRegistry } from '../../model-resolver.js';
-import { DEFAULT_OLLAMA_CHAT_MODEL } from '../../model-defaults.js';
+import { resolveModel } from '../../model-resolver.js';
 
 /**
  * GET /api/model-info - Get current model and adapter info
  */
 export async function handleGetModelInfo(req: UnifiedRequest): Promise<UnifiedResponse> {
   const { user } = req;
+  if (!user.isAuthenticated) return { status: 401, error: 'Authentication required' };
 
   try {
-    // Get base model from model registry (user-specific if authenticated)
-    let baseModel = DEFAULT_OLLAMA_CHAT_MODEL;
-    try {
-      const username = user.isAuthenticated ? user.username : undefined;
-      const registry = loadModelRegistry(false, username);
-      const defaultId = registry.defaults?.orchestrator || 'default.orchestrator';
-      const defaultModel = registry.models?.[defaultId];
-      baseModel = defaultModel?.model || DEFAULT_OLLAMA_CHAT_MODEL;
-    } catch {
-      // Use default if config not found
-    }
+    const model = resolveModel('persona', undefined, user.username);
+    let baseModel = model.model;
 
     // Get active adapter info
     let adapter: any = null;
-    const active = getActiveAdapter();
-    if (active && active.status === 'loaded') {
+    const active = getActiveAdapter(user.username);
+    if (active) {
       adapter = {
         name: active.modelName,
+        runLabel: active.runLabel,
         dataset: active.dataset,
         activatedAt: active.activatedAt,
         adapterPath: active.adapterPath ?? active.ggufAdapterPath,
@@ -45,17 +37,10 @@ export async function handleGetModelInfo(req: UnifiedRequest): Promise<UnifiedRe
       }
     }
 
-    // Get actual base model from env if adapter is loaded
-    let actualBaseModel = baseModel;
-    if (adapter?.name) {
-      // The active model is using an adapter, so show the base it's built on
-      actualBaseModel = process.env.METAHUMAN_BASE_MODEL || 'dolphin-mistral:latest';
-    }
-
     return successResponse({
-      baseModel: actualBaseModel,
+      baseModel,
       adapter,
-      activeModel: adapter?.name || baseModel,
+      activeModel: model.model,
     });
   } catch (error) {
     console.error('[model-info] GET error:', error);

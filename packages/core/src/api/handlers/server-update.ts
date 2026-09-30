@@ -3,7 +3,7 @@
  *
  * GET checks the configured upstream without converting transport failures into
  * an "up to date" result. POST permits one fast-forward update at a time and
- * reports success only after dependencies and the production build complete.
+ * reports success only after dependencies, full verification, and the production build complete.
  */
 
 import { execFile, spawn } from 'node:child_process'
@@ -267,7 +267,7 @@ async function performServerUpdate(
     if (needsPnpmInstall) {
       await dependencies.runPnpm(['install'], 120_000)
     }
-    await dependencies.runPnpm(['build'], 15 * 60_000)
+    await dependencies.runPnpm(['verify'], 15 * 60_000)
 
     const newCommit = await dependencies.runGit(['rev-parse', 'HEAD'])
     audit?.({

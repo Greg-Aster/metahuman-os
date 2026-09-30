@@ -63,6 +63,8 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   const contextBuilder = graph.nodes.find(node => node.data.nodeType === 'environment_context_builder')!;
   const actionParser = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')!;
   const userInput = graph.nodes.find(node => node.data.nodeType === 'user_input')!;
+  const inputBuffer = graph.nodes.find(node => node.id === 'input-conversation-buffer')!;
+  const savedInput = graph.nodes.find(node => node.id === 'input-memory-capture')!;
   const bridgeInput = graph.nodes.find(node => node.data.nodeType === 'environment_bridge_input')!;
   const history = graph.nodes.find(node => node.data.nodeType === 'conversation_history')!;
   const imageInput = graph.nodes.find(node => node.data.nodeType === 'environment_image_input')!;
@@ -106,25 +108,35 @@ test('Environment Mode uses one route-only orchestrator before selected context 
     () => parseEnvironmentIntentRouting('{"needsResponse":true}'),
     /requires boolean needsConversationHistory/,
   );
-  assert.equal(contextBuilder.data.properties?.recentHistoryLimit, 4);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /action result proves execution/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /visual observation proves only visible facts/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /selectedRoutes is the Intent Orchestrator's decision/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /response field carries the user-visible natural-language expression/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Use those selected capabilities without deciding the routes again/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /current visual evidence is useful but absent/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /saved environment observation supplies last-known state and capabilities/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Advertised actions are proven capabilities/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /movementRequest is available for a novel movement/i);
+  assert.equal('recentHistoryLimit' in (contextBuilder.data.properties ?? {}), false,
+    'The connected Buffer History node owns the conversation window');
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /command result establishes execution, not necessarily the whole objective/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Images show what was visible at their visualFrames times/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Address currentInstruction using selectedRoutes and the supplied capabilities/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Speech can accompany any choice/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /If more recent evidence is needed, advertised captureImage obtains it/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /not whether the camera works/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /advertised action whose description implements the intended effect/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /novel body-local movement not covered by an advertised action, movementRequest delegates/i);
   assert.match(String(contextBuilder.data.properties?.systemPrompt), /actions and movementRequest are exclusive/i);
   assert.match(
     String(contextBuilder.data.properties?.systemPrompt),
-    /taskDecision describes progress toward the whole objective independently/i,
+    /whole intended outcome separately from this turn's reply or effect/i,
   );
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Keep objectiveComplete false when selecting work whose result is still pending/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Accepting a request or beginning an activity is not completing it/i);
+  assert.doesNotMatch(String(contextBuilder.data.properties?.systemPrompt), /objectiveComplete/);
+  assert.equal(hasEdge('11', 'frames', contextBuilder.id, 'frames'), true, 'Image Input owns the matching frame metadata');
 
   assert.equal(graph.nodes.some(node => node.data.nodeType === 'instruction_resolver'), false);
-  assert.equal(hasEdge(userInput.id, 'message', orchestrator.id, 'message'), true);
+  assert.equal(inputBuffer.data.nodeType, 'conversation_buffer');
+  assert.equal(savedInput.data.nodeType, 'memory_capture');
+  assert.equal(hasEdge(userInput.id, 'message', inputBuffer.id, 'userMessage'), true);
+  assert.equal(hasEdge(userInput.id, 'entry', inputBuffer.id, 'entry'), true);
+  assert.equal(hasEdge(inputBuffer.id, 'entries', savedInput.id, 'entries'), true);
+  assert.equal(hasEdge(userInput.id, 'message', savedInput.id, 'passthrough'), true);
+  assert.equal(hasEdge(savedInput.id, 'passthrough', orchestrator.id, 'message'), true);
+  const inputHandoff = graph.nodes.find(node => node.data.nodeType === 'execution_event_out')!;
+  assert.equal(hasEdge(inputBuffer.id, 'entry', inputHandoff.id, 'entry'), true);
   assert.equal(hasEdge(history.id, 'history', orchestrator.id, 'conversationHistory'), true);
   assert.equal(hasEdge(orchestrator.id, 'analysis', contextBuilder.id, 'routingAnalysis'), true);
   assert.equal(hasEdge(orchestrator.id, 'analysis', memoryRouter.id, 'orchestratorHints'), true);
@@ -138,9 +150,9 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.deepEqual(imageInput.data.activation?.when, [
     { nodeId: orchestrator.id, output: 'needsVision', truthy: true },
   ]);
-  assert.equal(hasEdge(userInput.id, 'message', contextBuilder.id, 'instruction'), true);
-  assert.equal(hasEdge(userInput.id, 'message', contextBuilder.id, 'userInstruction'), true);
-  assert.equal(hasEdge(userInput.id, 'message', memoryRouter.id, 'userMessage'), true);
+  assert.equal(hasEdge(savedInput.id, 'passthrough', contextBuilder.id, 'instruction'), true);
+  assert.equal(hasEdge(savedInput.id, 'passthrough', contextBuilder.id, 'userInstruction'), true);
+  assert.equal(hasEdge(savedInput.id, 'passthrough', memoryRouter.id, 'userMessage'), true);
   assert.equal(hasEdge(memoryRouter.id, 'memories', contextBuilder.id, 'memories'), true);
   assert.equal(hasEdge(history.id, 'history', contextBuilder.id, 'conversationHistory'), true);
   assert.equal(hasEdge(statusInput.id, 'context', contextBuilder.id, 'robotStatus'), true);

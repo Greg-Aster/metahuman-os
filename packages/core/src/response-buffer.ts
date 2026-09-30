@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto';
 import { getProfilePaths } from './paths.js';
 import { systemPaths } from './path-builder.js';
 import type { Desire } from './agency/types.js';
+import { assertProfileMemoryAvailable } from './locks.js';
 
 const LOG_PREFIX = '[response-buffer]';
 
@@ -120,6 +121,7 @@ export function createResponseBuffer(
   desireSnapshot?: Desire,
   metadata?: Record<string, unknown>
 ): ResponseBuffer {
+  assertProfileMemoryAvailable(username);
   const now = new Date().toISOString();
   const buffer: ResponseBuffer = {
     id: randomUUID(),
@@ -183,6 +185,7 @@ export function appendToResponseBuffer(
   content: string,
   action?: string
 ): ResponseBuffer | null {
+  assertProfileMemoryAvailable(username);
   const buffer = loadResponseBuffer(username, bufferId);
   if (!buffer) {
     console.error(`${LOG_PREFIX} Cannot append: buffer ${bufferId} not found`);
@@ -225,6 +228,7 @@ export function appendExchangeToResponseBuffer(
   assistantContent: string,
   action: string
 ): ResponseBuffer | null {
+  assertProfileMemoryAvailable(username);
   const buffer = loadResponseBuffer(username, bufferId);
   if (!buffer) {
     console.error(`${LOG_PREFIX} Cannot append exchange: buffer ${bufferId} not found`);

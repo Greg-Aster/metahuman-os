@@ -141,13 +141,6 @@ export const EventTypes = {
   VLLM_SERVER_STOPPED: 'vllm.server.stopped',
   VLLM_MODEL_LOADED: 'vllm.model.loaded',
 
-  // Open Interpreter events
-  INTERPRETER_TASK_STARTED: 'interpreter.task.started',
-  INTERPRETER_TASK_COMPLETED: 'interpreter.task.completed',
-  INTERPRETER_TASK_FAILED: 'interpreter.task.failed',
-  INTERPRETER_SERVER_STARTED: 'interpreter.server.started',
-  INTERPRETER_SERVER_STOPPED: 'interpreter.server.stopped',
-
   // Whisper STT events
   WHISPER_TRANSCRIBE_STARTED: 'whisper.transcribe.started',
   WHISPER_TRANSCRIBE_COMPLETED: 'whisper.transcribe.completed',

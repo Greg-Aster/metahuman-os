@@ -4,11 +4,11 @@ import type {
   EscalationResult,
 } from '../escalation-backend.js'
 import {
-  bigBrotherSession,
+  getBigBrotherSessionState,
+  stopBigBrotherSession,
   executeInBigBrotherSession,
-  isTerminalBigBrotherProviderInstalled,
-  type TerminalBigBrotherProvider,
-} from '../big-brother-session.js'
+} from '../terminal/client.js'
+import { isTerminalBigBrotherProviderInstalled, type TerminalBigBrotherProvider } from '../terminal/providers/cli.js'
 
 interface TerminalBackendDefinition {
   id: TerminalBigBrotherProvider
@@ -36,10 +36,10 @@ export function createTerminalSessionBackend(definition: TerminalBackendDefiniti
       return ready
     },
 
-    stop(): void {
+    async stop(): Promise<void> {
       ready = false
-      if (bigBrotherSession.getState().provider === definition.id) {
-        void bigBrotherSession.stop(`${definition.name} backend stopped`)
+      if ((await getBigBrotherSessionState()).provider === definition.id) {
+        await stopBigBrotherSession()
       }
     },
 

@@ -177,7 +177,7 @@ import { handleSemanticTurn } from './handlers/semantic-turn.js';
 import { handleGetTrainingModels } from './handlers/training-models.js';
 import { handleWarmupModel } from './handlers/warmup-model.js';
 import { handleGetVoiceModels } from './handlers/voice-models.js';
-import { handleGetTrainingHistory } from './handlers/training-history.js';
+import { handleGetTrainingHistory, handleReviewTrainingCandidate } from './handlers/training-history.js';
 import { handleGetMemoryContent, handlePutMemoryContent } from './handlers/memory-content.js';
 import { handleListPersonaArchives, handlePersonaArchiveAction } from './handlers/persona-archives.js';
 import { handleGetPsychoanalyzerConfig, handleSetPsychoanalyzerConfig } from './handlers/psychoanalyzer-config.js';
@@ -200,17 +200,7 @@ import { handleOllamaControl } from './handlers/llm-backend-ollama.js';
 import { handleVllmControl } from './handlers/llm-backend-vllm.js';
 import { handleGetVllmLoras, handleUpdateVllmLoras } from './handlers/vllm-loras.js';
 import { handleGetOllamaLoras, handleCreateOllamaLora } from './handlers/ollama-loras.js';
-import {
-  handleLlmChat,
-  handleLLMProxy,
-  handleListProxyModels,
-  handleGetProxyConfig,
-  handleSetProxyConfig,
-} from './handlers/llm-proxy.js';
-import {
-  handleGetInterpreterStatus,
-  handleInterpreterControl,
-} from './handlers/interpreter-status.js';
+import { handleLlmChat } from './handlers/llm-proxy.js';
 import { handleGetFineTuneModels } from './handlers/fine-tune-models.js';
 import { handleGetCloudflareStatus, handleCloudflareStart, handleCloudflareStop, handleCloudflareToggle } from './handlers/cloudflare.js';
 import { handleGetTrainingStatus } from './handlers/training-status.js';
@@ -284,6 +274,7 @@ import { handleGetEmbeddingsConfig, handleUpdateEmbeddingsConfig } from './handl
 import { handleGetPersonaInsights } from './handlers/persona-insights.js';
 import { handleExtractOnboardingPersona } from './handlers/onboarding-persona.js';
 import { handleGetEventBusStatus, handlePostEventBusStatus } from './handlers/event-bus-status.js';
+import { handleEventBusStream } from './handlers/event-bus-stream.js';
 import { handleGetMemorySyncItem, handleDeleteMemorySyncItem } from './handlers/memory-sync-item.js';
 import { handleTemplateWatch } from './handlers/template-watch.js';
 import { handleGetAstroServers, handlePostAstroServers } from './handlers/astro-servers.js';
@@ -304,7 +295,6 @@ import {
 import {
   handleBigBrotherControl,
   handleBigBrotherStatus,
-  handleBigBrotherTerminalEvents,
 } from './handlers/big-brother-terminal.js';
 import { handleGetNodePipeline, handleSetNodePipeline } from './handlers/node-pipeline.js';
 import { handleDecryptProfilePath, handleEncryptProfilePath } from './handlers/profile-encryption.js';
@@ -419,13 +409,7 @@ import {
   handlePersonaGeneratorResetPersona,
   handlePersonaGeneratorPurgeSessions,
 } from './handlers/persona-generator.js';
-import {
-  handleCleanupTerminals,
-  handleKillTerminal,
-  handleListTerminals,
-  handleSpawnTerminal,
-  handleTerminalStatus,
-} from './handlers/terminal.js';
+import { handleTerminalState, handleTerminalControl, handleTerminalSession, handleTerminalEvents } from './handlers/terminal.js';
 import {
   handleGetActiveOperatorStatus,
   handleGetActiveOperatorConfig,
@@ -469,10 +453,10 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/pause-state', handler: handleGetPauseState, requiresAuth: true },
   { method: 'POST', pattern: '/api/pause-state', handler: handleUpdatePauseState, requiresAuth: true },
   { method: 'GET', pattern: '/api/event-bus-status', handler: handleGetEventBusStatus },
+  { method: 'GET', pattern: '/api/event-bus-stream', handler: handleEventBusStream, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/event-bus-status', handler: handlePostEventBusStatus, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/big-brother-status', handler: handleBigBrotherStatus, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/big-brother-status', handler: handleBigBrotherControl, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/big-brother/terminal-events', handler: handleBigBrotherTerminalEvents, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/astro-servers', handler: handleGetAstroServers, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/astro-servers', handler: handlePostAstroServers, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/node-pipeline', handler: handleGetNodePipeline, requiresAuth: true, guard: 'owner' },
@@ -594,12 +578,11 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: '/api/voice-settings', handler: handleGetVoiceSettings, requiresAuth: true },
   { method: 'POST', pattern: '/api/voice-settings', handler: handleSaveVoiceSettings, requiresAuth: true },
 
-  // Terminal Control
-  { method: 'GET', pattern: '/api/terminal/list', handler: handleListTerminals, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: '/api/terminal/spawn', handler: handleSpawnTerminal, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/terminal/cleanup', handler: handleTerminalStatus, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: '/api/terminal/cleanup', handler: handleCleanupTerminals, requiresAuth: true, guard: 'owner' },
-  { method: 'POST', pattern: /^\/api\/terminal\/kill\/([^\/]+)$/, handler: handleKillTerminal, requiresAuth: true, guard: 'owner' },
+  // Terminal agent transport (all access is owner-only and same-origin).
+  { method: 'GET', pattern: '/api/terminal/state', handler: handleTerminalState, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/terminal/control', handler: handleTerminalControl, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/terminal/sessions', handler: handleTerminalSession, requiresAuth: true, guard: 'owner' },
+  { method: 'GET', pattern: '/api/terminal/events', handler: handleTerminalEvents, requiresAuth: true, guard: 'owner' },
 
   // Active Operator
   { method: 'GET', pattern: '/api/active-operator/status', handler: handleGetActiveOperatorStatus, requiresAuth: true },
@@ -832,7 +815,7 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/big-brother-config', handler: handleSetBigBrotherConfig, requiresAuth: true, guard: 'owner' },
 
   // Persona Toggle
-  { method: 'GET', pattern: '/api/persona-toggle', handler: handleGetPersonaToggle },
+  { method: 'GET', pattern: '/api/persona-toggle', handler: handleGetPersonaToggle, requiresAuth: true },
   { method: 'POST', pattern: '/api/persona-toggle', handler: handleSetPersonaToggle, requiresAuth: true },
 
   // Storage Status
@@ -878,6 +861,7 @@ const routes: RouteDefinition[] = [
 
   // Training History
   { method: 'GET', pattern: '/api/training/history', handler: handleGetTrainingHistory, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/training/history', handler: handleReviewTrainingCandidate, requiresAuth: true, guard: 'owner' },
 
   // Memory Content
   { method: 'GET', pattern: '/api/memory-content', handler: handleGetMemoryContent, requiresAuth: true },
@@ -948,16 +932,6 @@ const routes: RouteDefinition[] = [
 
   // LLM Proxy - allows remote clients to use this server's LLM (Ollama or vLLM)
   { method: 'POST', pattern: '/api/llm/chat', handler: handleLlmChat, requiresAuth: true },
-  // OpenAI-compatible proxy for Open Interpreter (uses user-configurable model from tool-executor.json)
-  { method: 'POST', pattern: '/api/llm/proxy', handler: handleLLMProxy, requiresAuth: true },
-  { method: 'GET', pattern: '/api/llm/proxy/models', handler: handleListProxyModels, requiresAuth: true },
-  { method: 'GET', pattern: '/api/llm/proxy/config', handler: handleGetProxyConfig, requiresAuth: true },
-  { method: 'POST', pattern: '/api/llm/proxy/config', handler: handleSetProxyConfig, requiresAuth: true, guard: 'owner' },
-
-  // Open Interpreter Status and Control
-  { method: 'GET', pattern: '/api/interpreter-status', handler: handleGetInterpreterStatus, requiresAuth: true },
-  { method: 'POST', pattern: '/api/interpreter-status', handler: handleInterpreterControl, requiresAuth: true, guard: 'owner' },
-
   // Model Registry - authenticated users can manage their own model preferences
   { method: 'GET', pattern: '/api/model-registry', handler: handleGetModelRegistry, requiresAuth: true },
   { method: 'POST', pattern: '/api/model-registry', handler: handleAssignModelRole, requiresAuth: true },
@@ -999,7 +973,7 @@ const routes: RouteDefinition[] = [
   // Mobile Version
   { method: 'GET', pattern: '/api/mobile/version', handler: handleGetMobileVersion },
 
-  // Factory Reset
+  // Profile memory reset (existing route)
   { method: 'POST', pattern: '/api/reset-factory', handler: handleResetFactory, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/reset-factory', handler: handleResetFactoryGet },
 

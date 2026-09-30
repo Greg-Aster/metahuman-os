@@ -7,7 +7,6 @@
  *
  * Supported backends:
  * - claude-code: Anthropic's Claude Code CLI
- * - open-interpreter: Open Interpreter Python server
  * - aider: Aider AI pair programming
  * - gemini-cli: Google Gemini CLI
  * - qwen-code: Qwen Code CLI
@@ -110,7 +109,7 @@ export interface EscalationBackend {
   /**
    * Stop/cleanup the backend
    */
-  stop(): void;
+  stop(): void | Promise<void>;
 
   /**
    * Execute a prompt and return the result
@@ -176,14 +175,12 @@ export function getActiveBackend(username?: string): EscalationBackend | undefin
   // Check escalation config first (new schema)
   const escalationConfig = config.escalation;
   if (escalationConfig?.defaultBackend) {
-    const backend = backendRegistry.get(escalationConfig.defaultBackend);
-    if (backend) return backend;
+    return backendRegistry.get(escalationConfig.defaultBackend);
   }
 
   // Fall back to activeBackend (existing schema)
   if (config.activeBackend) {
-    const backend = backendRegistry.get(config.activeBackend);
-    if (backend) return backend;
+    return backendRegistry.get(config.activeBackend);
   }
 
   // Default to claude-code if registered
@@ -244,19 +241,17 @@ export async function escalate(
   const { username, preferredBackend, ...execOptions } = options || {};
 
   // Get backend
-  let backend: EscalationBackend | undefined;
-  if (preferredBackend) {
-    backend = getBackend(preferredBackend);
-  }
-  if (!backend) {
-    backend = getActiveBackend(username);
-  }
+  const backend = preferredBackend
+    ? getBackend(preferredBackend)
+    : getActiveBackend(username);
 
   if (!backend) {
     return {
       success: false,
       output: '',
-      error: 'No escalation backend available. Configure one in Settings.',
+      error: preferredBackend
+        ? `Escalation backend '${preferredBackend}' is not registered. Choose a supported provider in Settings.`
+        : 'No configured escalation backend is available. Choose a supported provider in Settings.',
     };
   }
 
@@ -358,19 +353,17 @@ export { BACKEND_IDS, type BackendId } from './escalation-constants.js';
 // Initialize backends when this module is first used.
 // Uses dynamic import to avoid circular dependency issues during module load.
 
-let backendsInitialized = false;
+let backendsInitialization: Promise<void> | undefined;
 
-async function initializeBackends(): Promise<void> {
-  if (backendsInitialized) return;
-  backendsInitialized = true;
-
-  // Dynamic imports - executed after this module is fully loaded
-  await import('./backends/claude-code-backend.js');
-  await import('./backends/open-interpreter-backend.js');
-  await import('./backends/aider-backend.js');
-  await import('./backends/gemini-cli-backend.js');
-  await import('./backends/qwen-code-backend.js');
-  await import('./backends/codex-backend.js');
+function initializeBackends(): Promise<void> {
+  // Every caller waits for the complete registry, including concurrent requests.
+  return backendsInitialization ??= (async () => {
+    await import('./backends/claude-code-backend.js');
+    await import('./backends/aider-backend.js');
+    await import('./backends/gemini-cli-backend.js');
+    await import('./backends/qwen-code-backend.js');
+    await import('./backends/codex-backend.js');
+  })();
 }
 
 // Immediately trigger initialization (fire-and-forget)

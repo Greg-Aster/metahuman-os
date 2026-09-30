@@ -17,6 +17,7 @@ export interface SleepWorkflowStage extends SleepStageDefinition {
   agentId?: string
   args?: string[]
   maxAttempts: number
+  resource?: TaskInput['resource']
 }
 
 export type SleepStageEnabled = (stage: SleepWorkflowStage) => boolean
@@ -32,6 +33,7 @@ export interface SleepWorkflowMarker {
 export const SLEEP_WORKFLOW_STAGES: readonly SleepWorkflowStage[] = [
   { id: 'organize-memory', displayName: 'Organize memories', type: 'memory_curate', handler: 'agent.organizer', agentId: 'organizer', args: ['--limit=20'], maxAttempts: 2 },
   { id: 'curate-memory', displayName: 'Curate training memories', type: 'training_curate', handler: 'agent.curator', agentId: 'curator', maxAttempts: 2 },
+  { id: 'train-personalization', displayName: 'Train a personalization candidate', type: 'generic', resource: 'local-llm', handler: 'training.personalization', maxAttempts: 1 },
   { id: 'run-desire-agent', displayName: 'Run Desire Agent', type: 'desire_generate', handler: 'agent.desire-generator', agentId: 'desire-agent', maxAttempts: 2 },
   { id: 'dream', displayName: 'Dream from memories', type: 'dream', handler: 'agent.dreamer', agentId: 'dreamer', maxAttempts: 2 },
   { id: 'review-persona', displayName: 'Review persona learnings', type: 'psychoanalyze', handler: 'agent.psychoanalyzer', agentId: 'psychoanalyzer', maxAttempts: 2 },
@@ -58,9 +60,10 @@ function stageInput(session: SleepSessionRuntime, stageIndex: number): TaskInput
     totalStages: SLEEP_WORKFLOW_STAGES.length,
   }
   const usesAgentProcess = stage.handler.startsWith('agent.')
-  const args = stage.args ?? []
+  const args = stage.id === 'curate-memory' ? ['--cutoff', session.startedAt] : stage.args ?? []
   return {
     type: stage.type,
+    ...(stage.resource ? { resource: stage.resource } : {}),
     handler: stage.handler,
     source: 'system',
     username: session.username,
@@ -173,10 +176,11 @@ export function advanceSleepWorkflow(
   const session = readSleepRuntimeState().currentSession
   if (!session || session.id !== marker.sessionId || session.state !== 'running') return null
   const stageEnabled = isStageEnabled ?? catalogStageEnabled()
+  const result = manager.getTask(task.id)?.result
   updateSleepStage(marker.sessionId, marker.stageId, {
-    state: outcome,
+    state: outcome === 'completed' && result?.skipped === true ? 'skipped' : outcome,
     completedAt: new Date().toISOString(),
-    error,
+    error: result?.skipped === true ? String(result.reason) : error,
   })
   let nextIndex = marker.stageIndex + 1
   try {

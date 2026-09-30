@@ -6,6 +6,7 @@ export const executionEventOutNode = defineNode({
   inputs: [
     { name: 'selection', type: 'object', description: 'Existing execution and event kind selected by the LLM' },
     { name: 'message', type: 'string', description: 'Original user input' },
+    { name: 'entry', type: 'message', optional: true, description: 'Original Conversation Buffer admission, preserving identity through the handoff' },
   ],
   outputs: [{ name: 'sent', type: 'boolean', description: 'Input handoff committed with this node output' }],
   properties: {},
@@ -13,9 +14,13 @@ export const executionEventOutNode = defineNode({
     if (!context.graphExecution) throw new Error('Execution input handoff requires durable execution')
     const selected = inputs.selection
     if (!selected?.executionId || !['user_steering', 'user_cancelled'].includes(selected.kind)) throw new Error('Invalid execution input selection')
+    if (inputs.entry && (inputs.entry.role !== 'user' || inputs.entry.content !== inputs.message)) {
+      throw new Error('Execution input entry must match the original user message')
+    }
     context.graphExecution.dispatch({ kind: 'execution_event', payload: {
       executionId: selected.executionId, kind: selected.kind,
-      context: { userMessage: inputs.message, ...(context.environmentObservation ? { environmentObservation: context.environmentObservation, environmentObservationCurrent: context.environmentObservationCurrent } : {}) },
+      context: { userMessage: inputs.message, ...(inputs.entry ? { userMessageEntry: inputs.entry } : {}),
+        ...(context.environmentObservation ? { environmentObservation: context.environmentObservation, environmentObservationCurrent: context.environmentObservationCurrent } : {}) },
     } })
     return { sent: true }
   },

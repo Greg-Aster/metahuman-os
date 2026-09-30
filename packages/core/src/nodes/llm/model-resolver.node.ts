@@ -5,7 +5,9 @@
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
-import { loadModelRegistry } from '../../model-resolver.js';
+import { loadModelRegistry, resolveModel, resolveModelForCognitiveMode, isModelRole } from '../../model-resolver.js';
+import { getUserContext } from '../../context.js';
+import { listTrainingCandidates } from '../../adapters.js';
 import { getActiveFacet } from '../../identity.js';
 import { loadMoodSettings } from '../../mood-settings.js';
 
@@ -26,18 +28,16 @@ export const ModelResolverNode: NodeDefinition = defineNode({
   description: 'Resolves which model to use for a given role',
 
   execute: async (inputs, context) => {
-    const role = inputs[0] || context.role || 'persona';
+    const role = inputs.role ?? context.role ?? 'persona';
 
     try {
-      const registry = loadModelRegistry();
-
-      const defaults = registry.defaults as Record<string, string> | undefined;
-      const fallbackId = defaults?.fallback || 'default.fallback';
-      const fallbackModel = registry.models?.[fallbackId];
-
-      if (!fallbackModel?.model) {
-        throw new Error('Default fallback model not configured');
-      }
+      if (!isModelRole(role)) throw new Error('Unknown model role: ' + role);
+      const username = context.username || getUserContext()?.username;
+      if (!username) throw new Error('Model resolution requires a profile');
+      const registry = loadModelRegistry(false, username);
+      const resolved = context.cognitiveMode
+        ? resolveModelForCognitiveMode(context.cognitiveMode, role, username)
+        : resolveModel(role, undefined, username);
 
       const globalSettings = registry.globalSettings || {};
       let includePersonaSummary = globalSettings.includePersonaSummary !== false;
@@ -47,7 +47,7 @@ export const ModelResolverNode: NodeDefinition = defineNode({
         if (activeFacet === 'inactive') {
           includePersonaSummary = false;
         } else if (!includePersonaSummary) {
-          const moodSettings = loadMoodSettings(context.username || context.userId);
+          const moodSettings = loadMoodSettings(username);
           includePersonaSummary = moodSettings.overridePersonaDisabled;
         }
       } catch (error) {
@@ -55,26 +55,15 @@ export const ModelResolverNode: NodeDefinition = defineNode({
         console.warn('[ModelResolver] Could not check active facet:', error);
       }
 
-      let model: string;
-      let usingLora = false;
-
-      if (globalSettings.useAdapter && globalSettings.activeAdapter) {
-        const adapterInfo = typeof globalSettings.activeAdapter === 'string'
-          ? globalSettings.activeAdapter
-          : (globalSettings.activeAdapter as { modelName?: string }).modelName ?? fallbackModel.model;
-        model = adapterInfo;
-        usingLora = true;
-      } else {
-        model = fallbackModel.model;
-        usingLora = false;
-      }
-
-      console.log(`[ModelResolver] Resolved model: ${model} (LoRA: ${usingLora})`);
+      const candidate = resolved.metadata.trainingRunLabel
+        ? listTrainingCandidates(username).find(item => item.runLabel === resolved.metadata.trainingRunLabel)
+        : undefined;
+      const usingLora = candidate ? candidate.method !== 'fine-tune' : resolved.adapters.length > 0;
 
       return {
-        modelId: fallbackId,
-        model,
-        provider: fallbackModel.provider || 'ollama',
+        modelId: resolved.id,
+        model: resolved.model,
+        provider: resolved.provider,
         usingLora,
         includePersonaSummary,
         role,

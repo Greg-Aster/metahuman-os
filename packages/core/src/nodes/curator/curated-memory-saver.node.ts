@@ -3,26 +3,19 @@
  * Saves curated memories to curated/conversations directory
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { getProfilePaths } from '../../paths.js';
-import { writeJsonAtomically } from './atomic-json.js';
 import { isSuccessfulCuration, type CuratorItemResult } from './contracts.js';
-import { curatedRecordFilename } from './curated-store.js';
+import { writeCuratedMemory } from './curated-store.js';
 
 export function saveCuratedResults(
   curatedResults: CuratorItemResult[],
-  curatedDir: string,
+  username: string,
 ): { savedCount: number; savedPaths: string[] } {
-  fs.mkdirSync(curatedDir, { recursive: true });
   const savedPaths: string[] = [];
 
   for (const result of curatedResults) {
     if (!isSuccessfulCuration(result)) continue;
-    const filepath = path.join(curatedDir, curatedRecordFilename(result.curated));
-    writeJsonAtomically(filepath, result.curated);
-    savedPaths.push(filepath);
+    savedPaths.push(writeCuratedMemory(username, result.curated));
   }
 
   return { savedCount: savedPaths.length, savedPaths };
@@ -45,9 +38,7 @@ const execute: NodeExecutor = async (inputs, context, _properties) => {
     };
   }
 
-  const profilePaths = getProfilePaths(context.userId);
-  const curatedDir = path.join(profilePaths.memory, 'curated', 'conversations');
-  const saved = saveCuratedResults(curatedResults as CuratorItemResult[], curatedDir);
+  const saved = saveCuratedResults(curatedResults as CuratorItemResult[], context.userId);
   return {
     success: true,
     curatedMemories: curatedResults,

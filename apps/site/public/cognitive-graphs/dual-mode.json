@@ -338,14 +338,42 @@
           "level": "info"
         }
       }
+    },
+    {
+      "id": "input-conversation-buffer",
+      "type": "outputNode",
+      "position": {
+        "x": 260,
+        "y": -40
+      },
+      "data": {
+        "label": "Admit User Input",
+        "nodeType": "conversation_buffer",
+        "properties": {},
+        "comment": "Admits the exact user message before any model call."
+      }
+    },
+    {
+      "id": "input-memory-capture",
+      "type": "outputNode",
+      "position": {
+        "x": 520,
+        "y": -40
+      },
+      "data": {
+        "label": "Save User Input",
+        "nodeType": "memory_capture",
+        "properties": {},
+        "comment": "Durably saves the input before forwarding it to cognition. A generation failure must not lose the input."
+      }
     }
   ],
   "edges": [
     {
       "id": "e1",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "24",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "message"
     },
     {
@@ -371,9 +399,9 @@
     },
     {
       "id": "e5",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "6",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "userMessage"
     },
     {
@@ -392,9 +420,9 @@
     },
     {
       "id": "e7",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "32",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "userQuery"
     },
     {
@@ -434,9 +462,9 @@
     },
     {
       "id": "e13",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "8",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "query"
     },
     {
@@ -476,9 +504,9 @@
     },
     {
       "id": "e19",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "33",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "originalQuery"
     },
     {
@@ -621,17 +649,10 @@
       "targetHandle": "response"
     },
     {
-      "id": "e36",
-      "source": "1",
-      "target": "26",
-      "sourceHandle": "message",
-      "targetHandle": "userMessage"
-    },
-    {
       "id": "e39",
-      "source": "26",
+      "source": "21",
       "target": "36",
-      "sourceHandle": "response",
+      "sourceHandle": "passthrough",
       "targetHandle": "conversation"
     },
     {
@@ -647,6 +668,61 @@
       "target": "22",
       "sourceHandle": "persisted",
       "targetHandle": "status"
+    },
+    {
+      "id": "capture-user-buffer",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "input-conversation-buffer",
+      "targetHandle": "userMessage",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "capture-user-entry",
+      "source": "1",
+      "sourceHandle": "entry",
+      "target": "input-conversation-buffer",
+      "targetHandle": "entry",
+      "type": "default",
+      "data": {
+        "type": "message"
+      }
+    },
+    {
+      "id": "capture-user-entries",
+      "source": "input-conversation-buffer",
+      "sourceHandle": "entries",
+      "target": "input-memory-capture",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "capture-user-forward",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "input-memory-capture",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "capture-response-forward",
+      "source": "26",
+      "sourceHandle": "response",
+      "target": "21",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
     }
   ]
 }

@@ -1,7 +1,13 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
-  "scheduler": { "version": 1, "activation": "demand", "skippedState": "explicit", "sideEffectOrder": "serial-topological", "maxLoopIterations": 5 },
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 5
+  },
   "name": "Agent Mode",
   "description": "Heuristic-based routing: simple queries use chat path, action requests use operator pipeline. Thinking blocks preserved for UI, stripped for memory.",
   "cognitiveMode": "agent",
@@ -95,7 +101,15 @@
         "label": "Context Builder\n(Operator Path)",
         "nodeType": "context_builder",
         "properties": {},
-        "activation": { "when": [{ "nodeId": "5", "output": "useOperator", "equals": true }] }
+        "activation": {
+          "when": [
+            {
+              "nodeId": "5",
+              "output": "useOperator",
+              "equals": true
+            }
+          ]
+        }
       },
       "width": 180,
       "height": 80
@@ -114,7 +128,15 @@
           "model": "default.coder",
           "temperature": 0.2
         },
-        "activation": { "when": [{ "nodeId": "5", "output": "useOperator", "equals": true }] }
+        "activation": {
+          "when": [
+            {
+              "nodeId": "5",
+              "output": "useOperator",
+              "equals": true
+            }
+          ]
+        }
       },
       "width": 180,
       "height": 80
@@ -130,7 +152,15 @@
         "label": "Skill Executor",
         "nodeType": "skill_executor",
         "properties": {},
-        "activation": { "when": [{ "nodeId": "5", "output": "useOperator", "equals": true }] }
+        "activation": {
+          "when": [
+            {
+              "nodeId": "5",
+              "output": "useOperator",
+              "equals": true
+            }
+          ]
+        }
       },
       "width": 180,
       "height": 80
@@ -149,7 +179,15 @@
           "model": "persona",
           "style": "default"
         },
-        "activation": { "when": [{ "nodeId": "5", "output": "useOperator", "equals": true }] }
+        "activation": {
+          "when": [
+            {
+              "nodeId": "5",
+              "output": "useOperator",
+              "equals": true
+            }
+          ]
+        }
       },
       "width": 200,
       "height": 80
@@ -185,7 +223,15 @@
         "properties": {
           "temperature": 0.8
         },
-        "activation": { "when": [{ "nodeId": "5", "output": "useOperator", "equals": false }] }
+        "activation": {
+          "when": [
+            {
+              "nodeId": "5",
+              "output": "useOperator",
+              "equals": false
+            }
+          ]
+        }
       },
       "width": 180,
       "height": 80
@@ -334,14 +380,42 @@
       },
       "width": 180,
       "height": 80
+    },
+    {
+      "id": "input-conversation-buffer",
+      "type": "outputNode",
+      "position": {
+        "x": 310,
+        "y": -20
+      },
+      "data": {
+        "label": "Admit User Input",
+        "nodeType": "conversation_buffer",
+        "properties": {},
+        "comment": "Admits the exact user message before any model call."
+      }
+    },
+    {
+      "id": "input-memory-capture",
+      "type": "outputNode",
+      "position": {
+        "x": 570,
+        "y": -20
+      },
+      "data": {
+        "label": "Save User Input",
+        "nodeType": "memory_capture",
+        "properties": {},
+        "comment": "Durably saves the input before forwarding it to cognition. A generation failure must not lose the input."
+      }
     }
   ],
   "edges": [
     {
       "id": "e-1-message-5-message",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "5",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "message",
       "data": {
         "type": "string"
@@ -393,13 +467,15 @@
       "target": "6",
       "sourceHandle": "cognitiveMode",
       "targetHandle": "mode",
-      "data": { "type": "cognitiveMode" }
+      "data": {
+        "type": "cognitiveMode"
+      }
     },
     {
       "id": "e-1-message-6-message",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "6",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "query",
       "data": {
         "type": "string"
@@ -417,9 +493,9 @@
     },
     {
       "id": "e-1-message-7-goal",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "7",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "goal",
       "data": {
         "type": "string"
@@ -447,9 +523,9 @@
     },
     {
       "id": "e-1-message-9-goal",
-      "source": "1",
+      "source": "input-memory-capture",
       "target": "9",
-      "sourceHandle": "message",
+      "sourceHandle": "passthrough",
       "targetHandle": "goal",
       "data": {
         "type": "string"
@@ -485,16 +561,6 @@
       "data": {
         "type": "string",
         "comment": "Operator path response → Safety Validator (bypassing CoT Stripper)"
-      }
-    },
-    {
-      "id": "e-1-message-32-userMessage",
-      "source": "1",
-      "target": "32",
-      "sourceHandle": "message",
-      "targetHandle": "userMessage",
-      "data": {
-        "type": "string"
       }
     },
     {
@@ -595,13 +661,68 @@
     },
     {
       "id": "e-32-response-tts-conversation",
-      "source": "32",
+      "source": "12",
       "target": "tts-out",
-      "sourceHandle": "response",
+      "sourceHandle": "passthrough",
       "targetHandle": "conversation",
       "data": {
         "type": "string",
         "comment": "Speak the exact response retained by the Conversation Buffer"
+      }
+    },
+    {
+      "id": "capture-user-buffer",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "input-conversation-buffer",
+      "targetHandle": "userMessage",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "capture-user-entry",
+      "source": "1",
+      "sourceHandle": "entry",
+      "target": "input-conversation-buffer",
+      "targetHandle": "entry",
+      "type": "default",
+      "data": {
+        "type": "message"
+      }
+    },
+    {
+      "id": "capture-user-entries",
+      "source": "input-conversation-buffer",
+      "sourceHandle": "entries",
+      "target": "input-memory-capture",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "capture-user-forward",
+      "source": "1",
+      "sourceHandle": "message",
+      "target": "input-memory-capture",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "capture-response-forward",
+      "source": "32",
+      "sourceHandle": "response",
+      "target": "12",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "string"
       }
     }
   ]

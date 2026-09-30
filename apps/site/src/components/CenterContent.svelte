@@ -23,7 +23,6 @@
   // PERFORMANCE OPTIMIZATION: Lazy load components
   // Only load ChatInterface eagerly (it's the default view and most common)
   import ChatInterface from './ChatInterface.svelte';
-  import TerminalManager from './TerminalManager.svelte';
   import TTSQueueConsumer from './TTSQueueConsumer.svelte';
 
   const ownerSystemSections = new Set([
@@ -142,8 +141,8 @@
         case 'ProfileLocation':
           module = await import('./ProfileLocation.svelte');
           break;
-        case 'TerminalManager':
-          module = { default: TerminalManager };
+        case 'TerminalPanel':
+          module = await import('./terminal/TerminalPanel.svelte');
           break;
         case 'AgencyDashboard':
           module = await import('./AgencyDashboard.svelte');
@@ -592,7 +591,7 @@ async function loadMemoryContent(relPath: string) {
         }
         break;
       case 'terminal':
-        void loadComponent('TerminalManager');
+        void loadComponent('TerminalPanel');
         break;
       case 'projects':
         void loadComponent('ProjectDashboard');
@@ -723,7 +722,7 @@ async function loadMemoryContent(relPath: string) {
           {#await loadComponent('TrainingWizard')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading training wizard...</div>
           {:then Component}
-            <svelte:component this={Component} />
+            <svelte:component this={Component} on:history={() => trainingTab = 'datasets'} />
           {/await}
         {:else if trainingTab === 'automatic'}
           {#await loadComponent('AutomaticTraining')}
@@ -1399,7 +1398,7 @@ async function loadMemoryContent(relPath: string) {
       </div>
     </div>
   {:else if $activeView === 'system'}
-    <div class="view-container" class:terminal-view={$systemSection === 'terminal'}>
+    <div class="view-container">
       <div class="view-header">
         <h2 class="view-title">⚙️ System</h2>
         <p class="view-subtitle">Tools & settings</p>
@@ -1480,12 +1479,12 @@ async function loadMemoryContent(relPath: string) {
   {:else if $activeView === 'terminal'}
     <div class="view-container terminal-view">
       <div class="view-header">
-        <h2 class="view-title">💻 System</h2>
-        <p class="view-subtitle">System console with tabbed sessions</p>
+        <h2 class="view-title">💻 Terminal</h2>
+        <p class="view-subtitle">Shells and provider sessions</p>
       </div>
-      <div class="view-content terminal-iframe-container">
-        {#await loadComponent('TerminalManager')}
-          <div class="loading-placeholder">Loading terminal manager...</div>
+      <div class="view-content terminal-panel-container">
+        {#await loadComponent('TerminalPanel')}
+          <div class="loading-placeholder">Loading terminal…</div>
         {:then Component}
           <svelte:component this={Component} />
         {/await}
@@ -1532,13 +1531,11 @@ async function loadMemoryContent(relPath: string) {
     @apply flex-1 flex flex-col min-h-0;
   }
 
-  .terminal-view .terminal-iframe-container {
+  .terminal-view .terminal-panel-container {
     @apply p-0 flex-1 w-full relative min-h-0;
   }
 
-  .terminal-iframe {
-    @apply w-full h-full border-none bg-black;
-  }
+
 
   /* Event body content */
   .event-body {

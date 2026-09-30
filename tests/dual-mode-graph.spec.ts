@@ -63,7 +63,26 @@ function validateContracts(graph: SvelteFlowGraph): void {
 
 function validateWorkflowShape(graph: SvelteFlowGraph): void {
   assert.equal(graph.cognitiveMode, 'dual')
-  assert.equal(graph.nodes.length, 21)
+  assert.equal(graph.nodes.length, 23)
+
+  assert.equal(graph.nodes.find(node => node.id === 'input-conversation-buffer')?.data.nodeType, 'conversation_buffer')
+  assert.equal(graph.nodes.find(node => node.id === 'input-memory-capture')?.data.nodeType, 'memory_capture')
+  assert(edgeExists(graph, '1', 'message', 'input-conversation-buffer', 'userMessage'))
+  assert(edgeExists(graph, '1', 'entry', 'input-conversation-buffer', 'entry'))
+  assert(edgeExists(graph, 'input-conversation-buffer', 'entries', 'input-memory-capture', 'entries'))
+  assert(edgeExists(graph, '1', 'message', 'input-memory-capture', 'passthrough'))
+  for (const [target, handle] of [
+    ['24', 'message'],
+    ['6', 'userMessage'],
+    ['32', 'userQuery'],
+    ['8', 'query'],
+    ['33', 'originalQuery'],
+  ]) {
+    assert(edgeExists(graph, 'input-memory-capture', 'passthrough', target, handle))
+  }
+  assert(graph.edges.filter(edge => edge.source === '1').every(edge =>
+    edge.target === 'input-conversation-buffer' || edge.target === 'input-memory-capture'),
+  'User input must pass through persistence before cognition')
 
   const nodeTypes = new Set(graph.nodes.map(node => node.data.nodeType))
   const runtimeCruft = [
@@ -109,15 +128,18 @@ function validateWorkflowShape(graph: SvelteFlowGraph): void {
   assert(edgeExists(graph, '31', 'stripped', '23', 'response'))
   assert(edgeExists(graph, '31', 'stripped', '26', 'response'))
   assert(edgeExists(graph, '26', 'entries', '21', 'entries'))
-  assert(edgeExists(graph, '26', 'response', '36', 'conversation'))
+  assert(edgeExists(graph, '26', 'response', '21', 'passthrough'))
+  assert(edgeExists(graph, '21', 'passthrough', '36', 'conversation'))
+  assert(!edgeExists(graph, '26', 'response', '36', 'conversation'),
+    'Speech must follow conversation memory persistence')
   assert(edgeExists(graph, '21', 'saved', '22', 'data'))
   assert(edgeExists(graph, '26', 'persisted', '22', 'status'))
 }
 
 function validateLoopScheduling(): void {
   const loopBody = ['8', '17', '33', '19', '20']
-  const outputPath = ['35', '31', '23', '21', '26', '36', '22']
-  const initialTail = ['35', '31', '23', '21', '26', '36', '22', 'unrelated']
+  const outputPath = ['35', '31', '23', '26', '21', '36', '22']
+  const initialTail = [...outputPath, 'unrelated']
 
   const retryQueue = scheduleLoopIteration(initialTail, loopBody, outputPath, '34')
   assert.deepEqual(retryQueue, [...loopBody, '34', 'unrelated'])

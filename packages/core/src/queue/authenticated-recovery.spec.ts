@@ -386,6 +386,52 @@ test('recovery stops between effects when authentication changes, retaining the 
   } finally { store.release(lease); store.close() }
 })
 
+test('input handoff rechecks authenticated selection after loading the graph and commits overlapping delivery once', async () => {
+  const tokenA = await login('profile-a')
+  const tokenB = await login('profile-b')
+  sessions.selectAuthenticatedSession(tokenA)
+  const { validateSvelteFlowGraph } = await import('../cognitive-graph-schema.js')
+  const { executionDefinition } = await import('../durable-execution/graph-contract.js')
+  const graph = validateSvelteFlowGraph({ version: '1.0', format: 'svelte-flow', name: 'Handoff receiver',
+    scheduler: { version: 1, activation: 'demand', skippedState: 'explicit', sideEffectOrder: 'serial-topological',
+      maxLoopIterations: 5, eventInputNodeId: 'receive' },
+    nodes: [{ id: 'receive', type: 'utilityNode', position: { x: 0, y: 0 },
+      data: { nodeType: 'execution_event_wait', label: 'Receive', activation: { mode: 'always' }, properties: { drain: true } } }], edges: [],
+  })
+  const executable = executionDefinition(graph)
+  const store = new ExecutionStore(path.join(root, 'steering-recovery.sqlite'), undefined, 'previous-runtime')
+  try {
+    const target = store.enter('profile-a', executable, randomUUID(), { graph, context: { userMessage: 'Original input' } })
+    const lease = store.claim(target.executionId, executable)
+    store.settle(lease, 'waiting', 'operator_authorization')
+    store.release(lease)
+    const sender = store.enter('profile-a', executable, randomUUID(), { graph, context: {} })
+    const effectId = randomUUID()
+    const userMessage = '  A follow-up with its original spacing.  '
+    store.db.transaction(() => store.commitTransition(sender.executionId, 'handoff-checkpoint', {
+      transitionId: 'handoff', dispatches: [{ effectId, kind: 'execution_event', payload: {
+        executionId: target.executionId, kind: 'user_steering', context: { userMessage },
+      } }],
+    }))()
+    const manager = new UnifiedQueueManager()
+    // Use the public relay's default callback, as receipt/Bridge callers do.
+    const relay = () => relayExecutionOutbox(store, sender.executionId, async input => manager.enqueue(input))
+    const switching = relay()
+    sessions.selectAuthenticatedSession(tokenB)
+    await switching
+    assert.equal(store.dispatch(effectId).status, 'pending')
+    assert.equal(store.events(target.executionId).length, 0)
+    assert.equal(manager.getAllTasks().length, 0)
+
+    sessions.selectAuthenticatedSession(tokenA)
+    await Promise.all([relay(), relay()])
+    assert.equal(store.dispatch(effectId).status, 'completed')
+    assert.equal(store.events(target.executionId).length, 1)
+    assert.deepEqual(store.event(target.executionId, effectId).payload, { userMessage })
+    assert.equal(manager.getAllTasks().length, 1, 'One committed input schedules one continuation')
+  } finally { store.close() }
+})
+
 test('opening a pre-upgrade execution preserves its identity and does not mark it as fresh', () => {
   const filename = path.join(root, 'legacy.sqlite')
   let store = new ExecutionStore(filename)

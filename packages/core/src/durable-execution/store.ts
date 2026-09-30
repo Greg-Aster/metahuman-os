@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { validateVisualObservation, type ObservationHistoryQuery, type VisualObservationRecord } from '../visual-observation.js'
 import {
   ExecutionCancelledError, ExecutionConflictError, ExecutionBusyError,
   type CheckpointTransition, type DispatchIntent, type DispatchRecord,
@@ -119,6 +120,18 @@ export class ExecutionStore {
       );
       CREATE INDEX IF NOT EXISTS execution_event_order ON execution_events(execution_id, sequence);
       CREATE INDEX IF NOT EXISTS execution_dispatch_state ON execution_outbox(execution_id, status);
+      CREATE TABLE IF NOT EXISTS execution_observations (
+        observation_id TEXT PRIMARY KEY, username TEXT NOT NULL, environment_id TEXT NOT NULL,
+        adapter TEXT NOT NULL, robot_id TEXT NOT NULL, session_id TEXT NOT NULL,
+        interpreted_at TEXT NOT NULL, identity TEXT NOT NULL, observation TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS execution_observation_refs (
+        execution_id TEXT NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
+        observation_id TEXT NOT NULL REFERENCES execution_observations(observation_id),
+        PRIMARY KEY(execution_id, observation_id)
+      );
+      CREATE INDEX IF NOT EXISTS execution_observation_history
+        ON execution_observations(username, environment_id, adapter, robot_id, interpreted_at);
     `)
     this.db.transaction(() => {
       if (!(this.db.pragma('table_info(executions)') as { name: string }[]).some(column => column.name === 'origin_runtime_id')) {
@@ -190,6 +203,40 @@ export class ExecutionStore {
     return row ? this.decodeDocument(row.frame) : null
   }
 
+  observationHistory(executionId: string, query: ObservationHistoryQuery): VisualObservationRecord[] {
+    if (!query.environmentId || !query.adapter || !query.sessionId || !Number.isSafeInteger(query.limit) || query.limit < 0) {
+      throw new Error('Observation history requires environment, adapter and a non-negative limit')
+    }
+    return (this.db.prepare(`SELECT observation FROM execution_observations
+      WHERE username=? AND environment_id=? AND adapter=? AND robot_id=? AND (? IS NOT NULL OR session_id=?)
+      ORDER BY interpreted_at DESC, observation_id DESC LIMIT ?`)
+      .all(this.get(executionId).username, query.environmentId, query.adapter, query.robotId ?? '', query.robotId, query.sessionId, query.limit) as { observation: string }[])
+      .map(row => this.decodeDocument(row.observation) as VisualObservationRecord).reverse()
+  }
+
+  /** A retained observation may outlive its originating execution. Every reader
+   * retains the same record and frames with its own successful checkpoint. */
+  observationFrames(executionId: string, observation: VisualObservationRecord) {
+    const row = this.db.prepare('SELECT username, identity FROM execution_observations WHERE observation_id=?')
+      .get(observation.observationId) as { username: string; identity: string } | undefined
+    if (!row || row.username !== this.get(executionId).username || row.identity !== contentHash(observation)) {
+      throw new ExecutionConflictError('Observation does not belong to this profile or changed identity')
+    }
+    return observation.frames.map(frame => {
+      const saved = this.db.prepare(`SELECT f.frame FROM execution_frames f JOIN execution_observation_refs r USING(execution_id)
+        WHERE r.observation_id=? AND f.frame_id=? LIMIT 1`).get(observation.observationId, frame.id) as { frame: string } | undefined
+      if (!saved) throw new ExecutionConflictError('Retained observation lost its source frame')
+      return this.decodeDocument(saved.frame) as import('../environment-interface/types.js').EnvironmentVisualFrame
+    })
+  }
+
+  readObservationHistory(executionId: string, query: ObservationHistoryQuery) {
+    return this.db.transaction(() => {
+      const observations = this.observationHistory(executionId, query)
+      return { observations, frames: observations.flatMap(observation => this.observationFrames(executionId, observation)) }
+    })()
+  }
+
   /** Run status is a projection of the committed root checkpoint, not an objective decision. */
   settle(lease: ExecutionLease, status: 'completed' | 'waiting' | 'failed', waitingReason?: string): void {
     this.db.transaction(() => {
@@ -202,11 +249,12 @@ export class ExecutionStore {
       }
       const pending = this.db.prepare(`SELECT 1 FROM execution_outbox WHERE execution_id = ?
         AND kind != 'graph_resume' AND status IN ('pending','admitted','accepted','outcome_unknown') LIMIT 1`).get(lease.executionId)
+      const pendingInput = this.hasPendingInput(lease.executionId)
       this.db.prepare('UPDATE executions SET status = ?, updated_at = ? WHERE execution_id = ?')
-        .run(status === 'completed' && pending ? 'waiting' : status, Date.now(), lease.executionId)
+        .run(status === 'completed' && (pending || pendingInput) ? 'waiting' : status, Date.now(), lease.executionId)
       if (this.get(lease.executionId).status === 'waiting') {
         this.db.prepare('INSERT INTO execution_waits VALUES (?, ?) ON CONFLICT(execution_id) DO UPDATE SET reason=excluded.reason')
-          .run(lease.executionId, waitingReason ?? 'effect_delivery')
+          .run(lease.executionId, waitingReason ?? (pendingInput ? 'pending_input' : 'effect_delivery'))
       } else this.db.prepare('DELETE FROM execution_waits WHERE execution_id=?').run(lease.executionId)
       this.settleFinishedDispatches(lease.executionId)
     }).immediate()
@@ -400,6 +448,37 @@ export class ExecutionStore {
         .run(executionId, frame.id, contentHash(frame), this.encodeDocument(executionId, frame))
     }
     if (state.cancelledAt === null) {
+      const observations = [
+        ...(transition.observations ?? []).map(observation => ({ observation, retained: false })),
+        ...(transition.retainedObservations ?? []).map(observation => ({ observation, retained: true })),
+      ]
+      for (const { observation, retained } of observations) {
+        const previous = this.db.prepare('SELECT username, identity FROM execution_observations WHERE observation_id=?')
+          .get(observation.observationId) as { username: string; identity: string } | undefined
+        if (previous && (previous.username !== state.username || previous.identity !== contentHash(observation))) {
+          throw new ExecutionConflictError('Observation identity reused with different evidence or profile')
+        }
+        if (!previous && ((!retained && observation.executionId !== executionId) || !observation.occurrenceId
+          || observation.observationId !== `${observation.occurrenceId}:visual-observation`
+          || !observation.environmentId || !observation.adapter || !observation.sessionId
+          || !Number.isFinite(Date.parse(observation.interpretedAt)))) {
+          throw new ExecutionConflictError('Observation has an invalid producing execution or source identity')
+        }
+        const frames = observation.frameIds.map(id => this.frame(executionId, id))
+        if (frames.some(frame => !frame)) throw new ExecutionConflictError('Observation has no retained source image')
+        const validated = validateVisualObservation({ summary: observation.summary, frameIds: observation.frameIds,
+          uncertainties: observation.uncertainties, ...(observation.changes !== undefined ? { changes: observation.changes } : {}) }, frames as NonNullable<typeof frames[number]>[])
+        if (validated.error || contentHash(observation.frames) !== contentHash(frames.map(frame => ({
+          id: frame!.id, timestamp: frame!.timestamp,
+          ...(typeof frame!.metadata?.actionId === 'string' ? { actionId: frame!.metadata.actionId } : {}),
+        })))) throw new ExecutionConflictError(validated.error ?? 'Observation frame references do not match retained evidence')
+        const encoded = this.encodeDocument(executionId, observation)
+        if (!previous) this.db.prepare('INSERT INTO execution_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(observation.observationId, state.username, observation.environmentId, observation.adapter,
+            observation.robotId ?? '', observation.sessionId, observation.interpretedAt, contentHash(observation), encoded)
+        this.db.prepare('INSERT INTO execution_observation_refs VALUES (?, ?) ON CONFLICT DO NOTHING')
+          .run(executionId, observation.observationId)
+      }
       for (const dispatch of transition.dispatches ?? []) this.insertDispatch(executionId, checkpointId, dispatch)
     } else if (transition.dispatches?.length) throw new ExecutionCancelledError(executionId)
     this.db.prepare(`UPDATE executions SET processed_sequence = ?, status = ?, updated_at = ? WHERE execution_id = ?`)
@@ -601,18 +680,34 @@ export class ExecutionStore {
 
   deliverEvent(executionId: string, event: NewExecutionEvent): ExecutionEvent {
     return this.db.transaction(() => {
+      if (['user_steering', 'autonomy_trigger'].includes(event.kind) && !this.findEvent(executionId, event.eventId)
+        && ['completed', 'failed', 'cancelled'].includes(this.get(executionId).status)) {
+        throw new ExecutionConflictError('Execution finished before input admission; the input was not delivered')
+      }
       const result = this.insertEvent(executionId, event)
       this.scheduleResume(result)
       return result
     }).immediate()
   }
 
+  /** Delivery/audit receipts do not themselves require another model decision. */
+  hasPendingInput(executionId: string): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM execution_events e JOIN executions x USING(execution_id)
+      WHERE e.execution_id = ? AND e.sequence > x.processed_sequence
+      AND e.kind IN ('user_steering','autonomy_trigger') LIMIT 1`).get(executionId))
+  }
+
   deliverExecutionInput(effectId: string): void {
     this.db.transaction(() => {
+      const saved = this.dispatch(effectId)
+      if (saved.kind !== 'execution_event') throw new Error('Not an execution input handoff')
+      if (saved.status === 'completed') return
       const effect = this.assertDispatchable(effectId)
-      if (effect.kind !== 'execution_event') throw new Error('Not an execution input handoff')
       const input = effect.payload as { executionId: string; kind: string; context: Record<string, unknown> }
       if (this.get(input.executionId).username !== this.get(effect.executionId).username) throw new Error('Execution input belongs to a different profile')
+      if (input.kind === 'user_steering' && !this.entry(input.executionId).graph?.scheduler?.eventInputNodeId) {
+        throw new ExecutionConflictError('Selected execution has no input route')
+      }
       const event = { eventId: effectId, kind: input.kind, payload: input.context }
       if (input.kind === 'user_cancelled') this.cancel(input.executionId, event)
       else this.deliverEvent(input.executionId, event)

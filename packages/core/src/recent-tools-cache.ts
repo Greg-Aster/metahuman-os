@@ -17,6 +17,12 @@ const MAX_TOOL_OUTPUT_SIZE = 2048; // 2 KB threshold for payload splitting
 const TOOL_SUMMARY_LENGTH = 256; // Summary character limit
 
 type ProfilePaths = ReturnType<typeof getProfilePaths>;
+const pendingWrites = new Map<string, Set<Promise<void>>>();
+
+/** Drain writes already accepted by this owner before reset removes their files. */
+export async function flushRecentToolCache(profileRoot: string): Promise<void> {
+  await Promise.all(pendingWrites.get(profileRoot) ?? []);
+}
 
 export interface RecentToolEntry {
   eventId: string;
@@ -75,13 +81,28 @@ async function ensureCacheDirectories(profilePaths: ProfilePaths): Promise<void>
  *
  * A4: If output exceeds 2KB, split into payload file + summary
  */
-export async function appendToolToCache(
+export function appendToolToCache(
   profilePaths: ProfilePaths | undefined,
   conversationId: string,
   eventId: string,
   toolName: string,
   success: boolean,
   output: string
+): Promise<void> {
+  if (!profilePaths) return Promise.resolve();
+  const pending = pendingWrites.get(profilePaths.root) ?? new Set<Promise<void>>();
+  pendingWrites.set(profilePaths.root, pending);
+  const operation = writeToolToCache(profilePaths, conversationId, eventId, toolName, success, output);
+  pending.add(operation);
+  return operation.finally(() => {
+    pending.delete(operation);
+    if (pending.size === 0) pendingWrites.delete(profilePaths.root);
+  });
+}
+
+async function writeToolToCache(
+  profilePaths: ProfilePaths, conversationId: string, eventId: string,
+  toolName: string, success: boolean, output: string,
 ): Promise<void> {
   try {
     if (!profilePaths) return;

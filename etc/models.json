@@ -11,9 +11,7 @@
   "_WARNING9": "═══════════════════════════════════════════════════════════════════════════════",
   "description": "SYSTEM DEFAULT - Used ONLY for new user initialization. See profile-based models.json",
   "globalSettings": {
-    "includePersonaSummary": false,
-    "useAdapter": false,
-    "activeAdapter": null
+    "includePersonaSummary": false
   },
   "defaults": {
     "orchestrator": "default.orchestrator",

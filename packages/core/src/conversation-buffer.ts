@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { systemPaths } from './path-builder.js';
 import { withBufferLock } from './buffer-locks.js';
+import { assertProfileMemoryAvailable } from './locks.js';
 import { eventBus } from './infrastructure/event-bus/client.js';
 import { loadChatSettingsForUser } from './chat-settings.js';
 import type { GraphNodeExecution } from './durable-execution/graph-contract.js';
@@ -258,6 +259,7 @@ export async function writeBufferEntry(
 
   let appendedUserMessageCount: number | undefined;
   const result = await withBufferLock(usernameForBuffer, mode, 'append_message', async () => {
+    assertProfileMemoryAvailable(usernameForBuffer);
     const bufferPath = getBufferPathForUser(usernameForBuffer, mode);
 
     try {

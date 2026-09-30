@@ -66,3 +66,20 @@ export function getPersonaBackground(persona: PersonaCore): string | null {
   const narrative = nonEmptyString((background as Record<string, unknown>).narrative);
   return narrative || JSON.stringify(background);
 }
+
+/** Bounded persona context shared by Curator and personalization training. */
+export function buildPersonaSummary(persona: PersonaCore): string {
+  const role = nonEmptyString(persona.identity?.role);
+  const purpose = nonEmptyString(persona.identity?.purpose);
+  const background = getPersonaBackground(persona);
+  const line = (label: string, values: string[]) => values.length ? `${label}: ${values.join(', ')}` : null;
+  return [
+    `Name: ${getPersonaName(persona)}`,
+    role ? `Role: ${role}` : null,
+    purpose ? `Purpose: ${purpose}` : null,
+    line('Core Values', getPersonaValueNames(persona)),
+    line('Personality Traits', getPersonaTraitDescriptions(persona)),
+    line('Active Goals', getActivePersonaGoals(persona)),
+    background ? `Background: ${background}` : null,
+  ].filter(Boolean).join('\n');
+}

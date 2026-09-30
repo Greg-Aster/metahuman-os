@@ -11,47 +11,72 @@ import {
   evaluateAutomaticTrainingReadiness,
   parseAutomaticTrainingConfig,
   saveAutomaticTrainingConfig,
+  runAutomaticTrainingForSleep,
 } from './training-automation.js'
-import type { TrainingDatasetInspection } from './training-dataset.js'
 
-function inspection(overrides: Partial<TrainingDatasetInspection['stats']> = {}): TrainingDatasetInspection {
-  const stats = {
-    totalMemories: 300,
-    episodicMemories: 300,
-    therapySessions: 0,
-    chatConversations: 0,
-    recentMemories: 300,
-    oldestMemory: null,
-    newestMemory: null,
-    cognitiveModeCounts: { dual: 0, agent: 0, emulation: 0, environment: 300 },
-    organizedMemories: 300,
-    pendingOrganization: 0,
-    curatedMemories: 300,
-    pendingCuration: 0,
-    curatedRecords: 300,
-    validCuratedRecords: 300,
-    invalidCuratedRecords: 0,
-    trainableSamples: 300,
-    estimatedTrainingSamples: 300,
-    latestCuratedAt: '2026-01-02T00:00:00.000Z',
-    ...overrides,
-  }
-  return {
-    stats,
-    trainableCuratedAt: Array.from({ length: stats.trainableSamples }, () => '2026-01-02T00:00:00.000Z'),
-  }
+function selection(count = 300, evaluation = 30) {
+  return { train: Array.from({ length: count }, (_, index) => ({ id: 'sample-' + index })),
+    evaluation: Array.from({ length: evaluation }, (_, index) => ({ id: 'eval-' + index })) }
 }
 
-test('automatic training is disabled by default and validates target-method pairing', () => {
+test('automatic training is disabled by default and shares trainer target support', () => {
   assert.equal(parseAutomaticTrainingConfig(undefined).enabled, false)
-  assert.throws(
-    () => parseAutomaticTrainingConfig({ ...DEFAULT_AUTOMATIC_TRAINING_CONFIG, method: 'local-lora', trainingTarget: 'vllm' }),
-    /vLLM artifacts require remote LoRA training/,
-  )
+  assert.equal(parseAutomaticTrainingConfig({ ...DEFAULT_AUTOMATIC_TRAINING_CONFIG, method: 'local-lora', trainingTarget: 'vllm' }).trainingTarget, 'vllm')
   assert.throws(
     () => parseAutomaticTrainingConfig({ ...DEFAULT_AUTOMATIC_TRAINING_CONFIG, learningRate: 0 }),
     /learning_rate/,
   )
+})
+
+test('Sleep admission requires the active owner, successful preparation, new data and one finite launch', async () => {
+  const controller = new AbortController()
+  const startedAt = '2026-09-09T01:00:00.000Z'
+  const now = Date.parse('2026-09-09T01:10:00.000Z')
+  const session = { id: 'sleep-fixture', username: 'fixture', state: 'running', currentStageId: 'train-personalization', startedAt,
+    stages: [{ id: 'organize-memory', state: 'completed' }, { id: 'curate-memory', state: 'completed' }] }
+  const input = { config: { ...DEFAULT_AUTOMATIC_TRAINING_CONFIG, enabled: true, maxRuntimeMinutes: 25 },
+    selection: selection(), history: { assignments: {}, completedSampleIds: [] }, runs: [], runningProcesses: [], remoteCredentialsConfigured: false }
+  let launches = 0
+  let waits = 0
+  const dependencies = {
+    sleep: () => ({ currentSession: session }) as any,
+    runtime: (username: string, cutoff?: number) => {
+      assert.equal(username, 'fixture')
+      assert.equal(cutoff, Date.parse(startedAt))
+      return input as any
+    },
+    now: () => now,
+    launch: (username: string, request: any, admission: any) => {
+      launches++
+      assert.equal(username, 'fixture')
+      assert.equal(request.advancedSettings.enablePreprocessing, false)
+      assert.deepEqual(admission, { sessionId: session.id, cutoff: startedAt, deadline: '2026-09-09T01:35:00.000Z' })
+      return { success: true as const, status: 200 as const, pid: 123, runLabel: 'fixture-run', logFile: 'fixture.log', agentName: 'full-cycle-local' as const, message: 'started' }
+    },
+    wait: async (username: string, pid: number, label: string, signal: AbortSignal) => {
+      waits++
+      assert.deepEqual([username, pid, label, signal], ['fixture', 123, 'fixture-run', controller.signal])
+    },
+  }
+  await assert.rejects(runAutomaticTrainingForSleep('other', session.id, controller.signal, dependencies), /active Sleep stage/)
+  session.stages[1].state = 'failed'
+  assert.equal((await runAutomaticTrainingForSleep('fixture', session.id, controller.signal, dependencies)).skipped, true)
+  session.stages[1].state = 'completed'
+  input.config.enabled = false
+  assert.equal((await runAutomaticTrainingForSleep('fixture', session.id, controller.signal, dependencies)).skipped, true)
+  assert.equal(launches, 0)
+  input.config.enabled = true
+  assert.deepEqual(await runAutomaticTrainingForSleep('fixture', session.id, controller.signal, dependencies), {
+    trained: true, runLabel: 'fixture-run', activation: 'review-required',
+  })
+  assert.equal(launches, 1)
+  assert.equal(waits, 1)
+  await assert.rejects(runAutomaticTrainingForSleep('fixture', session.id, controller.signal, {
+    ...dependencies, wait: async () => { throw new Error('worker cancelled after wake') },
+  }), /worker cancelled after wake/)
+  controller.abort(new Error('sleep was interrupted'))
+  await assert.rejects(runAutomaticTrainingForSleep('fixture', session.id, controller.signal, dependencies), /sleep was interrupted/)
+  assert.equal(launches, 2)
 })
 
 test('automatic policy persists in the shared profile training config without deleting manual settings', t => {
@@ -81,12 +106,12 @@ test('automatic policy persists in the shared profile training config without de
 
 test('readiness requires refined, valid, sufficiently new data', () => {
   const config = { ...DEFAULT_AUTOMATIC_TRAINING_CONFIG, enabled: true }
-  const ready = evaluateAutomaticTrainingReadiness(config, inspection(), [], [], false, Date.parse('2026-01-03T00:00:00.000Z'))
+  const ready = evaluateAutomaticTrainingReadiness(config, selection(), [], [], false, Date.parse('2026-01-03T00:00:00.000Z'))
   assert.equal(ready.eligible, true)
 
   const blocked = evaluateAutomaticTrainingReadiness(
     config,
-    inspection({ pendingOrganization: 2, pendingCuration: 3, invalidCuratedRecords: 1 }),
+    selection(0, 0),
     [],
     [],
     false,
@@ -98,10 +123,7 @@ test('readiness requires refined, valid, sufficiently new data', () => {
 
 test('readiness enforces new-sample and cooldown thresholds after a completed run', () => {
   const config = { ...DEFAULT_AUTOMATIC_TRAINING_CONFIG, enabled: true }
-  const data = inspection()
-  data.trainableCuratedAt = Array.from({ length: 300 }, (_, index) => (
-    index < 20 ? '2026-01-02T00:00:00.000Z' : '2025-12-01T00:00:00.000Z'
-  ))
+  const data = selection()
   const readiness = evaluateAutomaticTrainingReadiness(
     config,
     data,
@@ -113,6 +135,7 @@ test('readiness enforces new-sample and cooldown thresholds after a completed ru
     [],
     false,
     Date.parse('2026-01-02T00:00:00.000Z'),
+    { assignments: {}, completedSampleIds: data.train.slice(0, 280).map(row => row.id) },
   )
   assert.equal(readiness.eligible, false)
   assert.equal(readiness.newSamplesSinceLastRun, 20)
@@ -153,7 +176,6 @@ test('automatic policy maps every launch control into the shared training reques
     quantization: 'Q5_K_M',
     runpodTemplateId: 'automatic-template',
     runpodGpuType: 'automatic-gpu',
-    enablePreprocessing: false,
     enableS3Upload: true,
   }
   const request = automaticTrainingLaunchRequest(username, configured)

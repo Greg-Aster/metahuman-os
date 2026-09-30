@@ -57,6 +57,37 @@ There is no safe hidden fallback for a lost encryption secret. Keep recovery mat
 
 Account creation produces 10 single-use recovery codes. Using one to reset a password invalidates the old set and produces a new set. Never store recovery codes in source control, shared logs, screenshots, or the user guide.
 
+## Reset Profile Memory
+
+In **System → Security & Account Settings**, the owner can use **Reset profile
+memory** for the signed-in profile. Enter that profile's exact username to confirm.
+This permanently clears stored memories, conversation and inner-dialogue buffers,
+card-response history, queued speech, saved workflow history, and profile logs.
+Agency desires are also erased, including their plans, reviews, execution history,
+scratchpads, legacy records, migration backups, and accumulated metrics.
+The confirmed reset also ends inactive conversations and workflows waiting for
+input or authorization. An empty work queue can still contain such saved workflows;
+they do not need to be cancelled separately before a reset.
+
+The account, persona identity, tasks, projects, settings (including Agency configuration),
+and previously generated training
+datasets and models remain. Model assignments and learned model weights are not
+reset. Other profiles, shared sessions, process receipts, and shared audit logs
+remain intact. This is a memory reset, not account deletion or secure disk erasure.
+
+Finish or cancel queued or running work in the right sidebar's **Queue** tab, and stop
+training in **AI Training** before resetting. Pending or uncertain execution
+results must be resolved first. The reset refuses locked, unavailable, or shared
+profile storage. If a filesystem error interrupts deletion, the UI reports an
+incomplete reset; resolve that error before explicitly retrying. Completed resets
+and failures are recorded in the shared audit log.
+The Queue tab remains available while viewing Security Settings and refreshes its
+saved workflows and work history when reset removes them.
+
+This operation clears local memory. It does not remove remote profile-sync copies,
+exports, backups, or training artifacts; subsequently importing or synchronizing
+old data can restore it.
+
 ## Remote Access
 
 Remote access expands the trust boundary. Use HTTPS, restrict who can reach the origin, keep owner endpoints authenticated, and expose guest access only when at least one intentionally public profile exists.

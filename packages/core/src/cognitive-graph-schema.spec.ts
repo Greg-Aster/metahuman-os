@@ -49,3 +49,20 @@ test('rejects cycles in persisted visual group hierarchy', () => {
       && error.errors.some(message => message.includes('parent hierarchy contains a cycle')),
   );
 });
+
+test('a saved input entry must identify an enabled, always-active input receiver', () => {
+  const receiver = {
+    id: 'input', type: 'utilityNode', position: { x: 0, y: 0 },
+    data: { label: 'Receive Input', nodeType: 'execution_event_wait', properties: { drain: true },
+      activation: { mode: 'always' } },
+  };
+  const configured = { ...graph([]), nodes: [receiver],
+    scheduler: { ...DEFAULT_GRAPH_SCHEDULER, eventInputNodeId: receiver.id } };
+  assert.doesNotThrow(() => validateSvelteFlowGraph(configured));
+  for (const patch of [{ muted: true }, { activation: { mode: 'any-input' } }, { nodeType: 'text_input' }]) {
+    assert.throws(() => validateSvelteFlowGraph({ ...configured,
+      nodes: [{ ...receiver, data: { ...receiver.data, ...patch } }] }),
+    (error: unknown) => error instanceof GraphValidationError && error.errors.some(message => message.includes('eventInputNodeId')));
+  }
+  assert.throws(() => validateSvelteFlowGraph({ ...configured, nodes: [] }), GraphValidationError);
+});

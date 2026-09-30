@@ -42,7 +42,7 @@ assert.doesNotMatch(
 );
 
 const nodeId = (nodeType: string): string => {
-  const matches = graph.nodes.filter(node => node.data?.nodeType === nodeType);
+  const matches = graph.nodes.filter(node => node.data?.nodeType === nodeType && !node.id.startsWith('input-'));
   assert.equal(matches.length, 1, `Environment Mode must contain exactly one ${nodeType} node`);
   return matches[0]!.id;
 };
@@ -56,6 +56,10 @@ const hasEdge = (source: string, sourceHandle: string, target: string, targetHan
 
 const historyId = nodeId('conversation_history');
 const userInputId = nodeId('user_input');
+const savedInputId = 'input-memory-capture';
+assert.ok(hasEdge(userInputId, 'message', 'input-conversation-buffer', 'userMessage'));
+assert.ok(hasEdge('input-conversation-buffer', 'entries', savedInputId, 'entries'));
+assert.ok(hasEdge(userInputId, 'message', savedInputId, 'passthrough'));
 const orchestratorId = nodeId('orchestrator_llm');
 const bridgeInputId = nodeId('environment_bridge_input');
 const memoryRouterId = nodeId('memory_router');
@@ -73,14 +77,14 @@ const robotStatusId = nodeId('robot_status');
 const robotStatusOutId = nodeId('robot_status_out');
 
 assert.ok(hasEdge(historyId, 'history', contextId, 'conversationHistory'));
-assert.ok(hasEdge(userInputId, 'message', orchestratorId, 'message'));
+assert.ok(hasEdge(savedInputId, 'passthrough', orchestratorId, 'message'));
 assert.ok(hasEdge(historyId, 'history', orchestratorId, 'conversationHistory'));
 assert.ok(hasEdge(orchestratorId, 'analysis', contextId, 'routingAnalysis'));
 assert.equal(
   graph.nodes.find(node => node.id === orchestratorId)?.data?.properties?.outputContract,
   'environment',
 );
-assert.ok(hasEdge(userInputId, 'message', memoryRouterId, 'userMessage'));
+assert.ok(hasEdge(savedInputId, 'passthrough', memoryRouterId, 'userMessage'));
 assert.ok(hasEdge(orchestratorId, 'analysis', memoryRouterId, 'orchestratorHints'));
 assert.ok(hasEdge(memoryRouterId, 'memories', contextId, 'memories'));
 assert.ok(hasEdge(personaLoaderId, 'persona', personaFormatterId, 'persona'));
@@ -92,9 +96,9 @@ assert.equal(
   'Interactive Environment Mode must not retain the autonomous instruction adapter',
 );
 assert.ok(hasEdge(robotStatusId, 'context', contextId, 'robotStatus'));
-assert.ok(hasEdge(userInputId, 'message', contextId, 'instruction'));
-assert.ok(hasEdge(userInputId, 'message', contextId, 'userInstruction'));
-assert.ok(hasEdge(userInputId, 'message', bufferId, 'userMessage'));
+assert.ok(hasEdge(savedInputId, 'passthrough', contextId, 'instruction'));
+assert.ok(hasEdge(savedInputId, 'passthrough', contextId, 'userInstruction'));
+assert.equal(graph.edges.some(edge => edge.target === bufferId && edge.targetHandle === 'userMessage'), false);
 assert.ok(hasEdge(bridgeInputId, 'observation', contextId, 'observation'));
 assert.ok(hasEdge(bridgeInputId, 'isTriggeringObservation', contextId, 'observationCurrent'));
 assert.equal(
@@ -124,8 +128,9 @@ assert.equal(
   'Retired Environment task stores remain absent; task state belongs to the durable execution',
 );
 assert.ok(hasEdge(bufferId, 'entries', captureId, 'entries'));
-assert.ok(hasEdge(bufferId, 'response', streamId, 'response'));
-assert.ok(hasEdge(bufferId, 'response', ttsId, 'conversation'));
+assert.ok(hasEdge(bufferId, 'response', captureId, 'passthrough'));
+assert.ok(hasEdge(captureId, 'passthrough', streamId, 'response'));
+assert.ok(hasEdge(captureId, 'passthrough', ttsId, 'conversation'));
 assert.ok(hasEdge(bridgeId, 'bridgeRecord', robotBufferId, 'bridgeRecord'));
 assert.equal(
   graph.nodes.some(node => ['environment_action_context_input', 'environment_feedback'].includes(node.data?.nodeType || '')),
@@ -307,17 +312,17 @@ const followUpContext = await environmentContextBuilderNode.execute({
     ...fullConversationWindow,
     { role: 'user', content: followUpInstruction },
   ],
-}, {}, { recentHistoryLimit: 4 });
+}, {}, {});
 
 const followUpMessages = followUpContext.messages as Array<{ role: string; content: string }>;
 const followUpEnvelope = JSON.parse(followUpMessages.at(-1)?.content ?? '{}') as {
   currentInstruction: string;
   recentConversation: Array<{ role: string; content: string }>;
 };
-assert.equal(
-  followUpEnvelope.recentConversation.filter(message => message.content.startsWith('conversation message')).length,
-  4,
-  'A genuine follow-up receives the configured recent dialogue window once inside the selector envelope',
+assert.deepEqual(
+  followUpEnvelope.recentConversation,
+  fullConversationWindow,
+  'A genuine follow-up receives the entire dialogue window supplied by Buffer History once inside the selector envelope',
 );
 assert.equal(
   followUpEnvelope.recentConversation.some(message => message.content.includes('[Inner thought - daydream]')),

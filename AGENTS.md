@@ -1,294 +1,208 @@
 # MetaHuman OS Repository Guidelines
 
-This is repository-wide agent guidance. Keep this file named `AGENTS.md` at the
-repository root and track it with the project so local, remote, and future agents
-receive the same rules. Put genuinely personal or machine-specific preferences
-in local/global agent configuration; they must not weaken these repository rules.
+This tracked file governs repository work. Root `CLAUDE.md` and `GEMINI.md` are
+short pointers here; keep personal agent/editor settings in local configuration.
 
-The tracked authorities for maintained-source, architecture, audit, and refactor
-work are:
+## Authority and Scope
 
-- `docs/technical/MAINTAINED_SURFACE.md`
-- `docs/technical/REFACTOR_BLUEPRINT.md`
-- `docs/technical/AUDIT_PROTOCOL.md`
-- `docs/audits/consolidation-progress.md`
+- `docs/technical/MAINTAINED_SURFACE.md` owns executable source policy and critical
+  runtime ownership. Read the policy and ownership boundaries relevant to the task.
+- `docs/technical/REFACTOR_BLUEPRINT.md` owns architecture and refactor principles.
+  Its repository-wide program applies only when that scope is explicitly requested.
+- `docs/technical/AUDIT_PROTOCOL.md` applies to an explicitly requested maintained-source
+  audit, within the requested files or owner groups.
+- `docs/audits/consolidation-progress.md` and other dated reports are historical
+  evidence, not architecture authority or standing work orders. Search relevant
+  entries when needed; do not load the entire ledger for routine work.
+- Live workspace manifests and entrypoints define current commands and membership.
+  A broken implementation does not supersede a clear ownership contract. If current
+  authorities conflict, report the conflict before affected edits; historical
+  descriptions of retired behavior are not competing authority.
 
-Use the executable policy in `MAINTAINED_SURFACE.md` to decide what is maintained,
-excluded, generated, or remote-unsafe. Do not reproduce a second path inventory
-here. Other guidance, including `CLAUDE.md` and the draft `CONSTITUTION.md`, does
-not supersede the tracked authorities unless the Installation Owner explicitly
-ratifies it.
+The Installation Owner is the user or operator responsible for this installation.
+Authorization persists through follow-ups within the same task until the user
+changes or withdraws it. Make routine reversible implementation decisions within
+that scope and continue authorized work without seeking fresh approval. Ask when
+ambiguity materially affects scope, permissions, or external effects. Audit
+findings, comments, old plans, and unrelated tasks do not grant additional scope.
 
-“Installation Owner” means the user or repository operator responsible for this
-MetaHuman OS installation. Only an explicit instruction in the current task
-counts as authorization. Documentation, comments, audit findings, inferred intent,
-and earlier unrelated tasks do not grant additional authority.
+## Work Modes and Concurrent Work
 
-If tracked authorities conflict with each other, or their instructions cannot be
-reconciled with live manifests and entrypoints, stop and report the contradiction
-before editing. A broken implementation that violates a clear authority is not
-itself an authority conflict. Do not silently choose the interpretation that permits
-the largest change.
+- Review, explanation, diagnosis, inspection, audit, and reporting are read-only
+  for production source. Record formal audit findings under `docs/audits/`; a
+  routine question or diagnostic does not require a new document.
+- Fix, edit, implement, refactor, remove, consolidate, and migrate authorize the
+  changes reasonably necessary for that request. Refactors preserve behavior
+  unless the user explicitly requests a product change.
+- Inspect status and relevant diffs before editing. Existing changes belong to
+  their authors. Establish ownership before overlapping edits; use an isolated
+  worktree when independent tasks would collide on source or generated build output.
+  Never stash, reset, overwrite, or clean another task's work to obtain a baseline.
+- Review your complete task diff and interacting changes. Do not repeatedly audit
+  unrelated dirty files. An explicitly requested publication requires review of
+  the complete snapshot being published, including concurrent changes it contains.
+- Do not commit or push without an explicit request. Production dependencies,
+  public-contract changes, and excluded-subsystem work require explicit approval.
+  Destructive actions, credential changes, financial commitments, physical actions,
+  and external writes/publication require explicit authority and proportionate
+  evidence. Routine task-relevant reads, including configured authenticated access,
+  do not require separate approval. Honor tool and sandbox permission boundaries.
 
-## Work Mode and Change Safety
+## Bounded Workflow
 
-- Requests to review, explain, diagnose, inspect, audit, or report are read-only.
-- Requests to fix, edit, implement, refactor, remove, consolidate, or migrate
-  authorize only the modifications reasonably necessary for that stated task.
-- An audit finding alone does not authorize implementation. Keep audit findings
-  and implementation changes logically separate even when both are requested in
-  the same session.
-- Existing worktree changes belong to their current authors. Inspect status and
-  relevant diffs before editing, attribute overlapping work, and preserve unrelated
-  changes.
-- Refactor work is behavior-preserving unless the Installation Owner explicitly
-  requests a product change. Do not disguise redesign as cleanup.
-- Record line-by-line audit findings under `docs/audits/`; do not edit production
-  files or create per-file commits during a read-only audit.
-- Confirm suspected orphan code through both static references and real entrypoints,
-  routes, configuration, registrations, or runtime evidence before deleting it.
-- Do not commit or push unless the Installation Owner explicitly requests it.
-- Do not add a production dependency, change a public contract, or cross into an
-  excluded subsystem without explicit approval.
+Choose the work appropriate to the request:
 
-## Repair and Refactor Protocol
+| Task | Discovery and acceptance |
+| --- | --- |
+| Small text, style, or local edit | Read the affected owner and relevant guidance; inspect the result and run directly relevant checks. No subsystem audit or new test suite by default. |
+| Behavior repair or non-trivial refactor | Establish the failure or baseline, trace the entrypoint to its owner and consumers, and define focused acceptance evidence before editing. |
+| Maintained-source architecture audit | Use the audit protocol for the explicitly requested scope. Keep findings separate from implementation authorization. |
 
-For every non-trivial bug fix, repair, consolidation, or refactor:
+For a behavior repair or non-trivial refactor:
 
-1. Establish the failure or baseline before editing using a reproduction, failing
-   test, build result, trace, or other concrete evidence. If the environment makes
-   this impossible, state what could not be established and why.
-2. Trace behavior from its real entrypoint to the canonical owner. Distinguish the
-   root cause from downstream symptoms.
-3. Search maintained source, exports, callers, routes, registrations, configuration,
-   tests, and documentation before creating production code. Look specifically for
-   earlier partial repairs and competing implementations.
-4. For a non-trivial change, state a short pre-edit repair plan naming the canonical
-   owner, the existing path that will remain, the paths expected to change, and the
-   superseded path expected to be removed. Keep this concise.
-5. Repair the canonical owner. Do not route around it by adding another service,
-   manager, queue, scheduler, store, registry, validator, configuration system,
-   process manager, execution path, or fallback.
-6. A new production abstraction, compatibility layer, feature flag, or fallback
-   requires a concrete explanation of why the existing owner cannot be repaired.
-   If it creates a second active path, obtain Installation Owner approval first and
-   define the condition under which the old path will be removed.
-7. Remove superseded implementation, wiring, exports, registrations, configuration,
-   dependencies, tests, and documentation in the same change. Do not preserve dead
-   code “just in case.”
-8. Remove temporary logging, diagnostic routes, bypasses, flags, fixtures, and debug
-   code before handoff.
-9. Validate at the layer that proves the claimed behavior. A build proves compilation;
-   it does not prove runtime admission, external effects, or physical results.
-10. If the canonical owner is ambiguous, authorities conflict, deletion safety cannot
-    be established, the baseline fails for unrelated reasons, or the work must cross
-    into another subsystem, stop and ask the Installation Owner rather than guessing.
+1. Establish concrete baseline evidence: reproduction, failing test, trace, build
+   result, or source evidence. State any environmental limitation.
+2. Trace the real entrypoint to the canonical owner. Search relevant exports,
+   callers, registrations, configuration, tests, and documentation for existing
+   implementations and earlier repairs. Expand only when evidence crosses a
+   boundary or ownership remains unresolved. Stop discovery when the owner,
+   affected consumers, failure mechanism, and acceptance evidence are clear.
+3. State a short pre-edit plan: requested outcome, surviving owner, expected files,
+   superseded paths if any, and acceptance checks. A plan is not an additional
+   approval gate for already authorized work.
+4. Repair that owner and affected consumers. Remove superseded wiring, exports,
+   registrations, configuration, dependencies, tests, and documentation in the
+   same change. Confirm deletion safety with references plus actual entrypoints,
+   routes, registrations, configuration, or runtime evidence.
+5. Validate, review the task diff, and stop when acceptance evidence is satisfied.
+   Record unrelated findings separately without expanding the task. Do not begin
+   another cleanup or verification pass without a concrete unresolved question
+   or changed input.
 
-For repair and cleanup work, adding a production path without removing or
-consolidating an old path is presumed to be scope expansion, not completion.
-Measure improvement by fewer active responsibilities and clearer ownership, not by
-line count alone.
+If ownership, deletion safety, or necessary scope remains ambiguous, ask the
+Installation Owner about that boundary and continue independent authorized work.
+For an unrelated baseline failure, record evidence and use isolated focused checks
+where they can prove the requested change. If it prevents acceptance, report the
+blocker; do not fix unrelated code or claim a passing full baseline.
 
-## Prohibited Repair Patterns
+## Implementation and Debt
 
-Unless explicitly required and approved:
+- Use the smallest complete design, preserve separation of concerns, and keep one
+  canonical owner per responsibility. Discover and reuse before creating.
+- Do not route around a broken owner with another service, manager, queue,
+  scheduler, store, registry, validator, process manager, or execution path.
+- New abstractions, compatibility layers, flags, and fallbacks need a concrete
+  explanation of why the existing owner cannot implement the requirement. A
+  second active path requires explicit approval and an old-path removal condition.
+- Missing behavior inside the existing owner does not require an artificial
+  deletion. Judge debt by duplicate responsibilities and unnecessary mechanisms,
+  not additions, deletions, or file size alone. Remove what is actually superseded.
+- Do not swallow errors, fabricate success or defaults, introduce silent degraded
+  modes, weaken tests/types/guardrails, or normalize a known bug in test assertions.
+- Preserve required error reporting and observability at existing owners. Do not
+  add blanket entry/exit/parameter logging, redundant catch-and-rethrow wrappers,
+  speculative configuration, or tests that merely mirror implementation.
+- Leave no temporary diagnostics, bypasses, disabled replacements, commented-out
+  implementations, stale flags, or avoidable debt in the requested repair. Do not
+  leave TODOs for requested behavior unless the user accepts that incomplete scope.
+- Do not combine unrelated cleanup, reformatting, upgrades, or redesign with a repair.
 
-- Do not catch and ignore errors or convert failures into apparent success.
-- Do not introduce silent fallbacks, hidden degraded modes, or fabricated defaults.
-- Do not create a second source of truth or duplicate registration path.
-- Do not leave commented-out implementations, disabled replacement code, or stale
-  feature-flag branches.
-- Do not weaken tests, assertions, types, architecture checks, or validation baselines
-  merely to make a change pass.
-- Do not alter tests to normalize behavior identified as a bug.
-- Do not add compatibility shims without a documented caller, removal condition, and
-  explicit justification.
-- Do not leave TODOs in place of requested behavior unless the Installation Owner
-  accepts the incomplete scope.
-- Do not combine unrelated cleanup, reformatting, dependency upgrades, or redesign
-  with the requested repair.
-- Do not claim success when the relevant validation was not run or did not pass.
+## Architecture and Style
 
-## Engineering Constitution
+- Interfaces in `apps/*` and `packages/cli` sit above the engine in `packages/core`;
+  `brain/*` contains workers, services, and training. `packages/agent-runtime` owns
+  shared execution interfaces. Consult source policy/manifests for the full inventory.
+- Core must not import from apps, Brain, Astro, Svelte, UI, or local runtime data.
+  Brain and other external consumers use public `@metahuman/core` exports.
+- Site client code must not import runtime-heavy Core modules; browser-safe
+  types/schemas need explicit exports. Site API routes are transport-only;
+  business logic belongs in Core handlers or a documented service owner.
+- CLI commands parse and delegate. Domain owners retain durable behavior.
+  Resolve profile, persona, memory, task, and user paths through canonical storage
+  and path owners; never hardcode local runtime paths.
+- Read relevant critical runtime boundaries in `MAINTAINED_SURFACE.md` before
+  high-risk changes. Do not duplicate those changing contracts in agent guidance.
+- `apps/code-oss` and deprecated `apps/mobile` are excluded unless explicitly
+  scoped in. Maintained React Native code is a separate surface.
+- Follow the nearest maintained file: TypeScript ESM, local indentation/semicolon
+  conventions, named exports unless the framework requires defaults, and existing
+  library/component naming. Avoid unrelated mechanical restyling.
 
-- Finish work at production quality: correct the canonical owner; do not leave
-  patches, workarounds, cruft, avoidable debt, orphan code, hidden fallbacks, or
-  misleading completion claims.
-- Discover before creating. Reuse, repair, or consolidate before adding code.
-- Keep one canonical owner per responsibility. Preserve separation of concerns and
-  dependency direction.
-- Keep behavior behind a narrow owner contract so optional utilities can be removed
-  cleanly.
-- Use the smallest complete design and remove everything it supersedes in the same
-  change.
-- Define acceptance evidence before implementation and search for stale references,
-  duplicate paths, bypasses, and unused artifacts before declaring completion.
-- Report source validation, live runtime evidence, external confirmation, and
-  physical-hardware proof separately, along with anything still unverified.
+## Validation and Evidence Reuse
 
-## Architecture Contract
+- Inspect root and package scripts before selecting commands. Run focused owner
+  tests first. Add regression coverage for changed behavior and credible failure
+  modes, with timeout, cancellation, retries, and repeated invocation as warranted
+  by risk. Small reversible edits do not need new tests that restate the edit.
+- Select broader type, build, architecture, and remote-safety checks according to
+  affected contracts. A docs-only edit needs content/link checks; executable policy
+  or command changes also need validation of that policy or command.
+- Keep command, result, checked scope, and relevant source/environment state in
+  the existing conversation or task notes. Do not create a tracking document
+  solely to record validation. Reuse successful results while those inputs remain
+  unchanged, including reliable evidence from another task on the same inputs.
+  Recheck affected evidence after source, tests, dependencies, configuration,
+  environment, or interacting work changes. Explain any rerun or broader check;
+  an old success is not evidence for unverified changes.
+- Root `pnpm build` builds the Site. `pnpm verify` runs workspace typechecks,
+  architecture checks, registered tests/validators, and the Site build; the server
+  updater uses this full gate. Do not routinely run all its components and then
+  the full chain. Use `verify` for relevant integration risk, required release
+  validation, or an explicit request. Focused tests absent from the chain still
+  need their own invocation when applicable. TypeScript typechecks cache results
+  under each project's ignored `node_modules/.cache`; changed inputs are rechecked.
+- `./bin/audit check` includes `pnpm check:architecture`'s checker plus tracked-file
+  size and manifest reporting. Choose the needed scope; do not run both for the
+  same architecture evidence. `./bin/audit all` is a report writer, not a stronger
+  passing-test signal.
+- Separate pre-existing failures from regressions. Do not weaken assertions or
+  refresh guardrail baselines to conceal failures. A build proves compilation,
+  not live UI, admission, service effects, or physical behavior. Exercise only
+  authorized runtime/external/physical actions and state remaining limits.
 
-- This is a pnpm monorepo. `apps/*` and `packages/cli` are interfaces;
-  `packages/agent-runtime` owns shared execution interfaces; `packages/core` is the
-  engine/domain layer; and `brain/*` contains workers, services, and training above
-  the engine.
-- `packages/local-model-service` is the maintained local-model service package.
-  Deployment-mode contracts and cloud-provider transport belong to `packages/core`;
-  the workspace has no separate `packages/server` package. Use
-  `MAINTAINED_SURFACE.md` and the live workspace manifests for the complete current
-  inventory.
-- `packages/core` must not import from `apps`, `brain`, Astro, Svelte, UI code, or
-  local runtime data.
-- `apps/site` client code must not import runtime-heavy core modules. Browser-safe
-  types and schemas require explicit public exports.
-- `apps/site/src/pages/api` is transport-only. Business logic belongs in
-  `packages/core/src/api/handlers` or an explicitly documented service owner.
-- `brain/*` calls public `@metahuman/core` exports, not deep
-  `packages/core/src/...` paths.
-- CLI commands parse and delegate. Durable behavior belongs in core or an explicitly
-  documented agent/service owner.
-- Resolve profile, persona, memory, task, and user paths through canonical
-  path/storage owners; never hardcode local runtime paths.
-- Before changing a high-risk subsystem, read the current “Critical Runtime Ownership
-  Boundaries” in `MAINTAINED_SURFACE.md`. Do not duplicate those frequently changing
-  owner contracts here.
-- Do not audit or refactor `apps/code-oss` or deprecated `apps/mobile` during normal
-  MetaHuman work unless the Installation Owner explicitly scopes them in.
-- Excluded areas remain subject to remote-safety checks. Do not track personal
-  profiles, memories, logs, outputs, state, credentials, model weights, generated
-  builds, or local agent/editor data. Preserve explicitly sanctioned sanitized
-  tracked fixtures such as `profiles/README.md`.
-
-## Repository Orientation
-
-- Workspace membership: `pnpm-workspace.yaml` and package manifests are authoritative.
-- Core engine and public contracts: `packages/core`.
-- Shared execution abstraction: `packages/agent-runtime`.
-- CLI interface: `packages/cli` and `bin/mh`.
-- Web and maintained application interfaces: consult `MAINTAINED_SURFACE.md` and the
-  live worktree rather than relying on a static list here.
-- Workers, finite agents, persistent services, and training:
-  `brain/*`. Persistent lifecycle and finite coordinator work have different owners;
-  do not treat every agent as a long-running service.
-- System configuration and editable cognitive graphs: `etc`.
-- Guardrails, validators, support entrypoints, tests, and maintained integration code:
-  `scripts`, `bin`, `tests`, `external`, `docker`, and `plugins/examples` where
-  included by policy.
-- Runtime content such as `persona`, `profiles`, `memory`, `logs`, `out`,
-  `brain/journal`, and `brain/state` is user/system data, not maintained application
-  source, except for explicit sanitized policy exceptions.
-
-## Build, Test, and Development Commands
-
-- Install: `pnpm install` (workspace-aware).
-- CLI command authority: `./bin/mh help` (or
-  `cd packages/cli && pnpm mh -- help`). Do not maintain a duplicate command list
-  here.
-- Web UI development: `pnpm dev` from the repository root, or
-  `cd apps/site && pnpm dev`.
-- Web-only build/preview: `cd apps/site && pnpm build`; `pnpm preview`.
-- Root production build chain: `pnpm build`.
-- Maintained-source dry run:
-  `node --import tsx scripts/create-audit-inventory.ts --dry-run`.
-- Architecture and remote-safety guardrail: `pnpm check:architecture` or
-  `./bin/audit check`.
-- Full local audit report: `./bin/audit all` writes under ignored `logs/audit/`.
-- Package type checks: `pnpm typecheck:core`, `pnpm typecheck:cli`, and
-  `pnpm typecheck:site` when applicable.
-- Inspect root and package `scripts` before choosing focused behavior tests; do not
-  assume one command validates every subsystem.
-- Deprecated mobile commands are outside normal MetaHuman validation and must not be
-  run unless the Installation Owner explicitly scopes mobile work in.
-
-## Coding Style and Naming
-
-- Follow the nearest maintained file and avoid unrelated mechanical restyling.
-  TypeScript is ESM; use 2-space indentation and omit semicolons where locally
-  consistent.
-- Prefer `kebab-case.ts` for libraries and `PascalCase.astro`/`.svelte` for
-  components where that matches the owning area.
-- Prefer named exports; use framework-required defaults only where needed.
-- Consumers outside core use public `@metahuman/core` exports rather than deep
-  source imports.
-- Keep interface, transport, domain policy, orchestration, persistence, and external
-  effects in their documented layers.
-
-## Testing Guidelines
-
-- There is no single unified root unit-test command. The repository has focused
-  `*.spec.*`, `*.test.*`, `__tests__`, validator, integration, and smoke-test paths
-  using the runner appropriate to each owner.
-- Put focused tests near their owner and follow that area’s existing runner and
-  naming convention, including Node test/`tsx` or Jest where already used.
-- Establish a baseline before behavior-preserving refactors. Test success, failure,
-  timeout, cancellation, retries, and repeated invocation in proportion to risk.
-- Run focused owner tests first, followed by applicable type, build, architecture,
-  remote-safety, runtime, external, or physical checks.
-- Separate pre-existing failures from regressions with evidence. Do not weaken
-  baselines or add exceptions merely to make a check green.
-- Before handoff, run a final reference search and `git diff --check`; review the
-  complete diff for unrelated changes, local data, stale configuration, generated
-  artifacts, and temporary diagnostics.
-
-## Completion Gate
-
-Work is complete only when:
-
-- For an implementation or repair, the root cause and canonical owner have been
-  identified. A read-only diagnostic task may end without a confirmed root cause
-  only when the handoff clearly states what remains unknown and why.
-- The canonical path implements the requested behavior.
-- Superseded paths, stale references, obsolete configuration, and temporary
-  diagnostics have been removed.
-- Focused tests and applicable type, build, architecture, and remote-safety checks
-  pass, or every unrun/failed check is reported with its exact limitation.
-- Pre-existing failures are reported separately and were not concealed or weakened.
-- `git diff --check` passes and the final diff contains no unrelated changes, runtime
-  data, generated output, credentials, or machine-local artifacts.
-- The handoff states the root cause, what changed, what was deleted or consolidated,
-  the validation evidence, and what remains unverified.
-
-A passing build does not by itself satisfy this gate when the claim concerns runtime,
-external services, or physical hardware.
+Useful entrypoints (live scripts remain authoritative): `./bin/mh help`, root
+`pnpm dev`, `pnpm --dir apps/site build`, owner `typecheck:*` scripts, and
+`node --import tsx scripts/create-audit-inventory.ts --dry-run`. Do not install
+dependencies, start services, or generate inventories merely to read instructions.
+Node must satisfy `>=22.3.0 <23`; pnpm must satisfy `>=10.15.1 <11`.
 
 ## Code Review Rules
 
-Flag a change when it:
+- Flag concrete defects: duplicate owners or bypasses, broken layer boundaries,
+  swallowed failures, fabricated success, weakened checks, superseded code left
+  active, unrelated changes, or private data. Apply the ownership and approval
+  rules above, including explicitly authorized exceptions.
+- Identify the affected path and behavior, explain the impact, and point to the
+  surviving owner or safe correction. Do not turn hypothetical concerns or
+  formatting preferences into defects; leave mechanical checks to automation.
+- Flag runtime, external, or physical success claims supported only by source or
+  build evidence. Review only the requested scope and its affected consumers.
 
-- Creates or preserves a second active owner for an existing responsibility.
-- Routes around a broken canonical owner instead of repairing it.
-- Introduces a silent fallback, swallowed error, fabricated success, or hidden
-  degraded mode.
-- Places business logic in an interface or transport layer.
-- Changes tests or guardrails to accept broken behavior.
-- Leaves superseded code, wiring, registrations, configuration, dependencies, or
-  documentation behind.
-- Claims runtime, external, or physical success using only source or build evidence.
-- Includes unrelated cleanup or machine-local/private data.
+## Completion and Publication
 
-## Commit and Pull Request Guidelines
+- Confirm requested behavior and directly superseded-path removal. Run a final
+  reference search for affected symbols/paths and `git diff --check` for the task
+  files. Review the full task diff, including new files, for unrelated changes,
+  private data, generated artifacts, stale configuration, and diagnostics.
+- Report the root cause (or a diagnostic's remaining uncertainty), surviving
+  owner, changes/removals, validation results, pre-existing failures, and unverified
+  behavior. Do not claim success for failed or unrun acceptance checks.
+- When committing or publishing is explicitly requested, inspect the entire
+  selected snapshot and status. Preserve unrelated work and verify remote safety.
+  Use `feat|fix|docs|chore|refactor(scope): summary` commits. PRs explain behavior,
+  rationale, affected owners, removals, evidence/limitations, and UI screenshots
+  when relevant; include only remote-safe links and identifiers.
+- Never publish credentials, personal profiles, persona data, memories, logs,
+  model weights, generated output, or machine-local state. Preserve sanctioned
+  sanitized fixtures such as `profiles/README.md`. Source-policy exclusions never
+  exempt tracked files from remote-safety checks.
+- LLM work uses the configured backend owner; do not assume Ollama or require
+  unrelated models/services merely to validate a scoped source change.
 
-- Use Conventional Commits: `feat|fix|docs|chore|refactor(scope): summary`. Choose a
-  meaningful canonical-owner scope; examples are illustrative, not a closed allowlist.
-- PRs should state the behavior and rationale, affected owners, files removed or
-  consolidated, validation commands/results, remaining unverified behavior, and
-  screenshots for UI changes.
-- Link only remote-safe issue or task identifiers. Tasks are profile-resolved runtime
-  data, not a repository-level `memory/tasks` contract; never paste private task or
-  memory content into a PR.
-- Before an explicitly requested commit or push, inspect the complete diff and status,
-  preserve unrelated work, exclude machine-local artifacts, and run the scoped
-  validation required by risk.
+## Maintaining These Instructions
 
-## Security and Configuration
-
-- Local-first does not relax privacy or remote safety. Do not commit secrets,
-  credentials, personal profiles, memories, logs, model weights, generated output,
-  or machine-local state.
-- LLM features require a configured and available backend, not specifically Ollama.
-  Supported backend families include Ollama, vLLM, the local-model service, remote
-  providers, and automatic selection; follow the current backend owner and
-  configuration.
-- Environment contract: Node `>=22.3.0 <23`, pnpm `>=10.15.1 <11`.
-- Destructive, credentialed, external, financial, or physical actions require
-  explicit authority and evidence proportionate to their effect.
+When instruction maintenance is requested, base revisions on recurring concrete
+failures or verified changes to repository contracts. Revise existing rules and
+remove superseded wording instead of appending a prohibition for every incident.
+Keep durable repository rules here and reference detailed task-specific procedures;
+do not accumulate task histories or duplicate policy.

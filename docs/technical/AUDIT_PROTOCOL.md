@@ -1,6 +1,10 @@
 # Maintained Source Audit Protocol
 
-The audit is line by line, but it is not a license to churn code. Audit first, then implement scoped refactor tickets.
+This protocol applies when the user requests a maintained-source architecture
+audit. Review the requested files or owner groups line by line; it does not turn
+a routine question, small edit, or behavior repair into a repository-wide audit.
+Root `AGENTS.md` defines the bounded workflow for those tasks. Audit findings do
+not authorize implementation.
 
 ## Audit Inputs
 
@@ -12,7 +16,9 @@ The audit is line by line, but it is not a license to churn code. Audit first, t
 
 ## Per-File Checklist
 
-For each maintained file, record:
+For each maintained file in the requested scope, record the applicable findings
+below. Small owner groups may share one record; do not duplicate unchanged
+inventory details or create boilerplate records for unrelated files.
 
 - Purpose: what the file owns.
 - Layer: core engine, interface, CLI, agent, service, training, script, test, or doc.
@@ -46,7 +52,11 @@ Use one record per file or small owner group. Each record should include:
 
 ## Execution Rules
 
-- Do not edit files while performing the audit unless the user explicitly starts an implementation phase.
+- Write the requested findings, but do not edit production source unless the user
+  explicitly starts an implementation phase.
+- Reuse relevant evidence after checking its scope and source/environment state.
+  Expand discovery only to resolve a concrete boundary or missing proof; record
+  the reason. Finish when the requested coverage and findings are complete.
 - Do not use stale blanket instructions that require adding logging or return types to every file.
 - Do not commit per-file churn from audit agents.
 - If a file is likely orphaned, confirm with static references and runtime route/entrypoint discovery before deleting it.

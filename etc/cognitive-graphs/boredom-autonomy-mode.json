@@ -6,7 +6,8 @@
     "activation": "demand",
     "skippedState": "explicit",
     "sideEffectOrder": "serial-topological",
-    "maxLoopIterations": 5
+    "maxLoopIterations": 5,
+    "eventInputNodeId": "input-events"
   },
   "name": "Robot Autonomy Executor",
   "description": "One-pass Robot Autonomy Executor. An Intent Orchestrator selects the context needed for an internally authored intention, the Environment LLM chooses one self-directed consequence, Environment Bridge Out dispatches it, Robot Status Out records the pass, and the workflow ends.",
@@ -53,7 +54,7 @@
         "nodeType": "orchestrator_llm",
         "properties": {
           "outputContract": "environment",
-          "systemPrompt": "You are the Robot Autonomy Intent Orchestrator. The current message is a high-level intention authored by an internal agent for the robot, not a human instruction. Decide which independent routes are relevant to realizing that self-directed intention. You do not answer, rewrite or summarize the intention, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes optional first-person outward expression by the robot.\n- needsConversationHistory exposes recent dialogue and private reflection.\n- needsMemory exposes relevant long-term experience beyond memories already delegated with the intention.\n- needsRobotStatus exposes the current body snapshot and last action.\n- needsEnvironment exposes current bridge state and advertised capabilities without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection plus verified recent action history.\n\nTreat the intention as the robot's own prospective choice. Routes are independent and may combine. Select only information and capabilities that can materially inform this pass. Return only the requested JSON routing fields.",
+          "systemPrompt": "You are the Robot Autonomy Intent Orchestrator. The current message is a high-level intention authored by an internal agent for the robot, not a human instruction. Decide which independent routes are relevant to realizing that self-directed intention. You do not answer, rewrite or summarize the intention, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes optional first-person outward expression by the robot.\n- needsConversationHistory exposes recent dialogue and private reflection.\n- needsMemory exposes relevant long-term experience beyond memories already delegated with the intention.\n- needsRobotStatus exposes the current body snapshot and last action.\n- needsEnvironment exposes bridge state, advertised capabilities, and saved visual observation history without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection plus verified recent action history.\n\nTreat the intention as the robot's own prospective choice. Routes are independent and may combine. Select only information and capabilities that can materially inform this pass. Return only the requested JSON routing fields.",
           "userPromptTemplate": "Internal planner intention: {{userMessage}}\n{{executionSection}}\n{{recentConversationSection}}",
           "temperature": 0.1,
           "maxTokens": 768
@@ -72,7 +73,7 @@
         "label": "Robot Autonomy Execution Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Execute the internally authored plannerDecision using advertised capabilities as my own prospective intent, not a user request. The delegated instruction is authoritative intent; narrative is not action evidence.\n\nWith needsAction true, choose one advertised action, or one body-local movementRequest. Use a preset whose description implements the intention. If no description matches, use movementRequest for the dedicated movement generator. Preserve body part, direction, timing, and holds. robotStimulus.visualEvidence identifies attached, verified images.\n\nReturn JSON with response, actions, movementRequest, taskDecision. taskDecision is null unless a durable objective changes. Current Execution owns the objective and completionCriteria; Robot Status is a snapshot, possibly from another execution. Include observable completionCriteria when defining an objective. actions or movementRequest selects the next effect; taskDecision describes progress toward the whole objective independently. Keep objectiveComplete false while the selected work is pending; Robot Action Result interprets its result. Speech is optional and first-person, rather than compliance with an instruction. Leave response empty when speaking adds nothing; otherwise use one or two concise sentences.",
+          "message": "Execute the internally authored plannerDecision as my own prospective intent, not a user request. The delegated instruction describes the intended effect; narrative is not action evidence.\n\nWith needsAction true, choose an advertised action whose description implements the intention, or a body-local movementRequest for the dedicated movement generator when no advertised action fits. Preserve body part, direction, timing, and holds. robotStimulus.visualEvidence describes the attached images.\n\nReturn JSON with response, actions, movementRequest, taskDecision. Speech is optional, first-person, and one or two sentences. taskDecision defines or updates the whole objective separately from this pass's effect; null leaves it unchanged. Current Execution owns any existing objective and completionCriteria; Robot Status may describe another execution. An ongoing interaction can be an objective without motion. When defining one, supply completionCriteria describing what would establish that it is finished. outcome describes progress toward that condition: accepting or starting work is not completion. Robot Action Result supplies the evidence from dispatched work.\n\nObservation History supplies earlier image interpretations with their source times. Optional visualObservation records an interpretation of attached images independently of speech and goals.",
           "inputKey": ""
         }
       }
@@ -490,9 +491,173 @@
           "graph": "robot-action-result"
         }
       }
+    },
+    {
+      "id": "input-events",
+      "type": "utilityNode",
+      "position": {
+        "x": 3400,
+        "y": 160
+      },
+      "data": {
+        "nodeType": "execution_event_wait",
+        "label": "Receive Pending Input",
+        "properties": {
+          "drain": true,
+          "userGraph": "environment",
+          "autonomyGraph": "robot-autonomy-controller"
+        },
+        "activation": {
+          "mode": "always"
+        },
+        "comment": "Receives input admitted while preceding work ran. If later input arrives before this execution finishes, the runtime resumes here, preserving earlier action and review outputs."
+      }
+    },
+    {
+      "id": "continue-user-input",
+      "type": "utilityNode",
+      "position": {
+        "x": 3700,
+        "y": 160
+      },
+      "data": {
+        "nodeType": "workflow_call",
+        "label": "Handle Received Input",
+        "properties": {},
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "invocation"
+          ]
+        },
+        "comment": "Calls the workflow selected by Receive Pending Input in this execution. No input means no child workflow or model call."
+      }
+    },
+    {
+      "id": "remaining-objective",
+      "type": "contextNode",
+      "position": {
+        "x": 4000,
+        "y": 700
+      },
+      "data": {
+        "nodeType": "execution_context",
+        "label": "Read Remaining Objective",
+        "properties": {
+          "eventLimit": 16
+        },
+        "activation": {
+          "mode": "always"
+        }
+      }
+    },
+    {
+      "id": "review-remaining-objective",
+      "type": "llmNode",
+      "position": {
+        "x": 4300,
+        "y": 700
+      },
+      "data": {
+        "nodeType": "workflow_call",
+        "label": "Review Unfinished Objective",
+        "properties": {
+          "graph": "robot-goal-review"
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "remaining-objective",
+              "output": "needsGoalReview",
+              "truthy": true
+            }
+          ]
+        },
+        "comment": "Runs only if the saved objective is unfinished. Continues inside this execution; conversation and standalone actions without objectives skip it."
+      }
+    },
+    {
+      "id": "observation-history",
+      "type": "contextNode",
+      "position": {
+        "x": 240,
+        "y": 930
+      },
+      "data": {
+        "label": "Observation History",
+        "nodeType": "observation_history",
+        "properties": {
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "save-observation",
+      "type": "outputNode",
+      "position": {
+        "x": 1560,
+        "y": 780
+      },
+      "data": {
+        "label": "Save Visual Observation",
+        "nodeType": "save_visual_observation",
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "action-parser",
+              "output": "visualObservation",
+              "truthy": true
+            }
+          ]
+        }
+      }
     }
   ],
   "edges": [
+    {
+      "id": "continuity-user-input-remaining-objective",
+      "source": "continue-user-input",
+      "sourceHandle": "completed",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "completed",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "continuity-result-context-goal-review",
+      "source": "action-results",
+      "sourceHandle": "context",
+      "target": "review-remaining-objective",
+      "targetHandle": "context",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "continuity-remaining-objective-review-remaining-objective",
+      "source": "remaining-objective",
+      "sourceHandle": "needsGoalReview",
+      "target": "review-remaining-objective",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsGoalReview",
+          "truthy": true
+        }
+      }
+    },
     {
       "id": "e-planner-intent",
       "source": "robot-operator-input",
@@ -1278,6 +1443,158 @@
       "sourceHandle": "context",
       "target": "intent-orchestrator",
       "targetHandle": "execution"
+    },
+    {
+      "id": "input-events-invocation-continue-user-input-invocation",
+      "source": "input-events",
+      "sourceHandle": "invocation",
+      "target": "continue-user-input",
+      "targetHandle": "invocation",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "input-events-invocation-remaining-objective-control",
+      "source": "input-events",
+      "sourceHandle": "invocation",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "data": {
+        "type": "object",
+        "kind": "control",
+        "when": {
+          "truthy": true,
+          "output": "invocation"
+        }
+      }
+    },
+    {
+      "id": "action-results-userInput-input-events-receivedInput",
+      "source": "action-results",
+      "sourceHandle": "userInput",
+      "target": "input-events",
+      "targetHandle": "receivedInput",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "action-results-context-input-events-evidence",
+      "source": "action-results",
+      "sourceHandle": "context",
+      "target": "input-events",
+      "targetHandle": "evidence",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "review-action-completed-input-events-control",
+      "source": "review-action",
+      "sourceHandle": "completed",
+      "target": "input-events",
+      "targetHandle": "control",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "truthy": true,
+          "output": "completed"
+        }
+      }
+    },
+    {
+      "id": "robot-status-out-persisted-input-events-control",
+      "source": "robot-status-out",
+      "sourceHandle": "persisted",
+      "target": "input-events",
+      "targetHandle": "control",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "truthy": true,
+          "output": "persisted"
+        }
+      }
+    },
+    {
+      "id": "visual-history-observation-observation-observation-history-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "observation-history",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-observation-history-observations-autonomy-context-observationHistory",
+      "source": "observation-history",
+      "sourceHandle": "observations",
+      "target": "autonomy-context",
+      "targetHandle": "observationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-autonomy-context-frames-action-parser-frames",
+      "source": "autonomy-context",
+      "sourceHandle": "frames",
+      "target": "action-parser",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-autonomy-context-frames-save-observation-frames",
+      "source": "autonomy-context",
+      "sourceHandle": "frames",
+      "target": "save-observation",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-observation-observation-save-observation-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "save-observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-action-parser-visualObservation-save-observation-visualObservation",
+      "source": "action-parser",
+      "sourceHandle": "visualObservation",
+      "target": "save-observation",
+      "targetHandle": "visualObservation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-save-observation-observation-robot-status-out-visualObservation",
+      "source": "save-observation",
+      "sourceHandle": "observation",
+      "target": "robot-status-out",
+      "targetHandle": "visualObservation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
     }
   ]
 }

@@ -23,7 +23,7 @@ interface AuditLog {
 /**
  * Read recent audit logs and filter for training-related events
  */
-function getRecentTrainingLogs(maxLines: number = 100): AuditLog[] {
+function getRecentTrainingLogs(username: string, maxLines: number): AuditLog[] {
   const logs: AuditLog[] = [];
   const auditDir = path.join(systemPaths.logs, 'audit');
 
@@ -49,6 +49,7 @@ function getRecentTrainingLogs(maxLines: number = 100): AuditLog[] {
       for (let i = lines.length - 1; i >= 0 && logs.length < maxLines; i--) {
         try {
           const log = JSON.parse(lines[i]) as AuditLog;
+          if (log.details?.username !== username && log.actor !== username) continue;
 
           // Filter for training-related events
           if (
@@ -58,8 +59,7 @@ function getRecentTrainingLogs(maxLines: number = 100): AuditLog[] {
             log.event?.startsWith('builder_') ||
             log.event?.startsWith('training_') ||
             log.event === 'dataset_prepared' ||
-            log.event === 'samples_collected' ||
-            log.category === 'action' // Show all action events during training
+            log.event === 'samples_collected'
           ) {
             logs.push(log);
           }
@@ -78,11 +78,13 @@ function getRecentTrainingLogs(maxLines: number = 100): AuditLog[] {
  * GET /api/training/logs - Get recent training audit logs
  */
 export async function handleGetTrainingLogs(req: UnifiedRequest): Promise<UnifiedResponse> {
+  if (!req.user.isAuthenticated) return { status: 401, error: 'Authentication required' };
   try {
     const { query } = req;
-    const maxLines = parseInt(query?.maxLines || '100', 10);
+    const maxLines = Number(query?.maxLines ?? 100);
+    if (!Number.isInteger(maxLines) || maxLines < 1 || maxLines > 5000) return { status: 400, error: 'maxLines must be from 1 to 5000' };
 
-    const logs = getRecentTrainingLogs(maxLines);
+    const logs = getRecentTrainingLogs(req.user.username, maxLines);
 
     return successResponse({
       success: true,

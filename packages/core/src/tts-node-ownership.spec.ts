@@ -247,14 +247,22 @@ assert.equal(ttsNodes[0]?.type, 'outputNode');
 assert.equal(ttsNodes[0]?.data?.properties?.source, 'environment-mode');
 
 const ttsNodeId = ttsNodes[0]!.id;
-assert.ok(
-  environmentGraph.edges.some(edge =>
+assert.equal(environmentGraph.nodes.find(node => node.id === 'conversation-buffer')?.data?.nodeType, 'conversation_buffer');
+assert.equal(environmentGraph.nodes.find(node => node.id === 'memory-capture')?.data?.nodeType, 'memory_capture');
+for (const [sourceHandle, targetHandle] of [['entries', 'entries'], ['response', 'passthrough']]) {
+  assert.ok(environmentGraph.edges.some(edge =>
     edge.source === 'conversation-buffer'
-    && edge.sourceHandle === 'response'
-    && edge.target === ttsNodeId
-    && edge.targetHandle === 'conversation'
+    && edge.sourceHandle === sourceHandle
+    && edge.target === 'memory-capture'
+    && edge.targetHandle === targetHandle
   ),
-  'Environment Mode responses and refinement updates must pass through the canonical Conversation Buffer before the standard TTS input',
+  'Environment Mode must save the admitted buffer entries and forward the same response to speech');
+}
+assert.deepEqual(
+  environmentGraph.edges.filter(edge => edge.target === ttsNodeId && edge.targetHandle === 'conversation')
+    .map(edge => [edge.source, edge.sourceHandle]),
+  [['memory-capture', 'passthrough']],
+  'Environment Mode responses and refinement updates must pass through Conversation Buffer and Memory Saver before the standard TTS input',
 );
 
 for (const node of environmentGraph.nodes) {

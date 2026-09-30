@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getProfilePaths } from './path-builder.js';
+import { safeWriteJSON } from './safe-file.js';
 import { loadBackendConfig, type BackendType } from './llm-backend.js';
 import {
   DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL,
@@ -75,8 +76,6 @@ export interface ModelRegistry {
   description: string;
   globalSettings?: {
     includePersonaSummary?: boolean;
-    useAdapter?: boolean;
-    activeAdapter?: unknown; // Can be various adapter configuration formats
   };
   defaults: Partial<Record<ModelRole, string>>;
   models: Record<string, ModelDefinition>;
@@ -314,6 +313,19 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
  */
 export function invalidateModelCache(): void {
   registryCache.clear();
+}
+
+/** All persona controls update the same profile registry; model selection belongs to role assignments. */
+export function updateModelGlobalSettings(username: string, settings: unknown): NonNullable<ModelRegistry['globalSettings']> {
+  if (!isRecord(settings) || Object.keys(settings).some(key => key !== 'includePersonaSummary')
+      || typeof settings.includePersonaSummary !== 'boolean') {
+    throw new Error('Supply includePersonaSummary as a boolean. Select trained models through Model Settings role assignments.');
+  }
+  const registry = loadModelRegistry(true, username);
+  registry.globalSettings = { includePersonaSummary: settings.includePersonaSummary };
+  safeWriteJSON(resolveRegistryPath(username), registry);
+  invalidateModelCache();
+  return registry.globalSettings;
 }
 
 /**

@@ -1,18 +1,17 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { loadedGraphSource } from '../graph-streaming.js'
-import { validateSvelteFlowGraph } from '../cognitive-graph-schema.js'
 import { getUserContext } from '../context.js'
 import { executeGraph, type GraphExecutionState } from '../graph-executor.js'
 import type { GraphRunParams } from '../graph-runtime.js'
 import { ExecutionCheckpointer } from './checkpointer.js'
-import { executionAbortError, executionDefinition, graphContextSnapshot } from './graph-contract.js'
+import { executionAbortError, executionDefinition, graphContextSnapshot, resolveExecutionGraph } from './graph-contract.js'
 import { ExecutionStore } from './store.js'
 import type { QueuedTask, TaskInput } from '../queue/types.js'
 import { relayExecutionOutbox } from './coordinator-outbox.js'
 import { ExecutionDeliveryError } from './types.js'
 import { openExecutionStore } from './storage.js'
+import { assertProfileMemoryAvailable } from '../locks.js'
 
 /** Finite-work identity is transport context; the checkpoint owns the reasoning state. */
 const workScope = new AsyncLocalStorage<{ task: QueuedTask; graphIndex: number; attach(executionId: string): void;
@@ -33,6 +32,7 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
     : null
   const username = params.context.username || getUserContext()?.username || scope?.task.username
   if (typeof username !== 'string' || !username.trim()) throw new Error('Graph execution requires an authenticated profile')
+  assertProfileMemoryAvailable(username)
   const store = openExecutionStore(username)
   let heartbeat: ReturnType<typeof setInterval> | undefined
   let lease: ReturnType<ExecutionStore['claim']> | undefined
@@ -41,11 +41,9 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
   try {
     const suppliedId = params.executionId || delegated?.executionId
     if (params.resumeEventId && !suppliedId) throw new Error('An event wake requires an execution identity')
-    const entry = suppliedId ? store.entry(suppliedId) : null
-    const rootGraph = entry?.graphSource
-      ? validateSvelteFlowGraph(JSON.parse(readFileSync(entry.graphSource, 'utf8')))
-      : delegated ? entry.graph : params.graph
-    const definition = executionDefinition(rootGraph)
+    const resumed = suppliedId ? resolveExecutionGraph(store, suppliedId, delegated ? undefined : params.graph) : null
+    const rootGraph = resumed?.graph ?? params.graph
+    const definition = resumed?.definition ?? executionDefinition(rootGraph)
     const record = suppliedId ? store.get(suppliedId) : store.enter(
       username, definition,
       scope ? `${scope.task.id}:graph:${scope.graphIndex++}` : params.context.requestId || randomUUID(),

@@ -47,7 +47,7 @@ test('captureEventWithDetails persists producer idempotency across repeated call
   assert.equal(fs.existsSync(first.filePath), true)
   assert.match(first.eventId, /^evt-idempotent-[a-f0-9]{24}$/)
 
-  const changedContent = await withUserContext(
+  await assert.rejects(withUserContext(
     { userId: 'user-idempotency', username, role: 'owner' },
     () => captureEventWithDetails('Changed content cannot replace the stable capture', {
       type: 'observation',
@@ -55,10 +55,8 @@ test('captureEventWithDetails persists producer idempotency across repeated call
       idempotencyKey: 'ingestor:stable-test-key',
       metadata: { cognitiveMode: 'emulation' },
     }),
-  )
-  assert.equal(changedContent.deduplicated, true)
-  assert.equal(changedContent.eventId, first.eventId)
-  assert.equal(changedContent.filePath, first.filePath)
+  ), /conflict/i)
+  assert.equal(JSON.parse(fs.readFileSync(first.filePath, 'utf8')).content, 'Stable imported content')
 })
 
 test('idempotent memory capture rejects unstable identity inputs', () => {

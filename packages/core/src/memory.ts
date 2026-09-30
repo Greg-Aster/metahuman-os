@@ -37,6 +37,7 @@ import {
 } from './encryption.js';
 import { getProfileStorageConfig } from './users.js';
 import { safeWriteJSON } from './safe-file.js';
+import { assertProfileMemoryAvailable } from './locks.js';
 
 const LOG_PREFIX = '[memory]';
 
@@ -85,7 +86,7 @@ function isDuplicateContent(content: string): boolean {
     }
   }
 
-  const hash = contentHash(content);
+  const hash = JSON.stringify([getUserContext()?.username, contentHash(content)]);
   if (recentContentHashes.has(hash)) {
     console.log(`${LOG_PREFIX} Duplicate content detected, skipping save (hash: ${hash.slice(0, 8)}...)`);
     return true;
@@ -94,7 +95,13 @@ function isDuplicateContent(content: string): boolean {
 }
 
 function rememberCapturedContent(content: string): void {
-  recentContentHashes.set(contentHash(content), Date.now());
+  recentContentHashes.set(JSON.stringify([getUserContext()?.username, contentHash(content)]), Date.now());
+}
+
+export function clearMemoryCaptureCache(username: string): void {
+  for (const key of recentContentHashes.keys()) {
+    if (JSON.parse(key)[0] === username) recentContentHashes.delete(key);
+  }
 }
 
 /**
@@ -274,10 +281,6 @@ export interface CaptureResult {
   eventType: string;
   /** Bytes written */
   bytesWritten: number;
-  /** Warning if encryption was expected but couldn't be applied (fallback to plain) */
-  encryptionWarning?: string;
-  /** True if encryption was configured but file was written plain (security concern) */
-  encryptionFallback?: boolean;
   /** True if this was detected as duplicate content and not saved */
   deduplicated?: boolean;
 }
@@ -350,50 +353,44 @@ interface EncryptionContext {
   enabled: boolean;
   key: Buffer | null;
   type?: 'aes256' | 'veracrypt';
-  /** Warning if encryption was expected but unavailable */
-  warning?: string;
-  /** Whether encryption was configured but couldn't be applied */
-  fallback: boolean;
 }
 
 /**
  * Check if profile encryption is enabled and get encryption key
- * Returns fallback=true if encryption was expected but couldn't be applied
+ * Configured encryption must be available before any capture can be written.
  */
 function getEncryptionContext(username?: string): EncryptionContext {
   if (!username) {
-    return { enabled: false, key: null, fallback: false };
+    return { enabled: false, key: null };
   }
 
   const config = getProfileStorageConfig(username);
   if (!config?.encryption || config.encryption.type === 'none') {
-    return { enabled: false, key: null, fallback: false };
+    return { enabled: false, key: null };
   }
 
   // For VeraCrypt, the container handles encryption at the filesystem level
   // No application-level encryption needed - the mounted volume is encrypted
   if (config.encryption.type === 'veracrypt') {
-    return { enabled: false, key: null, type: 'veracrypt', fallback: false };
+    return { enabled: false, key: null, type: 'veracrypt' };
   }
 
   // For AES-256, we need the cached key
   if (config.encryption.type === 'aes256') {
-    const profilePath = config.path;
+    const resolved = storageClient.resolveProfileRoot(username);
+    if (!resolved.success || !resolved.profileRoot) throw new Error(resolved.error || 'Cannot resolve encrypted profile');
+    const profilePath = resolved.profileRoot;
     if (!isProfileUnlocked(profilePath)) {
-      const warning = 'Profile is encrypted but not unlocked - writing plain file. Unlock profile with password to enable encryption.';
-      console.warn(`${LOG_PREFIX} ${warning}`);
-      return { enabled: false, key: null, type: 'aes256', warning, fallback: true };
+      throw new Error('Profile is locked. Unlock it before capturing memories.');
     }
     const key = getCachedKey(profilePath);
     if (!key) {
-      const warning = 'Encryption key not found in cache - writing plain file';
-      console.warn(`${LOG_PREFIX} ${warning}`);
-      return { enabled: false, key: null, type: 'aes256', warning, fallback: true };
+      throw new Error('Profile encryption key is unavailable; memory capture was not written.');
     }
-    return { enabled: true, key, type: 'aes256', fallback: false };
+    return { enabled: true, key, type: 'aes256' };
   }
 
-  return { enabled: false, key: null, fallback: false };
+  return { enabled: false, key: null };
 }
 
 /**
@@ -403,6 +400,8 @@ function getEncryptionContext(username?: string): EncryptionContext {
 export function captureEventWithDetails(content: string, opts: CaptureEventOptions = {}): CaptureResult {
   // Get current user context (if any)
   const ctx = getUserContext();
+  if (ctx?.username) assertProfileMemoryAvailable(ctx.username);
+  const encryptionCtx = getEncryptionContext(ctx?.username);
 
   const idempotencyKey = opts.idempotencyKey?.trim();
   if (opts.idempotencyKey !== undefined && !idempotencyKey) {
@@ -468,6 +467,12 @@ export function captureEventWithDetails(content: string, opts: CaptureEventOptio
     const plainPath = path.join(dir, baseFilename);
     const existingPath = [encryptedPath, plainPath].find(candidate => fs.existsSync(candidate));
     if (existingPath) {
+      if (!ctx?.username) throw new Error('Idempotent capture requires a profile identity');
+      const existing = readCapturedEpisodicEvent(ctx.username, existingPath);
+      if (existing.content !== event.content || existing.response !== event.response || existing.timestamp !== event.timestamp
+          || existing.type !== event.type || existing.metadata?.idempotencyKeyHash !== event.metadata?.idempotencyKeyHash) {
+        throw new Error('Memory capture idempotency key conflicts with a different persisted message');
+      }
       const encrypted = existingPath === encryptedPath;
       return {
         eventId: event.id,
@@ -500,37 +505,18 @@ export function captureEventWithDetails(content: string, opts: CaptureEventOptio
   fs.mkdirSync(dir, { recursive: true });
 
   // Check encryption status
-  const encryptionCtx = getEncryptionContext(ctx?.username);
   let filepath: string;
   let bytesWritten: number;
   let encrypted = false;
-
-  // Log security warning if encryption was expected but unavailable
-  if (encryptionCtx.fallback && encryptionCtx.warning) {
-    audit({
-      level: 'warn',
-      category: 'security',
-      event: 'memory_encryption_fallback',
-      details: {
-        eventId: event.id,
-        eventType: event.type,
-        warning: encryptionCtx.warning,
-        expectedEncryption: encryptionCtx.type,
-        writtenPlain: true,
-      },
-      actor: ctx?.userId || 'system',
-    });
-  }
 
   if (encryptionCtx.enabled && encryptionCtx.key && encryptionCtx.type === 'aes256') {
     // Encrypt the event before writing
     const plaintext = JSON.stringify(event, null, 2);
     const encryptedData = encrypt(Buffer.from(plaintext, 'utf8'), encryptionCtx.key);
-    const encryptedJson = JSON.stringify(encryptedData);
 
     filepath = path.join(dir, baseFilename + ENCRYPTED_EXTENSION);
-    fs.writeFileSync(filepath, encryptedJson, 'utf8');
-    bytesWritten = Buffer.byteLength(encryptedJson);
+    safeWriteJSON(filepath, encryptedData);
+    bytesWritten = fs.statSync(filepath).size;
     encrypted = true;
 
     // Mark in metadata that this event is encrypted
@@ -539,7 +525,7 @@ export function captureEventWithDetails(content: string, opts: CaptureEventOptio
     // Write plain JSON
     const plaintext = JSON.stringify(event, null, 2);
     filepath = path.join(dir, baseFilename);
-    fs.writeFileSync(filepath, plaintext, 'utf8');
+    safeWriteJSON(filepath, event);
     bytesWritten = Buffer.byteLength(plaintext);
   }
 
@@ -603,8 +589,6 @@ export function captureEventWithDetails(content: string, opts: CaptureEventOptio
     timestamp: event.timestamp,
     eventType: event.type || 'observation',
     bytesWritten,
-    encryptionWarning: encryptionCtx.warning,
-    encryptionFallback: encryptionCtx.fallback,
   };
 }
 
@@ -653,10 +637,42 @@ export interface EpisodicMemoryMetadataUpdate {
   };
 }
 
+export interface EpisodicMemoryCurationUpdate {
+  username: string;
+  relativePath: string;
+  expectedId: string;
+  tags?: never;
+  entities?: never;
+  metadata: {
+    curated: true;
+    curatedAt: string;
+    curatorRecordId: string;
+    curatorRecordFile: string;
+    curatorSourceHash: string;
+    curatorPolicyVersion: number;
+    curationStatus: 'accepted' | 'rejected';
+  };
+}
+
 export interface EpisodicMemoryUpdateResult {
   relativePath: string;
   encrypted: boolean;
   event: EpisodicEvent;
+}
+
+/** Identity of the source reviewed by Curator, excluding its own review markers. */
+export function episodicSourceHash(event: {
+  id: string; timestamp: string; type?: string; content: string; response?: string;
+  tags?: string[]; metadata?: Record<string, unknown>;
+}): string {
+  const reviewFields = new Set(['curated', 'curatedAt', 'curationStatus', 'processed', 'processedAt', 'organizerStatus']);
+  const metadata = Object.entries(event.metadata ?? {})
+    .filter(([key]) => !reviewFields.has(key) && !key.startsWith('curator'))
+    .sort(([left], [right]) => left.localeCompare(right));
+  return crypto.createHash('sha256').update(JSON.stringify([
+    event.id, event.timestamp, event.type, event.content, event.response,
+    [...(event.tags ?? [])].sort(), metadata,
+  ])).digest('hex');
 }
 
 function episodicRootFor(username: string): string {
@@ -856,33 +872,52 @@ export function* scanEpisodicMemoryRecords(
  * graph result cannot replace another writer's memory content.
  */
 export function updateEpisodicMemoryMetadata(
-  input: EpisodicMemoryMetadataUpdate,
+  input: EpisodicMemoryMetadataUpdate | EpisodicMemoryCurationUpdate,
 ): EpisodicMemoryUpdateResult {
   if (!input.username.trim()) throw new Error('Episodic memory update requires a username');
+  assertProfileMemoryAvailable(input.username);
   if (!input.expectedId.trim()) throw new Error('Episodic memory update requires an expected memory id');
-  if (!Array.isArray(input.tags) || !input.tags.every(value => typeof value === 'string')) {
-    throw new Error('Episodic memory tags must be an array of strings');
-  }
-  if (!Array.isArray(input.entities) || !input.entities.every(value => typeof value === 'string')) {
-    throw new Error('Episodic memory entities must be an array of strings');
-  }
   if (!input.metadata || typeof input.metadata !== 'object' || Array.isArray(input.metadata)) {
     throw new Error('Episodic memory metadata update must be an object');
   }
-  const metadataKeys = Object.keys(input.metadata);
-  if (metadataKeys.some(key => !['processed', 'processedAt', 'model', 'organizerStatus'].includes(key))) {
-    throw new Error('Episodic memory update contains metadata outside the Organizer contract');
-  }
-  if (input.metadata.processed !== true
-      || !input.metadata.processedAt
-      || Number.isNaN(Date.parse(input.metadata.processedAt))) {
-    throw new Error('Episodic memory Organizer metadata requires a valid processed timestamp');
-  }
-  if (typeof input.metadata.model !== 'undefined' && typeof input.metadata.model !== 'string') {
-    throw new Error('Episodic memory Organizer model must be a string');
-  }
-  if (!['updated', 'skipped', 'no-content'].includes(input.metadata.organizerStatus)) {
-    throw new Error('Episodic memory Organizer status is invalid');
+  const metadata = input.metadata;
+  const metadataKeys = Object.keys(metadata);
+  const curation = 'curated' in metadata;
+  if ('curated' in metadata) {
+    if (input.tags !== undefined || input.entities !== undefined
+        || metadataKeys.some(key => !['curated', 'curatedAt', 'curatorRecordId', 'curatorRecordFile',
+          'curatorSourceHash', 'curatorPolicyVersion', 'curationStatus'].includes(key))) {
+      throw new Error('Episodic memory update contains fields outside the Curator contract');
+    }
+    if (metadata.curated !== true || !Number.isFinite(Date.parse(metadata.curatedAt))
+        || typeof metadata.curatorRecordId !== 'string' || !metadata.curatorRecordId.trim()
+        || typeof metadata.curatorRecordFile !== 'string' || !/^[A-Za-z0-9._-]+\.json$/.test(metadata.curatorRecordFile)
+        || typeof metadata.curatorSourceHash !== 'string' || !/^[a-f0-9]{64}$/.test(metadata.curatorSourceHash)
+        || !Number.isSafeInteger(metadata.curatorPolicyVersion) || metadata.curatorPolicyVersion < 1
+        || !['accepted', 'rejected'].includes(metadata.curationStatus)) {
+      throw new Error('Episodic memory Curator metadata is invalid');
+    }
+  } else {
+    if (!Array.isArray(input.tags) || !input.tags.every(value => typeof value === 'string')) {
+      throw new Error('Episodic memory tags must be an array of strings');
+    }
+    if (!Array.isArray(input.entities) || !input.entities.every(value => typeof value === 'string')) {
+      throw new Error('Episodic memory entities must be an array of strings');
+    }
+    if (metadataKeys.some(key => !['processed', 'processedAt', 'model', 'organizerStatus'].includes(key))) {
+      throw new Error('Episodic memory update contains metadata outside the Organizer contract');
+    }
+    if (metadata.processed !== true
+        || !metadata.processedAt
+        || Number.isNaN(Date.parse(metadata.processedAt))) {
+      throw new Error('Episodic memory Organizer metadata requires a valid processed timestamp');
+    }
+    if (typeof metadata.model !== 'undefined' && typeof metadata.model !== 'string') {
+      throw new Error('Episodic memory Organizer model must be a string');
+    }
+    if (!['updated', 'skipped', 'no-content'].includes(metadata.organizerStatus)) {
+      throw new Error('Episodic memory Organizer status is invalid');
+    }
   }
 
   const root = episodicRootFor(input.username);
@@ -897,11 +932,13 @@ export function updateEpisodicMemoryMetadata(
   if (current.id !== input.expectedId) {
     throw new Error(`Episodic memory identity changed before update: ${input.relativePath}`);
   }
+  if ('curated' in metadata && episodicSourceHash(current) !== metadata.curatorSourceHash) {
+    throw new Error(`Episodic memory source changed after Curator review: ${input.relativePath}`);
+  }
 
   const candidate: EpisodicEvent = {
     ...current,
-    tags: input.tags,
-    entities: input.entities,
+    ...(curation ? {} : { tags: input.tags, entities: input.entities }),
     metadata: { ...current.metadata, ...input.metadata },
   };
   const validation = validateEvent(candidate);
@@ -934,7 +971,7 @@ export function updateEpisodicMemoryMetadata(
     type: 'update',
     resource: 'episodic-memory-metadata',
     path: input.relativePath,
-    actor: 'organizer',
+    actor: curation ? 'curator' : 'organizer',
     details: {
       eventId: durable.id,
       tagCount: durable.tags?.length ?? 0,

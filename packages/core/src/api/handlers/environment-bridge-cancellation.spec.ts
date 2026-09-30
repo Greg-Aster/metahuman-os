@@ -48,7 +48,9 @@ test('queue Cancel and Cancel pending cancel the saved workflow, not only its wa
       assert.equal(response.status, 200);
       assert.equal(store.get(record.executionId).status, 'cancelled');
       assert.equal(manager.getTask(work.id)?.state, 'cancelled');
-      store.deliverEvent(record.executionId, { eventId: 'late', kind: 'autonomy_trigger', payload: {} });
+      assert.throws(() => store.deliverEvent(record.executionId,
+        { eventId: 'late', kind: 'autonomy_trigger', payload: {} }), /finished before input admission/);
+      assert.equal(store.findEvent(record.executionId, 'late'), null, 'Cancelled executions cannot acknowledge new input');
       assert.equal(store.pendingDispatches().length, 0);
       assert.ok(response.data.snapshot.executions.some((entry: any) => entry.executionId === record.executionId
         && entry.status === 'cancelled'));

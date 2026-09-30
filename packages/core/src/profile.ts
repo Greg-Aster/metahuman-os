@@ -12,7 +12,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import { systemPaths, ROOT, getProfilePaths } from './path-builder.js';
 import { audit } from './audit.js';
-import { DEFAULT_TRAINING_MODEL, DEFAULT_VLLM_TRAINING_MODEL } from './model-defaults.js';
+import { readTrainingConfigSeed } from './training-config.js';
 import { createDefaultSleepConfig, loadSleepConfigFile } from './sleep-config.js';
 import { deleteUser, getUserByUsername } from './users.js';
 
@@ -595,23 +595,8 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   await ensureModelsRegistry(profileModelsPath, systemModelsPath);
 
-  // training.json - Training configuration
-  const training = {
-    base_model: DEFAULT_TRAINING_MODEL,
-    max_seq_length: 2048,
-    lora_rank: 8,
-    lora_alpha: 16,
-    num_train_epochs: 2,
-    learning_rate: 0.0002,
-    per_device_train_batch_size: 1,
-    gradient_accumulation_steps: 16,
-    dtype: 'bfloat16',
-    lora_dropout: 0,
-    load_in_4bit: false,
-    load_in_16bit: true,
-  };
-
-  await writeJsonIfMissing(path.join(etcDir, 'training.json'), training);
+  // The training owner supplies one seed for all new profiles.
+  await writeJsonIfMissing(path.join(etcDir, 'training.json'), readTrainingConfigSeed());
 
   // boredom.json - Reflection trigger configuration
   const boredom = {
@@ -1076,41 +1061,6 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   await writeJsonIfMissing(path.join(etcDir, 'embeddings.json'), embeddings);
 
-  // model-registry.json - Model tracking for fine-tuning
-  const modelRegistry = {
-    comment: 'Model registry tracks fine-tuning lineage and current base model',
-    notes: [
-      'This file is automatically updated after each successful training run.',
-      'The current_base_model is used for the next fine-tuning cycle.',
-      'Original model is always preserved for reference.',
-    ],
-    original_base_model: DEFAULT_VLLM_TRAINING_MODEL,
-    current_base_model: DEFAULT_VLLM_TRAINING_MODEL,
-    model_type: 'huggingface',
-    training_history: [],
-    output_formats: {
-      unquantized: {
-        format: 'safetensors',
-        purpose: 'Future fine-tuning',
-        location: 'model/',
-        keep: true,
-      },
-      quantized: {
-        format: 'gguf',
-        quantization: 'Q8_0',
-        purpose: 'Local inference (Ollama)',
-        location: 'model.gguf',
-        keep: true,
-      },
-    },
-    versioning: {
-      enabled: true,
-      auto_update_base: true,
-      keep_all_versions: true,
-    },
-  };
-
-  await writeJsonIfMissing(path.join(etcDir, 'model-registry.json'), modelRegistry);
 
   // agency.json - Agency system configuration
   const agency = {
@@ -1154,27 +1104,8 @@ async function createDefaultConfigs(profileRoot: string, _username: string): Pro
 
   await writeJsonIfMissing(path.join(etcDir, 'agency.json'), agency);
 
-  // training-data.json - Training data configuration
-  const trainingData = {
-    version: '1.0.0',
-    description: 'Training data generation configuration',
-    outputDirectory: 'training-data',
-    memoryWindow: {
-      daysBack: 14,
-      maxMemories: 1000,
-    },
-    formatting: {
-      includeSystemPrompt: true,
-      includePersonaSummary: true,
-      maxTurnsPerConversation: 20,
-    },
-  };
-
-  await writeJsonIfMissing(path.join(etcDir, 'training-data.json'), trainingData);
-
   // Copy additional system config files if they exist
   const systemConfigsToCopy = [
-    'fine-tune-config.json',
     'persona-generator.json',
     'psychoanalyzer.json',
     'runpod.json',
@@ -1298,20 +1229,16 @@ async function ensureModelsRegistry(profileModelsPath: string, systemModelsPath:
   })();
 
   if (hasValidRegistry) return;
+  if (await fs.pathExists(profileModelsPath)) {
+    throw new Error('Existing model registry is invalid; preserve it for repair: ' + profileModelsPath);
+  }
 
   if (await fs.pathExists(systemModelsPath)) {
     await fs.copy(systemModelsPath, profileModelsPath);
     return;
   }
 
-  const fallback = {
-    $schema: 'https://json-schema.org/draft/2020-12/schema',
-    version: '1.0.0',
-    baseModel: null,
-    activeAdapter: null,
-    roles: {},
-  };
-  await fs.writeJson(profileModelsPath, fallback, { spaces: 2 });
+  throw new Error('Cannot initialize model roles: the system models.json seed is missing');
 }
 
 /**

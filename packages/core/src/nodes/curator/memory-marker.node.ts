@@ -3,11 +3,12 @@
  * Marks original episodic memories as curated
  */
 
-import fs from 'node:fs';
+import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { writeJsonAtomically } from './atomic-json.js';
-import { isSuccessfulCuration, sourcePathsForResult, type CuratorItemResult } from './contracts.js';
-import { curatedRecordFilename } from './curated-store.js';
+import { readCapturedEpisodicEvent, episodicSourceHash, updateEpisodicMemoryMetadata } from '../../memory.js';
+import { resolvePath } from '../../storage-client.js';
+import { CURATOR_POLICY_VERSION, parseStoredCuratedMemory, isSuccessfulCuration, sourcePathsForResult, type CuratorItemResult } from './contracts.js';
+import { curatedRecordFilename, readCuratedMemory } from './curated-store.js';
 
 export interface MarkCuratedResult {
   markedCount: number;
@@ -19,7 +20,9 @@ export interface MarkCuratedResult {
   markedPaths: string[];
 }
 
-export function markCuratedResults(curatedResults: CuratorItemResult[]): MarkCuratedResult {
+export function markCuratedResults(curatedResults: CuratorItemResult[], username: string): MarkCuratedResult {
+  const resolved = resolvePath({ username, category: 'memory', subcategory: 'episodic' });
+  if (!resolved.success || !resolved.path) throw new Error(resolved.error || 'Cannot resolve episodic storage');
   let markedCount = 0;
   let alreadyMarkedCount = 0;
   let sourceMarkedCount = 0;
@@ -41,33 +44,51 @@ export function markCuratedResults(curatedResults: CuratorItemResult[]): MarkCur
       continue;
     }
 
+    const curatorRecordFile = curatedRecordFilename(result.curated);
+    try {
+      const saved = readCuratedMemory(username, curatorRecordFile);
+      if (saved.provenance?.policyVersion !== CURATOR_POLICY_VERSION
+          || JSON.stringify(saved) !== JSON.stringify(parseStoredCuratedMemory(result.curated))) {
+        throw new Error('The reviewed decision has not been durably saved');
+      }
+    } catch (error) {
+      errors.push(`${result.memoryId}: ${(error as Error).message}`);
+      continue;
+    }
+
     let unitChanged = false;
     let unitFailed = false;
     for (const originalMemoryPath of originalMemoryPaths) {
       try {
-        const memory = JSON.parse(fs.readFileSync(originalMemoryPath, 'utf-8'));
+        const memory = readCapturedEpisodicEvent(username, originalMemoryPath);
         const metadata = memory.metadata && typeof memory.metadata === 'object' && !Array.isArray(memory.metadata)
           ? memory.metadata
           : {};
         const curationStatus = result.disposition;
-        const curatorRecordFile = curatedRecordFilename(result.curated);
+        const curatorSourceHash = result.curated.provenance!.sourceHashes[memory.id];
+        if (!curatorSourceHash || episodicSourceHash(memory) !== curatorSourceHash) {
+          throw new Error('Source changed after Curator review');
+        }
         const unchanged = metadata.curated === true
           && metadata.curatorRecordId === result.curated.id
           && metadata.curatorRecordFile === curatorRecordFile
+          && metadata.curatorPolicyVersion === CURATOR_POLICY_VERSION
+          && metadata.curatorSourceHash === curatorSourceHash
           && metadata.curationStatus === curationStatus;
 
         if (unchanged) {
           sourceAlreadyMarkedCount++;
         } else {
-          memory.metadata = {
-            ...metadata,
-            curated: true,
-            curatedAt: typeof metadata.curatedAt === 'string' ? metadata.curatedAt : result.curated.curatedAt,
-            curatorRecordId: result.curated.id,
-            curatorRecordFile,
-            curationStatus,
-          };
-          writeJsonAtomically(originalMemoryPath, memory);
+          updateEpisodicMemoryMetadata({
+            username,
+            relativePath: path.relative(resolved.path!, originalMemoryPath),
+            expectedId: memory.id,
+            metadata: {
+              curated: true, curatedAt: result.curated.curatedAt,
+              curatorRecordId: result.curated.id, curatorRecordFile,
+              curatorSourceHash, curatorPolicyVersion: CURATOR_POLICY_VERSION, curationStatus,
+            },
+          });
           sourceMarkedCount++;
           unitChanged = true;
         }
@@ -100,7 +121,8 @@ export function markCuratedResults(curatedResults: CuratorItemResult[]): MarkCur
   };
 }
 
-const execute: NodeExecutor = async (inputs, _context, _properties) => {
+const execute: NodeExecutor = async (inputs, context, _properties) => {
+  if (!context.userId) throw new Error('Curator requires a userId to mark source memories');
   // Inputs are keyed by targetHandle name from graph edges, not array index
   const curatedResults = inputs.curatedMemories?.curatedMemories || inputs.curatedMemories || inputs[0]?.curatedMemories || [];
 
@@ -119,7 +141,7 @@ const execute: NodeExecutor = async (inputs, _context, _properties) => {
 
   return {
     success: true,
-    ...markCuratedResults(curatedResults as CuratorItemResult[]),
+    ...markCuratedResults(curatedResults as CuratorItemResult[], context.userId!),
   };
 };
 

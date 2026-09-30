@@ -21,11 +21,11 @@ when a public configuration contract already exists.
 
 ## Training
 
-- `training.json` is the remote/UI training default.
-- `training-local.json` is the maintained local LoRA default.
-- `fine-tune-config.json` configures full remote fine-tuning.
-- `modes/*.json` supplies mode-specific full-fine-tune overrides.
-- `schemas/*.json` contains model-family formatting schemas.
+- `training.json` is the single seed for the profile's training settings.
+- Core's launcher freezes those settings for local LoRA, remote LoRA and full
+  fine-tuning. Worker-specific defaults and cognitive-mode optimizer overrides
+  are retired; cognitive mode never silently changes the learning objective.
+- Training datasets use structured messages. The trainer applies the selected tokenizer's chat template once; model-family wrapper files are not used.
 
 The maintained default family is Qwen 3.5. A new model-family preset belongs in
 maintained source only after its loader, precision, schema, output target, and

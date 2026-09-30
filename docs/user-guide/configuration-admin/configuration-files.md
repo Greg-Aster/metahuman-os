@@ -30,9 +30,9 @@ Common system-owned files include:
 - `logging.json` — system logging policy; and
 - `tool-executor.json` — external tool-executor policy.
 
-Training seeds live in `training.json`, `training-local.json`, and
-`fine-tune-config.json`. The Training Wizard reads and writes the authenticated
-profile's training configuration. RunPod credentials likewise belong to the
+Training settings have one seed, `training.json`. The Training Wizard reads and
+writes the authenticated profile's configuration, and Core freezes those settings
+for each local or remote job. RunPod credentials likewise belong to the
 authenticated profile's `runpod.json`; never commit real credentials.
 
 `agents.json` and `services.json` are deliberately separate. Trigger Manager
@@ -84,8 +84,9 @@ Backend Settings to change assignments and load artifacts; do not hand-edit
 generated adapter state.
 
 Each training run has one target artifact: an Ollama-targeted run produces a
-merged GGUF-backed model, while a vLLM-targeted remote LoRA run preserves one
-safetensors adapter. See [AI Training](/user-guide#ai-training).
+merged GGUF-backed model, while vLLM LoRA preserves an adapter and full fine-tuning
+preserves native weights. All remain candidates until reviewed in Training History
+and assigned through Model Settings. See [AI Training](/user-guide#ai-training).
 
 Profile `voice.json` selects Kokoro, Piper, GPT-SoVITS, or RVC and stores
 profile-specific values. Machine ports, commands, and auto-start policy remain

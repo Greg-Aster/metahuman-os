@@ -379,10 +379,11 @@ test('each boredom child keeps its specialized policy in the editable workflow',
   assert.doesNotMatch(movement, /exactly one safe robotCommand/i)
 
   const executive = message('boredom-autonomy', 'executive-policy')
-  assert.match(executive, /one advertised action, or one body-local movementRequest/i)
-  assert.match(executive, /If no description matches, use movementRequest for the dedicated movement generator/i)
-  assert.match(executive, /delegated instruction is authoritative intent/i)
-  assert.match(executive, /Robot Action Result interprets the result after this workflow ends/i)
+  assert.match(executive, /advertised action whose description implements the intention/i)
+  assert.match(executive, /body-local movementRequest for the dedicated movement generator when no advertised action fits/i)
+  assert.match(executive, /delegated instruction describes the intended effect/i)
+  assert.match(executive, /accepting or starting work is not completion/i)
+  assert.match(executive, /Robot Action Result supplies the evidence from dispatched work/i)
 
   const observer = message('boredom-observer', 'planner-policy')
   assert.match(observer, /fresh correlated camera image as current evidence/i)
@@ -545,7 +546,7 @@ test('structured captureImage remains available and capability gated', async () 
         outcome: 'act',
         reason: 'A current image is needed.',
         objective: 'Observe the current surroundings from a fresh image.',
-        objectiveComplete: false,
+        completionCriteria: 'A fresh image has been interpreted to describe the surroundings.',
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         actionPurpose: 'information_gain',
@@ -573,7 +574,7 @@ test('structured captureImage remains available and capability gated', async () 
         outcome: 'act',
         reason: 'A current image is needed.',
         objective: 'Observe the current surroundings from a fresh image.',
-        objectiveComplete: false,
+        completionCriteria: 'A fresh image has been interpreted to describe the surroundings.',
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         actionPurpose: 'information_gain',

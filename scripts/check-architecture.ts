@@ -229,12 +229,15 @@ function isSiteClientFile(file: string): boolean {
 function isAllowedClientCoreImport(specifier: string, typeOnly: boolean): boolean {
   if (!specifier.startsWith('@metahuman/core')) return true;
   if (specifier === '@metahuman/core/cognitive-graph-contract') return true;
+  // Serializable training settings and messages, with dependency-free validation.
+  if (specifier === '@metahuman/core/training-schema') return true;
   // This explicit public subpath contains only serializable schema contracts
   // and their dependency-free value validator. The site bundler maintains the
   // matching browser-safe allowlist.
   if (specifier === '@metahuman/core/nodes/types') return true;
   if (!typeOnly) return false;
-  return specifier === '@metahuman/core/nodes/schemas';
+  return specifier === '@metahuman/core/nodes/schemas'
+    || specifier === '@metahuman/core/terminal/types';
 }
 
 function isCoreImportFromSiteClient(file: string, specifier: string, typeOnly: boolean): boolean {

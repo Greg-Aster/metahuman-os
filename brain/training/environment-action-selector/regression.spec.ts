@@ -43,9 +43,9 @@ const expected: EnvironmentModelOutput = {
   movementRequest: { description: 'Tilt the head gently toward the visible object.' },
   taskDecision: {
     objective: 'Inspect the visible object from a slightly different viewpoint.',
+    completionCriteria: 'A new image shows the object from a different viewpoint.',
     outcome: 'act',
     reason: 'The motion is intended to gain a different view, not merely to express curiosity.',
-    objectiveComplete: false,
     continuationPolicy: 'bounded',
     requiredCompletionBasis: 'visual_observation',
     motionClass: 'body_local',

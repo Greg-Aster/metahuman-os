@@ -1,19 +1,21 @@
-import { inspectTrainingDataset, type TrainingDatasetInspection } from './training-dataset.js'
+import { inspectTrainingDataset, selectPersonalizationDataset, trainingPersonaContext, readTrainingDatasetHistory, type TrainingDatasetInspection, type SelectedPersonalizationDataset, type TrainingDatasetHistory } from './training-dataset.js'
+import { readSleepRuntimeState } from './sleep-runtime.js'
 import { DEFAULT_TRAINING_MODEL } from './model-defaults.js'
 import { loadRunpodConfig } from './runpod-config.js'
 import {
+  readTrainingDataSettings,
   readProfileTrainingConfig,
   updateProfileTrainingConfig,
 } from './training-config.js'
 import {
-  trainingLaunchConfigForProfile,
+  trainingLaunchConfigForProfile, launchTrainingJob, waitForTrainingJob,
   validateTrainingLaunchConfig,
   type TrainingLaunchConfig,
   type TrainingLaunchRequest,
   type TrainingMethod,
   type TrainingTarget,
 } from './training-launch.js'
-import { listTrainingProcesses, type TrackedTrainingProcess } from './training-process.js'
+import { listTrainingProcesses, readTrainingHistoryForUser, type TrackedTrainingProcess } from './training-process.js'
 
 export interface AutomaticTrainingConfig {
   version: 1
@@ -23,6 +25,7 @@ export interface AutomaticTrainingConfig {
   minimumTrainableSamples: number
   minimumNewSamples: number
   cooldownHours: number
+  maxRuntimeMinutes: number
   baseModel: string
   epochs: number
   maxSamples: number | null
@@ -38,7 +41,6 @@ export interface AutomaticTrainingConfig {
   quantization: string
   runpodTemplateId: string
   runpodGpuType: string
-  enablePreprocessing: boolean
   enableS3Upload: boolean
   updatedAt?: string
 }
@@ -66,7 +68,7 @@ export interface AutomaticTrainingStatus {
   dataset: TrainingDatasetInspection['stats']
   integration: {
     owner: 'sleep-workflow'
-    triggerInstalled: false
+    triggerInstalled: true
     message: string
   }
 }
@@ -79,22 +81,22 @@ export const DEFAULT_AUTOMATIC_TRAINING_CONFIG: AutomaticTrainingConfig = {
   minimumTrainableSamples: 250,
   minimumNewSamples: 50,
   cooldownHours: 168,
+  maxRuntimeMinutes: 180,
   baseModel: DEFAULT_TRAINING_MODEL,
-  epochs: 5,
+  epochs: 1,
   maxSamples: 3000,
   useRollingWindow: false,
   recentDays: 30,
   olderSamples: 3000,
   loraRank: 16,
   loraAlpha: 32,
-  learningRate: 0.0003,
+  learningRate: 0.0001,
   batchSize: 1,
   gradientAccumulationSteps: 16,
   maxSequenceLength: 2048,
   quantization: 'Q4_K_M',
   runpodTemplateId: 'metahuman-runpod-trainer',
   runpodGpuType: 'NVIDIA H100 PCIe',
-  enablePreprocessing: true,
   enableS3Upload: false,
 }
 
@@ -186,9 +188,6 @@ export function parseAutomaticTrainingConfig(
   if (candidate.trainingTarget !== 'ollama' && candidate.trainingTarget !== 'vllm') {
     throw new Error('trainingTarget must be ollama or vllm')
   }
-  if (candidate.trainingTarget === 'vllm' && candidate.method !== 'remote-lora') {
-    throw new Error('vLLM artifacts require remote LoRA training')
-  }
   const method = candidate.method as TrainingMethod
   const trainingTarget = candidate.trainingTarget as TrainingTarget
   const trainingConfig = trainingConfigFromAutomatic(candidate, trainingTarget)
@@ -196,7 +195,6 @@ export function parseAutomaticTrainingConfig(
     throw new Error('LoRA training requires loraRank and loraAlpha to be at least 1')
   }
   if (typeof candidate.useRollingWindow !== 'boolean') throw new Error('useRollingWindow must be a boolean')
-  if (typeof candidate.enablePreprocessing !== 'boolean') throw new Error('enablePreprocessing must be a boolean')
   if (typeof candidate.enableS3Upload !== 'boolean') throw new Error('enableS3Upload must be a boolean')
   if (candidate.updatedAt !== undefined && (
     typeof candidate.updatedAt !== 'string'
@@ -213,6 +211,7 @@ export function parseAutomaticTrainingConfig(
     minimumTrainableSamples: requireInteger(candidate.minimumTrainableSamples, 'minimumTrainableSamples', 1, 1_000_000),
     minimumNewSamples: requireInteger(candidate.minimumNewSamples, 'minimumNewSamples', 1, 1_000_000),
     cooldownHours: requireInteger(candidate.cooldownHours, 'cooldownHours', 1, 8760),
+    maxRuntimeMinutes: requireInteger(candidate.maxRuntimeMinutes, 'maxRuntimeMinutes', 1, 720),
     baseModel: trainingConfig.base_model,
     epochs: trainingConfig.num_train_epochs,
     maxSamples: trainingConfig.max_samples,
@@ -228,7 +227,6 @@ export function parseAutomaticTrainingConfig(
     quantization: trainingConfig.quantization,
     runpodTemplateId: requireString(candidate.runpodTemplateId, 'runpodTemplateId', 300),
     runpodGpuType: requireString(candidate.runpodGpuType, 'runpodGpuType', 300),
-    enablePreprocessing: candidate.enablePreprocessing,
     enableS3Upload: candidate.enableS3Upload,
     ...(candidate.updatedAt ? { updatedAt: candidate.updatedAt } : {}),
   }
@@ -254,61 +252,32 @@ export function saveAutomaticTrainingConfig(
 
 export function evaluateAutomaticTrainingReadiness(
   config: AutomaticTrainingConfig,
-  inspection: TrainingDatasetInspection,
+  selection: { train: ReadonlyArray<{ id: string }>; evaluation: ReadonlyArray<{ id: string }> },
   runs: AutomaticTrainingRun[],
   runningProcesses: TrackedTrainingProcess[],
   remoteCredentialsConfigured: boolean,
   now = Date.now(),
+  history: TrainingDatasetHistory = { assignments: {}, completedSampleIds: [] },
 ): AutomaticTrainingReadiness {
-  const completedRuns = runs
-    .filter(run => run.status === 'completed')
-    .sort((left, right) => Date.parse(right.endTime || right.startTime) - Date.parse(left.endTime || left.startTime))
-  const lastCompleted = completedRuns[0]
+  const ordered = [...runs].sort((a, b) => Date.parse(b.endTime || b.startTime) - Date.parse(a.endTime || a.startTime))
+  const lastCompleted = ordered.find(run => run.status === 'completed')
   const lastCompletedAt = lastCompleted?.endTime || lastCompleted?.startTime || null
-  const lastCompletedTime = lastCompletedAt ? Date.parse(lastCompletedAt) : Number.NaN
-  const newSamplesSinceLastRun = Number.isFinite(lastCompletedTime)
-    ? inspection.trainableCuratedAt.filter(timestamp => Date.parse(timestamp) > lastCompletedTime).length
-    : inspection.stats.trainableSamples
-  const cooldownEndsAt = Number.isFinite(lastCompletedTime)
-    ? new Date(lastCompletedTime + config.cooldownHours * 60 * 60 * 1000).toISOString()
-    : null
+  const previousSamples = new Set(history.completedSampleIds)
+  const newSamplesSinceLastRun = selection.train.filter(row => !previousSamples.has(row.id)).length
+  // Failed attempts also consume the cooldown; unavailable infrastructure must not cause nightly retry storms.
+  const lastAttempt = ordered[0]
+  const cooldownEndsAt = lastAttempt ? new Date(Date.parse(lastAttempt.endTime || lastAttempt.startTime) + config.cooldownHours * 3_600_000).toISOString() : null
   const runningProcess = runningProcesses[0] ?? null
   const blockers: string[] = []
-
   if (!config.enabled) blockers.push('Automatic training is disabled')
-  if (runningProcess) blockers.push(`${runningProcess.name} is already running`)
-  if (inspection.stats.pendingOrganization > 0) {
-    blockers.push(`${inspection.stats.pendingOrganization} episodic memories still need organization`)
-  }
-  if (inspection.stats.pendingCuration > 0) {
-    blockers.push(`${inspection.stats.pendingCuration} episodic memories still need Curator review`)
-  }
-  if (inspection.stats.invalidCuratedRecords > 0) {
-    blockers.push(`${inspection.stats.invalidCuratedRecords} Curator records fail the current training contract`)
-  }
-  if (inspection.stats.trainableSamples < config.minimumTrainableSamples) {
-    blockers.push(`Need ${config.minimumTrainableSamples - inspection.stats.trainableSamples} more validated training samples`)
-  }
-  if (lastCompleted && newSamplesSinceLastRun < config.minimumNewSamples) {
-    blockers.push(`Need ${config.minimumNewSamples - newSamplesSinceLastRun} more new samples since the last completed run`)
-  }
-  if (cooldownEndsAt && now < Date.parse(cooldownEndsAt)) {
-    blockers.push(`Cooldown remains active until ${cooldownEndsAt}`)
-  }
-  if ((config.method === 'remote-lora' || config.method === 'fine-tune') && !remoteCredentialsConfigured) {
-    blockers.push('Complete RunPod credentials are required for the selected method')
-  }
-
-  return {
-    eligible: blockers.length === 0,
-    blockers,
-    trainableSamples: inspection.stats.trainableSamples,
-    newSamplesSinceLastRun,
-    lastCompletedAt,
-    cooldownEndsAt,
-    runningProcess,
-    remoteCredentialsConfigured,
-  }
+  if (runningProcess) blockers.push(runningProcess.name + ' is already running')
+  if (selection.train.length < config.minimumTrainableSamples) blockers.push('Need ' + (config.minimumTrainableSamples - selection.train.length) + ' more eligible training samples')
+  if (!selection.evaluation.length) blockers.push('An independent evaluation group is required')
+  if (newSamplesSinceLastRun < config.minimumNewSamples) blockers.push('Need ' + (config.minimumNewSamples - newSamplesSinceLastRun) + ' more new samples')
+  if (cooldownEndsAt && now < Date.parse(cooldownEndsAt)) blockers.push('Cooldown remains active until ' + cooldownEndsAt)
+  if (config.method !== 'local-lora' && !remoteCredentialsConfigured) blockers.push('Complete RunPod credentials are required for the selected method')
+  return { eligible: blockers.length === 0, blockers, trainableSamples: selection.train.length,
+    newSamplesSinceLastRun, lastCompletedAt, cooldownEndsAt, runningProcess, remoteCredentialsConfigured }
 }
 
 export function automaticTrainingLaunchRequest(
@@ -329,24 +298,60 @@ export function automaticTrainingLaunchRequest(
     ...(runpodConfig ? { runpodConfig } : {}),
     trainingConfig: trainingConfigFromAutomatic(config, config.trainingTarget),
     advancedSettings: {
-      enablePreprocessing: config.enablePreprocessing,
+      enablePreprocessing: false, // Sleep already completed the canonical refinement stages.
       enableS3Upload: config.enableS3Upload,
     },
   }
 }
 
-export function automaticTrainingRuntimeInputs(username: string): {
-  config: AutomaticTrainingConfig
-  inspection: TrainingDatasetInspection
-  runningProcesses: TrackedTrainingProcess[]
-  remoteCredentialsConfigured: boolean
-} {
+export function automaticTrainingRuntimeInputs(username: string, cutoff = Date.now()) {
   const config = readAutomaticTrainingConfig(username)
-  const runpod = loadRunpodConfig(username)
+  const inspection = inspectTrainingDataset(username, cutoff)
+  const settings = readTrainingDataSettings(username)
+  const history = readTrainingDatasetHistory(username)
+  const selection = selectPersonalizationDataset(inspection, settings, {
+    maxSamples: config.maxSamples, recentDays: config.useRollingWindow ? config.recentDays : undefined,
+    olderSamples: config.useRollingWindow ? config.olderSamples : undefined,
+    personaContext: trainingPersonaContext(username, settings), history,
+  })
+  return { config, inspection, selection, history, runs: readTrainingHistoryForUser(username),
+    runningProcesses: listTrainingProcesses(), remoteCredentialsConfigured: Boolean(loadRunpodConfig(username).apiKey) }
+}
+
+export function getAutomaticTrainingStatus(username: string, cutoff = Date.now()): AutomaticTrainingStatus {
+  const input = automaticTrainingRuntimeInputs(username, cutoff)
   return {
-    config,
-    inspection: inspectTrainingDataset(username),
-    runningProcesses: listTrainingProcesses(),
-    remoteCredentialsConfigured: Boolean(runpod.apiKey),
+    config: input.config, dataset: input.inspection.stats,
+    readiness: evaluateAutomaticTrainingReadiness(input.config, input.selection, input.runs, input.runningProcesses, input.remoteCredentialsConfigured, Date.now(), input.history),
+    integration: { owner: 'sleep-workflow', triggerInstalled: true,
+      message: 'Sleep runs one bounded training job after successful Organizer and Curator stages. New activity cancels the job. Candidates require review before activation.' },
   }
+}
+
+/** Only the active, prerequisite-complete Sleep stage may request automatic admission. */
+export async function runAutomaticTrainingForSleep(username: string, sessionId: string, signal: AbortSignal,
+  dependencies: {
+    runtime?: typeof automaticTrainingRuntimeInputs
+    sleep?: typeof readSleepRuntimeState
+    launch?: typeof launchTrainingJob
+    wait?: typeof waitForTrainingJob
+    now?: () => number
+  } = {},
+): Promise<Record<string, unknown>> {
+  const session = (dependencies.sleep ?? readSleepRuntimeState)().currentSession
+  if (!session || session.id !== sessionId || session.username !== username || session.state !== 'running'
+      || session.currentStageId !== 'train-personalization') throw new Error('Automatic training requires its active Sleep stage')
+  if (['organize-memory', 'curate-memory'].some(id => session.stages.find(stage => stage.id === id)?.state !== 'completed')) {
+    return { skipped: true, reason: 'Organizer and Curator must complete successfully before automatic training' }
+  }
+  signal.throwIfAborted()
+  const now = (dependencies.now ?? Date.now)()
+  const input = (dependencies.runtime ?? automaticTrainingRuntimeInputs)(username, Date.parse(session.startedAt))
+  const readiness = evaluateAutomaticTrainingReadiness(input.config, input.selection, input.runs, input.runningProcesses, input.remoteCredentialsConfigured, now, input.history)
+  if (!readiness.eligible) return { skipped: true, reason: readiness.blockers.join('; '), readiness }
+  const automatic = { sessionId, cutoff: session.startedAt, deadline: new Date(now + input.config.maxRuntimeMinutes * 60_000).toISOString() }
+  const launched = (dependencies.launch ?? launchTrainingJob)(username, automaticTrainingLaunchRequest(username, input.config), automatic)
+  if (!launched.success) throw new Error(launched.error)
+  await (dependencies.wait ?? waitForTrainingJob)(username, launched.pid, launched.runLabel, signal)
+  return { trained: true, runLabel: launched.runLabel, activation: 'review-required' }
 }

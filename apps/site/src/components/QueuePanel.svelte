@@ -102,7 +102,6 @@
       name: 'Work Coordinator Stream',
       url: '/api/queue-stream',
       priority: ConnectionPriority.MEDIUM,
-      viewDependency: 'chat',
       defer: true,
       onOpen: () => { connected = true; error = ''; },
       onClose: () => { connected = false; },

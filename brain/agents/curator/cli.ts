@@ -14,6 +14,7 @@
  *   --limit <count>       Memories per batch (1-500, default 20)
  *   --max-batches <count> Safety bound for --all (default 100)
  *   --temperature <0-1>  Curator LLM temperature
+ *   --cutoff <timestamp> Freeze the source window for this run
  */
 
 import { initGlobalLogger, audit } from '@metahuman/core';

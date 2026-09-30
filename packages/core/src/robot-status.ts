@@ -116,6 +116,7 @@ export interface RobotStatusHistoryEntry {
 }
 
 export interface RobotStatusSnapshot {
+  latestVisualObservation?: import('./visual-observation.js').VisualObservationRecord
   projection?: { executionId: string; effectId: string }
   version: 1
   updatedAt: string
@@ -137,6 +138,7 @@ export interface RobotStatusSnapshot {
 }
 
 export interface RobotStatusSourceFacts {
+  latestVisualObservation?: import('./visual-observation.js').VisualObservationRecord
   generatedAt?: string
   projection?: { executionId: string; effectId: string }
   sourceUpdatedAt: RobotStatusSnapshot['sourceUpdatedAt']
@@ -392,7 +394,9 @@ export function loadRobotStatus(username: string): RobotStatusSnapshot | null {
   const store = openExecutionStore(username)
   try {
     const task = normalizeTask(store.projectedTask(username))
-    return { ...parsed, agency: { activeDesires: projectDesireAwareness(parsed.agency?.activeDesires) }, task, situation: { ...parsed.situation, currentGoal: currentGoal(task) } }
+    return { ...parsed, agency: { activeDesires: projectDesireAwareness(parsed.agency?.activeDesires) }, task,
+      situation: { ...parsed.situation, currentGoal: currentGoal(task),
+        currentIntent: currentGoal(task) ? task!.decision.reason : parsed.situation.currentIntent } }
   } finally { store.close() }
 }
 
@@ -424,6 +428,17 @@ export function buildRobotStatusProjection(
     ? [...previous.history, previousHistoryEntry(previous)].slice(-ROBOT_STATUS_HISTORY_LIMIT)
     : []
   const body = mergeBody(previous?.body ?? null, sources.body)
+  const visualObservations = [previous?.latestVisualObservation, sources.latestVisualObservation]
+    .filter((item): item is NonNullable<typeof item> => {
+      const robot = body?.state?.body as Record<string, unknown> | undefined
+      return Boolean(item && item.environmentId === body?.environmentId
+        && (robot?.robotId ? item.robotId === robot.robotId : item.sessionId === body?.sessionId))
+    })
+    .sort((a, b) => {
+      const captured = (item: typeof a) => Math.max(...item.frames.map(frame => Date.parse(frame.timestamp)))
+      return captured(b) - captured(a) || b.interpretedAt.localeCompare(a.interpretedAt)
+    })
+  const latestVisualObservation = visualObservations[0]
   const retainLastAction = previous?.lastAction && previous.sourceUpdatedAt.robotHistory > sources.sourceUpdatedAt.robotHistory
   const snapshot: RobotStatusSnapshot = {
     projection: sources.projection ?? previous?.projection,
@@ -437,10 +452,12 @@ export function buildRobotStatusProjection(
       agency: cleanText(sources.sourceUpdatedAt.agency, 80),
     },
     body,
+    ...(latestVisualObservation ? { latestVisualObservation } : {}),
     lastAction: retainLastAction ? previous.lastAction : normalizeAction(sources.lastAction),
     task,
     agency: { activeDesires: projectDesireAwareness(sources.activeDesires) },
-    situation: parseRobotStatusSituation({ ...situation, currentGoal: currentGoal(task) }, true),
+    situation: parseRobotStatusSituation({ ...situation, currentGoal: currentGoal(task),
+      currentIntent: currentGoal(task) ? task!.decision.reason : situation.currentIntent }, true),
     history,
   }
   return snapshot

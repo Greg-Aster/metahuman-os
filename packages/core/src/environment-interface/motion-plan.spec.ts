@@ -62,9 +62,9 @@ function selectorJson(output: {
     ...output,
     taskDecision: {
       objective: 'Exercise the current Environment selection and admission contract.',
+      completionCriteria: 'The selected action or response has completed with its required evidence.',
       outcome: physical ? 'act' : 'report',
       reason: physical ? 'The selected action advances the current objective.' : 'No physical action was selected.',
-      objectiveComplete: false,
       continuationPolicy: targetRelative ? 'bounded' : 'none',
       requiredCompletionBasis: targetRelative
         ? 'visual_observation'
@@ -287,7 +287,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
       ],
     },
   };
-  const missingSelection = await environmentActionParserNode.execute({
+  await assert.rejects(environmentActionParserNode.execute({
     response: selectorJson({
       response: 'Walking forward.',
       actions: [],
@@ -295,7 +295,6 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
       taskDecision: {
         outcome: 'act',
         reason: 'A physical action is required.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
         motionClass: 'body_local',
@@ -305,10 +304,7 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
     routingAnalysis: movementRouting,
     observation,
     sessionId: observation.sessionId,
-  }, {});
-  assert.deepEqual(missingSelection.actions, []);
-  assert.equal(missingSelection.movementRequest, null);
-  assert.equal(missingSelection.valid, false);
+  }, {}), /outcome=act requires an action or movementRequest/);
 
   const surprised = await environmentActionParserNode.execute({
     response: selectorJson({
@@ -318,7 +314,6 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
       taskDecision: {
         outcome: 'act',
         reason: 'The surprised command matches the requested body-local expression.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
         motionClass: 'body_local',
@@ -345,7 +340,6 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
       taskDecision: {
         outcome: 'act',
         reason: 'The advertised turn command matches the requested orientation change.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
         motionClass: 'open_loop_displacement',
@@ -371,7 +365,6 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
       taskDecision: {
         outcome: 'act',
         reason: 'Wave is one advertised body-local motion.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
         motionClass: 'body_local',
@@ -397,7 +390,6 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
         taskDecision: {
           outcome: 'act',
           reason: 'The selected command is advertised.',
-          objectiveComplete: false,
           continuationPolicy: 'none',
           requiredCompletionBasis: 'action_result',
           motionClass: command.startsWith('turn_') || command === 'walk_slow' || command === 'run'
@@ -431,7 +423,6 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
       taskDecision: {
         outcome: 'act',
         reason: 'Walk is the advertised command selected for the request.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
       },
@@ -457,7 +448,6 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
       taskDecision: {
         outcome: 'act',
         reason: 'No advertised command represents the requested body-local pose.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
       },
@@ -480,7 +470,6 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
       taskDecision: {
         outcome: 'act',
         reason: 'The LLM explicitly selected off-script body-local generation.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
       },
@@ -534,7 +523,6 @@ test('uses only Environment LLM-selected advertised commands and explicit moveme
       taskDecision: {
         outcome: 'act',
         reason: 'The model selected a command.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
       },
@@ -588,7 +576,6 @@ test('a named robot command uses its action result instead of asking the robot c
       taskDecision: {
         outcome: 'act',
         reason: 'The body-mounted camera cannot see the robot posture, so use command feedback.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
         motionClass: 'body_local',
@@ -641,7 +628,6 @@ test('target-relative work executes the LLM-selected advertised command without 
       taskDecision: {
         outcome: 'act',
         reason: 'Walk once, then compare the correlated post-action view with the object.',
-        objectiveComplete: false,
         continuationPolicy: 'bounded',
         requiredCompletionBasis: 'visual_observation',
         motionClass: 'target_relative',
@@ -938,7 +924,6 @@ test('a missing robot session is reported before freestyle capability negotiatio
       taskDecision: {
         outcome: 'act',
         reason: 'The Environment LLM selected off-script body-local movement.',
-        objectiveComplete: false,
         continuationPolicy: 'none',
         requiredCompletionBasis: 'action_result',
       },

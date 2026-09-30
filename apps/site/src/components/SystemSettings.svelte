@@ -751,19 +751,19 @@
       <div class="setting-label">Active Model Info</div>
       <div class="info-grid">
         <div class="info-item">
-          <span class="info-key">Base Model:</span>
+          <span class="info-key">Persona model:</span>
           <span class="info-value font-mono">{modelInfo.activeModel}</span>
         </div>
         {#if modelInfo.adapter}
           <div class="info-item">
-            <span class="info-key">LoRA Adapter:</span>
+            <span class="info-key">Training candidate:</span>
             <span class="info-value text-violet-600 dark:text-violet-400 font-semibold">
-              {modelInfo.adapter.dataset}
+              {modelInfo.adapter.runLabel ?? modelInfo.adapter.dataset}
             </span>
           </div>
         {:else}
           <div class="info-item">
-            <span class="info-key">LoRA Adapter:</span>
+            <span class="info-key">Training candidate:</span>
             <span class="info-value text-gray-400 dark:text-gray-500">None</span>
           </div>
         {/if}

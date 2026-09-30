@@ -22,7 +22,8 @@ import { getNode, getNodeExecutor, materializeNodeProperties } from './nodes/ind
 import { NodeInputValidationError, type ModelOutputFeedback } from './nodes/types.js';
 import { Annotation, Command, END, START, StateGraph, interrupt, isGraphInterrupt } from '@langchain/langgraph';
 import { ExecutionCheckpointer } from './durable-execution/checkpointer.js';
-import { executionAbortError, executionDefinition, graphContextSnapshot, type DurableGraphOptions, type GraphNodeExecution } from './durable-execution/graph-contract.js';
+import { contentHash } from './durable-execution/store.js';
+import { executionAbortError, executionDefinition, graphContextSnapshot, resolveExecutionGraph, type DurableGraphOptions, type GraphNodeExecution } from './durable-execution/graph-contract.js';
 import type { CheckpointTransition, DispatchIntent } from './durable-execution/types.js';
 
 const log = createLogger('graph-pipeline');
@@ -787,19 +788,44 @@ export async function executeGraph(
       const processedEventIds: string[] = [];
       let taskUpdate: import('./durable-execution/types.js').ExecutionObjective | undefined;
       const frames: import('./environment-interface/types.js').EnvironmentVisualFrame[] = [];
+      const observations: import('./visual-observation.js').VisualObservationRecord[] = [];
+      const retainedObservations: import('./visual-observation.js').VisualObservationRecord[] = [];
       let childIndex = 0;
-      const occurrenceId = `${durable?.lease.executionId ?? requestId}:${durable?.invocationId ?? ''}:${nodeId}:${iterCount}`;
+      const executionId = durable?.lease.executionId ?? requestId;
+      // Parentage lives in the saved graph/checkpoint records. An occurrence is
+      // an opaque, replay-stable identity, not a recursively expanded call path.
+      const occurrenceId = `${executionId}:${contentHash([executionId, durable?.invocationId ?? '', nodeId, iterCount])}`;
       const nodeExecution: GraphNodeExecution | undefined = durable ? {
         executionId: durable.lease.executionId,
         occurrenceId,
         activeExecutions: () => durable.store.list(durable.store.get(durable.lease.executionId).username)
           .filter(record => record.executionId !== durable.lease.executionId && ['running', 'waiting'].includes(record.status))
-          .flatMap(record => { const task = durable.store.task(record.executionId); return task ? [{ executionId: record.executionId, status: record.status, task }] : []; }),
+          .map(record => {
+            const saved = durable.store.entry(record.executionId);
+            const entry = saved.context;
+            let resumeError: string | undefined;
+            try { resolveExecutionGraph(durable.store, record.executionId); }
+            catch (error) { resumeError = error instanceof Error ? error.message : String(error); }
+            return { executionId: record.executionId, status: record.status, graphId: record.definition.graphId,
+              waitingReason: record.waitingReason, task: durable.store.task(record.executionId),
+              canSteer: !resumeError && Boolean(saved.graph.scheduler.eventInputNodeId),
+              ...(resumeError ? { resumeError } : {}),
+              instruction: entry.userMessage || entry.robotOperatorContext?.plannerDecision?.instruction || '' };
+          }),
         task: () => taskUpdate ?? durable.store.task(durable.lease.executionId),
         recordTask: task => { taskUpdate = task; },
         events: () => durable.store.events(durable.lease.executionId),
+        pendingEvents: () => durable.store.events(durable.lease.executionId,
+          durable.store.get(durable.lease.executionId).lastProcessedSequence + processedEventIds.length),
         frame: id => frames.find(frame => frame.id === id) ?? durable.store.frame(durable.lease.executionId, id),
         recordFrames: supplied => { frames.push(...supplied); },
+        observationHistory: query => {
+          const history = durable.store.readObservationHistory(executionId, query);
+          frames.push(...history.frames);
+          retainedObservations.push(...history.observations);
+          return history.observations;
+        },
+        recordObservation: observation => { observations.push(observation); },
         dispatch: intent => {
           const dispatch = { ...intent, effectId: `${occurrenceId}:effect:${dispatches.length}` };
           dispatches.push(dispatch);
@@ -862,7 +888,7 @@ export async function executeGraph(
           || graph.nodes.some(node => node.id !== nodeId && executionState.has(node.id)
             && node.data.activation?.when?.some(condition => condition.nodeId === source.id)));
         if (!source || !output || sources[0].sourceHandle !== output || typeof response !== 'string'
-          || alreadyEvaluated || dispatches.length || taskUpdate || processedEventIds.length || frames.length || childIndex) throw error;
+          || alreadyEvaluated || dispatches.length || taskUpdate || processedEventIds.length || frames.length || observations.length || retainedObservations.length || childIndex) throw error;
         modelFeedback[source.id] = { response, error: error.message, consumerId: nodeId };
         // The rejected answer remains in earlier immutable checkpoints. This
         // checkpoint records the feedback and the next model occurrence together,
@@ -874,7 +900,7 @@ export async function executeGraph(
       delete modelFeedback[nodeId];
       signal?.throwIfAborted();
       const transition: CheckpointTransition | undefined = durable ? {
-        transitionId: occurrenceId, dispatches, processedEventIds, frames, ...(taskUpdate ? { task: taskUpdate } : {}),
+        transitionId: occurrenceId, dispatches, processedEventIds, frames, observations, retainedObservations, ...(taskUpdate ? { task: taskUpdate } : {}),
       } : undefined;
 
       const outgoingLoopEdges = graph.edges.filter(edge => (
@@ -919,7 +945,24 @@ export async function executeGraph(
         executionQueue.push(...scheduledQueue);
       }
       return { queue: executionQueue, counts: Object.fromEntries(executedCount), nodeEntries: [...executionState], modelFeedback, executionTransition: transition };
-    }).addConditionalEdges(START, schedule => schedule.queue.length ? 'execute' : END)
+    }).addNode('receive_input', schedule => {
+      const receiver = graph.scheduler.eventInputNodeId;
+      if (!durable || !receiver) throw new Error('Graph has no declared event input node');
+      // Only the declared input tail runs again. The earlier decisions, effects
+      // and result interpretation retain their immutable checkpointed outputs.
+      const reachable = new Set<string>([receiver]);
+      const pending = [receiver];
+      while (pending.length) {
+        const source = pending.pop()!;
+        for (const edge of graph.edges.filter(edge => edge.source === source)) {
+          if (!reachable.has(edge.target)) { reachable.add(edge.target); pending.push(edge.target); }
+        }
+      }
+      return { queue: executionOrder.filter(id => reachable.has(id)),
+        nodeEntries: schedule.nodeEntries.filter(([id]) => !reachable.has(id)),
+        executionTransition: undefined };
+    }).addEdge('receive_input', 'execute')
+      .addConditionalEdges(START, schedule => schedule.queue.length ? 'execute' : END)
       .addConditionalEdges('execute', schedule => schedule.queue.length ? 'execute' : END)
       .compile({ checkpointer: durable ? new ExecutionCheckpointer(durable.store, durable.lease, durable.afterCheckpoint, durable.checkpointNamespace) : undefined });
     const config = {
@@ -944,7 +987,13 @@ export async function executeGraph(
       for (;;) {
         const saved = await program.getState(config);
         const pending = saved.tasks.flatMap(task => task.interrupts ?? []);
-        if (!pending.length) break;
+        if (!pending.length) {
+          if (!saved.next.length && graph.scheduler.eventInputNodeId && durable.store.hasPendingInput(durable.lease.executionId)) {
+            finished = await program.invoke(new Command({ goto: 'receive_input' }), config);
+            continue;
+          }
+          break;
+        }
         const wait = pending[0].value as { executionId: string; sequence: number };
         if (wait.executionId !== durable.lease.executionId || !Number.isSafeInteger(wait.sequence) || wait.sequence < 1) {
           throw new Error('Saved event wait does not identify this execution sequence');

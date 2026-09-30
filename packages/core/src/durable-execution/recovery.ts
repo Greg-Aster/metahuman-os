@@ -8,6 +8,7 @@ import { executionWorkInput, relayExecutionOutbox } from './coordinator-outbox.j
 import { deliverDurableWorkReceipt } from './work-results.js'
 import { ExecutionCheckpointer } from './checkpointer.js'
 import { retireBufferAdmissions } from '../conversation-buffer.js'
+import { isLocked, profileMemoryResetLockName } from '../locks.js'
 
 /** Coordinator maintenance for the one authenticated, storage-ready profile. */
 export async function recoverDurableExecutions(manager: UnifiedQueueManager, retentionDays: number): Promise<void> {
@@ -16,6 +17,7 @@ export async function recoverDurableExecutions(manager: UnifiedQueueManager, ret
   const { username, userId } = user
   const runtimeId = getAuthenticatedRuntimeId()
   const stillActive = () => getAuthenticatedRuntimeId() === runtimeId && getCurrentlyActiveUser()?.userId === userId
+    && !isLocked(profileMemoryResetLockName(username))
   const enqueue = async (input: Parameters<UnifiedQueueManager['enqueue']>[0]) => manager.enqueue(input)
   const ledger = manager.exportState()
   const tasks = [...(ledger.items ?? []), ...(ledger.history ?? []), ...(ledger.durableReceipts ?? [])]

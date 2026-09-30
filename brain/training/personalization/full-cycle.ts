@@ -1,502 +1,217 @@
 /**
- * User-Aware Full Cycle Orchestrator - Remote Training Version
- * Runs training on RunPod for a specific user's profile
- *
- * 1) Build dataset
- * 2) Prepare config
- * 3) Run remote training via runRemoteTraining()
- * 4) If successful: register the trained artifact and load it when supported
- * 5) If failed: Write summary and exit with error
- *
- * Usage:
- *   pnpm exec tsx brain/training/personalization/full-cycle.ts --username <username>
+ * Shared personalization worker and CLI bridge.
+ * Core's training launcher admits every CLI/UI job; this worker orchestrates its
+ * frozen dataset, trainer and candidate verification without activating a model.
  */
-import fs from 'node:fs';
-import path from 'node:path';
-import { execSync } from 'node:child_process';
-import { systemPaths, audit, loadUserConfig, setActiveAdapter } from '@metahuman/core';
-import { withUserContext, getUserContext } from '@metahuman/core/context';
-import { requireUserInfo } from '@metahuman/core/user-resolver';
-const mkdirpSync = (dir: string) => fs.mkdirSync(dir, { recursive: true });
-import { runRemoteTraining } from './lora-trainer';
-import { randomBytes } from 'node:crypto';
-import type { ActiveAdapterInfo } from '@metahuman/core/adapters';
-import { DEFAULT_TRAINING_MODEL } from '@metahuman/core/model-defaults';
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { spawn } from 'node:child_process'
 import {
-  parseCognitiveMode,
-  parsePositiveInteger,
-  preparePersonalizationDataset,
-} from './dataset-pipeline';
+  systemPaths, getProfilePaths, readProfileTrainingConfig, trainingLaunchConfigForProfile,
+  launchTrainingJob, loadRunpodConfig, verifyTrainingCandidate, safeWriteJSON,
+  finalizeTrainingProcess, type TrainingProcessName,
+  readSleepRuntimeState,
+  type TrainingLaunchConfig, type TrainingMethod,
+} from '@metahuman/core'
+import { parseTrainingDataSettings, type CognitiveMode } from '@metahuman/core/training-schema'
+import { withUserContext } from '@metahuman/core/context'
+import { requireUserInfo } from '@metahuman/core/user-resolver'
+import { preparePersonalizationDataset, parsePositiveInteger, parseCognitiveMode } from './dataset-pipeline.js'
+import { runRemoteTraining } from './lora-trainer.js'
 
-// Load environment variables from .env file FIRST
-const environmentPath = path.join(systemPaths.root, '.env');
-if (fs.existsSync(environmentPath)) process.loadEnvFile(environmentPath);
+export async function runLocalTraining(options: {
+  workDirectory: string; outputDirectory: string; trainingPath: string; evaluationPath: string
+  configPath: string; manifestPath: string
+  signal?: AbortSignal
+}): Promise<void> {
+  const python = path.join(systemPaths.root, 'venv/bin/python3')
+  if (!fs.existsSync(python)) throw new Error('Local training environment is missing; run ./bin/setup-local-training')
+  const child = spawn(python, [
+    path.join(systemPaths.root, 'docker/runpod-trainer/train_unsloth.py'),
+    '--data', options.trainingPath, '--eval-data', options.evaluationPath,
+    '--manifest', options.manifestPath, '--config', options.configPath, '--output', options.outputDirectory,
+  ], { cwd: options.workDirectory, stdio: 'inherit', signal: options.signal, env: { ...process.env, PYTHONUNBUFFERED: '1', UNSLOTH_SKIP_SYSTEM_INSTALL: '1' } })
+  await new Promise<void>((resolve, reject) => {
+    let failure: Error | undefined
+    child.once('error', error => { failure = error })
+    child.once('close', (code, signal) => code === 0 && !signal
+      ? resolve() : reject(failure ?? new Error('Local trainer failed: ' + (signal ?? 'exit ' + code))))
+  })
+}
 
-// This will hold the ID for the current run, so the catch handler can access it.
-let currentRunId: string | null = null;
-let currentRunLabel: string | null = null;
-let currentWorkLocal: string | null = null;
-let currentRunOutputDir: string | null = null;
-
-function safeRemove(target: string) {
+export async function runPersonalizationCycle(username: string, method: TrainingMethod, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
+  const runLabel = process.env.METAHUMAN_TRAINING_RUN_LABEL
+  const configPath = process.env.METAHUMAN_TRAINING_CONFIG_PATH
+  if (!runLabel || !/^\d{4}-\d{2}-\d{2}T[0-9TZ-]+$/.test(runLabel) || !configPath) {
+    throw new Error('This worker requires a job admitted by the Core training launcher')
+  }
+  const date = runLabel.slice(0, 10)
+  const workDirectory = path.join(systemPaths.root, 'metahuman-runs', username, date, runLabel)
+  if (path.resolve(configPath) !== path.join(workDirectory, 'config.json')) throw new Error('Training configuration is outside the admitted run')
+  const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  if (cfg.training_mode !== (method === 'fine-tune' ? 'full_finetune' : 'lora')) throw new Error('Worker method differs from its admitted configuration')
+  const settings = parseTrainingDataSettings(cfg.data)
+  const profile = getProfilePaths(username)
+  const outputRoot = path.join(profile.out, 'adapters', date, runLabel)
+  const candidateDirectory = path.join(outputRoot, method === 'fine-tune' ? 'model' : 'adapter')
+  fs.mkdirSync(outputRoot, { recursive: true, mode: 0o700 })
+  const summaryPath = path.join(outputRoot, 'run.json')
+  if (fs.existsSync(summaryPath)) throw new Error('This training run already has an execution receipt')
+  const summary: Record<string, unknown> = {
+    version: 2, runLabel, username, method, trainingTarget: cfg.trainingTarget, baseModel: cfg.base_model, startedAt: new Date().toISOString(),
+    status: 'preparing', candidateDirectory, workDirectory, activation: 'not-activated',
+  }
+  safeWriteJSON(summaryPath, summary)
+  console.log('[full-cycle] Starting ' + method + ' for user: ' + username)
+  console.log('[full-cycle] Training base model: ' + cfg.base_model)
   try {
-    if (!fs.existsSync(target)) return;
-    const stats = fs.lstatSync(target);
-    if (stats.isDirectory()) {
-      fs.rmSync(target, { recursive: true, force: true });
+    const frozenConfigCopy = path.join(outputRoot, 'config.json')
+    fs.copyFileSync(configPath, frozenConfigCopy, fs.constants.COPYFILE_EXCL)
+    const dataset = await preparePersonalizationDataset({
+      actor: username, baseModel: cfg.base_model, datasetPaths: [path.join(outputRoot, 'train.jsonl')],
+      logPrefix: 'full-cycle', maxSamples: cfg.max_samples, outputRoot,
+      recentDays: cfg.monthly_training ? cfg.days_recent ?? 30 : undefined,
+      olderSamples: cfg.monthly_training ? cfg.old_samples ?? 3000 : undefined,
+      modeFilter: cfg.mode_filter as CognitiveMode | undefined,
+      skipPreprocessing: process.env.METAHUMAN_SKIP_PREPROCESSING === '1',
+      cutoff: cfg.datasetCutoff, username, signal,
+    }, { settings })
+    const manifest = JSON.parse(fs.readFileSync(dataset.manifestPath, 'utf8'))
+    Object.assign(summary, { status: 'training', datasetId: dataset.datasetId, trainingSamples: dataset.sampleCount,
+      evaluationSamples: dataset.evaluationCount, cutoff: manifest.cutoff })
+    safeWriteJSON(summaryPath, summary)
+    signal?.throwIfAborted()
+    if (method === 'local-lora') {
+      await runLocalTraining({
+        workDirectory, outputDirectory: candidateDirectory, trainingPath: dataset.datasetPaths[0],
+        evaluationPath: dataset.evaluationPaths[0], configPath, manifestPath: dataset.manifestPath, signal,
+      })
     } else {
-      fs.rmSync(target, { force: true });
+      const remote = await runRemoteTraining({
+        DATE_STR: date, RUN_LABEL: runLabel, run_id: runLabel, WORK_LOCAL: workDirectory, OUT_ROOT: outputRoot,
+        FINAL_ADAPTER_DIR: candidateDirectory, RAW_DATA_FILE: dataset.datasetPaths[0], CLEAN_DATA_FILE: dataset.datasetPaths[0],
+        EVAL_DATA_FILE: dataset.evaluationPaths[0], DATASET_MANIFEST_FILE: dataset.manifestPath,
+        CONFIG_FILE: configPath, SUMMARY_FILE: path.join(workDirectory, 'run-summary.json'),
+        samples_used: dataset.sampleCount, username, signal,
+      })
+      Object.assign(summary, { podId: remote.pod_id, podTerminated: remote.terminated })
+      if (!remote.training_success) throw new Error(remote.error ?? 'Remote training failed')
     }
-  } catch (err) {
-    console.warn(`[full-cycle] Failed to remove ${target}: ${(err as Error).message}`);
-  }
-}
-
-function cleanupAfterSuccessfulMerge(runRoot: string, workLocal?: string) {
-  safeRemove(path.join(runRoot, 'merged_gguf_output'));
-  if (workLocal) {
-    safeRemove(path.join(workLocal, 'adapter_base64.txt'));
-    safeRemove(path.join(workLocal, 'temp_adapter_download'));
-  }
-}
-
-async function mainWithContext() {
-  const ctx = getUserContext();
-
-  if (!ctx) {
-    console.error('[full-cycle] ERROR: No user context found.');
-    console.error('[full-cycle] This must be run with withUserContext()');
-    process.exit(1);
-  }
-
-  currentRunId = randomBytes(8).toString('hex');
-  console.log(`[full-cycle] Starting remote full cycle for ${ctx.username} (${currentRunId})`);
-
-  // User-specific paths
-  if (!ctx.profilePaths) {
-    console.error('[full-cycle] ERROR: User context missing profilePaths');
-    process.exit(1);
-  }
-  const profileRoot = ctx.profilePaths.root;
-  const profileTrainingConfig = loadUserConfig<Record<string, any>>(
-    'training.json',
-    {},
-    ctx.username,
-  );
-
-  // 2.1. Compute run identifiers and paths
-  const now = new Date();
-  const DATE_STR = now.toISOString().slice(0, 10); // e.g. "2025-10-24"
-  const TIME_STR = now.toISOString().slice(11, 19).replace(/:/g, '');
-  const runSuffix = (currentRunId || randomBytes(4).toString('hex')).slice(0, 6);
-  const RUN_LABEL = `${DATE_STR}-${TIME_STR}-${runSuffix}`;
-  currentRunLabel = RUN_LABEL;
-
-  const PROJECT_ROOT = systemPaths.root;
-  // User-specific dataset directory
-  const datasetDir = path.join(profileRoot, 'out', 'adapters', DATE_STR);
-  const OUT_ROOT = path.join(datasetDir, RUN_LABEL);
-  const WORK_LOCAL = path.join(PROJECT_ROOT, 'metahuman-runs', ctx.username, DATE_STR, RUN_LABEL);
-  const FINAL_ADAPTER_DIR = path.join(OUT_ROOT, 'adapter');
-  currentWorkLocal = WORK_LOCAL;
-  currentRunOutputDir = OUT_ROOT;
-
-  const RAW_DATA_FILE = path.join(OUT_ROOT, `${RUN_LABEL}.jsonl`);
-  const CLEAN_DATA_FILE = path.join(WORK_LOCAL, 'unsloth_dataset.jsonl');
-  const CONFIG_FILE = path.join(WORK_LOCAL, 'config.json');
-  const SUMMARY_FILE = path.join(WORK_LOCAL, 'run-summary.json');
-  const UPLOAD_PROOF_REMOTE = "/workspace/input/upload.ok";
-  const TAR_STAGING_LOCAL = path.join(WORK_LOCAL, 'adapter_base64.txt');
-  const uniqueRunInfoPath = path.join(datasetDir, `${RUN_LABEL}-run.json`);
-
-  console.log('[full-cycle] Preparing dataset...');
-  audit({ level: 'info', category: 'action', event: 'full_cycle_started', details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL, username: ctx.username }, actor: ctx.username });
-
-  // Ensure dirs exist
-  try {
-    mkdirpSync(WORK_LOCAL);
-    mkdirpSync(FINAL_ADAPTER_DIR);
-  } catch (error) {
-    console.error('[full-cycle] Failed to create directories:', error);
-    // Write a minimal failed summary
-    const failedSummary = {
-      run_id: currentRunId,
-      run_label: RUN_LABEL,
-      date: DATE_STR,
-      training_success: false,
-      terminated: false,
-      error: `Failed to create directories: ${(error as Error).message}`
-    };
-    fs.writeFileSync(SUMMARY_FILE, JSON.stringify(failedSummary, null, 2));
-    throw error;
-  }
-
-  const baseModel = process.env.METAHUMAN_BASE_MODEL
-    || profileTrainingConfig.base_model
-    || DEFAULT_TRAINING_MODEL;
-  const modeFilter = process.env.METAHUMAN_MODE_FILTER && process.env.METAHUMAN_MODE_FILTER !== 'all'
-    ? parseCognitiveMode(process.env.METAHUMAN_MODE_FILTER, 'METAHUMAN_MODE_FILTER')
-    : undefined;
-  const maxSamples = process.env.METAHUMAN_MAX_SAMPLES
-    ? parsePositiveInteger(process.env.METAHUMAN_MAX_SAMPLES, 'METAHUMAN_MAX_SAMPLES')
-    : undefined;
-  const dataset = await preparePersonalizationDataset({
-    actor: ctx.username,
-    baseModel,
-    captureProgramOutput: true,
-    datasetPaths: [CLEAN_DATA_FILE, RAW_DATA_FILE],
-    format: 'instruction',
-    logPrefix: 'full-cycle',
-    maxSamples,
-    modeFilter,
-    outputRoot: OUT_ROOT,
-    skipPreprocessing: process.env.METAHUMAN_SKIP_PREPROCESSING === '1',
-    username: ctx.username,
-  });
-  const samples_used = dataset.sampleCount;
-  console.log(`[full-cycle] Curation complete: ${samples_used} high-quality samples`);
-
-  // 2.3. Merge the authenticated profile's training configuration.
-  let config: any = {
-    "base_model": DEFAULT_TRAINING_MODEL,
-    "lora_rank": 8,
-    "lora_alpha": 16,
-    "lora_dropout": 0,
-    "num_train_epochs": 2,
-    "learning_rate": 0.0002,
-    "per_device_train_batch_size": 1,
-    "gradient_accumulation_steps": 16,
-    "max_seq_length": 2048,
-    "load_in_4bit": false,
-    "load_in_16bit": true
-  };
-
-  const { comment, notes, ...trainingParams } = profileTrainingConfig;
-  config = { ...config, ...trainingParams };
-  console.log(`[full-cycle] Loaded training config from ${path.join(ctx.profilePaths.etc, 'training.json')}`);
-
-  // Environment variable override for base_model (highest priority)
-  if (process.env.METAHUMAN_BASE_MODEL) {
-    config.base_model = process.env.METAHUMAN_BASE_MODEL;
-    console.log(`[full-cycle] Using base model from env: ${config.base_model}`);
-  }
-
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-
-  // Document the base model used for training
-  console.log(`[full-cycle] Training base model: ${config.base_model}`);
-  console.log('[full-cycle] Ollama output is a merged model; vLLM output is one LoRA adapter\n');
-
-  // 2.4. Call the new remote trainer
-  console.log('[full-cycle] Starting remote training', {
-    run_id: currentRunId,
-    DATE_STR,
-    WORK_LOCAL,
-    OUT_ROOT,
-    FINAL_ADAPTER_DIR,
-    RAW_DATA_FILE,
-    CLEAN_DATA_FILE,
-    CONFIG_FILE,
-    SUMMARY_FILE,
-    samples_used,
-  });
-
-  const result = await runRemoteTraining({
-    run_id: currentRunId,
-    DATE_STR,
-    RUN_LABEL,
-    WORK_LOCAL,
-    OUT_ROOT,
-    FINAL_ADAPTER_DIR,
-    RAW_DATA_FILE,
-    CLEAN_DATA_FILE,
-    CONFIG_FILE,
-    SUMMARY_FILE,
-    samples_used,
-    username: ctx.username,
-  });
-
-  console.log(`[full-cycle] Remote training complete, success=${result.training_success}`);
-
-  if (!result.training_success) {
-    console.error('[full-cycle] Remote training failed, stopping early but summary written');
-    // Summary is already written by runRemoteTraining, so just exit
-    process.exit(1);
-  }
-
-  // Continue with post-processing steps if training was successful
-  console.log('[full-cycle] Preparing the trained artifact...');
-
-  // Now that adapter is downloaded, run the remaining steps
-  const adapterPath = path.join(FINAL_ADAPTER_DIR, 'adapter_model.safetensors');
-
-  // If no adapter produced, pause gracefully
-  if (!fs.existsSync(adapterPath)) {
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'full_cycle_waiting_for_adapter',
-      details: { date: DATE_STR, datasetDir },
-      actor: 'full-cycle',
+    const candidate = await verifyTrainingCandidate(candidateDirectory, {
+      datasetId: dataset.datasetId, baseModel: cfg.base_model, configPath: frozenConfigCopy,
+      evaluationSha256: manifest.evaluation.sha256, requireGguf: cfg.gguf_conversion.enabled,
     })
-    console.log('[full-cycle] No adapter weights found after remote training.');
-    return;
-  }
-
-  const canonicalSafetensors = path.join(datasetDir, 'adapter_model.safetensors');
-  // Note: We don't create timestamped copies - files already exist in run directories
-  // Symlinks provide access without duplicating storage
-  try {
-    if (fs.existsSync(canonicalSafetensors) || fs.lstatSync(canonicalSafetensors)) {
-      fs.rmSync(canonicalSafetensors);
-    }
-  } catch {
-    // ignore
-  }
-  try {
-    const relative = path.relative(datasetDir, adapterPath);
-    fs.symlinkSync(relative, canonicalSafetensors);
-  } catch (e) {
-    console.warn('[full-cycle] Failed to symlink adapter_model.safetensors, falling back to copy:', (e as Error).message);
-    try {
-      fs.copyFileSync(adapterPath, canonicalSafetensors);
-    } catch (copyErr) {
-      console.warn('[full-cycle] Failed to copy adapter_model.safetensors into dataset directory:', (copyErr as Error).message);
-    }
-  }
-
-  // The training backend produces the artifact used by the selected runtime.
-
-  const targetBackend = config.trainingTarget === 'vllm' ? 'vllm' : 'ollama';
-  const isVllmMode = targetBackend === 'vllm';
-
-  console.log(`[full-cycle] Training target: ${targetBackend}`);
-
-  // Step 5: Activate adapter based on backend
-  const modelName = `${ctx.username}-${isVllmMode ? 'vllm-' : ''}${DATE_STR}`;
-  const personaName = ctx.username.charAt(0).toUpperCase() + ctx.username.slice(1);
-  const safetensorsAdapter = path.join(OUT_ROOT, 'adapter');
-  const trainedGGUF = path.join(OUT_ROOT, 'adapter.gguf');
-  const canonicalGGUF = path.join(datasetDir, 'adapter.gguf');
-
-  if (isVllmMode) {
-    // vLLM mode: Verify safetensors adapter exists
-    const adapterConfigPath = path.join(safetensorsAdapter, 'adapter_config.json');
-    if (!fs.existsSync(adapterConfigPath)) {
-      throw new Error(`Safetensors adapter not found at ${safetensorsAdapter}. Training may have failed.`);
-    }
-    console.log(`[full-cycle] vLLM mode: Safetensors adapter verified at ${safetensorsAdapter}`);
-  } else {
-    // Ollama mode: Verify GGUF exists
-    if (!fs.existsSync(trainedGGUF)) {
-      throw new Error(`Merged GGUF not found at ${trainedGGUF}. Training may have failed.`);
-    }
-    console.log('[full-cycle] Ollama mode: GGUF adapter verified');
-  }
-
-  // Note: Removed timestamped copy creation - files already exist in run directories
-  // Symlinks provide access to latest without duplicating storage
-
-  const activatedAt = new Date().toISOString();
-  let modelfilePath: string | undefined;
-
-  if (isVllmMode) {
-    audit({
-      level: 'info',
-      category: 'action',
-      event: 'training_artifact_registered',
-      details: { date: DATE_STR, backend: 'vllm', adapterPath: safetensorsAdapter, username: ctx.username },
-      actor: ctx.username,
-    });
-    console.log(`[full-cycle] vLLM adapter available: ${safetensorsAdapter}`);
-    console.log('[full-cycle] Backend Settings owns loading this adapter into vLLM');
-
-  } else {
-    // ========== OLLAMA MODE ==========
-    // Create GGUF symlinks and Modelfile for Ollama
-
-    try {
-      if (fs.existsSync(canonicalGGUF) || fs.lstatSync(canonicalGGUF)) {
-        fs.rmSync(canonicalGGUF);
-      }
-    } catch {
-      // Ignore if nothing to remove
-    }
-
-    try {
-      const relative = path.relative(datasetDir, trainedGGUF);
-      fs.symlinkSync(relative, canonicalGGUF);
-    } catch (e) {
-      console.warn('[full-cycle] Failed to create adapter.gguf symlink, falling back to copy:', (e as Error).message);
-      try {
-        fs.copyFileSync(trainedGGUF, canonicalGGUF);
-      } catch (copyErr) {
-        console.warn('[full-cycle] Failed to copy adapter.gguf into dataset directory:', (copyErr as Error).message);
-      }
-    }
-
-    const modelfile = `# MetaHuman OS Fully-Merged Model - ${ctx.username} - ${DATE_STR}
-# This GGUF contains both the base model and trained adapter (merged on RunPod)
-FROM ${trainedGGUF}
-
-TEMPLATE """{{ if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
-{{ .Response }}<|im_end|>
-"""
-
-SYSTEM You are ${personaName}'s digital personality extension. Speak naturally in first person as ${personaName}.
-`;
-
-    console.log('[full-cycle] Using the fully merged training artifact');
-    audit({ level: 'info', category: 'action', event: 'full_cycle_merged_modelfile', details: { ggufPath: trainedGGUF, run_label: RUN_LABEL, username: ctx.username }, actor: ctx.username });
-
-    modelfilePath = path.join(OUT_ROOT, 'Modelfile');
-    fs.writeFileSync(modelfilePath, modelfile);
-
-    const canonicalModelfile = path.join(datasetDir, 'Modelfile');
-    const uniqueModelfile = path.join(datasetDir, `Modelfile-${RUN_LABEL}`);
-    try {
-      fs.writeFileSync(uniqueModelfile, modelfile);
-    } catch (e) {
-      console.warn('[full-cycle] Failed to write unique Modelfile copy:', (e as Error).message);
-    }
-    try {
-      if (fs.existsSync(canonicalModelfile) || fs.lstatSync(canonicalModelfile)) {
-        fs.rmSync(canonicalModelfile);
-      }
-    } catch {
-      // ignore
-    }
-    try {
-      const relative = path.relative(datasetDir, modelfilePath);
-      fs.symlinkSync(relative, canonicalModelfile);
-    } catch (e) {
-      console.warn('[full-cycle] Failed to symlink Modelfile, falling back to copy:', (e as Error).message);
-      try {
-        fs.copyFileSync(modelfilePath, canonicalModelfile);
-      } catch (copyErr) {
-        console.warn('[full-cycle] Failed to copy Modelfile into dataset directory:', (copyErr as Error).message);
-      }
-    }
-
-    const activeInfo: ActiveAdapterInfo = {
-      modelName,
-      activatedAt,
-      adapterPath: trainedGGUF,
-      dataset: RUN_LABEL,
-      date: DATE_STR,
-      modelfilePath,
-      status: 'ready_for_ollama_load',
-      activatedBy: 'full-cycle',
-      runLabel: RUN_LABEL,
-      trainingMethod: 'remote',
-      ggufAdapterPath: trainedGGUF,
-      baseModel: config.base_model,
-    };
-
-    setActiveAdapter(activeInfo);
-    audit({ level: 'info', category: 'action', event: 'adapter_activated', details: { date: DATE_STR, modelName, backend: 'ollama', auto: true, username: ctx.username }, actor: ctx.username });
-
-    // Step 6: Auto-load into Ollama (best-effort)
-    try {
-      const { execSync } = await import('node:child_process');
-      console.log(`[full-cycle] Creating Ollama model: ${modelName}`);
-      execSync(`ollama create ${modelName} -f ${modelfilePath}`, { stdio: 'inherit' });
-      const loadedInfo: ActiveAdapterInfo = { ...activeInfo, status: 'loaded' };
-      setActiveAdapter(loadedInfo);
-    } catch (e) {
-      console.warn('[full-cycle] Failed to auto-load model into Ollama:', (e as Error).message);
-    }
-  } // End of Ollama mode block
-
-  // Common cleanup and completion (both backends)
-  try {
-    fs.writeFileSync(uniqueRunInfoPath, JSON.stringify({ runId: currentRunId, runLabel: RUN_LABEL, createdAt: new Date().toISOString() }, null, 2));
-    fs.writeFileSync(path.join(datasetDir, 'latest-run.json'), JSON.stringify({ runId: currentRunId, runLabel: RUN_LABEL, updatedAt: new Date().toISOString() }, null, 2));
-  } catch (e) {
-    console.warn('[full-cycle] Failed to record run metadata:', (e as Error).message);
-  }
-
-  // Cleanup (only for Ollama mode with GGUF)
-  if (!isVllmMode && fs.existsSync(trainedGGUF)) {
-    cleanupAfterSuccessfulMerge(OUT_ROOT, WORK_LOCAL);
-  }
-
-  audit({ level: 'info', category: 'action', event: 'full_cycle_completed', details: { date: DATE_STR, run_id: currentRunId, run_label: RUN_LABEL, backend: targetBackend, username: ctx.username }, actor: ctx.username });
-  console.log(`\n✅ [full-cycle] Training complete for user: ${ctx.username}`);
-  console.log(`   Backend: ${targetBackend}`);
-  console.log(`   Model name: ${modelName}`);
-  console.log(`   Dataset: ${datasetDir}`);
-
-  // Auto-cleanup: Archive old training runs
-  try {
-    const { autoCleanupTrainingRuns, cleanupOldWorkDirectories } = await import('@metahuman/core');
-    await autoCleanupTrainingRuns(ctx.username, RUN_LABEL, false); // false = LoRA adapter
-    cleanupOldWorkDirectories(ctx.username);
-  } catch (err) {
-    console.warn('[full-cycle] Auto-cleanup failed (non-critical):', (err as Error).message);
+    Object.assign(summary, {
+      status: candidate.qualityGate === 'passed' ? 'candidate' : 'rejected', qualityGate: candidate.qualityGate,
+      baselineLoss: candidate.baselineLoss, candidateLoss: candidate.candidateLoss, finishedAt: new Date().toISOString(),
+    })
+    safeWriteJSON(summaryPath, summary)
+    console.log('[full-cycle] Candidate saved for review: ' + candidateDirectory)
+    console.log('[full-cycle] Quality gate: ' + candidate.qualityGate + '; serving validation and activation review required')
+  } catch (error) {
+    Object.assign(summary, { status: signal?.aborted ? 'cancelled' : 'failed', error: (error as Error).message, finishedAt: new Date().toISOString() })
+    safeWriteJSON(summaryPath, summary)
+    throw error
   }
 }
 
-async function main() {
-  // Parse CLI arguments
-  const args = process.argv.slice(2);
-  let username: string | null = null;
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--username' && i + 1 < args.length) {
-      username = args[i + 1];
-      break;
-    }
+export function parseTrainingArguments(args: string[]): {
+  username: string; overrides: Partial<TrainingLaunchConfig>; modeFilter?: CognitiveMode
+} {
+  let username = ''
+  const overrides: Partial<TrainingLaunchConfig> = {}
+  let modeFilter: CognitiveMode | undefined
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index]
+    if (argument === '--') continue
+    if (argument === '--monthly') { overrides.monthly_training = true; continue }
+    const value = args[++index]
+    if (!value || value.startsWith('--')) throw new Error('Missing value for ' + argument)
+    if (argument === '--username') username = value
+    else if (argument === '--base-model') overrides.base_model = value
+    else if (argument === '--max') overrides.max_samples = value === 'all' ? null : parsePositiveInteger(value, '--max')
+    else if (argument === '--mode') modeFilter = parseCognitiveMode(value, '--mode')
+    else if (argument === '--days-recent') {
+      overrides.days_recent = parsePositiveInteger(value, '--days-recent')
+      overrides.monthly_training = true
+    } else if (argument === '--old-samples') {
+      const count = Number(value)
+      if (!Number.isSafeInteger(count) || count < 0 || count > 1_000_000) throw new Error('--old-samples must be an integer from 0 to 1000000')
+      overrides.old_samples = count
+      overrides.monthly_training = true
+    } else throw new Error('Unknown training argument: ' + argument)
   }
-
-  if (!username) {
-    console.error('[full-cycle] ERROR: --username <name> is required');
-    console.error('\nUsage: pnpm exec tsx brain/training/personalization/full-cycle.ts --username <username>');
-    console.error('\nExample: pnpm exec tsx brain/training/personalization/full-cycle.ts --username greggles');
-    process.exit(1);
-  }
-
-  // Resolve user info
-  const userInfo = requireUserInfo(username);
-
-  console.log(`[full-cycle] Starting remote training for user: ${username}`);
-
-  // Run with user context
-  await withUserContext(userInfo, mainWithContext);
+  if (!username.trim()) throw new Error('--username is required')
+  return { username, overrides, modeFilter }
 }
 
-main().catch(err => {
-  console.error('[full-cycle] failed:', err);
-  // Try to write a partial summary with what we have
-  try {
-    const fallbackDate = new Date().toISOString().slice(0, 10);
-    const fallbackRunLabel = currentRunLabel || `${fallbackDate}-error`;
-    const fallbackWorkLocal = currentWorkLocal || path.join(systemPaths.root, 'metahuman-runs', fallbackDate, fallbackRunLabel);
-    mkdirpSync(fallbackWorkLocal); // Ensure directory exists
-
-    const partialSummary = {
-      run_id: currentRunId,
-      run_label: currentRunLabel,
-      date: fallbackDate,
-      training_success: false,
-      terminated: false,
-      error: String(err),
-      pod_id: null,
-      ssh_user: null,
-      ssh_host: null,
-      connection_mode: 'gateway-no-scp-no-pty',
-    };
-
-    const SUMMARY_FILE = path.join(fallbackWorkLocal, 'run-summary.json');
-    fs.writeFileSync(SUMMARY_FILE, JSON.stringify(partialSummary, null, 2));
-  } catch (summaryErr) {
-    console.error('Failed to write partial summary:', summaryErr);
+export async function runTrainingEntryPoint(method: TrainingMethod, args = process.argv.slice(2)): Promise<void> {
+  if (args.includes('--help')) {
+    console.log('Training options: --username NAME [--base-model MODEL] [--max N|all] [--mode dual|agent|emulation|environment] [--monthly] [--days-recent N] [--old-samples N]')
+    console.log('Jobs use the same Core launcher and saved settings as Training Wizard. Review candidates in Training History.')
+    return
   }
+  const options = parseTrainingArguments(args)
+  const user = requireUserInfo(options.username)
+  await withUserContext(user, async () => {
+    if (process.env.METAHUMAN_TRAINING_CONFIG_PATH) {
+      const name: TrainingProcessName = method === 'local-lora' ? 'full-cycle-local' : method === 'fine-tune' ? 'fine-tune-cycle' : 'full-cycle'
+      const controller = new AbortController()
+      const onCancel = () => {
+        if (controller.signal.aborted) return
+        controller.abort(new Error('Training was cancelled'))
+        // Also stop converter/reload grandchildren. The worker retains control of remote cleanup.
+        try { process.kill(-process.pid, 'SIGTERM') } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+        }
+      }
+      process.on('SIGTERM', onCancel)
+      process.on('SIGINT', onCancel)
+      const admittedConfig = JSON.parse(fs.readFileSync(process.env.METAHUMAN_TRAINING_CONFIG_PATH, 'utf8'))
+      const automatic = admittedConfig.automaticAdmission
+      const checkAdmission = () => {
+        if (!automatic) return
+        try {
+          const session = readSleepRuntimeState().currentSession
+          if (!Number.isFinite(Date.parse(automatic.deadline)) || Date.now() >= Date.parse(automatic.deadline)
+              || !session || session.id !== automatic.sessionId || session.state !== 'running'
+              || session.username !== options.username || session.currentStageId !== 'train-personalization') onCancel()
+        } catch (error) {
+          console.error('[full-cycle] Automatic admission could not be verified: ' + (error as Error).message)
+          onCancel()
+        }
+      }
+      checkAdmission()
+      const admissionTimer = automatic ? setInterval(checkAdmission, 1000) : undefined
+      try {
+        await runPersonalizationCycle(options.username, method, controller.signal)
+        controller.signal.throwIfAborted()
+        finalizeTrainingProcess(name, process.pid, { status: 'completed', exitCode: 0 })
+      } catch (error) {
+        finalizeTrainingProcess(name, process.pid, { status: controller.signal.aborted ? 'cancelled' : 'failed', exitCode: 1, error: (error as Error).message })
+        throw error
+      } finally {
+        if (admissionTimer) clearInterval(admissionTimer)
+        process.removeListener('SIGTERM', onCancel)
+        process.removeListener('SIGINT', onCancel)
+      }
+      return
+    }
+    const profile = readProfileTrainingConfig(options.username)
+    const runpod = method === 'local-lora' ? undefined : loadRunpodConfig(options.username)
+    const launch = launchTrainingJob(options.username, {
+      method, trainingTarget: profile.trainingTarget === 'vllm' ? 'vllm' : 'ollama',
+      trainingConfig: { ...trainingLaunchConfigForProfile(options.username, options.overrides), mode_filter: options.modeFilter },
+      runpodConfig: runpod ? { apiKey: runpod.apiKey ?? '', templateId: runpod.templateId ?? '', gpuType: runpod.gpuType ?? '' } : undefined,
+      advancedSettings: { enableS3Upload: false, enablePreprocessing: true },
+    })
+    if (!launch.success) throw new Error(launch.error)
+    console.log(launch.message + ' (PID ' + launch.pid + '). Track or cancel it in Training Wizard.')
+  })
+}
 
-  audit({ level: 'error', category: 'action', event: 'full_cycle_failed', details: { error: String(err), run_id: currentRunId, run_label: currentRunLabel }, actor: 'full-cycle' });
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  runTrainingEntryPoint('remote-lora').catch(error => { console.error('[full-cycle] failed:', error); process.exitCode = 1 })
+}

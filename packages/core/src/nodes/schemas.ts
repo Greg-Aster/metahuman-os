@@ -9,10 +9,12 @@
 
 import type {
   NodeCategory,
+  NodeExecutionPolicy,
   NodePresentation,
   NodeSlot,
   PropertySchema,
 } from './types.js';
+import { observationHistorySchema, saveVisualObservationSchema } from './environment/observation.schemas.js';
 import {
   DEFAULT_ROBOT_AUTONOMY_TASK_IDS,
   ROBOT_AUTONOMY_TASK_OPTIONS,
@@ -33,6 +35,7 @@ export interface NodeSchema {
   propertySchemas?: Record<string, PropertySchema>;
   description: string;
   presentation?: NodePresentation;
+  execution?: Partial<NodeExecutionPolicy>;
   editorOnly?: boolean;
   size?: [number, number];
   version?: string;
@@ -82,6 +85,7 @@ function defineSchema(
 }
 
 const ROBOT_CONTEXT_OUTPUTS: NodeSlot[] = [
+  { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
   { name: 'messages', type: 'array', description: 'Multimodal messages for this workflow LLM' },
   { name: 'jsonSchema', type: 'object', description: 'Structured output contract for this workflow LLM' },
   { name: 'context', type: 'object', description: 'Inspectable context summary' },
@@ -91,6 +95,7 @@ const ROBOT_CONTEXT_OUTPUTS: NodeSlot[] = [
 ];
 
 const ROBOT_CONTEXT_INPUTS: Record<string, NodeSlot> = {
+  observationHistory: { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
   instruction: { name: 'instruction', type: 'string', description: 'Graph-owned instructions for this one LLM task' },
   stimulusInstruction: { name: 'stimulusInstruction', type: 'string', optional: true, description: 'High-level intention delegated to Robot Autonomy Executor' },
   routingAnalysis: { name: 'routingAnalysis', type: 'object', description: 'Intent Orchestrator route switches for the delegated intention' },
@@ -125,7 +130,7 @@ function robotContextSchema(
     id,
     name,
     category: 'operator',
-    inputs: inputs.map(input => ROBOT_CONTEXT_INPUTS[input]),
+    inputs: ['observationHistory', ...inputs].map(input => ROBOT_CONTEXT_INPUTS[input]),
     outputs: ROBOT_CONTEXT_OUTPUTS,
     properties: {},
     propertySchemas: {},
@@ -138,13 +143,25 @@ function robotContextSchema(
 // ============================================================================
 
 export const nodeSchemas: NodeSchema[] = [
+  defineSchema(observationHistorySchema),
+  defineSchema(saveVisualObservationSchema),
   defineSchema({
     id: 'execution_event_wait', name: 'Wait for Continuation', category: 'utility',
+    execution: { eventInput: true },
     description: 'Keeps this execution saved until a user correction or an authorized autonomy trigger arrives. Full mode can authorize an already selected next workflow immediately.',
-    inputs: [{ name: 'invocation', type: 'object', optional: true, description: 'Next workflow already chosen by the LLM' }],
-    outputs: [{ name: 'invocation', type: 'object', description: 'Authorized next workflow with the newly received context' }],
-    properties: { waitForEvent: false, userGraph: 'environment', autonomyGraph: 'robot-autonomy-controller' },
+    inputs: [
+      { name: 'invocation', type: 'object', optional: true, description: 'Next workflow already chosen by the LLM' },
+      { name: 'selection', type: 'object', optional: true, description: 'Finite specialist already chosen by the LLM, awaiting mode authorization before dispatch' },
+      { name: 'receivedInput', type: 'object', optional: true, description: 'Input received during preceding work, delivered once before checking newer events' },
+      { name: 'evidence', type: 'object', optional: true, description: 'Returned result context for input received after that result' },
+    ],
+    outputs: [
+      { name: 'invocation', type: 'object', description: 'Authorized next workflow with the newly received context' },
+      { name: 'selection', type: 'object', description: 'Authorized specialist selection, unchanged' },
+    ],
+    properties: { waitForEvent: false, drain: false, userGraph: 'environment', autonomyGraph: 'robot-autonomy-controller' },
     propertySchemas: {
+      drain: { type: 'boolean', default: false, label: 'Receive Available Input Only', description: 'Handles already received input and returns immediately when none remains. A graph may select this node as its late-input entry point.' },
       waitForEvent: { type: 'boolean', default: false, label: 'Always Await a New Event', description: 'Used when the LLM chose to wait or request input, instead of selecting a next action.' },
       userGraph: { type: 'text', default: 'environment', label: 'User Workflow', description: 'Workflow used for a user correction.' },
       autonomyGraph: { type: 'text', default: 'robot-autonomy-controller', label: 'Autonomy Workflow', description: 'Workflow used to reconsider context after an autonomy trigger.' },
@@ -156,6 +173,7 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'selection', type: 'object', description: 'Existing execution and event kind selected by the LLM' },
       { name: 'message', type: 'string', description: 'Original user input' },
+      { name: 'entry', type: 'message', optional: true, description: 'Original Conversation Buffer admission, preserving identity through the handoff' },
     ],
     outputs: [{ name: 'sent', type: 'boolean', description: 'Input handoff committed with this node output' }],
     properties: {},
@@ -226,6 +244,11 @@ export const nodeSchemas: NodeSchema[] = [
         "description": "Correlated results and observations for the next workflow"
       },
       {
+        "name": "userInput",
+        "type": "object",
+        "description": "User input received during the action, with its ordered events and the returned observation; absent when no input arrived"
+      },
+      {
         "name": "events",
         "type": "array",
         "description": "Ordered events received while waiting"
@@ -260,6 +283,11 @@ export const nodeSchemas: NodeSchema[] = [
         "name": "result",
         "type": "object",
         "description": "Agent result, including failure or cancellation"
+      },
+      {
+        "name": "userInput",
+        "type": "object",
+        "description": "Input received during this agent job, for the following input workflow"
       }
     ],
     "properties": {},
@@ -352,6 +380,7 @@ export const nodeSchemas: NodeSchema[] = [
     ],
     outputs: [
       { name: 'message', type: 'string', description: 'User message' },
+      { name: 'entry', type: 'message', optional: true, description: 'Original admitted entry when forwarding this chat input; fresh input gets its identity at Conversation Buffer' },
       { name: 'inputSource', type: 'string', description: 'Input source: text, speech, or chat' },
       { name: 'instructionSource', type: 'string', description: 'Instruction provenance: user' },
       { name: 'sessionId', type: 'string', description: 'Session identifier' },
@@ -1165,6 +1194,7 @@ export const nodeSchemas: NodeSchema[] = [
     "name": "Environment Context Builder",
     "category": "environment",
     "inputs": [
+    { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
       {
         "name": "execution",
         "type": "object",
@@ -1202,6 +1232,12 @@ export const nodeSchemas: NodeSchema[] = [
         "description": "Validated model image content parts"
       },
       {
+        "name": "frames",
+        "type": "array",
+        "optional": true,
+        "description": "Frames selected alongside images, in the same order"
+      },
+      {
         "name": "conversationHistory",
         "type": "array",
         "optional": true,
@@ -1232,6 +1268,7 @@ export const nodeSchemas: NodeSchema[] = [
       }
     ],
     "outputs": [
+    { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
       {
         "name": "message",
         "type": "string",
@@ -1284,8 +1321,7 @@ export const nodeSchemas: NodeSchema[] = [
       }
     ],
     "properties": {
-      "systemPrompt": "",
-      "recentHistoryLimit": 4
+      "systemPrompt": ""
     },
     "propertySchemas": {
       "systemPrompt": {
@@ -1293,15 +1329,6 @@ export const nodeSchemas: NodeSchema[] = [
         "default": "",
         "label": "System Prompt",
         "rows": 5
-      },
-      "recentHistoryLimit": {
-        "type": "slider",
-        "default": 4,
-        "label": "Recent History Limit",
-        "description": "Maximum dialogue messages included when the context router marks the instruction as a follow-up.",
-        "min": 0,
-        "max": 12,
-        "step": 1
       }
     },
     "description": "Packages only the context selected by Intent Orchestrator for one Environment Action Selector call."
@@ -1311,6 +1338,7 @@ export const nodeSchemas: NodeSchema[] = [
     name: 'Environment Action Parser',
     category: 'environment',
     inputs: [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact source images attached to the model call' },
       { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
       { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands and capabilities' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
@@ -1318,6 +1346,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
     ],
     outputs: [
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of task decisions' },
       { name: 'actions', type: 'array', description: 'Parsed environment actions' },
       { name: 'firstAction', type: 'object', description: 'First parsed action' },
       { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
@@ -2380,9 +2409,11 @@ export const nodeSchemas: NodeSchema[] = [
     name: 'Robot Operator Decision Parser',
     category: 'operator',
     inputs: [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact source images attached to the model call' },
       { name: 'response', type: 'any', description: 'Strict JSON planner response' },
     ],
     outputs: [
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of task decisions' },
       { name: 'decision', type: 'object', description: 'Validated high-level planner instruction' },
       { name: 'observed', type: 'string', description: 'Grounded stimulus summary' },
       { name: 'instruction', type: 'string', description: 'Instruction for Robot Autonomy Executor' },
@@ -2397,6 +2428,7 @@ export const nodeSchemas: NodeSchema[] = [
     "name": "Interpret Robot Action Result",
     "category": "operator",
     "inputs": [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact source images attached to the model call' },
       {
         "name": "response",
         "type": "any",
@@ -2409,6 +2441,7 @@ export const nodeSchemas: NodeSchema[] = [
       }
     ],
     "outputs": [
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of task decisions' },
       {
         "name": "taskDecision",
         "type": "object",
@@ -2429,6 +2462,7 @@ export const nodeSchemas: NodeSchema[] = [
     "name": "Validate Robot Goal Review",
     "category": "operator",
     "inputs": [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact source images attached to the model call' },
       {
         "name": "response",
         "type": "any",
@@ -2441,6 +2475,7 @@ export const nodeSchemas: NodeSchema[] = [
       }
     ],
     "outputs": [
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of task decisions' },
       {
         "name": "awaitContinuation", "type": "boolean", "description": "The LLM chose to wait for a new event or user input"
       },
@@ -2492,10 +2527,12 @@ export const nodeSchemas: NodeSchema[] = [
     name: 'Validate Autonomy Decision',
     category: 'operator',
     inputs: [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact source images attached to the model call' },
       { name: 'response', type: 'any', description: 'Strict JSON from the Robot Autonomy Controller LLM' },
       { name: 'availableTasks', type: 'array', description: 'Exact task catalog supplied to the controller LLM' },
     ],
     outputs: [
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of task decisions' },
       { name: 'decisionReceipt', type: 'object', description: 'Validated record of the LLM selection and its supplied rationale' },
       { name: 'taskDecision', type: 'object', description: 'Catalog-backed finite agent selection' },
       { name: 'executorDecision', type: 'object', description: 'High-level intention for Robot Autonomy Executor' },
@@ -2722,7 +2759,7 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
       { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
-      { name: 'activeExecutions', type: 'array', optional: true, description: 'Existing objectives the user may steer, cancel, or leave separate from this turn' },
+      { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions, their optional objectives, original inputs and waiting state, available for steering or cancellation' },
       { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
       { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
     ],
@@ -3024,7 +3061,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'success', type: 'boolean' },
       { name: 'error', type: 'object', optional: true },
     ],
-    properties: { timeout: 60000, autoStartSession: true },
+    properties: { timeout: 60000 },
     description: 'Executes skills via Claude CLI',
   }),
   defineSchema({
@@ -3090,6 +3127,7 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [
       { name: 'entry', type: 'message', optional: true },
       { name: 'entries', type: 'array', optional: true },
+      { name: 'passthrough', type: 'any', optional: true },
     ],
     outputs: [
       { name: 'saved', type: 'boolean' },
@@ -3099,6 +3137,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'eventPath', type: 'string', optional: true },
       { name: 'eventPaths', type: 'array' },
       { name: 'results', type: 'array' },
+      { name: 'passthrough', type: 'any' },
     ],
     description: 'Saves each buffer-admitted user or assistant entry as its own long-term conversation memory.',
   }),
@@ -4181,8 +4220,17 @@ What grounded insights or patterns emerge?`,
     name: 'Load Uncurated Memories',
     category: 'curator',
     inputs: [],
-    outputs: [{ name: 'memories', type: 'array', description: 'Uncurated episodic memories' }],
-    properties: { limit: 5 },
+    outputs: [
+      { name: 'memories', type: 'array', description: 'Uncurated episodic memories' },
+      { name: 'count', type: 'number' }, { name: 'sourceCount', type: 'number' },
+      { name: 'deferredCount', type: 'number' }, { name: 'hasMore', type: 'boolean' },
+      { name: 'excludedCount', type: 'number' }, { name: 'errors', type: 'array' },
+    ],
+    properties: { limit: 50, cutoff: '' },
+    propertySchemas: {
+      limit: { type: 'number', default: 50, min: 1, max: 500, label: 'Limit' },
+      cutoff: { type: 'string', default: '', label: 'Source cutoff', description: 'Review only memories at or before this timestamp. Empty uses the start of this batch.' },
+    },
     description: 'Loads uncurated episodic memories',
   }),
   defineSchema({

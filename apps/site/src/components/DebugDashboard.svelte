@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
 
   interface MetaHumanEvent {
     timestamp: string;
@@ -14,7 +14,7 @@
   }
 
   let events: MetaHumanEvent[] = [];
-  let ws: WebSocket | null = null;
+  let stream: EventSource | null = null;
   let connected = false;
   let autoScroll = true;
   let eventsContainer: HTMLDivElement;
@@ -45,42 +45,22 @@
   $: requestIds = [...new Set(events.filter(e => e.requestId).map(e => e.requestId!))];
 
   function connect() {
-    ws = new WebSocket('ws://localhost:3100');
-
-    ws.onopen = () => {
-      connected = true;
-      console.log('[DebugDashboard] Connected to event bus');
-    };
-
-    ws.onmessage = (event) => {
+    stream = new EventSource('/api/event-bus-stream');
+    stream.onopen = () => { connected = true; };
+    stream.onmessage = async (event) => {
       try {
         const e = JSON.parse(event.data) as MetaHumanEvent;
-        events = [...events.slice(-999), e]; // Keep last 1000 events
+        events = [...events.slice(-999), e];
         eventCount++;
         if (e.level === 'error') errorCount++;
         lastEventTime = e.timestamp;
-
-        // Auto-scroll to bottom
-        if (autoScroll && eventsContainer) {
-          setTimeout(() => {
-            eventsContainer.scrollTop = eventsContainer.scrollHeight;
-          }, 10);
-        }
+        await tick();
+        if (autoScroll && stream && eventsContainer) eventsContainer.scrollTop = eventsContainer.scrollHeight;
       } catch (err) {
         console.error('[DebugDashboard] Invalid event:', err);
       }
     };
-
-    ws.onclose = () => {
-      connected = false;
-      console.log('[DebugDashboard] Disconnected from event bus');
-      // Reconnect after 3 seconds
-      setTimeout(connect, 3000);
-    };
-
-    ws.onerror = (err) => {
-      console.error('[DebugDashboard] WebSocket error:', err);
-    };
+    stream.onerror = () => { connected = false; };
   }
 
   function clearEvents() {
@@ -120,9 +100,8 @@
   });
 
   onDestroy(() => {
-    if (ws) {
-      ws.close();
-    }
+    stream?.close();
+    stream = null;
   });
 </script>
 

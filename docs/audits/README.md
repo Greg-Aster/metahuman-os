@@ -1,13 +1,19 @@
 # Source Audits
 
-This directory contains current, remote-safe audit authority for the maintained
-MetaHuman source surface.
+This directory contains remote-safe findings and dated evidence for the maintained
+MetaHuman source surface. Current policy and ownership live in
+`../technical/MAINTAINED_SURFACE.md` and `../technical/REFACTOR_BLUEPRINT.md`;
+root `AGENTS.md` governs task scope and validation.
 
-## Current authority
+## Evidence and Generated Inventories
 
 - `consolidation-progress.md`: chronological cleanup and validation evidence.
 - `maintained-source-inventory.md`: generated human-readable source inventory.
 - `maintained-source-inventory.json`: generated machine-readable inventory.
+
+These records describe the source and checks at the time recorded. They are not
+current architecture authority or standing work orders. Search relevant entries
+and verify their applicability; do not reread the full history for routine work.
 
 ## Active evidence ledgers
 

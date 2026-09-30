@@ -17,6 +17,7 @@ export const UserInputNode: NodeDefinition = defineNode({
   ],
   outputs: [
     { name: 'message', type: 'string', description: 'Final user message' },
+    { name: 'entry', type: 'message', optional: true, description: 'Original admitted entry when forwarding this chat input; fresh input gets its identity at Conversation Buffer' },
     { name: 'inputSource', type: 'string', description: 'Source of input: text, speech, or chat' },
     { name: 'instructionSource', type: 'string', description: 'Instruction provenance: user' },
     { name: 'sessionId', type: 'string', description: 'Current session ID' },
@@ -98,8 +99,14 @@ export const UserInputNode: NodeDefinition = defineNode({
       }
     }
 
+    // An internal handoff retains the original admission. Connected text/speech
+    // or a newly supplied message must not inherit a previous message's identity.
+    const entry = inputSource === 'chat' && message === context.userMessage
+      && context.userMessageEntry?.content === message ? context.userMessageEntry : undefined;
+
     return {
       message,
+      entry,
       inputSource,
       instructionSource: 'user',
       sessionId: context.sessionId || `session-${Date.now()}`,

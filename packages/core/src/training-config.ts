@@ -4,6 +4,7 @@ import path from 'node:path'
 import { getProfilePaths } from './path-builder.js'
 import { systemPaths } from './paths.js'
 import { safeWriteJSON } from './safe-file.js'
+import { parseTrainingDataSettings, type TrainingDataSettings } from './training-schema.js'
 
 function readObject(filePath: string, label: string): Record<string, unknown> {
   const parsed: unknown = JSON.parse(fs.readFileSync(filePath, 'utf8'))
@@ -43,6 +44,18 @@ export function readProfileTrainingConfig(username: string): Record<string, unkn
     ...readTrainingConfigSeed(),
     ...readObject(profilePath, `Training configuration for ${username}`),
   }
+}
+
+export function readTrainingDataSettings(username: string): TrainingDataSettings {
+  return parseTrainingDataSettings(readProfileTrainingConfig(username).data ?? {})
+}
+
+export function updateTrainingDataSettings(username: string, value: unknown): TrainingDataSettings {
+  const settings = parseTrainingDataSettings(value)
+  // Retire unused priorities, enabled lists and collection controls in this
+  // section. There is one validated sampling contract for every consumer.
+  updateProfileTrainingConfig(username, { data: settings })
+  return settings
 }
 
 /** Merge a bounded owner update without deleting sibling training sections. */

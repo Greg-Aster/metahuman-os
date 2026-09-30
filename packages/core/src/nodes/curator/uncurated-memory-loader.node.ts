@@ -3,12 +3,12 @@
  * Loads episodic memories that haven't been curated yet
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
-import { getProfilePaths } from '../../paths.js';
-import { parseStoredCuratedMemory, type EpisodicMemory } from './contracts.js';
-import { curatedRecordFilename } from './curated-store.js';
+import { scanEpisodicMemoryRecords } from '../../memory.js';
+import { resolvePath, getStorageStatus } from '../../storage-client.js';
+import type { EpisodicMemory } from './contracts.js';
+import { sourceCurationStatus } from './curated-store.js';
 import { assembleCuratorSources } from './source-assembler.js';
 
 const execute: NodeExecutor = async (_inputs, context, properties) => {
@@ -17,94 +17,38 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
     throw new Error(`Curator memory limit must be an integer between 1 and 500, received: ${properties?.limit}`);
   }
   const limit = requestedLimit;
+  const cutoff = properties?.cutoff ? Date.parse(String(properties.cutoff)) : Date.now();
+  if (!Number.isFinite(cutoff)) throw new Error('Curator cutoff must be a valid timestamp');
 
   if (!context.userId) {
     throw new Error('Curator requires a userId to load episodic memories');
   }
+  const storage = getStorageStatus(context.userId);
+  if (!storage.available) throw new Error(storage.error || 'Profile storage is unavailable');
 
-  const profilePaths = getProfilePaths(context.userId);
-  const episodicPath = path.join(profilePaths.memory, 'episodic');
-  const curatedPath = path.join(profilePaths.memory, 'curated', 'conversations');
+  const resolved = resolvePath({ username: context.userId, category: 'memory', subcategory: 'episodic' });
+  if (!resolved.success || !resolved.path) throw new Error(resolved.error || 'Cannot resolve episodic storage');
   const candidates: (EpisodicMemory & { path: string })[] = [];
   const errors: string[] = [];
-
-  if (!fs.existsSync(episodicPath)) {
-    return {
-      memories: [],
-      count: 0,
-      sourceCount: 0,
-      deferredCount: 0,
-      hasMore: false,
-    };
-  }
-
-  function walkDirectory(dir: string): void {
-    const entries = fs.readdirSync(dir, { withFileTypes: true })
-      .sort((left, right) => left.name.localeCompare(right.name));
-
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        walkDirectory(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith('.json')) {
-        try {
-          const content = fs.readFileSync(fullPath, 'utf-8');
-          const memory = JSON.parse(content) as EpisodicMemory;
-
-          if (memory.metadata?.curated) {
-            const configuredFile = typeof memory.metadata.curatorRecordFile === 'string'
-              ? path.basename(memory.metadata.curatorRecordFile)
-              : undefined;
-            const recordId = typeof memory.metadata.curatorRecordId === 'string'
-              ? memory.metadata.curatorRecordId
-              : memory.id;
-            const recordFile = configuredFile || curatedRecordFilename({
-              id: recordId,
-              originalTimestamp: memory.timestamp,
-            });
-            const recordPath = path.join(curatedPath, recordFile);
-            try {
-              parseStoredCuratedMemory(
-                JSON.parse(fs.readFileSync(recordPath, 'utf8')),
-                `Curator record ${recordFile}`,
-              );
-              continue;
-            } catch {
-              // Missing or invalid durable records are explicitly re-curated.
-            }
-          }
-          if (memory.metadata?.reinforcementSignal === -1) continue;
-          if (memory.tags?.includes('feedback')) continue;
-          if (typeof memory.id !== 'string' || !memory.id.trim()) {
-            errors.push(`${fullPath}: missing memory id`);
-            continue;
-          }
-          if (typeof memory.timestamp !== 'string' || Number.isNaN(Date.parse(memory.timestamp))) {
-            errors.push(`${fullPath}: invalid timestamp`);
-            continue;
-          }
-          if (typeof memory.content !== 'string' || !memory.content.trim()) {
-            errors.push(`${fullPath}: missing memory content`);
-            continue;
-          }
-
-          candidates.push({ ...memory, path: fullPath });
-        } catch (error) {
-          errors.push(`${fullPath}: ${(error as Error).message}`);
-        }
-      }
+  const currentPaths = new Set<string>();
+  for (const outcome of scanEpisodicMemoryRecords(context.userId)) {
+    if (outcome.status === 'failed') {
+      errors.push(`${outcome.relativePath}: ${outcome.error}`);
+      continue;
     }
-  }
-
-  walkDirectory(episodicPath);
-
-  if (errors.length > 0) {
-    throw new Error(`Curator found ${errors.length} invalid episodic memory file(s): ${errors.join('; ')}`);
+    const memory = outcome.record.event;
+    if (Date.parse(memory.timestamp) > cutoff) continue;
+    const fullPath = path.join(resolved.path, outcome.record.relativePath);
+    if (sourceCurationStatus(context.userId, memory).current) currentPaths.add(fullPath);
+    candidates.push({ ...memory, path: fullPath });
   }
 
   const assembled = assembleCuratorSources(candidates);
-  const memories = assembled.memories.slice(0, limit);
+  // Assemble first: a changed side must bring its previously reviewed partner
+  // back into the same review unit rather than becoming an orphan.
+  const pending = assembled.memories.filter(memory =>
+    !(memory.sourcePaths ?? [memory.path]).every(sourcePath => currentPaths.has(sourcePath)));
+  const memories = pending.slice(0, limit);
   return {
     memories,
     count: memories.length,
@@ -113,7 +57,9 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
       0,
     ),
     deferredCount: assembled.deferredPaths.length,
-    hasMore: assembled.memories.length > limit,
+    excludedCount: errors.length,
+    errors,
+    hasMore: pending.length > limit,
   };
 };
 
@@ -127,12 +73,19 @@ export const UncuratedMemoryLoaderNode: NodeDefinition = defineNode({
     { name: 'count', type: 'number' },
     { name: 'sourceCount', type: 'number' },
     { name: 'deferredCount', type: 'number' },
+    { name: 'excludedCount', type: 'number' },
+    { name: 'errors', type: 'array' },
     { name: 'hasMore', type: 'boolean' },
   ],
   properties: {
     limit: 50,
+    cutoff: '',
   },
   propertySchemas: {
+    cutoff: {
+      type: 'string', default: '', label: 'Source cutoff',
+      description: 'Review only memories captured at or before this timestamp. Empty uses the start of this batch.',
+    },
     limit: {
       type: 'number',
       default: 50,

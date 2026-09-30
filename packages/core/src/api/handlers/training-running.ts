@@ -14,13 +14,17 @@ import { listTrainingProcesses } from '../../training-process.js';
  */
 export async function handleGetTrainingRunning(req: UnifiedRequest): Promise<UnifiedResponse> {
   try {
-    const [running] = listTrainingProcesses();
+    if (!req.user.isAuthenticated) return { status: 401, error: 'Authentication required' };
+    const running = listTrainingProcesses().find(item => item.username === req.user.username);
     if (running) {
       return successResponse({
         success: true,
         running: true,
         pid: running.pid,
         method: running.name,
+        runLabel: running.runLabel,
+        logFile: running.logFile,
+        cancelling: Boolean(running.cancelRequestedAt),
       });
     }
 

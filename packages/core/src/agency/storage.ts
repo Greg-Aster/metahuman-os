@@ -5,7 +5,10 @@
  * using the centralized storage router.
  */
 
-import { storageClient } from '../storage-client.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { storageClient, validateProfileDeletion } from '../storage-client.js';
+import { ENCRYPTED_EXTENSION } from '../encryption.js';
 import type {
   Desire,
   DesireStatus,
@@ -43,6 +46,27 @@ const SUBCATEGORY = 'desires' as const;
 // Folder-based storage: each desire has its own folder at folders/{id}/
 const FOLDER_BASE = 'folders';
 
+/** Profile-relative Agency history for the existing confirmed memory reset. */
+export function getAgencyHistoryResetPaths(username: string): string[] {
+  const resolved = storageClient.resolvePath({ username, category: CATEGORY, subcategory: SUBCATEGORY });
+  if (!resolved.success || !resolved.path || !resolved.profileRoot || resolved.error) {
+    throw new Error(resolved.error || 'Agency storage is unavailable');
+  }
+  const relativeRoot = path.relative(resolved.profileRoot, resolved.path);
+  validateProfileDeletion(username, [relativeRoot]);
+  let entries: string[];
+  try { entries = fs.readdirSync(resolved.path); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  // Configuration is retained; manifests, plans, legacy copies, migration
+  // backups, metrics and the generator's evidence history are erased together.
+  return entries.filter(name => name !== 'config.json' && name !== `config.json${ENCRYPTED_EXTENSION}`)
+    .map(name => path.join(relativeRoot, name));
+}
+
+
 // ============================================================================
 // Desire Storage (Folder-Based)
 // ============================================================================
@@ -62,7 +86,7 @@ async function ensureDesireFolder(desireId: string, username?: string): Promise<
   const subdirs = ['scratchpad', 'plans', 'reviews', 'executions'];
 
   for (const subdir of subdirs) {
-    await storageClient.write({
+    const written = await storageClient.write({
       username,
       category: CATEGORY,
       subcategory: SUBCATEGORY,
@@ -70,6 +94,7 @@ async function ensureDesireFolder(desireId: string, username?: string): Promise<
       data: '',
       encoding: 'utf8',
     });
+    if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
   }
 }
 
@@ -84,7 +109,7 @@ export async function saveDesire(desire: Desire, username?: string): Promise<voi
   await ensureDesireFolder(desire.id, username);
 
   // Save manifest
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -97,6 +122,7 @@ export async function saveDesire(desire: Desire, username?: string): Promise<voi
     }, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 }
 
 /** Preserve the exact pre-migration manifest in an inert, timestamped backup. */
@@ -106,7 +132,7 @@ export async function saveDesireMigrationBackup(
   username?: string,
 ): Promise<void> {
   if (!/^[a-zA-Z0-9_-]+$/.test(migrationId)) throw new Error('Invalid Agency migration ID');
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -114,6 +140,7 @@ export async function saveDesireMigrationBackup(
     data: JSON.stringify(desire, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 }
 
 /**
@@ -283,7 +310,7 @@ export async function getDesireCount(status: DesireStatus, username?: string): P
  * Save a plan to storage.
  */
 export async function savePlan(plan: DesirePlan, username?: string): Promise<void> {
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -291,6 +318,7 @@ export async function savePlan(plan: DesirePlan, username?: string): Promise<voi
     data: JSON.stringify(plan, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 }
 
 /**
@@ -349,7 +377,7 @@ export async function loadAgencyConfig(username?: string): Promise<AgencyConfig 
  * Save agency configuration override for a user.
  */
 export async function saveAgencyConfig(config: AgencyConfig, username?: string): Promise<void> {
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -357,6 +385,7 @@ export async function saveAgencyConfig(config: AgencyConfig, username?: string):
     data: JSON.stringify(config, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 }
 
 // ============================================================================
@@ -386,7 +415,7 @@ export async function loadMetrics(username?: string): Promise<AgencyMetrics | nu
  * Save agency metrics.
  */
 export async function saveMetrics(metrics: AgencyMetrics, username?: string): Promise<void> {
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -394,6 +423,7 @@ export async function saveMetrics(metrics: AgencyMetrics, username?: string): Pr
     data: JSON.stringify(metrics, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 }
 
 /**
@@ -504,7 +534,7 @@ export async function initializeAgencyStorage(username?: string): Promise<void> 
       subcategory: SUBCATEGORY,
       relativePath: placeholderPath,
     })) {
-      await storageClient.write({
+      const written = await storageClient.write({
         username,
         category: CATEGORY,
         subcategory: SUBCATEGORY,
@@ -512,6 +542,7 @@ export async function initializeAgencyStorage(username?: string): Promise<void> 
         data: '',
         encoding: 'utf8',
       });
+      if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
     }
   }
 }
@@ -712,7 +743,7 @@ export async function addScratchpadEntryToFolder(
   const filename = getScratchpadEntryFilename(entryNumber, entry.type as DesireScratchpadEntryType);
 
   // Save the entry file
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -720,6 +751,7 @@ export async function addScratchpadEntryToFolder(
     data: JSON.stringify(entry, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 
   // Update manifest with new summary
   desire.scratchpad = updateScratchpadSummary(summary, entry);
@@ -809,7 +841,7 @@ export async function savePlanToFolder(
 ): Promise<void> {
   const folderPath = getDesireFolderPath(desireId);
 
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -817,6 +849,7 @@ export async function savePlanToFolder(
     data: JSON.stringify(plan, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 
   // Update manifest metrics
   const desire = await loadDesireFromFolder(desireId, username);
@@ -879,7 +912,7 @@ export async function saveDesireReviewToFolder(
 ): Promise<void> {
   const folderPath = getDesireFolderPath(desireId);
 
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -887,6 +920,7 @@ export async function saveDesireReviewToFolder(
     data: JSON.stringify(review, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 }
 
 /** Load one plan or outcome review from the desire's canonical review folder. */
@@ -918,7 +952,7 @@ export async function saveExecutionToFolder(
 ): Promise<void> {
   const folderPath = getDesireFolderPath(desireId);
 
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -926,6 +960,7 @@ export async function saveExecutionToFolder(
     data: JSON.stringify(execution, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 }
 
 /**
@@ -1157,7 +1192,7 @@ export async function saveGeneratorScratchpad(
     scratchpad.analyzedInputTokens = scratchpad.analyzedInputTokens.slice(-scratchpad.maxTrackedIds);
   }
 
-  await storageClient.write({
+  const written = await storageClient.write({
     username,
     category: CATEGORY,
     subcategory: SUBCATEGORY,
@@ -1165,6 +1200,7 @@ export async function saveGeneratorScratchpad(
     data: JSON.stringify(scratchpad, null, 2),
     encoding: 'utf8',
   });
+  if (!written.success) throw new Error(written.error || 'Failed to persist Agency data');
 }
 
 /**

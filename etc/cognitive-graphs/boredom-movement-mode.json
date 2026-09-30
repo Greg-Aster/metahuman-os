@@ -235,6 +235,21 @@
         "nodeType": "workflow_call",
         "properties": {}
       }
+    },
+    {
+      "id": "observation-history",
+      "type": "contextNode",
+      "position": {
+        "x": 410,
+        "y": 970
+      },
+      "data": {
+        "label": "Observation History",
+        "nodeType": "observation_history",
+        "properties": {
+          "limit": 5
+        }
+      }
     }
   ],
   "edges": [
@@ -467,6 +482,28 @@
       "type": "default",
       "data": {
         "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-observation-observation-observation-history-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "observation-history",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-observation-history-observations-planner-context-observationHistory",
+      "source": "observation-history",
+      "sourceHandle": "observations",
+      "target": "planner-context",
+      "targetHandle": "observationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
       }
     }
   ]

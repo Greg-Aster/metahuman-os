@@ -7,7 +7,7 @@
 
   type DefaultBackend = 'auto' | 'ollama' | 'vllm';
   type ResolvedBackend = 'ollama' | 'vllm' | 'local-models' | 'remote' | 'offline';
-  type BigBrotherProvider = 'claude-code' | 'open-interpreter' | 'aider' | 'gemini-cli' | 'qwen-code' | 'codex';
+  type BigBrotherProvider = 'claude-code' | 'aider' | 'gemini-cli' | 'qwen-code' | 'codex';
 
   interface BackendAvailability {
     ollama: { installed: boolean; running: boolean; model?: string };
@@ -97,7 +97,6 @@
 
   const bigBrotherProviderOptions: { value: BigBrotherProvider; label: string; description: string }[] = [
     { value: 'claude-code', label: 'Claude Code', description: 'Runs in the visible Big Brother terminal' },
-    { value: 'open-interpreter', label: 'Open Interpreter', description: 'Uses RunPod or other configured LLM' },
     { value: 'aider', label: 'Aider', description: 'AI pair programming with git integration' },
     { value: 'gemini-cli', label: 'Gemini CLI', description: 'Google Gemini CLI' },
     { value: 'qwen-code', label: 'Qwen Code', description: 'Qwen Code CLI' },
@@ -213,10 +212,6 @@
     needsAuth?: boolean;
   } | null = null;
 
-  let interpreterStatus: { running: boolean; version?: string; available: boolean } | null = null;
-  let interpreterStarting = false;
-  let interpreterStopping = false;
-
   let bigBrotherConfig: BigBrotherConfig | null = null;
   let bigBrotherEnabled = false;
   let bigBrotherDelegateAll = false;
@@ -228,7 +223,6 @@
       void refreshVllmMemoryPlan();
       void loadOllamaLoras();
     });
-    loadInterpreterStatus();
     loadBigBrotherConfig();
     loadVllmLoras();
   });
@@ -486,7 +480,7 @@
       vllmLoraDtype = data.config?.loraDtype || 'auto';
     } catch (err) {
       console.error('[BackendSettings] vLLM LoRA settings failed:', err);
-      vllmLoraAdapters = [];
+      error = 'Could not load vLLM adapter settings: ' + (err as Error).message;
     } finally {
       loadingVllmLoras = false;
     }
@@ -762,65 +756,6 @@
       error = `Failed to ${action} ${getBackendLabel(backend)}`;
     } finally {
       actionInProgress = null;
-    }
-  }
-
-  async function loadInterpreterStatus() {
-    try {
-      const res = await apiFetch('/api/interpreter-status');
-      if (res.ok) {
-        interpreterStatus = await res.json();
-      }
-    } catch (err) {
-      console.error('[BackendSettings] Error loading interpreter status:', err);
-    }
-  }
-
-  async function startInterpreter() {
-    interpreterStarting = true;
-    clearMessages();
-
-    try {
-      const res = await apiFetch('/api/interpreter-status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'start' }),
-      });
-
-      if (res.ok) {
-        await loadInterpreterStatus();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        error = data.error || 'Failed to start Open Interpreter';
-      }
-    } catch (err) {
-      error = 'Failed to start Open Interpreter';
-    } finally {
-      interpreterStarting = false;
-    }
-  }
-
-  async function stopInterpreter() {
-    interpreterStopping = true;
-    clearMessages();
-
-    try {
-      const res = await apiFetch('/api/interpreter-status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'stop' }),
-      });
-
-      if (res.ok) {
-        await loadInterpreterStatus();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        error = data.error || 'Failed to stop Open Interpreter';
-      }
-    } catch (err) {
-      error = 'Failed to stop Open Interpreter';
-    } finally {
-      interpreterStopping = false;
     }
   }
 
@@ -1546,7 +1481,7 @@
                     <div class="space-y-2">
                       {#each vllmLoraAdapters as adapter}
                         <label class="flex items-start gap-2 rounded-md border border-gray-200 dark:border-gray-700 p-2 text-sm">
-                          <input type="checkbox" bind:group={vllmEnabledLoras} value={adapter.name} disabled={!adapter.valid} class="mt-0.5 w-4 h-4 accent-violet-600" />
+                          <input type="checkbox" bind:group={vllmEnabledLoras} value={adapter.name} disabled={!adapter.valid && !vllmEnabledLoras.includes(adapter.name)} class="mt-0.5 w-4 h-4 accent-violet-600" />
                           <span class="min-w-0">
                             <span class="block font-medium text-gray-800 dark:text-gray-200">
                               {adapter.name}
@@ -1561,6 +1496,13 @@
                       {/each}
                     </div>
                   {/if}
+
+                  {#each vllmEnabledLoras.filter(name => !vllmLoraAdapters.some(adapter => adapter.name === name)) as missingName}
+                    <div class="rounded-md border border-amber-600 p-2 text-sm">
+                      <p>Enabled adapter unavailable: {missingName}. Remove this selection and save to unblock startup.</p>
+                      <button type="button" class="btn-secondary" on:click={() => vllmEnabledLoras = vllmEnabledLoras.filter(name => name !== missingName)}>Remove unavailable adapter</button>
+                    </div>
+                  {/each}
 
                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label class="block text-sm">
@@ -1732,6 +1674,9 @@
 
       <label for="big-brother-provider" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Escalation Provider</label>
       <select id="big-brother-provider" bind:value={bigBrotherProvider} on:change={saveBigBrotherConfig} disabled={savingBigBrother} class="select-field w-full mb-3">
+        {#if !bigBrotherProviderOptions.some(option => option.value === bigBrotherProvider)}
+          <option value={bigBrotherProvider} disabled>Unavailable provider — choose a replacement</option>
+        {/if}
         {#each bigBrotherProviderOptions as opt}
           <option value={opt.value}>{opt.label} - {opt.description}</option>
         {/each}
@@ -1748,30 +1693,6 @@
         </div>
       </div>
 
-      {#if bigBrotherProvider === 'open-interpreter'}
-        <div class="mt-3 bg-black/5 dark:bg-white/5 rounded-lg p-3">
-          <h5 class="text-sm font-semibold mb-2">Open Interpreter Server</h5>
-          <div class="flex items-center gap-2 mb-2">
-            <span class="text-sm text-gray-500 dark:text-gray-400">Status:</span>
-            <span class="text-sm font-semibold {interpreterStatus?.running ? 'text-green-600 dark:text-green-400' : 'text-yellow-700 dark:text-yellow-300'}">
-              {interpreterStatus?.running ? 'Running' : interpreterStatus?.available ? 'Stopped' : 'Not available'}
-            </span>
-          </div>
-          <div class="flex items-center gap-2">
-            {#if interpreterStatus?.running}
-              <button class="btn-danger btn-sm" on:click={stopInterpreter} disabled={interpreterStopping}>
-                {interpreterStopping ? 'Stopping...' : 'Stop Server'}
-              </button>
-            {:else if interpreterStatus?.available}
-              <button class="btn-success btn-sm" on:click={startInterpreter} disabled={interpreterStarting}>
-                {interpreterStarting ? 'Starting...' : 'Start Server'}
-              </button>
-            {:else}
-              <span class="text-xs text-gray-500 dark:text-gray-400 font-mono">Run: bin/start-interpreter</span>
-            {/if}
-          </div>
-        </div>
-      {/if}
     </section>
 
     <section class="panel p-4 bg-fuchsia-50/50 dark:bg-fuchsia-900/10 border-fuchsia-200 dark:border-fuchsia-800">

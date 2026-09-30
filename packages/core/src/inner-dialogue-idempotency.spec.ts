@@ -134,7 +134,8 @@ test('Inner Buffer derives a role-scoped key and reuses durable text on retry', 
   assert.equal(partial.saved, true)
   assert.equal(jsonFiles(getProfilePaths(username).episodic).length, 0)
 
-  const retry = await admit('A changed model response on retry.')
+  await assert.rejects(admit('A changed model response on retry.'), /conflict/i)
+  const retry = await admit('The first durable reflection.')
   const save = await withUserContext(
     { userId: 'real-user-id', username, role: 'owner' },
     () => InnerDialogueSaverNode.execute({ entries: retry.entries }, {
@@ -142,7 +143,7 @@ test('Inner Buffer derives a role-scoped key and reuses durable text on retry', 
       recordPersonaMemory: true,
     }, {}),
   )
-  const repeated = await admit('Another changed response.')
+  const repeated = await admit('The first durable reflection.')
   const repeatedSave = await withUserContext(
     { userId: 'real-user-id', username, role: 'owner' },
     () => InnerDialogueSaverNode.execute({ entries: repeated.entries }, {
@@ -159,7 +160,7 @@ test('Inner Buffer derives a role-scoped key and reuses durable text on retry', 
   const buffer = loadBufferForUser(username, 'inner')
   assert.equal(buffer.messages.length, 1)
   assert.equal(buffer.messages[0]?.content, 'The first durable reflection.')
-  assert.equal(buffer.messages[0]?.meta?.idempotencyKey, `${executionKey}:reflection`)
+  assert.equal(buffer.messages[0]?.meta?.idempotencyKey, `${executionKey}:reflection:0`)
 
   const memories = jsonFiles(getProfilePaths(username).episodic)
   assert.equal(memories.length, 1)

@@ -9,5 +9,5 @@ export const LEGACY_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID = 'ollama.environment-a
 export const LEGACY_ENVIRONMENT_ROUTER_ROLE = 'environmentRouter';
 
 /** Maintained Qwen 3.5 training bases. */
-export const DEFAULT_TRAINING_MODEL = 'unsloth/Qwen3.5-9B';
-export const DEFAULT_VLLM_TRAINING_MODEL = 'Qwen/Qwen3.5-9B';
+export const DEFAULT_TRAINING_MODEL = 'unsloth/Qwen3.5-4B';
+export const DEFAULT_VLLM_TRAINING_MODEL = 'Qwen/Qwen3.5-4B';

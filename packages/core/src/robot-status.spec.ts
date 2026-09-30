@@ -213,6 +213,9 @@ test('Robot Status projects execution lifecycle without rewriting or reviving it
       assert.equal(read.task.executionStatus, state)
       assert.equal(read.task.objective, task.objective, 'Historical objectives remain inspectable')
       assert.equal(read.context.situation.currentGoal, ['running', 'waiting'].includes(state) ? task.objective : '')
+      if (['running', 'waiting'].includes(state)) {
+        assert.equal(read.context.situation.currentIntent, task.decision.reason, 'Active intent comes from the same execution as its objective')
+      }
       assert.deepEqual(store.task(execution.executionId), task, 'A status read cannot rewrite the execution decision')
       const saved = saveRobotStatus(username, situation, sources)
       assert.equal(saved.situation.currentGoal, read.context.situation.currentGoal)
@@ -225,11 +228,17 @@ test('out-of-order projections retain facts together with their independent sour
   const username = 'robot-status-out-of-order'
   const time = (second: number) => `2026-08-27T18:00:${String(second).padStart(2, '0')}.000Z`
   const latest = structuredClone(sources)
+  const visual = {
+    observationId: 'visual-source:save:visual-observation', executionId: 'visual-source', occurrenceId: 'visual-source:save',
+    environmentId: latest.body.environmentId, adapter: 'fixture-adapter', robotId: null, sessionId: latest.body.sessionId,
+    interpretedAt: time(11), summary: 'An object is visible near a chair.', uncertainties: ['Its identity is uncertain.'],
+    frameIds: ['latest-frame'], frames: [{ id: 'latest-frame', timestamp: time(10), actionId: 'newest-action' }],
+  }
   latest.sourceUpdatedAt = { environment: time(10), telemetry: time(20), conversation: time(10), robotHistory: time(10), agency: time(10) }
   latest.lastAction = { ...latest.lastAction, actionId: 'newest-action', completedAt: time(10) }
   latest.body = { ...latest.body, observationAt: time(10), telemetryAt: time(20),
     battery: { voltage: 7.4, observedAt: time(20) }, motion: { available: true, activity: 'idle', observedAt: time(10) } }
-  saveRobotStatus(username, situation, latest)
+  saveRobotStatus(username, situation, { ...latest, latestVisualObservation: visual })
 
   for (const second of [8, 9, 10]) {
     const older = structuredClone(latest)
@@ -239,7 +248,11 @@ test('out-of-order projections retain facts together with their independent sour
     older.lastAction = { ...older.lastAction, actionId: `older-action-${second}`, completedAt: time(Math.min(second, 9)) }
     older.body = { ...older.body, observationAt: time(second), telemetryAt: time(15), telemetry: { vbat: 6.2 },
       battery: { voltage: 6.2, observedAt: time(15) }, motion: { available: false, activity: 'old-state', observedAt: time(8) } }
-    const snapshot = saveRobotStatus(username, situation, older)
+    const snapshot = saveRobotStatus(username, situation, { ...older, latestVisualObservation: {
+      ...visual, observationId: 'older-view', interpretedAt: time(25), frameIds: ['older-frame'],
+      frames: [{ id: 'older-frame', timestamp: time(7) }],
+    } })
+    assert.deepEqual(snapshot.latestVisualObservation, visual, 'A later interpretation of an old image is not a newer view')
     assert.equal(snapshot.lastAction?.actionId, 'newest-action')
     assert.equal(snapshot.sourceUpdatedAt.robotHistory, time(10))
     assert.equal(snapshot.body?.observationAt, time(10))
@@ -257,6 +270,7 @@ test('out-of-order projections retain facts together with their independent sour
   freshTelemetry.sourceUpdatedAt.environment = time(9)
   freshTelemetry.sourceUpdatedAt.telemetry = time(25)
   const updated = saveRobotStatus(username, situation, freshTelemetry)
+  assert.deepEqual(updated.latestVisualObservation, visual, 'A general refresh retains image identity and capture time')
   assert.equal(updated.body?.observationAt, time(10))
   assert.equal(updated.body?.telemetryAt, time(25))
   assert.deepEqual(updated.body?.battery, freshTelemetry.body.battery)
@@ -395,7 +409,7 @@ test('Robot Status writer and reusable input node share the same canonical snaps
   assert.match(written.event.content, /Last action: Wave\. — completed/)
   assert.match(written.event.content, /Environment: A dim work area is the latest supported environment context\./)
   assert.match(written.event.content, /Goal: Continue inspecting the work area\./)
-  assert.match(written.event.content, /Intent: Use the next fresh observation to choose a useful continuation\./)
+  assert.match(written.event.content, /Intent: Inspect the work area\./)
   assert.match(written.event.content, /User context: The user is working nearby\./)
   assert.match(written.event.content, /Active desires: Find the cat \(planning\)/)
   assert.match(written.event.content, /Uncertainties: No fresh image was supplied to this status update\./)
@@ -596,6 +610,22 @@ test('Robot Status Out preserves the execution origin rather than inferring stee
   assert.equal(restated.task.instruction, 'Inspect the keys when useful.')
   assert.equal(restated.task.source, 'autonomy')
   assert.equal(restated.task.objectiveId, initial.task.objectiveId)
+})
+
+test('a new workflow does not copy a previous workflow intent into its new user context', async () => {
+  const username = 'robot-status-intent-owner'
+  await statusGraph(username, [{ inputs: {
+    userInstruction: 'The earlier activity.', response: 'That activity is finished.',
+    taskDecision: { objective: 'An earlier activity.', completionCriteria: 'The activity is finished.',
+      outcome: 'complete', objectiveComplete: true, reason: 'The earlier activity is finished.' },
+  } }])
+  const { outputs: [next] } = await statusGraph(username, [{ inputs: {
+    userInstruction: 'A separate conversation.', response: 'A new conversational reply.', taskDecision: null,
+  } }])
+  assert.equal(next.status.situation.userContext, 'A separate conversation.')
+  assert.equal(next.status.situation.currentIntent, '')
+  assert.ok(next.status.history.some((entry: any) => entry.currentIntent === 'The earlier activity is finished.'),
+    'The previous assessment remains history rather than being relabelled as current')
 })
 
 test('Robot Status Out records a new action within the execution without replacing its objective', async () => {

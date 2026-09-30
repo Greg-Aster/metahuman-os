@@ -265,27 +265,7 @@ export function getEventBus(options?: EventBusClientOptions): EventBusClient {
  */
 export const eventBus = getEventBus();
 
-// Install cleanup handlers to ensure the event bus disconnects on process exit
-// This prevents Node.js from hanging when CLI commands finish
+// Transport cleanup must not exit the process ahead of its service owner.
 if (typeof process !== 'undefined') {
-  const cleanup = () => {
-    if (instance) {
-      instance.disconnect();
-    }
-  };
-
-  // Handle normal exit
-  process.on('beforeExit', cleanup);
-
-  // Handle SIGINT (Ctrl+C)
-  process.on('SIGINT', () => {
-    cleanup();
-    process.exit(0);
-  });
-
-  // Handle SIGTERM
-  process.on('SIGTERM', () => {
-    cleanup();
-    process.exit(0);
-  });
+  process.once('exit', () => instance?.disconnect());
 }

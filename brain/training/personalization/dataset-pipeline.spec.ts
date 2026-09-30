@@ -3,198 +3,108 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { CURATOR_POLICY_VERSION, episodicSourceHash, setAuditEnabled, type CuratedMemory, type EpisodicEvent } from '@metahuman/core'
+import { parseTrainingDataSettings } from '@metahuman/core/training-schema'
+import { parsePositiveInteger, parseCognitiveMode, preparePersonalizationDataset, type PersonalizationProgram } from './dataset-pipeline.js'
 
-import type { FormattedSample, SchemaAppliedSample } from '@metahuman/core/schema-manager'
-
-import {
-  parsePositiveInteger,
-  parseCognitiveMode,
-  preparePersonalizationDataset,
-  type PersonalizationProgram,
-  type ProgramRunner,
-} from './dataset-pipeline.js'
-
-const formattedSamples: FormattedSample[] = [{
-  mode: 'dual',
-  input: 'question',
-  output: 'answer',
-  metadata: { original_id: 'sample-1', source_type: 'conversation' },
-}]
-
-const schemaSamples: SchemaAppliedSample[] = [{
-  ...formattedSamples[0],
-  input: '<wrapped>question</wrapped>',
-  output: '<wrapped>answer</wrapped>',
-  raw_input: 'question',
-  raw_output: 'answer',
-  schema_family: 'test',
-}]
-
-function createRunner(
-  calls: PersonalizationProgram[],
-  capturedArgs?: Partial<Record<PersonalizationProgram, string[]>>,
-): ProgramRunner {
-  return async (program, args) => {
-    calls.push(program)
-    if (capturedArgs) capturedArgs[program] = [...args]
-    const outputIndex = args.indexOf('--output')
-    const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : undefined
-    if (program === 'curated-aggregator' && outputPath) {
-      fs.writeFileSync(outputPath, '[]')
-    }
-    if (program === 'mode-formatter' && outputPath) {
-      fs.writeFileSync(outputPath, JSON.stringify(formattedSamples))
-    }
-    if (program === 'training-exporter' && outputPath) {
-      fs.writeFileSync(outputPath, `${JSON.stringify({ input: schemaSamples[0]!.input, output: schemaSamples[0]!.output })}\n`)
-    }
-    return 0
-  }
+const cutoff = '2026-09-09T00:00:00Z'
+setAuditEnabled(false)
+const settings = parseTrainingDataSettings({ objective: 'assistant-continuation', includePersona: false })
+function inputs() {
+  const sources: EpisodicEvent[] = Array.from({ length: 40 }, (_, i) => ({
+    id: 'source-' + i, timestamp: '2026-09-01T00:00:00Z', type: 'conversation',
+    content: 'Question ' + i, response: 'Answer ' + i, metadata: { cognitiveMode: 'emulation' },
+  }))
+  const records: CuratedMemory[] = sources.map(source => ({
+    id: source.id, originalTimestamp: source.timestamp, conversationalEssence: 'Synthetic test example',
+    context: '', userMessage: source.content, assistantResponse: source.response,
+    curatedAt: cutoff, flags: [], suitableForTraining: true, cognitiveMode: 'emulation',
+    cognitiveModeSource: 'metadata', memoryType: 'conversation', sourceMemoryIds: [source.id],
+    provenance: { policyVersion: CURATOR_POLICY_VERSION, kind: 'recorded-exchange',
+      sourceHashes: { [source.id]: episodicSourceHash(source) }, sessionId: source.id },
+  }))
+  return { records, sources, cutoff, errors: [] }
+}
+function options(t: test.TestContext) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-personalization-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  return { actor: 'test', baseModel: 'test-model', username: 'test-user', logPrefix: 'test',
+    outputRoot: root, datasetPaths: [path.join(root, 'train.jsonl')], cutoff }
 }
 
-test('prepares one instruction dataset through the canonical stages', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-personalization-'))
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+test('the canonical pipeline writes exact messages, independent evaluation and a frozen manifest', async t => {
+  const opts = options(t)
+  opts.datasetPaths.push(path.join(opts.outputRoot, 'archive', 'dataset.jsonl'))
   const calls: PersonalizationProgram[] = []
-  const primaryPath = path.join(root, 'work', 'dataset.jsonl')
-  const archivePath = path.join(root, 'output', 'dataset.jsonl')
-
-  const result = await preparePersonalizationDataset({
-    actor: 'test',
-    baseModel: 'test-model',
-    datasetPaths: [primaryPath, archivePath],
-    format: 'instruction',
-    logPrefix: 'test',
-    maxSamples: 12,
-    modeFilter: 'dual',
-    outputRoot: path.join(root, 'stages'),
-    username: 'test-user',
-  }, {
-    applySchema: () => schemaSamples,
-    runProgram: createRunner(calls),
+  const args: string[][] = []
+  const result = await preparePersonalizationDataset(opts, {
+    settings, inspection: inputs(),
+    runProgram: async (program, arguments_) => { calls.push(program); args.push(arguments_); return 0 },
   })
-
-  assert.deepEqual(calls, ['organizer', 'curator', 'curated-aggregator', 'mode-formatter'])
-  assert.equal(result.sampleCount, 1)
-  assert.equal(fs.readFileSync(primaryPath, 'utf8'), fs.readFileSync(archivePath, 'utf8'))
-  assert.deepEqual(JSON.parse(fs.readFileSync(primaryPath, 'utf8')), {
-    instruction: '<wrapped>question</wrapped>',
-    input: '',
-    output: '<wrapped>answer</wrapped>',
-  })
-})
-
-test('uses the validated exporter and can skip pre-curation', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-personalization-'))
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  const calls: PersonalizationProgram[] = []
-  const datasetPath = path.join(root, 'dataset.jsonl')
-
-  const result = await preparePersonalizationDataset({
-    actor: 'test',
-    baseModel: 'test-model',
-    datasetPaths: [datasetPath],
-    format: 'input-output',
-    logPrefix: 'test',
-    outputRoot: path.join(root, 'stages'),
-    skipPreprocessing: true,
-    username: 'test-user',
-  }, {
-    applySchema: () => schemaSamples,
-    runProgram: createRunner(calls),
-  })
-
-  assert.deepEqual(calls, ['curated-aggregator', 'mode-formatter', 'training-exporter'])
-  assert.equal(result.sampleCount, 1)
-})
-
-test('passes rolling-window controls to the canonical curated aggregator', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-personalization-'))
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  const calls: PersonalizationProgram[] = []
-  const capturedArgs: Partial<Record<PersonalizationProgram, string[]>> = {}
-
-  await preparePersonalizationDataset({
-    actor: 'test',
-    baseModel: 'test-model',
-    datasetPaths: [path.join(root, 'dataset.jsonl')],
-    format: 'instruction',
-    logPrefix: 'test',
-    olderSamples: 777,
-    outputRoot: path.join(root, 'stages'),
-    recentDays: 45,
-    skipPreprocessing: true,
-    username: 'test-user',
-  }, {
-    applySchema: () => schemaSamples,
-    runProgram: createRunner(calls, capturedArgs),
-  })
-
-  assert.deepEqual(capturedArgs['curated-aggregator']?.slice(-4), [
-    '--days-recent', '45', '--old-samples', '777',
-  ])
-})
-
-test('stops immediately when a canonical preparation stage fails', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-personalization-'))
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  const calls: PersonalizationProgram[] = []
-
-  await assert.rejects(
-    preparePersonalizationDataset({
-      actor: 'test',
-      baseModel: 'test-model',
-      datasetPaths: [path.join(root, 'dataset.jsonl')],
-      format: 'instruction',
-      logPrefix: 'test',
-      outputRoot: path.join(root, 'stages'),
-      username: 'test-user',
-    }, {
-      applySchema: () => schemaSamples,
-      runProgram: async program => {
-        calls.push(program)
-        return 7
-      },
-    }),
-    /organizer failed with exit code 7/,
-  )
-  assert.deepEqual(calls, ['organizer'])
-})
-
-test('stops after Organizer when Curator fails', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-personalization-'))
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  const calls: PersonalizationProgram[] = []
-
-  await assert.rejects(
-    preparePersonalizationDataset({
-      actor: 'test',
-      baseModel: 'test-model',
-      datasetPaths: [path.join(root, 'dataset.jsonl')],
-      format: 'instruction',
-      logPrefix: 'test',
-      outputRoot: path.join(root, 'stages'),
-      username: 'test-user',
-    }, {
-      applySchema: () => schemaSamples,
-      runProgram: async program => {
-        calls.push(program)
-        return program === 'curator' ? 7 : 0
-      },
-    }),
-    /curator failed with exit code 7/,
-  )
   assert.deepEqual(calls, ['organizer', 'curator'])
+  assert.deepEqual(args[1]!.slice(-2), ['--cutoff', cutoff])
+  assert.ok(result.sampleCount > 0 && result.evaluationCount > 0)
+  const text = fs.readFileSync(opts.datasetPaths[0]!, 'utf8')
+  assert.equal(text, fs.readFileSync(opts.datasetPaths[1]!, 'utf8'))
+  const rows = text.trim().split('\n').map(line => JSON.parse(line))
+  assert.equal(rows.length, result.sampleCount)
+  for (const row of rows) {
+    assert.deepEqual(row.messages, [
+      { role: 'user', content: 'Question ' + row.metadata.sourceIds[0].split('-').at(-1) },
+      { role: 'assistant', content: 'Answer ' + row.metadata.sourceIds[0].split('-').at(-1) },
+    ])
+    assert.equal(row.input, undefined)
+    assert.equal(row.instruction, undefined)
+  }
+  const manifest = JSON.parse(fs.readFileSync(result.manifestPath, 'utf8'))
+  assert.equal(manifest.datasetId, result.datasetId)
+  assert.equal(manifest.supervision, 'final-assistant-only')
+  assert.equal(manifest.settings.includePersona, false)
+  assert.equal(manifest.baseModel, 'test-model')
+  assert.ok(manifest.train.sourceIds.every((id: string) => !manifest.evaluation.sourceIds.includes(id)))
+  await assert.rejects(() => preparePersonalizationDataset(opts, { settings, inspection: inputs() }), /already has a frozen dataset/)
 })
 
-test('rejects invalid positive integer limits', () => {
+test('identical frozen data and controls produce identical manifests across run directories', async t => {
+  const first = await preparePersonalizationDataset({ ...options(t), skipPreprocessing: true }, { settings, inspection: inputs() })
+  const second = await preparePersonalizationDataset({ ...options(t), skipPreprocessing: true }, { settings, inspection: inputs() })
+  assert.equal(first.datasetId, second.datasetId)
+  assert.equal(fs.readFileSync(first.manifestPath, 'utf8'), fs.readFileSync(second.manifestPath, 'utf8'))
+})
+
+test('no dataset is committed if either required preprocessing stage fails', async t => {
+  for (const failed of ['organizer', 'curator'] as const) {
+    const opts = options(t)
+    const calls: PersonalizationProgram[] = []
+    await assert.rejects(preparePersonalizationDataset(opts, {
+      settings, inspection: inputs(),
+      runProgram: async program => { calls.push(program); return program === failed ? 7 : 0 },
+    }), new RegExp(failed + ' failed with exit code 7'))
+    assert.deepEqual(calls, failed === 'organizer' ? ['organizer'] : ['organizer', 'curator'])
+    assert.equal(fs.existsSync(path.join(opts.outputRoot, 'dataset-manifest.json')), false)
+  }
+})
+
+test('preparation rejects absent evaluation groups, zero-weight data and changed cutoffs', async t => {
+  const inspection = inputs()
+  const common = { ...options(t), skipPreprocessing: true }
+  await assert.rejects(preparePersonalizationDataset(common, {
+    settings, inspection: { ...inspection, cutoff: '2025-01-01T00:00:00Z' },
+  }), /does not match/)
+  await assert.rejects(preparePersonalizationDataset(common, {
+    settings: parseTrainingDataSettings({ ...settings, memoryTypes: { percentages: { conversation: 0 } } }), inspection,
+  }), /No eligible training examples/)
+  const oneGroup = { ...inspection, records: inspection.records.map(record => ({
+    ...record, provenance: { ...record.provenance!, sessionId: 'one-session' },
+  })) }
+  await assert.rejects(preparePersonalizationDataset(common, { settings, inspection: oneGroup }), /No independent evaluation group|No eligible training examples/)
+  assert.equal(fs.existsSync(common.datasetPaths[0]!), false)
+})
+
+test('limits and mode filters are strict', () => {
   assert.equal(parsePositiveInteger('12', 'limit'), 12)
   assert.throws(() => parsePositiveInteger('0', 'limit'), /positive integer/)
   assert.throws(() => parsePositiveInteger('2.5', 'limit'), /positive integer/)
-})
-
-test('rejects unsupported cognitive mode filters', () => {
-  assert.equal(parseCognitiveMode('dual', 'mode'), 'dual')
   assert.equal(parseCognitiveMode('environment', 'mode'), 'environment')
   assert.throws(() => parseCognitiveMode('all', 'mode'), /dual, emulation, agent, or environment/)
 })

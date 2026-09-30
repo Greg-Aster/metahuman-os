@@ -204,6 +204,11 @@ fi
 
 # Stop all MetaHuman agents via CLI
 echo "Stopping MetaHuman agents..."
+# Stop owned shell/provider sessions before the generic agent shutdown.
+if [ -x "$REPO_ROOT/bin/mh" ]; then
+    run_with_timeout 15 "$REPO_ROOT/bin/mh" terminal stop || print_warning "Terminal owner did not stop cleanly; inspect Agent Monitor"
+fi
+
 if [ -x "$REPO_ROOT/bin/mh" ]; then
     run_with_timeout 15 "$REPO_ROOT/bin/mh" agent stop --all 2>/dev/null || print_warning "Agent CLI stop did not exit cleanly; continuing with process cleanup"
 else
@@ -219,19 +224,6 @@ kill_repo_process_pattern "audio-organizer" "Audio Organizer"
 # Stop any running agents by pattern
 kill_repo_process_pattern "packages/core/src/agent-bootstrap.ts" "MetaHuman Agents"
 kill_repo_process_pattern "brain/agents" "Background Agents"
-
-# Stop terminal processes through their scoped listener ports. The terminal API
-# owns terminal-N PID files; there is no second standalone terminal launcher.
-echo "Stopping terminal servers..."
-for terminal_port in $(seq 3001 3010); do
-    kill_repo_port "$terminal_port" "Terminal Server"
-done
-
-# Stop Big Brother terminal (port 3099)
-echo "Stopping Big Brother terminal..."
-if [ -x "$REPO_ROOT/bin/mh" ]; then
-    run_with_timeout 15 "$REPO_ROOT/bin/mh" big-brother stop 2>/dev/null || print_warning "Big Brother lifecycle owner did not stop cleanly"
-fi
 
 # Stop vLLM before voice/web cleanup so GPU memory is released promptly.
 stop_vllm

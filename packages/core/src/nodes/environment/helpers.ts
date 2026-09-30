@@ -174,6 +174,7 @@ export function projectRobotStatusContext(value: unknown): unknown {
   const task = isRecord(value.task) ? value.task : null;
   return {
     updatedAt: value.updatedAt,
+    ...(value.latestVisualObservation ? { latestVisualObservation: value.latestVisualObservation } : {}),
     body: body
       ? projectSelectorEvidence({
           sessionId: body.sessionId,
@@ -247,6 +248,9 @@ export function projectRobotCommandDescriptions(
 }
 
 export interface EnvironmentSelectorEnvelopeInput {
+  /** Frames selected alongside the attached images, in the same order. */
+  visualFrames?: EnvironmentVisualFrame[];
+  observationHistory?: import('../../visual-observation.js').VisualObservationRecord[];
   execution?: unknown;
   instruction: string;
   observation?: EnvironmentObservation | null;
@@ -314,10 +318,7 @@ export function buildEnvironmentSelectorEnvelope(
   const robotCommandDescriptions = observation
     ? projectRobotCommandDescriptions(observation.capabilities)
     : {};
-  const frames = observation
-    ? [observation.visual, ...(observation.visuals ?? [])]
-    .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame))
-    .slice(-2)
+  const frames = (input.visualFrames ?? [])
     .map(frame => ({
       id: frame.id,
       timestamp: frame.timestamp,
@@ -328,8 +329,7 @@ export function buildEnvironmentSelectorEnvelope(
       actionId: typeof frame.metadata?.actionId === 'string'
         ? frame.metadata.actionId
         : undefined,
-    }))
-    : [];
+    }));
   const feedback = (observation?.feedback ?? []).slice(-3).map(event => ({
     type: event.type,
     actionId: event.actionId,
@@ -382,12 +382,13 @@ export function buildEnvironmentSelectorEnvelope(
     activePersona: input.personaText?.trim().slice(0, 2_000) || null,
     robotStatus: projectRobotStatusContext(input.robotStatus),
     execution: input.execution ?? null,
+    ...(input.observationHistory?.length ? { observationHistory: input.observationHistory } : {}),
     ...(input.replyToContent?.trim()
       ? { replyToContext: input.replyToContent.trim().slice(0, 500) }
       : {}),
-    recentConversation: (input.recentConversation ?? []).slice(-4).map(message => ({
+    recentConversation: (input.recentConversation ?? []).map(message => ({
       role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: message.content.slice(0, SELECTOR_MAX_STRING_LENGTH),
+      content: message.content,
     })),
     memories: (input.memories ?? []).slice(0, 3).map(memory => memory.slice(0, 500)),
   });
@@ -520,8 +521,7 @@ function parseTaskDecision(
   if (!objective) {
     return { decision: null, error: 'taskDecision objective must be a non-empty string' };
   }
-  if (record.completionCriteria !== undefined
-    && (typeof record.completionCriteria !== 'string' || !record.completionCriteria.trim())) {
+  if (typeof record.completionCriteria !== 'string' || !record.completionCriteria.trim()) {
     return { decision: null, error: 'taskDecision completionCriteria must be a non-empty string' };
   }
   const requiredCompletionBasis = typeof record.requiredCompletionBasis === 'string'
@@ -579,9 +579,7 @@ function parseTaskDecision(
       ...(typeof record.completionCriteria === 'string' && record.completionCriteria.trim()
         ? { completionCriteria: record.completionCriteria.trim() } : {}),
       objective,
-      objectiveComplete: typeof record.objectiveComplete === 'boolean'
-        ? record.objectiveComplete
-        : outcome === 'complete',
+      objectiveComplete: outcome === 'complete',
       ...(continuationPolicy ? { continuationPolicy } : {}),
       ...(requiredCompletionBasis ? { requiredCompletionBasis } : {}),
       ...(motionClass ? { motionClass } : {}),
@@ -595,22 +593,24 @@ function parseTaskDecision(
 }
 
 export interface EnvironmentModelOutput {
+  visualObservation?: unknown;
   response: string;
   actions: Partial<EnvironmentAction>[];
   movementRequest: (Omit<EnvironmentMovementRequest, 'motionClass'> & {
     motionClass?: EnvironmentMovementRequest['motionClass'];
   }) | null;
-  taskDecision: EnvironmentTaskDecision | null;
+  taskDecision: (Omit<EnvironmentTaskDecision, 'objectiveComplete' | 'completionCriteria'> & {
+    completionCriteria: string;
+  }) | null;
 }
 
 const SELECTOR_SCHEMA_STRING = { type: 'string' } as const;
 const SELECTOR_SCHEMA_COMPLETION_BASES = ENVIRONMENT_COMPLETION_BASES.filter(value => value !== 'none');
 const SELECTOR_SCHEMA_DECISION_PROPERTIES = {
-  outcome: { type: 'string', enum: [...ENVIRONMENT_TASK_OUTCOMES] },
-  reason: { type: 'string', minLength: 1 },
   objective: { type: 'string', minLength: 1 },
   completionCriteria: { type: 'string', minLength: 1, description: 'Observable success condition for this objective, not merely the next movement.' },
-  objectiveComplete: { type: 'boolean' },
+  outcome: { type: 'string', enum: [...ENVIRONMENT_TASK_OUTCOMES], description: 'Progress of the whole objective. complete means its success condition has been met, not merely accepted or started.' },
+  reason: { type: 'string', minLength: 1 },
   continuationPolicy: { type: 'string', enum: [...ENVIRONMENT_CONTINUATION_POLICIES] },
   requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
   motionClass: { type: 'string', enum: [...ENVIRONMENT_MOTION_CLASSES] },
@@ -620,9 +620,10 @@ const SELECTOR_SCHEMA_DECISION_PROPERTIES = {
   completionEvidence: { type: 'string', maxLength: 1_000 },
 } as const;
 const SELECTOR_SCHEMA_DECISION_REQUIRED = [
+  'objective',
+  'completionCriteria',
   'outcome',
   'reason',
-  'objectiveComplete',
   'continuationPolicy',
   'requiredCompletionBasis',
 ] as const;
@@ -682,8 +683,6 @@ export interface EnvironmentSelectorJsonSchemaInput {
   robotCommands?: readonly string[];
   actionRouteSelected?: boolean;
   requireAction?: boolean;
-  requireProgress?: boolean;
-  requireAutonomousConsequence?: boolean;
 }
 
 /**
@@ -714,10 +713,7 @@ export function buildEnvironmentSelectorJsonSchema(
   const taskDecisionObjectSchema = {
     type: 'object',
     additionalProperties: false,
-    required: [
-      ...SELECTOR_SCHEMA_DECISION_REQUIRED,
-      'objective',
-    ],
+    required: [...SELECTOR_SCHEMA_DECISION_REQUIRED],
     properties: {
       ...SELECTOR_SCHEMA_DECISION_PROPERTIES,
       outcome: {
@@ -728,151 +724,64 @@ export function buildEnvironmentSelectorJsonSchema(
       },
     },
   };
-  const nonActionTaskDecisionConstraint = {
-    required: ['outcome'],
-    properties: { outcome: { type: 'string', enum: nonActionOutcomes } },
-  };
-  const actionTaskDecisionConstraint = {
-    required: ['objectiveComplete'],
-    properties: {
-      objectiveComplete: { type: 'boolean', enum: [false] },
-    },
-  };
-  const generatedMovementTaskDecisionConstraint = {
-    ...actionTaskDecisionConstraint,
-    properties: {
-      ...actionTaskDecisionConstraint.properties,
-      motionClass: { type: 'string', enum: ['body_local'] },
-    },
-  };
-  const progressBranches: Record<string, unknown>[] = [];
-  const autonomyWorkBranches: Record<string, unknown>[] = [];
-  const outputRouteBranches: Record<string, unknown>[] = [{
-    properties: {
-      actions: { maxItems: 0 },
-      movementRequest: { type: 'null' },
-      taskDecision: nonActionTaskDecisionConstraint,
-    },
-  }];
-  if (directActionTypes.length > 0) {
-    const directActionBranch = {
-      properties: {
-        actions: { minItems: 1 },
-        movementRequest: { type: 'null' },
-        taskDecision: actionTaskDecisionConstraint,
-      },
+  const taskSchema = (properties: Record<string, unknown>, nullable = true) => {
+    const decision = { ...taskDecisionObjectSchema,
+      properties: { ...taskDecisionObjectSchema.properties, ...properties } };
+    return {
+      description: 'Durable objective state when this pass defines or changes an objective. Preserve the whole objective and its success criteria, not just the next effect.',
+      ...(nullable ? { anyOf: [{ type: 'null' }, decision] } : decision),
     };
-    outputRouteBranches.push(directActionBranch);
-    progressBranches.push(directActionBranch);
-    autonomyWorkBranches.push(directActionBranch);
-  }
-  if (movementSupported) {
-    const generatedMovementBranch = {
-      properties: {
-        actions: { maxItems: 0 },
-        movementRequest: { type: 'object' },
-        taskDecision: generatedMovementTaskDecisionConstraint,
-      },
-    };
-    outputRouteBranches.push(generatedMovementBranch);
-    progressBranches.push(generatedMovementBranch);
-    autonomyWorkBranches.push(generatedMovementBranch);
-  }
-  progressBranches.push({
-    properties: {
-      actions: { maxItems: 0 },
-      movementRequest: { type: 'null' },
-      taskDecision: {
-        required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis', 'completionEvidence'],
-        properties: {
-          outcome: { type: 'string', enum: ['complete'] },
-          objectiveComplete: { type: 'boolean', enum: [true] },
-          requiredCompletionBasis: { type: 'string', enum: SELECTOR_SCHEMA_COMPLETION_BASES },
-          completionEvidence: { type: 'string', minLength: 1, maxLength: 1_000 },
-        },
-      },
-    },
-  });
-  const autonomyResponseBranch = {
-    properties: {
-      response: { type: 'string', minLength: 1 },
-      actions: { maxItems: 0 },
-      movementRequest: { type: 'null' },
-      taskDecision: {
-        required: ['outcome', 'objectiveComplete', 'requiredCompletionBasis'],
-        properties: {
-          outcome: { type: 'string', enum: ['complete'] },
-          objectiveComplete: { type: 'boolean', enum: [true] },
-          requiredCompletionBasis: { type: 'string', enum: ['response'] },
-        },
-      },
-    },
   };
-  const autonomyBranches = [...autonomyWorkBranches, autonomyResponseBranch];
-  const meaningfulOutputBranches: Record<string, unknown>[] = [
-    { properties: { response: { type: 'string', minLength: 1 } } },
-    ...(directActionTypes.length > 0
-      ? [{ properties: { actions: { type: 'array', minItems: 1 } } }]
-      : []),
-    ...(movementSupported
-      ? [{ properties: { movementRequest: { type: 'object' } } }]
-      : []),
-    { properties: { taskDecision: { type: 'object' } } },
-  ];
-  const routeConstraints: Record<string, unknown>[] = [
-    { anyOf: outputRouteBranches },
-    { anyOf: meaningfulOutputBranches },
-  ];
-  if (input.requireAutonomousConsequence === true) {
-    const requiredBranches = input.requireAction === true ? autonomyWorkBranches : autonomyBranches;
-    if (requiredBranches.length > 0) routeConstraints.push({ anyOf: requiredBranches });
-  } else if (input.requireProgress === true && progressBranches.length > 0) {
-    routeConstraints.push({ anyOf: progressBranches });
-  } else if (input.requireAction === true && autonomyWorkBranches.length > 0) {
-    routeConstraints.push({ anyOf: autonomyWorkBranches });
-  }
-
-  return {
+  const response = {
+    ...SELECTOR_SCHEMA_STRING,
+    description: 'Optional natural speech. It may accompany a selected consequence but never substitutes for a required physical or sensing action.',
+  };
+  const emptyActions = { type: 'array', maxItems: 0, items: { type: 'object' } };
+  const noMovement = { type: 'null' };
+  const branch = (properties: Record<string, unknown>) => ({
     type: 'object',
     additionalProperties: false,
-    required: ['response', 'actions', 'movementRequest', 'taskDecision'],
-    allOf: routeConstraints,
-    properties: {
-      response: {
-        ...SELECTOR_SCHEMA_STRING,
-        description: 'Optional natural speech. It may accompany a selected consequence but never substitutes for a required physical or sensing action.',
-      },
+    required: ['taskDecision', 'response', 'actions', 'movementRequest'],
+    properties: { taskDecision: properties.taskDecision, response: properties.response,
+      actions: properties.actions, movementRequest: properties.movementRequest },
+  });
+  const alternatives: Record<string, unknown>[] = [];
+  const actionAvailable = directActionTypes.length > 0 || movementSupported;
+  if (!input.requireAction || !actionAvailable) {
+    const outcome = { type: 'string', enum: nonActionOutcomes };
+    alternatives.push(branch({
+      response: { ...response, minLength: 1 }, actions: emptyActions,
+      movementRequest: noMovement, taskDecision: taskSchema({ outcome }),
+    }), branch({
+      response: { ...response, maxLength: 0 }, actions: emptyActions,
+      movementRequest: noMovement, taskDecision: taskSchema({ outcome }, false),
+    }));
+  }
+  const pending = { outcome: { type: 'string', enum: ENVIRONMENT_TASK_OUTCOMES.filter(outcome => outcome !== 'complete') } };
+  if (directActionTypes.length > 0) alternatives.push(branch({
+      response,
       actions: {
         type: 'array',
         description: 'One advertised action only when its supplied capability meaning implements the intended effect.',
-        ...(input.requireAction && !movementSupported && directActionTypes.length > 0
-          ? { minItems: 1 }
-          : {}),
-        maxItems: 1,
+        minItems: 1, maxItems: 1,
         items: selectorActionItemSchema(directActionTypes, robotCommands),
       },
-      movementRequest: movementSupported
-        ? {
-            description: 'A novel body-local movement whose intended effect is not implemented by an advertised action. The dedicated movement generator authors the plan.',
-            anyOf: [
-              { type: 'null' },
-              {
-                type: 'object',
-                additionalProperties: false,
-                required: ['description'],
-                properties: {
-                  description: { type: 'string', minLength: 1, maxLength: 500 },
-                },
-              },
-            ],
-          }
-        : { type: 'null' },
-      taskDecision: {
-        description: 'Durable objective state only when this pass creates, advances, completes, or otherwise changes an objective.',
-        anyOf: [{ type: 'null' }, taskDecisionObjectSchema],
+      movementRequest: noMovement,
+      taskDecision: taskSchema(pending),
+  }));
+  if (movementSupported) alternatives.push(branch({
+      response, actions: emptyActions,
+      movementRequest: {
+        type: 'object', additionalProperties: false, required: ['description'],
+        description: 'A novel body-local movement whose intended effect is not implemented by an advertised action. The dedicated movement generator authors the plan.',
+        properties: { description: { type: 'string', minLength: 1, maxLength: 500 } },
       },
-    },
-  };
+      taskDecision: taskSchema({ ...pending, motionClass: { type: 'string', enum: ['body_local'] } }),
+  }));
+  // Keep each alternative complete. Ollama's grammar converter ignores allOf
+  // refinements beside properties, so intersecting partial object schemas here
+  // allowed mutually incompatible routes and caused repeated parser rejection.
+  return { anyOf: alternatives };
 }
 
 export const ENVIRONMENT_SELECTOR_JSON_SCHEMA = buildEnvironmentSelectorJsonSchema();
@@ -881,7 +790,7 @@ export interface EnvironmentSelectorValidationResult {
   jsonValid: boolean;
   valid: boolean;
   errors: string[];
-  value?: EnvironmentModelOutput;
+  value?: Omit<EnvironmentModelOutput, 'taskDecision'> & { taskDecision: EnvironmentTaskDecision | null };
 }
 
 const SELECTOR_OUTPUT_FIELDS = new Set([
@@ -896,7 +805,6 @@ const SELECTOR_TASK_DECISION_FIELDS = new Set([
   'reason',
   'objective',
   'completionCriteria',
-  'objectiveComplete',
   'continuationPolicy',
   'requiredCompletionBasis',
   'motionClass',
@@ -965,7 +873,7 @@ export function validateEnvironmentSelectorOutput(
     if (!(field in raw)) errors.push(`${field} is required`);
   }
   for (const field of Object.keys(raw)) {
-    if (!SELECTOR_OUTPUT_FIELDS.has(field)) errors.push(`${field} is not an Environment model-output field`);
+    if (!SELECTOR_OUTPUT_FIELDS.has(field) && field !== 'visualObservation') errors.push(`${field} is not an Environment model-output field`);
   }
   if (typeof raw.response !== 'string') errors.push('response must be a string');
   if (!Array.isArray(raw.actions)) errors.push('actions must be an array');
@@ -984,7 +892,7 @@ export function validateEnvironmentSelectorOutput(
       'outcome',
       'reason',
       'objective',
-      'objectiveComplete',
+      'completionCriteria',
       'continuationPolicy',
       'requiredCompletionBasis',
     ]) {
@@ -995,9 +903,6 @@ export function validateEnvironmentSelectorOutput(
     }
     if (typeof raw.taskDecision.objective !== 'string' || !raw.taskDecision.objective.trim()) {
       errors.push('taskDecision.objective must be a non-empty string');
-    }
-    if (typeof raw.taskDecision.objectiveComplete !== 'boolean') {
-      errors.push('taskDecision.objectiveComplete must be boolean');
     }
   }
 
@@ -1030,9 +935,9 @@ export function validateEnvironmentSelectorOutput(
   const decision = task.decision;
   const response = typeof raw.response === 'string' ? raw.response.trim() : '';
   const physicalWorkSelected = normalizedActions.length > 0 || Boolean(movement.request);
-  if (!response && !physicalWorkSelected && !decision) {
+  if (!response && !physicalWorkSelected && !decision && !isRecord(raw.visualObservation)) {
     errors.push(
-      'selector output must include a non-empty response, action, movementRequest, or taskDecision',
+      'selector output must include a non-empty response, action, movementRequest, taskDecision, or visualObservation',
     );
   }
   if (decision && physicalWorkSelected && decision.objectiveComplete) {
@@ -1049,6 +954,7 @@ export function validateEnvironmentSelectorOutput(
     valid: true,
     errors,
     value: {
+      ...(raw.visualObservation !== undefined ? { visualObservation: raw.visualObservation } : {}),
       response,
       actions: normalizedActions,
       movementRequest: movement.request

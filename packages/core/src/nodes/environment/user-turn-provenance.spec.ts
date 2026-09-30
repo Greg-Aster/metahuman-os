@@ -51,7 +51,6 @@ test('a current user instruction owns provenance over an unfinished autonomous R
     },
   }, { username: 'owner' }, {
     systemPrompt: 'Return one Environment decision.',
-    recentHistoryLimit: 4,
   })
 
   const envelope = JSON.parse(String(result.message))
@@ -59,8 +58,8 @@ test('a current user instruction owns provenance over an unfinished autonomous R
   assert.equal(result.instructionSource, 'user')
   assert.equal(envelope.inputSource, 'user')
   assert.equal(envelope.execution, null, 'Another execution’s status cannot become this turn’s objective')
-  assert.deepEqual((result.jsonSchema as any).properties.taskDecision.anyOf.map((branch: any) => branch.type), ['null', 'object'])
-  assert.match((result.jsonSchema as any).properties.taskDecision.description, /durable objective/i)
+  assert.deepEqual((result.jsonSchema as any).anyOf[0].properties.taskDecision.anyOf.map((branch: any) => branch.type), ['null', 'object'])
+  assert.match((result.jsonSchema as any).anyOf[0].properties.taskDecision.description, /durable objective/i)
 })
 
 test('a standalone action may omit task lifecycle state', async () => {

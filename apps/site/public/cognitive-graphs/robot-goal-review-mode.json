@@ -9,7 +9,8 @@
     "activation": "demand",
     "skippedState": "explicit",
     "sideEffectOrder": "serial-topological",
-    "maxLoopIterations": 5
+    "maxLoopIterations": 5,
+    "eventInputNodeId": "input-events"
   },
   "last_modified": "2026-09-04T20:35:09.000Z",
   "nodes": [
@@ -173,7 +174,7 @@
         "label": "Goal Review Task",
         "nodeType": "text_input",
         "properties": {
-          "message": "Review the current execution objective as one self-directed decision. Use its latest recorded action outcome together with verified Robot Action Outcomes, Environment Bridge facts, attached robot-camera evidence, recent conversation and private reflection, active persona, and active desires. The visualEvidence fields say whether an image is attached and verified for this decision; absence of an attached image is not evidence about camera health. Do not invent physical facts or completion.\n\nChoose complete only when supplied evidence establishes the objective, and cite that evidence in completionEvidence. Choose continue when another useful attempt exists, wait when progress depends on a changing condition, request_user when specific human information or help is needed, or abandon when the objective is not attainable, no longer worthwhile, or I choose to do something else. response is optional outward speech only: keep it natural, first-person, and concise, and leave it empty rather than exposing outcome tokens, workflow names, agent names, or internal instructions. Independently choose the next useful capability from availableTasks, or none. Every catalog meaning is available here just as at the initial autonomy decision. instruction carries the purpose and relevant evidence to the selected specialist or executor; the specialist performs its own task. A continuing objective does not require a physical action, and completion or abandonment can accompany a new activity. This is self-directed autonomy, not a requirement to await a user request. The execution supplies the objective and ordered user corrections; evaluate that objective, not a new objective inferred from the status display. Return only the requested JSON.",
+          "message": "Review the current execution objective as one self-directed decision. Use its latest recorded action outcome together with verified Robot Action Outcomes, Environment Bridge facts, attached robot-camera evidence, recent conversation and private reflection, active persona, and active desires. The visualEvidence fields say whether an image is attached and verified for this decision; absence of an attached image is not evidence about camera health. Do not invent physical facts or completion.\n\nChoose complete only when supplied evidence establishes the objective, and cite that evidence in completionEvidence. Choose continue when another useful attempt exists, wait when progress depends on a changing condition, request_user when specific human information or help is needed, or abandon when the objective is not attainable, no longer worthwhile, or I choose to do something else. response is optional outward speech only: keep it natural, first-person, and concise, and leave it empty rather than exposing outcome tokens, workflow names, agent names, or internal instructions. Independently choose the next useful capability from availableTasks, or none. Every catalog meaning is available here just as at the initial autonomy decision. instruction carries the purpose and relevant evidence to the selected specialist or executor; the specialist performs its own task. A continuing objective does not require a physical action, and completion or abandonment can accompany a new activity. This is self-directed autonomy, not a requirement to await a user request. The execution supplies the objective and ordered user corrections; evaluate that objective, not a new objective inferred from the status display. Return only the requested JSON.\n\nObservation History supplies earlier image interpretations with their source times. Optional visualObservation records an interpretation of attached images independently of speech and goals.",
           "inputKey": ""
         }
       }
@@ -313,7 +314,7 @@
       "id": "remaining-objective",
       "type": "utilityNode",
       "position": {
-        "x": 2800,
+        "x": 3400,
         "y": 140
       },
       "data": {
@@ -321,6 +322,9 @@
         "nodeType": "execution_context",
         "properties": {
           "eventLimit": 16
+        },
+        "activation": {
+          "mode": "always"
         }
       }
     },
@@ -328,7 +332,7 @@
       "id": "review-remaining-objective",
       "type": "utilityNode",
       "position": {
-        "x": 3100,
+        "x": 3700,
         "y": 140
       },
       "data": {
@@ -472,6 +476,84 @@
         "label": "agent-result",
         "properties": {}
       }
+    },
+    {
+      "id": "input-events",
+      "type": "utilityNode",
+      "position": {
+        "x": 2800,
+        "y": 140
+      },
+      "data": {
+        "nodeType": "execution_event_wait",
+        "label": "Receive Pending Input",
+        "properties": {
+          "drain": true,
+          "userGraph": "environment",
+          "autonomyGraph": "robot-autonomy-controller"
+        },
+        "activation": {
+          "mode": "always"
+        },
+        "comment": "Receives input admitted during the selected activity. Late input resumes this branch without replaying the earlier selection or activity."
+      }
+    },
+    {
+      "id": "continue-user-input",
+      "type": "utilityNode",
+      "position": {
+        "x": 3100,
+        "y": 140
+      },
+      "data": {
+        "nodeType": "workflow_call",
+        "label": "Handle Received Input",
+        "properties": {},
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "invocation"
+          ]
+        },
+        "comment": "Handles received input in the same execution before reviewing any remaining objective. No input skips this child workflow."
+      }
+    },
+    {
+      "id": "observation-history",
+      "type": "contextNode",
+      "position": {
+        "x": 560,
+        "y": 830
+      },
+      "data": {
+        "label": "Observation History",
+        "nodeType": "observation_history",
+        "properties": {
+          "limit": 5
+        }
+      }
+    },
+    {
+      "id": "save-observation",
+      "type": "outputNode",
+      "position": {
+        "x": 2140,
+        "y": 650
+      },
+      "data": {
+        "label": "Save Visual Observation",
+        "nodeType": "save_visual_observation",
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "parser",
+              "output": "visualObservation",
+              "truthy": true
+            }
+          ]
+        }
+      }
     }
   ],
   "edges": [
@@ -479,7 +561,7 @@
       "id": "selected-activity-objective-state",
       "source": "selected-workflow",
       "sourceHandle": "completed",
-      "target": "remaining-objective",
+      "target": "input-events",
       "targetHandle": "control",
       "type": "default",
       "data": {
@@ -1035,10 +1117,10 @@
       }
     },
     {
-      "id": "contextual-agent-result-result-remaining-objective-control",
+      "id": "contextual-agent-result-result-input-events-control",
       "source": "agent-result",
       "sourceHandle": "result",
-      "target": "remaining-objective",
+      "target": "input-events",
       "targetHandle": "control",
       "type": "default",
       "data": {
@@ -1064,6 +1146,157 @@
           "output": "persisted",
           "truthy": true
         }
+      }
+    },
+    {
+      "id": "agent-result-userInput-input-events-receivedInput",
+      "source": "agent-result",
+      "sourceHandle": "userInput",
+      "target": "input-events",
+      "targetHandle": "receivedInput",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "input-events-invocation-continue-user-input-invocation",
+      "source": "input-events",
+      "sourceHandle": "invocation",
+      "target": "continue-user-input",
+      "targetHandle": "invocation",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "input-events-invocation-remaining-objective-control",
+      "source": "input-events",
+      "sourceHandle": "invocation",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "data": {
+        "type": "object",
+        "kind": "control",
+        "when": {
+          "output": "invocation",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "continue-user-input-completed-remaining-objective-control",
+      "source": "continue-user-input",
+      "sourceHandle": "completed",
+      "target": "remaining-objective",
+      "targetHandle": "control",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "completed",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "visual-history-observation-observation-observation-history-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "observation-history",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-observation-history-observations-context-observationHistory",
+      "source": "observation-history",
+      "sourceHandle": "observations",
+      "target": "context",
+      "targetHandle": "observationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-context-frames-parser-frames",
+      "source": "context",
+      "sourceHandle": "frames",
+      "target": "parser",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-context-frames-save-observation-frames",
+      "source": "context",
+      "sourceHandle": "frames",
+      "target": "save-observation",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "visual-history-observation-observation-save-observation-observation",
+      "source": "observation",
+      "sourceHandle": "observation",
+      "target": "save-observation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-parser-visualObservation-save-observation-visualObservation",
+      "source": "parser",
+      "sourceHandle": "visualObservation",
+      "target": "save-observation",
+      "targetHandle": "visualObservation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-save-observation-observation-status-out-visualObservation",
+      "source": "save-observation",
+      "sourceHandle": "observation",
+      "target": "status-out",
+      "targetHandle": "visualObservation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "visual-history-status-out-status-prompt-out-control",
+      "source": "status-out",
+      "sourceHandle": "status",
+      "target": "prompt-out",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "kind": "control"
+      }
+    },
+    {
+      "id": "visual-history-status-out-status-agent-dispatch-control",
+      "source": "status-out",
+      "sourceHandle": "status",
+      "target": "agent-dispatch",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "kind": "control"
       }
     }
   ],

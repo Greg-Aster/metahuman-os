@@ -5,6 +5,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { assertProfileMemoryAvailable } from '../locks.js';
 import { canonicalJSON } from '../durable-execution/store.js';
 import {
   DEFAULT_HANDLERS,
@@ -231,6 +232,7 @@ export class UnifiedQueueManager {
     if (this.unconfirmedCommit) this.notifyChange();
     input = immutableJSON(input);
     if (!input.username?.trim()) throw new Error('Work item username is required');
+    assertProfileMemoryAvailable(input.username);
     if (!input.type) throw new Error('Work item type is required');
     const handler = input.handler || DEFAULT_HANDLERS[input.type];
     const admissionIdentity = input.durable ? canonicalJSON({
@@ -882,6 +884,29 @@ export class UnifiedQueueManager {
     this.inFlightRemote.clear();
     for (const resource of this.resources.values()) resource.currentRunning = 0;
     if (notify) this.notifyChange();
+  }
+
+  assertProfileIdle(username: string): void {
+    if (this.getAllTasks().some(task => task.username === username)
+      || [...this.inFlightRemote.values()].some(handle => this.tasks.get(handle.taskId)?.username === username)) {
+      throw new Error('Finish or cancel this profile\'s unfinished work before resetting memory');
+    }
+  }
+
+  /** Explicit profile reset, after the durable owner has retired its terminal records. */
+  forgetProfileHistory(username: string): void {
+    this.assertProfileIdle(username);
+    const removed = [...this.tasks.values()].filter(task => task.username === username);
+    for (const task of removed) {
+      const scope = this.idempotencyScope(task);
+      if (scope) this.idempotency.delete(scope);
+      this.tasks.delete(task.id);
+      const index = this.terminalOrder.indexOf(task.id);
+      if (index >= 0) this.terminalOrder.splice(index, 1);
+    }
+    this.notifyChange();
+    // Notify existing queue viewers only after the history removal is persisted.
+    this.emit({ type: 'task_deleted', details: { username, taskIds: removed.map(task => task.id) } });
   }
 
   /** Called only after the execution owner retires its terminal checkpoint. */

@@ -1,4 +1,5 @@
 import { defineNode } from '../types.js';
+import { visualObservationOutput } from '../environment/visual-observation-output.js';
 
 export interface RobotOperatorDecision {
   observed: string;
@@ -42,9 +43,11 @@ export const robotOperatorDecisionParserNode = defineNode({
   name: 'Robot Operator Decision Parser',
   category: 'operator',
   inputs: [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact images supplied to the planner model' },
     { name: 'response', type: 'any', description: 'Strict JSON response from a boredom planner LLM' },
   ],
   outputs: [
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of the delegated intention' },
     { name: 'decision', type: 'object', description: 'Validated grounded observation and free-form high-level intention' },
     { name: 'observed', type: 'string', description: 'Concise summary grounded in the current robot stimulus' },
     { name: 'instruction', type: 'string', description: 'High-level intention delegated to Robot Autonomy Executor' },
@@ -64,9 +67,9 @@ export const robotOperatorDecisionParserNode = defineNode({
     const parsed = strictJsonObject(raw);
     const invalid = (error: string): never => { throw new Error(error); };
     if (!isRecord(parsed)) return invalid('Robot Operator response was not a JSON object.');
-    const unknown = Object.keys(parsed).filter(field => !DECISION_FIELDS.has(field));
-    if (unknown.length > 0 || Object.keys(parsed).length !== DECISION_FIELDS.size) {
-      return invalid('Robot Operator decision must contain exactly observed, instruction, and reason.');
+    const unknown = Object.keys(parsed).filter(field => !DECISION_FIELDS.has(field) && field !== 'visualObservation');
+    if (unknown.length > 0 || [...DECISION_FIELDS].some(field => !(field in parsed))) {
+      return invalid('Robot Operator decision requires observed, instruction, and reason, with optional visualObservation.');
     }
     const observed = cleanText(parsed.observed, 500);
     const reason = cleanText(parsed.reason, 500);
@@ -81,6 +84,7 @@ export const robotOperatorDecisionParserNode = defineNode({
     };
     return {
       decision,
+      visualObservation: visualObservationOutput(parsed.visualObservation, inputs.frames),
       observed: decision.observed,
       instruction: decision.instruction,
       reason: decision.reason,

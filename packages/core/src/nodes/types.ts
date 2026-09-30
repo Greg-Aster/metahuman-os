@@ -7,6 +7,8 @@
  * Industry standard pattern based on ComfyUI, Unreal Blueprints, and Node-RED.
  */
 
+import type { ConversationMessage } from '../conversation-buffer.js';
+
 // ============================================================================
 // CATEGORY TYPES
 // ============================================================================
@@ -165,6 +167,8 @@ export interface NodeExecutionPolicy {
   timeoutOwner?: 'node' | 'children';
   /** Pure model output that can be regenerated after downstream validation feedback. */
   modelOutput?: string;
+  /** This node can receive ordered execution input without replaying earlier work. */
+  eventInput?: boolean;
 }
 
 /** A consumer rejected one input's content, not execution or transport itself. */
@@ -197,6 +201,8 @@ export interface NodeExecutionContext {
   sessionId?: string;
   userId?: string;
   userMessage?: string;
+  /** Original admission identity when this user input is forwarded between workflows. */
+  userMessageEntry?: ConversationMessage;
   cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
   conversationHistory?: any[];
   contextPackage?: any;
@@ -408,6 +414,7 @@ export function defineNode(
       requiredInputs,
       ...(definition.execution?.timeoutOwner ? { timeoutOwner: definition.execution.timeoutOwner } : {}),
       ...(definition.execution?.modelOutput ? { modelOutput: definition.execution.modelOutput } : {}),
+      ...(definition.execution?.eventInput ? { eventInput: true } : {}),
     },
   };
 }

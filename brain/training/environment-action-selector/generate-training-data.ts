@@ -101,6 +101,7 @@ export async function buildDevelopmentRecords(
         user: buildEnvironmentSelectorEnvelope({
           instruction,
           observation,
+          visualFrames: observation ? [observation.visual, ...(observation.visuals ?? [])].filter(frame => frame !== undefined) : [],
           robotStatus: sourceCase.robotStatus,
           recentConversation,
           memories: sourceCase.memories,

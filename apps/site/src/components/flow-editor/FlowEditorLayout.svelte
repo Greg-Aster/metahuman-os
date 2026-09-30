@@ -539,7 +539,7 @@
     flowEditorRef?.updateEdgeData(edgeId, patch);
   }
 
-  function handleUpdateGraph(patch: { name?: string; description?: string; maxLoopIterations?: number }) {
+  function handleUpdateGraph(patch: { name?: string; description?: string; maxLoopIterations?: number; eventInputNodeId?: string }) {
     flowEditorRef?.updateGraphMetadata(patch);
   }
 

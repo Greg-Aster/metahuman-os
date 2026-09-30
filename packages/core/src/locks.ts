@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { createHash } from 'node:crypto'
 import { systemPaths } from './path-builder.js'
 
 export interface LockHandle {
@@ -13,16 +14,31 @@ export interface AcquireLockOptions {
   exitOnSignal?: boolean
 }
 
+/** Shared with memory producers and Coordinator admission during an explicit reset. */
+export function profileMemoryResetLockName(username: string): string {
+  if (!username.trim()) throw new Error('Memory reset requires a profile')
+  return `memory-reset-${createHash('sha256').update(username).digest('hex')}`
+}
+
+export function assertProfileMemoryAvailable(username: string): void {
+  if (isLocked(profileMemoryResetLockName(username))) {
+    throw new Error('This profile is resetting its memory. Retry after the reset completes.')
+  }
+}
+
 /**
  * Acquire a simple file lock. Returns a handle or throws if already locked.
  */
 export function acquireLock(name: string, options: AcquireLockOptions = {}): LockHandle {
+  if (!/^[A-Za-z0-9_.-]+$/.test(name) || name.includes('..')) throw new Error('Invalid lock name')
   const dir = path.join(systemPaths.run, 'locks')
   fs.mkdirSync(dir, { recursive: true })
   const lockPath = path.join(dir, `${name}.lock`)
 
+  let identity: fs.Stats
   try {
-    const fd = fs.openSync(lockPath, 'wx')
+    const fd = fs.openSync(lockPath, 'wx', 0o600)
+    identity = fs.fstatSync(fd)
     const payload = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), name })
     fs.writeFileSync(fd, payload)
     fs.closeSync(fd)
@@ -36,7 +52,7 @@ export function acquireLock(name: string, options: AcquireLockOptions = {}): Loc
         // If we're here, the process is running.
         throw new Error(`Lock already held: ${name}`);
       } catch (checkError: any) {
-        if (checkError.code === 'ESRCH' || checkError instanceof SyntaxError) {
+        if (checkError.code === 'ESRCH') {
           // Process doesn't exist or lock file is corrupt, lock is stale.
           fs.unlinkSync(lockPath);
           return acquireLock(name, options);
@@ -50,14 +66,26 @@ export function acquireLock(name: string, options: AcquireLockOptions = {}): Loc
     throw e
   }
 
+  let released = false
+  const onSignal = () => { release(); process.exit(1) }
   const release = () => {
-    try { fs.unlinkSync(lockPath) } catch {}
+    if (released) return
+    released = true
+    process.removeListener('exit', release)
+    process.removeListener('SIGINT', onSignal)
+    process.removeListener('SIGTERM', onSignal)
+    try {
+      const current = fs.statSync(lockPath)
+      if (current.dev === identity.dev && current.ino === identity.ino) fs.unlinkSync(lockPath)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
   }
 
   process.once('exit', release)
   if (options.exitOnSignal !== false) {
-    process.once('SIGINT', () => { release(); process.exit(1) })
-    process.once('SIGTERM', () => { release(); process.exit(1) })
+    process.once('SIGINT', onSignal)
+    process.once('SIGTERM', onSignal)
   }
 
   return { name, path: lockPath, release }
@@ -81,8 +109,8 @@ export function isLocked(name: string): boolean {
     // Process is running, lock is valid
     return true
   } catch (error: any) {
-    if (error.code === 'ESRCH' || error instanceof SyntaxError) {
-      // Process doesn't exist or lock file is corrupt - stale lock
+    if (error.code === 'ESRCH') {
+      // Only a confirmed dead owner can be reclaimed. An incomplete write is held.
       // Clean it up automatically
       try {
         fs.unlinkSync(lockPath)
@@ -139,14 +167,8 @@ export function cleanupStaleLocks(): number {
           cleaned++
         }
       }
-    } catch (error: any) {
-      // Corrupt lock file - remove it
-      if (error instanceof SyntaxError) {
-        try {
-          fs.unlinkSync(lockPath)
-          cleaned++
-        } catch {}
-      }
+    } catch {
+      // A partial write or unreadable owner is not evidence of a stale lock.
     }
   }
 

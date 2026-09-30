@@ -57,6 +57,18 @@
       "autoRestart": true,
       "maxRetries": 3,
       "comment": "Maintenance-only service for stale-lock health checks, audit-log cleanup, and embedding preload."
+    },
+    "terminal": {
+      "id": "terminal",
+      "enabled": true,
+      "type": "manual",
+      "priority": "normal",
+      "agentPath": "services/terminal.ts",
+      "usesLLM": false,
+      "startOnSystemBoot": false,
+      "autoRestart": false,
+      "maxRetries": 0,
+      "comment": "On-demand shell and Big Brother session owner. Stopping closes all owned sessions."
     }
   }
 }

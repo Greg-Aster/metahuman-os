@@ -40,6 +40,7 @@ export interface AgentCatalogDefinition {
   priority: 'low' | 'normal' | 'high';
   risk: AgentCatalogRisk;
   defaultTrigger?: AgentCatalogDefaultTrigger;
+  defaultService?: { startOnSystemBoot: boolean; autoRestart: boolean; maxRetries: number };
   parentIds?: string[];
   tags?: string[];
   /** Internal worker hidden from public registration and manual-run surfaces. */
@@ -291,6 +292,19 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
     risk: 'standard',
     defaultTrigger: { type: 'interval', interval: 3600 },
     tags: ['curiosity', 'inner-dialogue'],
+  },
+  terminal: {
+    id: 'terminal',
+    displayName: 'Terminal',
+    description: 'Owns on-demand shell sessions, terminal screens, and Big Brother CLI execution.',
+    lifecycle: 'service',
+    executionContext: 'system',
+    servicePath: 'services/terminal.ts',
+    usesLLM: false,
+    priority: 'normal',
+    risk: 'privileged',
+    tags: ['terminal', 'system'],
+    defaultService: { startOnSystemBoot: false, autoRestart: false, maxRetries: 0 },
   },
   'maintenance-service': {
     id: 'maintenance-service',

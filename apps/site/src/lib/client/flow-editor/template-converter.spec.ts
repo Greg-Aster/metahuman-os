@@ -60,6 +60,7 @@ test('scheduler, node activation, and edge selection survive load and save', () 
     skippedState: 'explicit',
     sideEffectOrder: 'serial-topological',
     maxLoopIterations: 7,
+    eventInputNodeId: 'receive-input',
   }
   stored.nodes[0].data.activation = {
     when: [{ nodeId: 'gate', output: 'enabled', equals: true }],

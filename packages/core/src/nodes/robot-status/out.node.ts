@@ -215,6 +215,7 @@ export const robotStatusOutNode = defineNode({
   name: 'Robot Status Out',
   category: 'output',
   inputs: [
+    { name: 'visualObservation', type: 'object', optional: true, description: 'Image-linked record from Save Visual Observation; source capture times remain unchanged' },
     { name: 'observation', type: 'object', optional: true, description: 'Current Environment Bridge observation' },
     { name: 'instruction', type: 'string', optional: true, description: 'Current resolved instruction' },
     { name: 'userInstruction', type: 'string', optional: true, description: 'Current human instruction, when present' },
@@ -252,8 +253,10 @@ export const robotStatusOutNode = defineNode({
     const action = lastAction(inputs, previous, now)
     const decision = isRecord(inputs.taskDecision) ? inputs.taskDecision : null
     const response = cleanText(inputs.response, 1_000)
+    const visualObservation = inputs.visualObservation as import('../../visual-observation.js').VisualObservationRecord | null | undefined
     const userInstruction = cleanText(inputs.userInstruction, 500)
-    const semanticSummary = cleanText(decision?.observationSummary, 1_000)
+    const semanticSummary = cleanText(visualObservation?.summary, 1_000)
+      || cleanText(decision?.observationSummary, 1_000)
       || response
       || cleanText(decision?.reason, 1_000)
       || cleanText((inputs.terminalFeedback as Record<string, unknown> | undefined)?.message, 500)
@@ -263,14 +266,15 @@ export const robotStatusOutNode = defineNode({
     const previousSituation = previous?.situation
     const nextSituation = {
       situationalSummary: semanticSummary,
-      environmentDescription: cleanText(decision?.observationSummary, 1_000)
+      environmentDescription: cleanText(visualObservation?.summary, 1_000)
+        || cleanText(decision?.observationSummary, 1_000)
         || previousSituation?.environmentDescription
         || semanticSummary,
       currentGoal: task?.decision.objectiveComplete === true || task?.decision.outcome === 'abandon'
         ? ''
         : task?.objective || previousSituation?.currentGoal || '',
       currentIntent: cleanText(decision?.reason, 500)
-        || previousSituation?.currentIntent
+        || context.graphExecution.task()?.decision.reason
         || '',
       userContext: userInstruction || previousSituation?.userContext || '',
       uncertainties: previousSituation?.uncertainties ?? [],
@@ -284,6 +288,7 @@ export const robotStatusOutNode = defineNode({
       agency: '',
     }
     const sources = {
+      ...(visualObservation ? { latestVisualObservation: visualObservation } : {}),
       generatedAt: now,
       sourceUpdatedAt: {
         ...sourceUpdatedAt,

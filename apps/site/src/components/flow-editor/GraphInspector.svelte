@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SvelteFlowGraph } from '../../lib/client/flow-editor/template-converter'
   import type { AuthoringIssue, SchemaHealth } from '../../lib/client/flow-editor/graph-authoring'
+  import type { NodeSchema } from '@metahuman/core/nodes/types'
 
   let {
     graph,
@@ -12,7 +13,7 @@
     graph: SvelteFlowGraph | null
     issues: AuthoringIssue[]
     schemaHealth: SchemaHealth | null
-    onUpdateGraph?: (patch: { name?: string; description?: string; maxLoopIterations?: number }) => void
+    onUpdateGraph?: (patch: { name?: string; description?: string; maxLoopIterations?: number; eventInputNodeId?: string }) => void
     onSelectIssue?: (issue: AuthoringIssue) => void
   } = $props()
 
@@ -53,6 +54,15 @@
         oninput={(event) => onUpdateGraph?.({ maxLoopIterations: Number((event.target as HTMLInputElement).value) })}
       />
       <p class="hint">A conditional loop that remains selected beyond this limit fails the graph.</p>
+      <label class="field-label" for="event-input-node">Input Received During Execution</label>
+      <select id="event-input-node" class="property-input" value={graph.scheduler.eventInputNodeId ?? ''}
+        onchange={(event) => onUpdateGraph?.({ eventInputNodeId: (event.target as HTMLSelectElement).value })}>
+        <option value="">No input receiver</option>
+        {#each graph.nodes.filter(node => (node.data?.schema as NodeSchema | undefined)?.execution?.eventInput) as node}
+          <option value={node.id}>{String(node.data?.label ?? node.id)}</option>
+        {/each}
+      </select>
+      <p class="hint">If new input arrives before completion, resume this node and its following branch. Earlier actions are not replayed. The receiver must be enabled with Always activation.</p>
     </section>
 
     <section class="border-b border-slate-700 p-4">

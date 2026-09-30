@@ -1,633 +1,470 @@
 #!/usr/bin/env python3
+"""Shared local/RunPod text trainer. Data policy belongs to Core's frozen dataset."""
+import argparse
+import gc
+import hashlib
+import importlib.metadata
 import json
+import math
 import os
+from pathlib import Path
+import shutil
+import subprocess
 import sys
 import time
-import argparse
-from datetime import datetime
+import traceback
 
-# BUGFIX: Disable xFormers to prevent Flash Attention compatibility issues on newer GPUs
-# RTX 5090 (capability 12.0) is too new for xFormers builds in most containers
-# Force PyTorch to use native SDPA instead - multiple env vars for comprehensive coverage
-os.environ['XFORMERS_DISABLED'] = '1'
-os.environ['XFORMERS_FORCE_DISABLE_TRITON'] = '1'
-os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-os.environ['TORCH_CUDNN_SDPA_ENABLED'] = '1'
-# Disable Flash Attention at the transformers level
-os.environ['USE_FLASH_ATTENTION'] = '0'
-os.environ['DISABLE_FLASH_ATTN'] = '1'
+QUANTIZATIONS = {"q4_k_m", "q5_k_m", "q6_k", "q8_0", "f16", "bf16", "f32"}
 
-# Set HuggingFace cache - use /workspace on RunPod, ~/.cache locally
-# Detect RunPod by checking if we have write access to /workspace (not just if it exists)
-is_runpod = os.path.exists('/workspace') and os.access('/workspace', os.W_OK)
-if is_runpod:
-    os.environ['HF_HOME'] = '/workspace/.cache/huggingface'
-    os.environ['TRANSFORMERS_CACHE'] = '/workspace/.cache/huggingface/transformers'
-    os.environ['HF_DATASETS_CACHE'] = '/workspace/.cache/huggingface/datasets'
-else:
-    cache_dir = os.path.expanduser('~/.cache/huggingface')
-    os.environ['HF_HOME'] = cache_dir
-    os.environ['TRANSFORMERS_CACHE'] = os.path.join(cache_dir, 'transformers')
-    os.environ['HF_DATASETS_CACHE'] = os.path.join(cache_dir, 'datasets')
 
-import importlib
-import subprocess
+def digest(path):
+    hasher = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(block)
+    return hasher.hexdigest()
 
-print("[train_unsloth] ✅ Environment prepared for SDPA-only training")
 
-from unsloth import FastLanguageModel, FastModel, train_on_responses_only
-from unsloth.trainer import UnslothTrainer, UnslothTrainingArguments
-from datasets import load_dataset
-import torch
+def read_json(path):
+    def invalid_constant(value):
+        raise ValueError("Non-finite JSON value: " + value)
+    return json.loads(Path(path).read_text(encoding="utf-8"), parse_constant=invalid_constant)
 
-# Progress tracking helper
-def log_progress(stage, message, percent=None):
-    """Print progress with timestamp and stage indicator"""
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    if percent is not None:
-        print(f"[{timestamp}] 📊 {stage} ({percent}%) - {message}", flush=True)
+
+def write_json(path, value):
+    path = Path(path)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        os.chmod(temporary, 0o600)
+        json.dump(value, handle, ensure_ascii=False, allow_nan=False, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
+def log(stage, message):
+    print(f"[train_unsloth] {stage}: {message}", flush=True)
+
+
+def validate_config(cfg):
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("base_model"), str) or not cfg["base_model"].strip():
+        raise ValueError("config.base_model is required")
+    mode = cfg.get("training_mode", "lora")
+    if mode not in ("lora", "full", "full_finetune"):
+        raise ValueError("training_mode must be lora or full_finetune")
+    for name, minimum, maximum in (
+        ("num_train_epochs", 1, 50), ("per_device_train_batch_size", 1, 128),
+        ("gradient_accumulation_steps", 1, 1024), ("max_seq_length", 128, 262144),
+    ):
+        if type(cfg.get(name)) is not int or not minimum <= cfg[name] <= maximum:
+            raise ValueError(f"{name} must be an integer from {minimum} through {maximum}")
+    rate = cfg.get("learning_rate")
+    if type(rate) not in (int, float) or not math.isfinite(rate) or not 0 < rate <= 1:
+        raise ValueError("learning_rate must be finite and greater than zero, at most one")
+    if mode == "lora":
+        for name in ("lora_rank", "lora_alpha"):
+            if type(cfg.get(name)) is not int or not 1 <= cfg[name] <= 4096:
+                raise ValueError(f"{name} must be a positive integer no greater than 4096")
+    for name in ("load_in_4bit", "load_in_16bit"):
+        if type(cfg.get(name)) is not bool:
+            raise ValueError(f"{name} must be explicitly configured")
+    if cfg["load_in_4bit"] == cfg["load_in_16bit"]:
+        raise ValueError("Choose exactly one of load_in_4bit and load_in_16bit")
+    if mode != "lora" and cfg["load_in_4bit"]:
+        raise ValueError("Full fine-tuning requires unquantized weights")
+    if cfg.get("dtype", "bfloat16") not in ("bfloat16", "float16", "float32"):
+        raise ValueError("dtype must be bfloat16, float16, or float32")
+    if cfg.get("chat_template", "native") not in ("auto", "native"):
+        raise ValueError("Manual chat templates are retired; use the model's native template")
+    if cfg.get("force_eager_attention"):
+        raise ValueError("Runtime attention monkey-patches are retired")
+    if cfg.get("train_on_responses_only", True) is not True:
+        raise ValueError("Training always supervises the final response only")
+    conversion = cfg.get("gguf_conversion", {"enabled": False})
+    if not isinstance(conversion, dict) or type(conversion.get("enabled")) is not bool:
+        raise ValueError("gguf_conversion.enabled must be a boolean")
+    if conversion["enabled"] and str(conversion.get("quantization_type", "")).lower() not in QUANTIZATIONS:
+        raise ValueError("Unsupported or missing GGUF quantization_type")
+    if cfg.get("require_exact_messages") and cfg.get("owner") != "environment-action-selector":
+        raise ValueError("Exact system/user/output records belong to the Action Selector's development pipeline")
+    return cfg
+
+
+def row_messages(row, exact=False):
+    if not isinstance(row, dict):
+        raise ValueError("Each dataset row must be an object")
+    if exact:
+        # A maintained caller uses this explicit contract; no generic legacy
+        # instruction/input formatter or invented system prompt is accepted.
+        if any(not isinstance(row.get(key), str) or not row[key].strip() for key in ("system", "user", "output")):
+            raise ValueError("Action Selector records require exact system, user and output strings")
+        messages = [
+            {"role": "system", "content": row["system"]},
+            {"role": "user", "content": row["user"]},
+            {"role": "assistant", "content": row["output"]},
+        ]
     else:
-        print(f"[{timestamp}] ▶️  {stage} - {message}", flush=True)
+        messages = row.get("messages")
+    if not isinstance(messages, list) or len(messages) < 2:
+        raise ValueError("Each row requires chronological messages")
+    roles = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict) or message.get("role") not in ("system", "user", "assistant"):
+            raise ValueError("Only text system, user and assistant messages are supported")
+        if not isinstance(message.get("content"), str) or not message["content"].strip():
+            raise ValueError("Message content must be a non-empty string")
+        if message["role"] == "system" and index != 0:
+            raise ValueError("A system message must be first")
+        roles.append(message["role"])
+    dialogue = roles[1:] if roles[0] == "system" else roles
+    if dialogue != ["user" if index % 2 == 0 else "assistant" for index in range(len(dialogue))] or dialogue[-1] != "assistant":
+        raise ValueError("Messages must alternate user/assistant and end in an assistant target")
+    return messages
 
 
-def ensure_packages(packages):
-    missing = []
-    for pkg, import_name in packages:
-        try:
-            importlib.import_module(import_name or pkg)
-        except ImportError:
-            missing.append(pkg)
-
-    if not missing:
-        return
-
-    log_progress("GGUF_DEPS", f"Installing required packages: {', '.join(missing)}")
-
-    installers = [
-        ["uv", "pip", "install", "--upgrade"] + missing,
-        [sys.executable, "-m", "pip", "install", "--upgrade"] + missing,
-    ]
-
-    for cmd in installers:
-        try:
-            subprocess.run(cmd, check=True)
-            all_available = True
-            for pkg, import_name in packages:
-                try:
-                    importlib.import_module(import_name or pkg)
-                except ImportError:
-                    all_available = False
-                    break
-            if all_available:
-                log_progress("GGUF_DEPS", f"Packages ready via {' '.join(cmd[:2])}")
-                return
-        except FileNotFoundError:
+def read_rows(path, exact=False):
+    rows = []
+    for index, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines()):
+        if not line.strip():
             continue
-        except subprocess.CalledProcessError as exc:
-            print(f"[train_unsloth] Warning: installer {' '.join(cmd[:2])} failed with exit code {exc.returncode}", file=sys.stderr)
-
-    still_missing = []
-    for pkg, import_name in packages:
         try:
-            importlib.import_module(import_name or pkg)
-        except ImportError:
-            still_missing.append(pkg)
+            row = json.loads(line)
+            row_messages(row, exact)
+        except (ValueError, TypeError) as error:
+            raise ValueError(f"{Path(path).name} row {index + 1}: {error}") from error
+        rows.append(row)
+    if not rows:
+        raise ValueError(f"{Path(path).name} has no examples")
+    return rows
 
-    raise RuntimeError(
-        f"Failed to install required GGUF dependencies: {', '.join(still_missing or missing)}"
+
+def verify_manifest(manifest_path, data_path, eval_path, cfg):
+    manifest = read_json(manifest_path)
+    if manifest.get("version") != 2 or manifest.get("supervision") != "final-assistant-only":
+        raise ValueError("A version 2 response-only dataset manifest is required")
+    if manifest.get("baseModel") != cfg["base_model"]:
+        raise ValueError("The trainer base model differs from the frozen dataset")
+    snapshot = {key: value for key, value in manifest.items() if key != "datasetId"}
+    expected = hashlib.sha256(json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+    if manifest.get("datasetId") != expected:
+        raise ValueError("Dataset manifest identity does not match its contents")
+    identities = []
+    for name, file_path in (("train", data_path), ("evaluation", eval_path)):
+        if not file_path:
+            raise ValueError("An independent evaluation dataset is required")
+        section = manifest.get(name, {})
+        if digest(file_path) != section.get("sha256"):
+            raise ValueError(f"{name} dataset checksum does not match the frozen manifest")
+        rows = read_rows(file_path)
+        if len(rows) != section.get("count"):
+            raise ValueError(f"{name} dataset count does not match the frozen manifest")
+        ids = set()
+        for row in rows:
+            metadata = row.get("metadata", {})
+            sources = metadata.get("sourceIds", [])
+            if not sources or set(metadata.get("sourceHashes", {})) != set(sources):
+                raise ValueError("Every example requires its exact source identities and hashes")
+            if metadata.get("objective") != manifest.get("settings", {}).get("objective"):
+                raise ValueError("Example objective differs from its manifest")
+            if any(manifest.get("sourceHashes", {}).get(source) != metadata["sourceHashes"][source] for source in sources):
+                raise ValueError("Example provenance differs from its manifest")
+            context = next((message["content"] for message in row["messages"] if message["role"] == "system"), None)
+            if context != manifest.get("systemPrompt"):
+                raise ValueError("Example persona context differs from its manifest")
+            ids.update(sources)
+        if sorted(ids) != section.get("sourceIds"):
+            raise ValueError(f"{name} source identities differ from the manifest")
+        identities.append(ids)
+    if identities[0].intersection(identities[1]):
+        raise ValueError("Training and evaluation share source identities")
+    return manifest
+
+
+def tokenize_row(tokenizer, row, max_length, exact=False):
+    messages = row_messages(row, exact)
+    if not tokenizer.chat_template:
+        raise ValueError("The selected tokenizer has no native chat template")
+    # Tokenize the native template once. The prompt includes the native generation
+    # header; only its continuation and native end-of-turn tokens receive loss.
+    full = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False, enable_thinking=False)
+    prefix = tokenizer.apply_chat_template(messages[:-1], tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    ids = tokenizer(full, add_special_tokens=False)["input_ids"]
+    prompt_ids = tokenizer(prefix, add_special_tokens=False)["input_ids"]
+    if not full.startswith(prefix) or ids[:len(prompt_ids)] != prompt_ids:
+        raise ValueError("The native template has no exact final-response token boundary for this example")
+    if len(ids) > max_length:
+        raise ValueError(f"Example has {len(ids)} tokens, exceeding max_seq_length={max_length}; increase the limit or curate a shorter example")
+    if len(prompt_ids) >= len(ids):
+        raise ValueError("The final response has no supervised tokens")
+    if tokenizer.eos_token_id is None or tokenizer.eos_token_id not in ids[len(prompt_ids):]:
+        raise ValueError("The native response does not contain the tokenizer's end-of-turn token")
+    return {
+        "input_ids": ids, "attention_mask": [1] * len(ids),
+        "labels": [-100] * len(prompt_ids) + ids[len(prompt_ids):],
+    }
+
+
+def tokenize_rows(tokenizer, rows, cfg):
+    output = []
+    for index, row in enumerate(rows):
+        try:
+            output.append(tokenize_row(tokenizer, row, cfg["max_seq_length"], cfg.get("require_exact_messages", False)))
+        except ValueError as error:
+            raise ValueError(f"Example {row.get('id', index + 1)}: {error}") from error
+    return output
+
+
+def finite_loss(metrics):
+    value = metrics.get("eval_loss")
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+        raise ValueError("Evaluation did not return a finite non-negative loss")
+    return float(value)
+
+
+def artifact_files(output):
+    output = Path(output)
+    names = ["adapter_config.json", "config.json", "tokenizer_config.json", "tokenizer.json",
+             "tokenizer.model", "spiece.model", "vocab.json", "vocab.txt", "merges.txt", "added_tokens.json",
+             "special_tokens_map.json", "chat_template.jinja", "generation_config.json"]
+    files = [output / name for name in names if (output / name).is_file()]
+    files += sorted(output.glob("*.safetensors"))
+    files += sorted(output.glob("*.safetensors.index.json"))
+    if not any(file.suffix == ".safetensors" for file in files):
+        raise ValueError("Training produced no safetensors weights")
+    if not (output / "tokenizer_config.json").is_file():
+        raise ValueError("Training produced no tokenizer configuration")
+    return {file.name: digest(file) for file in files}
+
+
+def gguf_artifact(directory, quantization):
+    files = [file for file in Path(directory).rglob("*.gguf") if quantization.lower() in file.name.lower()]
+    if len(files) != 1:
+        raise ValueError(f"Expected exactly one fresh {quantization} GGUF artifact; found {len(files)}")
+    with files[0].open("rb") as handle:
+        if handle.read(4) != b"GGUF":
+            raise ValueError("Converted artifact has no GGUF header")
+    return files[0]
+
+
+def load_runtime(cfg, model_path=None, training=False):
+    # Import Unsloth before Transformers/Torch as required by its supported API.
+    from unsloth import FastModel
+    import torch
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is unavailable; repair the environment with bin/setup-local-training")
+    dtype = getattr(torch, cfg.get("dtype", "bfloat16"))
+    if dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
+        raise RuntimeError("This GPU does not support the configured bfloat16 training dtype")
+    model, tokenizer = FastModel.from_pretrained(
+        model_name=str(model_path or cfg["base_model"]),
+        max_seq_length=cfg["max_seq_length"], dtype=dtype,
+        load_in_4bit=cfg["load_in_4bit"], load_in_16bit=cfg["load_in_16bit"],
+        full_finetuning=training and cfg.get("training_mode", "lora") != "lora",
+        use_gradient_checkpointing="unsloth", text_only=True,
     )
+    if training and cfg.get("training_mode", "lora") == "lora":
+        model = FastModel.get_peft_model(
+            model, r=cfg["lora_rank"], lora_alpha=cfg["lora_alpha"],
+            lora_dropout=cfg.get("lora_dropout", 0),
+            finetune_vision_layers=False, finetune_language_layers=True,
+            finetune_attention_modules=True, finetune_mlp_modules=True,
+            use_gradient_checkpointing="unsloth", random_state=cfg.get("seed", 42),
+        )
+    if tokenizer.pad_token_id is None:
+        raise ValueError("The selected tokenizer must declare a padding token")
+    tokenizer.padding_side = "right"
+    return model, tokenizer, torch
+
+
+def make_trainer(model, tokenizer, cfg, output, training, evaluation):
+    from datasets import Dataset
+    from transformers import Trainer, TrainingArguments, DataCollatorForSeq2Seq
+    development = cfg.get("require_exact_messages", False) and bool(evaluation)
+    arguments = TrainingArguments(
+        output_dir=str(output),
+        num_train_epochs=cfg["num_train_epochs"],
+        per_device_train_batch_size=cfg["per_device_train_batch_size"],
+        per_device_eval_batch_size=cfg.get("per_device_eval_batch_size", 1),
+        gradient_accumulation_steps=cfg["gradient_accumulation_steps"],
+        learning_rate=cfg["learning_rate"],
+        bf16=cfg.get("dtype", "bfloat16") == "bfloat16",
+        fp16=cfg.get("dtype", "bfloat16") == "float16",
+        logging_steps=1, save_strategy="epoch" if training else "no",
+        # The Action Selector's development folds select checkpoints by loss.
+        # Personalization's independent evaluation never selects a checkpoint.
+        eval_strategy="epoch" if development and training else "no",
+        load_best_model_at_end=development and bool(training),
+        metric_for_best_model="eval_loss" if development else None,
+        greater_is_better=False if development else None,
+        save_total_limit=cfg.get("save_total_limit", cfg["num_train_epochs"] if development else 1),
+        torch_compile=False, optim=cfg.get("optimizer", "adamw_torch"),
+        seed=cfg.get("seed", 42), data_seed=cfg.get("seed", 42),
+        report_to="none", remove_unused_columns=True,
+    )
+    return Trainer(
+        model=model, args=arguments, processing_class=tokenizer,
+        train_dataset=Dataset.from_list(training) if training else None,
+        eval_dataset=Dataset.from_list(evaluation) if evaluation else None,
+        # Precomputed labels are preserved; examples are never packed together.
+        data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, label_pad_token_id=-100),
+    )
+
+
+def evaluate_artifact(args, cfg):
+    rows = read_rows(args.eval_data, cfg.get("require_exact_messages", False))
+    model, tokenizer, _ = load_runtime(cfg, args.output)
+    tokens = tokenize_rows(tokenizer, rows, cfg)
+    trainer = make_trainer(model, tokenizer, cfg, args.output, [], tokens)
+    loss = finite_loss(trainer.evaluate())
+    write_json(Path(args.output) / "artifact-evaluation.json", {
+        "version": 1, "loss": loss, "evaluationSha256": digest(args.eval_data),
+        "artifacts": artifact_files(args.output), "count": len(rows),
+    })
+
+
+def run_training(args, cfg, manifest):
+    output = Path(args.output).resolve()
+    output.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if any(output.iterdir()):
+        raise ValueError("The candidate output directory must be empty; use a new run")
+    started = time.time()
+    result = {
+        "version": 1, "status": "running", "baseModel": cfg["base_model"],
+        "trainingMode": cfg.get("training_mode", "lora"),
+        "datasetId": manifest["datasetId"] if manifest else None,
+        "configSha256": digest(args.config), "evaluationPolicy": "development" if cfg.get("require_exact_messages") else "independent",
+        "activation": "not-activated",
+    }
+    write_json(output / "training-result.json", result)
+    try:
+        rows = read_rows(args.data, cfg.get("require_exact_messages", False))
+        eval_rows = read_rows(args.eval_data, cfg.get("require_exact_messages", False)) if args.eval_data else []
+        model, tokenizer, torch = load_runtime(cfg, training=True)
+        training = tokenize_rows(tokenizer, rows, cfg)
+        evaluation = tokenize_rows(tokenizer, eval_rows, cfg)
+        result.update({
+            "trainingSamples": len(training), "evaluationSamples": len(evaluation),
+            "supervisedTokens": sum(sum(label != -100 for label in row["labels"]) for row in training),
+            "templateSha256": hashlib.sha256(tokenizer.get_chat_template().encode()).hexdigest(),
+            "templateOptions": {"enable_thinking": False}, "supervision": "final-assistant-only",
+            "baseRevision": getattr(model.config, "_commit_hash", None),
+            "packages": {name: importlib.metadata.version(name) for name in ("torch", "unsloth", "transformers", "peft")},
+        })
+        trainer = make_trainer(model, tokenizer, cfg, output, training, evaluation)
+        baseline = finite_loss(trainer.evaluate()) if evaluation else None
+        log("TRAINING", f"{len(training)} examples, {result['supervisedTokens']} supervised tokens")
+        trainer.train()
+        trainer.save_model(str(output))
+        tokenizer.save_pretrained(output)
+        artifacts = artifact_files(output)
+        conversion = cfg.get("gguf_conversion", {"enabled": False})
+        if conversion["enabled"] and not args.skip_gguf:
+            quantization = conversion["quantization_type"].lower()
+            conversion_dir = output / "gguf-conversion"
+            conversion_dir.mkdir(mode=0o700)
+            model.save_pretrained_gguf(str(conversion_dir), tokenizer, quantization_method=quantization)
+            gguf = gguf_artifact(conversion_dir, quantization)
+            destination = output / "model.gguf"
+            shutil.move(str(gguf), destination)
+            artifacts[destination.name] = digest(destination)
+            # Conversion intermediates are inside this newly created run only.
+            shutil.rmtree(conversion_dir)
+        result["artifacts"] = artifacts
+        # Reload the serialized candidate in a fresh process; in-memory loss is
+        # not evidence that the exported weights can actually be loaded.
+        del trainer, model, tokenizer
+        gc.collect()
+        torch.cuda.empty_cache()
+        candidate = None
+        if eval_rows:
+            subprocess.run([
+                sys.executable, str(Path(__file__).resolve()),
+                "--config", str(Path(args.config).resolve()), "--output", str(output),
+                "--eval-data", str(Path(args.eval_data).resolve()), "--evaluate-artifact",
+            ], check=True)
+            report = read_json(output / "artifact-evaluation.json")
+            if report["evaluationSha256"] != digest(args.eval_data) or report["artifacts"] != artifact_files(output):
+                raise ValueError("Reload evaluation does not describe these exact candidate files")
+            candidate = finite_loss({"eval_loss": report["loss"]})
+            result["artifacts"]["artifact-evaluation.json"] = digest(output / "artifact-evaluation.json")
+        result.update({
+            "status": "candidate", "baselineLoss": baseline, "candidateLoss": candidate,
+            "qualityGate": "passed" if candidate is not None and baseline is not None and candidate <= baseline else
+                "failed" if candidate is not None else "external-evaluation-required",
+            "durationSeconds": time.time() - started,
+            "servingValidation": "required",
+        })
+        write_json(output / "training-result.json", result)
+        log("CANDIDATE", f"Saved candidate; quality gate={result['qualityGate']}; activation requires serving validation and review")
+    except BaseException as error:
+        result.update({"status": "failed", "error": str(error), "durationSeconds": time.time() - started})
+        write_json(output / "training-result.json", result)
+        raise
+
+
+def check_environment():
+    """The same pinned import/CUDA preflight is used locally and before remote data upload."""
+    from importlib.metadata import version
+    requirements = Path(__file__).with_name("requirements.txt")
+    for line in requirements.read_text().splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        package, expected = line.strip().split("==")
+        installed = version(package).split("+")[0]
+        if installed != expected:
+            raise ValueError(f"{package}: expected {expected}, found {installed}; rebuild the training environment")
+    import unsloth
+    import torch
+    if not torch.cuda.is_available():
+        raise ValueError("CUDA is unavailable in the training environment")
+    log("ENVIRONMENT", "Pinned packages and CUDA imports passed")
 
 
 def main():
-    # Parse command-line arguments for local execution
-    parser = argparse.ArgumentParser(description='Train LoRA adapter with Unsloth')
-    parser.add_argument('--data', help='Path to training data JSONL file')
-    parser.add_argument('--eval-data', help='Optional development-validation JSONL file')
-    parser.add_argument('--config', help='Path to config JSON file')
-    parser.add_argument('--output', help='Output directory for adapter')
-    parser.add_argument('--skip-gguf', action='store_true', help='Skip GGUF conversion (for vLLM safetensors output)')
-    parser.add_argument(
-        '--skip-validation-generation',
-        action='store_true',
-        help='Use eval data for loss/checkpointing but leave response generation to a fresh evaluator process',
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", help="Frozen training JSONL")
+    parser.add_argument("--eval-data", help="Independent evaluation JSONL (development fold for the Action Selector)")
+    parser.add_argument("--manifest", help="Version 2 dataset manifest")
+    parser.add_argument("--config", help="Training configuration JSON")
+    parser.add_argument("--output", help="Fresh candidate directory")
+    parser.add_argument("--check-environment", action="store_true", help="Check pinned dependencies and CUDA without loading model weights")
+    parser.add_argument("--skip-gguf", action="store_true", help="Produce safetensors only")
+    parser.add_argument("--validate-only", action="store_true", help="Validate dataset provenance and native token labels without loading model weights")
+    parser.add_argument("--evaluate-artifact", action="store_true", help="Evaluate serialized candidate weights in a fresh process")
     args = parser.parse_args()
-
-    start_time = time.time()
-
-    log_progress("INIT", "🚀 Starting LoRA training pipeline")
-
-    # Use command-line args if provided, otherwise use RunPod defaults
-    if args.data and args.config and args.output:
-        log_progress("INIT", "🖥️  Running in LOCAL mode")
-        data_path = args.data
-        config_path = args.config
-        output_dir = args.output
-    else:
-        log_progress("INIT", "☁️  Running in RUNPOD mode")
-        input_dir = "/workspace/input"
-        data_path = os.path.join(input_dir, "unsloth_dataset.jsonl")
-        config_path = os.path.join(input_dir, "config.json")
-        output_dir = "/workspace/output/adapter"  # Use /workspace (network volume) instead of /output (container)
-
-    # Defaults matching etc/training.json; can be overridden by config.json
-    cfg = {
-        "base_model": "unsloth/Qwen3.5-9B",
-        "lora_rank": 8,
-        "lora_alpha": 16,
-        "lora_dropout": 0,
-        "num_train_epochs": 2,
-        "learning_rate": 0.0002,  # 2e-4
-        "per_device_train_batch_size": 1,
-        "gradient_accumulation_steps": 16,
-        "max_seq_length": 2048,
-        "load_in_4bit": False,
-        "load_in_16bit": True,
-    }
-
-    if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            file_cfg = json.load(f)
-            cfg.update({k: v for k, v in file_cfg.items() if v is not None})
-
-    if not os.path.exists(data_path):
-        print(f"[train_unsloth] Missing dataset: {data_path}", file=sys.stderr)
-        sys.exit(2)
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Step 1: Load dataset
-    log_progress("DATASET", "Loading training data...")
-    dataset = load_dataset("json", data_files=data_path, split="train")
-    eval_dataset = (
-        load_dataset("json", data_files=args.eval_data, split="train")
-        if args.eval_data
-        else None
-    )
-    if cfg.get("require_exact_messages", False):
-        required_columns = {"system", "user", "output"}
-        missing_columns = required_columns.difference(dataset.column_names)
-        if missing_columns:
-            raise ValueError(
-                "Exact-message training dataset is missing columns: "
-                + ", ".join(sorted(missing_columns))
-            )
-        for index, example in enumerate(dataset):
-            for field in required_columns:
-                if not isinstance(example.get(field), str) or not example[field].strip():
-                    raise ValueError(f"Training row {index} has no non-empty {field} field")
-        if eval_dataset is not None:
-            missing_eval_columns = required_columns.difference(eval_dataset.column_names)
-            if missing_eval_columns:
-                raise ValueError(
-                    "Exact-message validation dataset is missing columns: "
-                    + ", ".join(sorted(missing_eval_columns))
-                )
-            for index, example in enumerate(eval_dataset):
-                for field in required_columns:
-                    if not isinstance(example.get(field), str) or not example[field].strip():
-                        raise ValueError(f"Validation row {index} has no non-empty {field} field")
-    log_progress("DATASET", f"✅ Loaded {len(dataset)} training samples", 100)
-
-    # Step 2: Download and load model with 4-bit quantization
-    log_progress("MODEL_DOWNLOAD", f"📥 Downloading {cfg['base_model']}")
-
-    # Qwen 3.5 text-only LoRA follows Unsloth's supported 16-bit path. Its
-    # current guide discourages 4-bit QLoRA for this model family.
-    load_in_4bit = cfg.get("load_in_4bit", False)
-    load_in_16bit = cfg.get("load_in_16bit", not load_in_4bit)
-    dtype_name = str(cfg.get("dtype", "bfloat16")).lower()
-    dtype_by_name = {
-        "bfloat16": torch.bfloat16,
-        "bf16": torch.bfloat16,
-        "float16": torch.float16,
-        "fp16": torch.float16,
-        "float32": torch.float32,
-        "fp32": torch.float32,
-    }
-    if dtype_name not in dtype_by_name:
-        raise ValueError(f"Unsupported training dtype: {dtype_name}")
-    dtype = dtype_by_name[dtype_name]
-
-    if load_in_4bit and load_in_16bit:
-        raise ValueError("Choose either load_in_4bit or load_in_16bit, not both")
-
-    if load_in_4bit:
-        log_progress("MODEL_DOWNLOAD", f"Model will be loaded in 4-bit quantized {dtype_name}")
-    else:
-        log_progress("MODEL_DOWNLOAD", f"Model will be loaded in 16-bit {dtype_name} for supported Qwen 3.5 LoRA training")
-
-    model_start = time.time()
-
-    # BUGFIX: Use SDPA attention for compatibility with newer GPUs (RTX 5090, etc.)
-    # Flash Attention 2 via xFormers has GPU capability restrictions
-    # SDPA is PyTorch's native implementation and works on all GPUs
-    log_progress("MODEL_DOWNLOAD", "Using PyTorch SDPA attention (compatible with all GPUs)")
-
-    is_qwen35 = 'qwen3.5' in cfg['base_model'].lower()
-    model_api = FastModel if is_qwen35 else FastLanguageModel
-
-    try:
-        model, tokenizer = model_api.from_pretrained(
-            cfg["base_model"],
-            load_in_4bit=load_in_4bit,
-            load_in_16bit=load_in_16bit,
-            full_finetuning=False,
-            dtype=dtype,
-            use_gradient_checkpointing="unsloth",  # Use Unsloth's checkpointing, not FA2
-            max_seq_length=cfg["max_seq_length"],
-            attn_implementation="sdpa",  # Use PyTorch native SDPA instead of Flash Attention
-        )
-    except Exception as e:
-        # If SDPA fails, try without specifying attention implementation
-        log_progress("MODEL_DOWNLOAD", f"SDPA failed, retrying with default attention: {e}")
-        model, tokenizer = model_api.from_pretrained(
-            cfg["base_model"],
-            load_in_4bit=load_in_4bit,
-            load_in_16bit=load_in_16bit,
-            full_finetuning=False,
-            dtype=dtype,
-            use_gradient_checkpointing="unsloth",
-            max_seq_length=cfg["max_seq_length"],
-        )
-    model_time = time.time() - model_start
-    log_progress("MODEL_DOWNLOAD", f"✅ Model loaded in {model_time/60:.1f} minutes", 100)
-
-    # The older generic pipeline can retain its eager-attention compatibility
-    # fallback. Maintained Qwen 3.5 runs use native SDPA unless explicitly told
-    # otherwise, avoiding a global slow path on supported GPUs.
-    if cfg.get("force_eager_attention", True):
-        try:
-            if hasattr(model, 'config'):
-                model.config._attn_implementation = "eager"
-                if hasattr(model.config, 'use_flash_attention_2'):
-                    model.config.use_flash_attention_2 = False
-                if hasattr(model.config, '_flash_attn_2_enabled'):
-                    model.config._flash_attn_2_enabled = False
-                log_progress("MODEL_DOWNLOAD", "Patched model config to use eager attention")
-
-            patched_modules = 0
-            for name, module in model.named_modules():
-                if 'attention' in name.lower() or 'attn' in name.lower():
-                    if hasattr(module, '_attn_implementation'):
-                        module._attn_implementation = "eager"
-                        patched_modules += 1
-                    if hasattr(module, 'is_causal'):
-                        module.is_causal = True
-
-            if patched_modules > 0:
-                log_progress("MODEL_DOWNLOAD", f"Patched {patched_modules} attention modules to eager mode")
-        except Exception as e:
-            log_progress("MODEL_DOWNLOAD", f"Warning: Could not patch attention config: {e}")
-
-    # Get chat template configuration from config file
-    chat_template = cfg.get('chat_template', 'auto').lower()
-    system_prompt = cfg.get('system_prompt', 'You are MetaHuman Greg, a helpful assistant.')
-
-    # Auto-detect template if set to 'auto'
-    if chat_template == 'auto':
-        base_model_name = cfg['base_model'].lower()
-        if 'gpt-oss' in base_model_name or 'openai' in base_model_name:
-            chat_template = 'harmony'
-        elif 'qwen' in base_model_name:
-            chat_template = 'chatml'
-        elif 'llama' in base_model_name or 'mistral' in base_model_name:
-            chat_template = 'llama'
-        else:
-            chat_template = 'chatml'  # Default fallback
-        log_progress("TEMPLATE", f"Auto-detected chat template: {chat_template}")
-    else:
-        log_progress("TEMPLATE", f"Using configured chat template: {chat_template}")
-
-    def row_messages(example):
-        """Prefer exact per-record prompts while preserving legacy datasets."""
-        row_system = (example.get("system") or system_prompt).strip()
-        exact_user = (example.get("user") or "").strip()
-        instruction = (example.get("instruction") or "").strip()
-        context = (example.get("input") or "").strip()
-        answer = (example.get("output") or "").strip()
-
-        if exact_user:
-            user_msg = exact_user
-        elif context:
-            user_msg = f"{instruction}\n\n{context}"
-        else:
-            user_msg = instruction
-
-        return row_system, user_msg, answer
-
-    # Define formatting function based on template type
-    if chat_template == 'harmony':
-        # OpenAI Harmony format for gpt-oss models
-        eos_token = tokenizer.eos_token or "<|return|>"
-
-        def row_to_text(example):
-            row_system, user_msg, answer = row_messages(example)
-
-            # Harmony format: <|start|>role<|message|>content<|end|>
-            merged = f"<|start|>developer<|message|>{row_system}<|end|><|start|>user<|message|>{user_msg}<|end|><|start|>assistant<|message|>{answer}<|end|>"
-            return {"text": merged}
-
-        def row_to_prompt(example):
-            row_system, user_msg, _ = row_messages(example)
-            return f"<|start|>developer<|message|>{row_system}<|end|><|start|>user<|message|>{user_msg}<|end|><|start|>assistant<|message|>"
-
-    elif chat_template == 'chatml':
-        # ChatML format for Qwen and similar models
-        eos_token = tokenizer.eos_token or "<|im_end|>"
-
-        def row_to_text(example):
-            row_system, user_msg, answer = row_messages(example)
-
-            # ChatML format: <|im_start|>role\ncontent<|im_end|>
-            merged = f"<|im_start|>system\n{row_system}<|im_end|>\n<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n{answer}<|im_end|>"
-            return {"text": merged}
-
-        def row_to_prompt(example):
-            row_system, user_msg, _ = row_messages(example)
-            return f"<|im_start|>system\n{row_system}<|im_end|>\n<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n"
-
-    elif chat_template == 'llama':
-        # Llama format with [INST] tags
-        eos_token = tokenizer.eos_token or "</s>"
-
-        def row_to_text(example):
-            row_system, user_msg, answer = row_messages(example)
-
-            # Llama format: <s>[INST] <<SYS>>system<</SYS>>user [/INST] assistant </s>
-            merged = f"<s>[INST] <<SYS>>\n{row_system}\n<</SYS>>\n\n{user_msg} [/INST] {answer} </s>"
-            return {"text": merged}
-
-        def row_to_prompt(example):
-            row_system, user_msg, _ = row_messages(example)
-            return f"<s>[INST] <<SYS>>\n{row_system}\n<</SYS>>\n\n{user_msg} [/INST]"
-
-    else:
-        # Unknown template - raise error
-        raise ValueError(f"Unknown chat_template '{chat_template}'. Supported: harmony, chatml, llama, auto")
-
-    # Step 3: Preprocess dataset
-    log_progress("PREPROCESSING", "Converting dataset to training format...")
-    dataset = dataset.map(row_to_text)
-    if eval_dataset is not None:
-        eval_dataset = eval_dataset.map(row_to_text)
-    log_progress("PREPROCESSING", "✅ Dataset preprocessed", 100)
-
-    # Step 4: Apply LoRA adapters
-    log_progress("LORA_SETUP", f"Applying LoRA adapters (rank={cfg['lora_rank']})")
-
-    # Auto-detect target modules based on model architecture
-    base_model_name = cfg['base_model'].lower()
-    if is_qwen35:
-        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-        log_progress("LORA_SETUP", "Detected Qwen 3.5 text-only training - using attention and MLP modules")
-    elif 'qwen' in base_model_name:
-        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj"]
-        log_progress("LORA_SETUP", "Detected Qwen architecture - using attention-only target modules")
-    elif 'gpt' in base_model_name or 'llama' in base_model_name or 'mistral' in base_model_name:
-        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-        log_progress("LORA_SETUP", "Detected GPT/LLaMA/Mistral architecture - using full target modules")
-    else:
-        # Default to full set for unknown architectures
-        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
-        log_progress("LORA_SETUP", f"Unknown architecture, using full target modules")
-
-    peft_options = {
-        "r": int(cfg["lora_rank"]),
-        "lora_alpha": int(cfg.get("lora_alpha", 16)),
-        "lora_dropout": float(cfg.get("lora_dropout", 0.05)),
-        "use_gradient_checkpointing": "unsloth",
-    }
-
-    peft_options["target_modules"] = target_modules
-    model = model_api.get_peft_model(model, **peft_options)
-    target_description = str(target_modules)
-
-    log_progress("LORA_SETUP", f"✅ LoRA adapters configured for: {target_description}", 100)
-
-    # Step 5: Training
-    total_steps = len(dataset) // (cfg["per_device_train_batch_size"] * cfg["gradient_accumulation_steps"]) * cfg["num_train_epochs"]
-    log_progress("TRAINING", f"🔥 Starting training: {cfg['num_train_epochs']} epochs, ~{total_steps} steps")
-    log_progress("TRAINING", f"Estimated time: {total_steps * 0.5:.0f}-{total_steps * 1:.0f} minutes")
-    training_args = UnslothTrainingArguments(
-        output_dir=output_dir,
-        num_train_epochs=int(cfg["num_train_epochs"]),
-        per_device_train_batch_size=int(cfg["per_device_train_batch_size"]),
-        per_device_eval_batch_size=int(cfg.get("per_device_eval_batch_size", 8)),
-        gradient_accumulation_steps=int(cfg["gradient_accumulation_steps"]),
-        learning_rate=float(cfg["learning_rate"]),
-        fp16=False,  # Qwen models use bfloat16, not fp16
-        bf16=True,   # Use bfloat16 precision
-        logging_steps=10,
-        save_strategy="epoch",
-        eval_strategy="epoch" if eval_dataset is not None else "no",
-        load_best_model_at_end=eval_dataset is not None,
-        metric_for_best_model="eval_loss" if eval_dataset is not None else None,
-        greater_is_better=False if eval_dataset is not None else None,
-        save_total_limit=int(cfg.get("save_total_limit", cfg["num_train_epochs"])),
-        torch_compile=False,
-        optim=cfg.get("optimizer", "paged_adamw_8bit"),  # Use config optimizer
-        seed=int(cfg.get("seed", 42)),
-    )
-
-    trainer = UnslothTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=dataset,
-        eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
-    )
-    if cfg.get("train_on_responses_only", False):
-        response_markers = {
-            "chatml": ("<|im_start|>user\n", "<|im_start|>assistant\n"),
-            "harmony": ("<|start|>user<|message|>", "<|start|>assistant<|message|>"),
-            "llama": ("[INST]", "[/INST] "),
-        }
-        instruction_part, response_part = response_markers[chat_template]
-        trainer = train_on_responses_only(
-            trainer,
-            instruction_part=instruction_part,
-            response_part=response_part,
-        )
-        log_progress("TRAINING", "Loss is restricted to assistant response tokens")
-
-    training_start = time.time()
-    trainer.train()
-    training_time = time.time() - training_start
-    log_progress("TRAINING", f"✅ Training complete in {training_time/60:.1f} minutes", 100)
-
-    # Step 6: Save adapter
-    log_progress("SAVE_ADAPTER", "Saving LoRA adapter weights...")
-    model.save_pretrained(output_dir)
-    tokenizer.save_pretrained(output_dir)
-    log_progress("SAVE_ADAPTER", "✅ Adapter saved", 100)
-
-    if args.eval_data and not args.skip_validation_generation:
-        log_progress("VALIDATION", "Generating held-back development responses")
-        raw_eval_dataset = load_dataset("json", data_files=args.eval_data, split="train")
-        model_api.for_inference(model)
-        if hasattr(model, "config"):
-            model.config.use_cache = True
-        tokenizer.padding_side = "left"
-        eval_batch_size = int(cfg.get("per_device_eval_batch_size", 8))
-        max_new_tokens = int(cfg.get("generation_max_new_tokens", 512))
-        generation_path = os.path.join(output_dir, "validation-generations.jsonl")
-        with open(generation_path, "w", encoding="utf-8") as handle:
-            for offset in range(0, len(raw_eval_dataset), eval_batch_size):
-                rows = [raw_eval_dataset[index] for index in range(
-                    offset,
-                    min(offset + eval_batch_size, len(raw_eval_dataset)),
-                )]
-                prompts = [row_to_prompt(row) for row in rows]
-                encoded = tokenizer(prompts, padding=True, return_tensors="pt")
-                encoded = {key: value.to(model.device) for key, value in encoded.items()}
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                batch_started = time.perf_counter()
-                with torch.inference_mode():
-                    generated = model.generate(
-                        **encoded,
-                        do_sample=False,
-                        max_new_tokens=max_new_tokens,
-                        eos_token_id=tokenizer.eos_token_id,
-                        pad_token_id=tokenizer.eos_token_id,
-                    )
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                latency_ms = (time.perf_counter() - batch_started) * 1000 / len(rows)
-                output_tokens = generated[:, encoded["input_ids"].shape[1]:]
-                responses = tokenizer.batch_decode(output_tokens, skip_special_tokens=True)
-                for row, response in zip(rows, responses, strict=True):
-                    handle.write(json.dumps({
-                        "model": cfg["base_model"],
-                        "adapter": output_dir,
-                        "expectedText": row["output"],
-                        "rawResponse": response.strip(),
-                        "meanBatchLatencyMs": latency_ms,
-                        "metadata": row.get("metadata", {}),
-                    }, ensure_ascii=False) + "\n")
-        log_progress("VALIDATION", f"✅ Wrote {generation_path}", 100)
-    elif args.eval_data:
-        log_progress(
-            "VALIDATION",
-            "⏭️  Skipping in-process generation; retained checkpoints are ready for the external evaluator",
-        )
-
-    # Step 7: Merge and convert to GGUF (skip for vLLM safetensors training)
-    # Check both command-line flag and config file
-    skip_gguf = args.skip_gguf
-    if not skip_gguf and cfg.get('gguf_conversion', {}).get('enabled') == False:
-        skip_gguf = True
-        log_progress("GGUF_MERGE", "GGUF conversion disabled via config (gguf_conversion.enabled=false)")
-
-    if skip_gguf:
-        log_progress("GGUF_MERGE", "⏭️  Skipping GGUF conversion (vLLM safetensors mode)")
-        log_progress("GGUF_MERGE", "📁 Safetensors adapter ready for vLLM at: " + output_dir)
-    else:
-        log_progress("GGUF_MERGE", "🔄 Merging adapter with base model...")
-        log_progress("GGUF_MERGE", "Converting to GGUF Q4_K_M format (this may take 5-10 minutes)")
-
-        # Use appropriate temp directory based on execution mode
-        if args.output:
-            merged_dir = os.path.join(os.path.dirname(output_dir), "merged_gguf_output")
-        else:
-            merged_dir = "/workspace/merged_gguf_output"
-        os.makedirs(merged_dir, exist_ok=True)
-
-        merge_start = time.time()
-
-        ensure_packages([
-            ("gguf", None),
-            ("protobuf", "google.protobuf"),
-            ("sentencepiece", None),
-            ("mistral_common", None),
-        ])
-
-        model.save_pretrained_gguf(
-            merged_dir,
-            tokenizer,
-            quantization_method="q4_k_m"
-        )
-        merge_time = time.time() - merge_start
-
-        # Search for GGUF files in multiple locations
-        gguf_files = []
-        search_locations = [merged_dir]
-
-        # Also search current working directory (where llama.cpp may put files)
-        cwd = os.getcwd()
-        if cwd not in search_locations:
-            search_locations.append(cwd)
-
-        # Also search /workspace if it exists and isn't already covered
-        if os.path.exists('/workspace') and '/workspace' not in search_locations:
-            search_locations.append('/workspace')
-
-        log_progress("GGUF_MERGE", f"Searching for GGUF in: {search_locations}")
-
-        # Search each location recursively
-        for search_dir in search_locations:
-            if not os.path.exists(search_dir):
-                continue
-            for root, dirs, files in os.walk(search_dir):
-                for f in files:
-                    if f.endswith('.gguf'):
-                        full_path = os.path.join(root, f)
-                        if full_path not in gguf_files:  # Avoid duplicates
-                            gguf_files.append(full_path)
-                            log_progress("GGUF_MERGE", f"Found GGUF: {full_path} ({os.path.getsize(full_path) / (1024**3):.2f} GB)")
-
-        log_progress("GGUF_MERGE", f"Found {len(gguf_files)} GGUF file(s): {[os.path.basename(f) for f in gguf_files]}")
-
-        if gguf_files:
-            # Use the first GGUF file found
-            source_gguf = gguf_files[0]
-
-            # Set final GGUF path based on execution mode
-            if args.output:
-                final_gguf = os.path.join(os.path.dirname(output_dir), "adapter.gguf")
-            else:
-                final_gguf = "/workspace/final_merged_model.gguf"
-
-            # Copy instead of rename in case source is in subdirectory
-            import shutil
-            shutil.copy2(source_gguf, final_gguf)
-
-            size_bytes = os.path.getsize(final_gguf)
-            size_gb = size_bytes / (1024 ** 3)
-            log_progress("GGUF_MERGE", f"✅ GGUF created in {merge_time/60:.1f} minutes ({size_gb:.2f} GB)", 100)
-            log_progress("GGUF_MERGE", f"📁 Source: {os.path.basename(source_gguf)} → {os.path.basename(final_gguf)}")
-        else:
-            log_progress("GGUF_MERGE", "⚠️  Warning: No GGUF file generated")
-            # List all files in merged_dir for debugging
-            all_files = []
-            for root, dirs, files in os.walk(merged_dir):
-                for f in files:
-                    all_files.append(os.path.relpath(os.path.join(root, f), merged_dir))
-            log_progress("GGUF_MERGE", f"Files in {merged_dir}: {all_files[:10]}")
-
-    # Final summary
-    total_time = time.time() - start_time
-    log_progress("COMPLETE", "=" * 60)
-    log_progress("COMPLETE", f"🎉 Training pipeline complete in {total_time/60:.1f} minutes")
-    log_progress("COMPLETE", f"📁 Adapter: {output_dir}")
-    if not skip_gguf:
-        final_gguf_path = "/workspace/final_merged_model.gguf" if in_container else os.path.join(os.path.dirname(output_dir), "adapter.gguf")
-        if os.path.exists(final_gguf_path):
-            log_progress("COMPLETE", f"📁 Merged GGUF: {final_gguf_path}")
-        else:
-            log_progress("COMPLETE", "⚠️  GGUF file not found (merge may have failed)")
-    else:
-        log_progress("COMPLETE", "📁 Mode: vLLM safetensors (no GGUF)")
-    log_progress("COMPLETE", "=" * 60)
+    if args.check_environment:
+        check_environment()
+        return
+    if not args.config or not args.output:
+        parser.error("Training and artifact evaluation require --config and --output")
+    cfg = validate_config(read_json(args.config))
+    if args.evaluate_artifact:
+        if args.validate_only or not args.eval_data or not (Path(args.output) / "training-result.json").is_file():
+            parser.error("Artifact evaluation requires an existing candidate and --eval-data")
+        evaluate_artifact(args, cfg)
+        return
+    if not args.data:
+        parser.error("--data is required")
+    manifest = None
+    if not cfg.get("require_exact_messages", False):
+        if not args.manifest or not args.eval_data:
+            parser.error("Personalization requires --manifest and --eval-data")
+        manifest = verify_manifest(args.manifest, args.data, args.eval_data, cfg)
+    if args.validate_only:
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(cfg["base_model"])
+        rows = tokenize_rows(tokenizer, read_rows(args.data, cfg.get("require_exact_messages", False)), cfg)
+        evaluation = tokenize_rows(tokenizer, read_rows(args.eval_data, cfg.get("require_exact_messages", False)), cfg) if args.eval_data else []
+        log("VALIDATED", f"{len(rows)} training and {len(evaluation)} evaluation examples; final response labels only")
+        return
+    check_environment()
+    run_training(args, cfg, manifest)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
-        import traceback
+    except Exception:
         traceback.print_exc()
-        print("[train_unsloth] ERROR:", str(e), file=sys.stderr)
         sys.exit(1)
