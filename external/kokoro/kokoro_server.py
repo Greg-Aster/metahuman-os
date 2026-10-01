@@ -5,30 +5,71 @@ Provides HTTP endpoints for text-to-speech synthesis
 """
 import argparse
 import io
+import os
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 import soundfile as sf
+import numpy as np
+import onnxruntime as ort
+import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from kokoro import KPipeline
+from kokoro_onnx import Kokoro
 from server_defaults import SynthesisDefaults, load_synthesis_defaults
-
-try:
-    from kokoro import KPipeline
-except ImportError:
-    print("Error: kokoro package not found")
-    print("Install with: pip install kokoro>=0.9.4")
-    exit(1)
 
 app = FastAPI(title="Kokoro TTS Server")
 
-# Global pipeline instance
+# KPipeline is used only for pronunciation; ONNX owns all model inference.
 pipeline: Optional[KPipeline] = None
+model: Optional[Kokoro] = None
+MODEL_DIR = Path(__file__).resolve().parent / "models"
+synthesis_lock = Lock()
 voices_dir: Optional[Path] = None
 synthesis_defaults = SynthesisDefaults()
 processing_device = "cpu"
+
+
+def load_model(device: str) -> Kokoro:
+    provider = {"cpu": "CPUExecutionProvider", "cuda": "CUDAExecutionProvider"}[device]
+    if provider not in ort.get_available_providers():
+        raise RuntimeError(f"Kokoro {device} requires ONNX Runtime provider {provider}; run bin/install-kokoro.sh --device {device}")
+    model_path = MODEL_DIR / "kokoro-v1.0.onnx"
+    voices_path = MODEL_DIR / "voices-v1.0.bin"
+    if not model_path.is_file() or not voices_path.is_file():
+        raise RuntimeError("Kokoro ONNX assets are missing; run bin/install-kokoro.sh")
+    threads = int(os.environ.get("OMP_NUM_THREADS", "2"))
+    if threads < 1:
+        raise ValueError("OMP_NUM_THREADS must be a positive integer")
+    options = ort.SessionOptions()
+    options.intra_op_num_threads = threads
+    options.inter_op_num_threads = 1
+    options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+    session = ort.InferenceSession(str(model_path), sess_options=options, providers=[provider])
+    if session.get_providers()[0] != provider:
+        raise RuntimeError(f"Kokoro could not activate the requested {provider}")
+    session.disable_fallback()
+    return Kokoro.from_session(session, str(voices_path))
+
+
+def load_frontend(lang_code: str) -> KPipeline:
+    return KPipeline(lang_code=lang_code, model=False, repo_id="hexgrad/Kokoro-82M")
+
+
+def load_custom_voicepack(filename: str) -> np.ndarray:
+    pack = torch.load(filename, map_location="cpu", weights_only=True)
+    if not isinstance(pack, torch.Tensor):
+        raise ValueError("Custom Kokoro voicepack must contain a tensor")
+    style = pack.detach().cpu().numpy().astype(np.float32)
+    if style.ndim != 3 or style.shape[1:] != (1, 256) or style.shape[0] < 510 or not np.isfinite(style).all():
+        raise ValueError("Custom Kokoro voicepack must contain finite voice styles shaped (510 or more, 1, 256)")
+    return style
 
 
 class SynthesizeRequest(BaseModel):
@@ -42,21 +83,22 @@ class SynthesizeRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    """Initialize Kokoro pipeline on server startup"""
-    global pipeline, voices_dir, synthesis_defaults, processing_device
+    """Initialize one ONNX model and a pronunciation-only frontend."""
+    global pipeline, model, voices_dir, synthesis_defaults, processing_device
     parser = argparse.ArgumentParser()
     parser.add_argument("--lang", help="Default language code override")
     parser.add_argument("--voices-dir", type=Path, help="Custom voices directory")
     parser.add_argument("--port", type=int, default=9882)
-    parser.add_argument("--device", default="cpu", help="Device to use: cpu or cuda")
+    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     args, _ = parser.parse_known_args()
 
     voices_dir = args.voices_dir
     synthesis_defaults = load_synthesis_defaults()
-    processing_device = args.device if args.device in ['cpu', 'cuda'] else 'cpu'
+    processing_device = args.device
     lang_code = args.lang or synthesis_defaults.lang_code
-    pipeline = KPipeline(lang_code=lang_code, device=processing_device)
-    print(f"✓ Kokoro pipeline initialized (lang_code={lang_code}, device={processing_device})")
+    model = load_model(processing_device)
+    pipeline = load_frontend(lang_code)
+    print(f"✓ Kokoro ONNX initialized (lang_code={lang_code}, device={processing_device})")
     print(
         "✓ Kokoro server defaults loaded "
         f"(voice={synthesis_defaults.voice}, speed={synthesis_defaults.speed}, "
@@ -67,11 +109,12 @@ async def startup():
 @app.get("/health")
 async def health():
     """Health check endpoint"""
-    if pipeline is None:
+    if pipeline is None or model is None:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
     return {
         "status": "ok",
+        "engine": "onnx",
         "device": processing_device,
         "lang": pipeline.lang_code if hasattr(pipeline, 'lang_code') else "unknown",
         "voices_dir": str(voices_dir) if voices_dir else None,
@@ -93,32 +136,35 @@ def render_speech(
     custom_voicepack: Optional[str],
     normalize: bool,
 ) -> bytes:
-    if pipeline is None:
+    global pipeline
+    if pipeline is None or model is None:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
-    voice_to_use = custom_voicepack if (
-        custom_voicepack and Path(custom_voicepack).exists()
-    ) else voice
     print("[Kokoro Server] Synthesize request:")
     print(f"  text: {text[:50]}...")
     print(f"  voice: {voice}")
     print(f"  custom_voicepack: {custom_voicepack is not None}")
-    print(f"  voice_to_use: {voice_to_use}")
     print(f"  lang_code: {lang_code}")
     print(f"  speed: {speed}")
     print(f"  normalize: {normalize}")
 
-    gen = pipeline(
-        text,
-        voice=voice_to_use,
-        speed=speed,
-        split_pattern=None
-    )
-    audio_chunks = [result.output.audio.cpu().numpy() for result in gen]
+    # Keep pronunciation and inference serialized while health stays responsive.
+    with synthesis_lock:
+        if pipeline.lang_code != lang_code:
+            pipeline = load_frontend(lang_code)
+        voice_to_use = load_custom_voicepack(custom_voicepack) if custom_voicepack else voice
+        audio_chunks = []
+        for result in pipeline(text, split_pattern=None):
+            audio, sample_rate = model.create(
+                result.phonemes, voice=voice_to_use, speed=speed,
+                is_phonemes=True, trim=False, sentence_pause=0, clause_pause=0,
+            )
+            if sample_rate != 24000 or not len(audio) or not np.isfinite(audio).all():
+                raise ValueError("Kokoro ONNX produced invalid audio")
+            audio_chunks.append(audio)
     if not audio_chunks:
         raise ValueError("Kokoro produced no audio")
 
-    import numpy as np
     audio = np.concatenate(audio_chunks) if len(audio_chunks) > 1 else audio_chunks[0]
     if normalize:
         max_val = np.abs(audio).max()
@@ -136,7 +182,7 @@ def render_speech(
 
 
 @app.post("/synthesize")
-async def synthesize(request: SynthesizeRequest):
+def synthesize(request: SynthesizeRequest):
     """Synthesize speech using request-provided settings."""
     try:
         audio = render_speech(
@@ -161,7 +207,7 @@ class DefaultSynthesizeRequest(BaseModel):
 
 
 @app.post("/synthesize-default")
-async def synthesize_default(request: DefaultSynthesizeRequest):
+def synthesize_default(request: DefaultSynthesizeRequest):
     """Synthesize speech using the voice preset loaded when the server started."""
     try:
         audio = render_speech(
@@ -182,13 +228,12 @@ async def synthesize_default(request: DefaultSynthesizeRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    import sys
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=9882)
     parser.add_argument("--lang")
     parser.add_argument("--voices-dir", type=Path)
-    parser.add_argument("--device", default="cpu", help="Device to use: cpu or cuda")
+    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     args = parser.parse_args()
 
     uvicorn.run(

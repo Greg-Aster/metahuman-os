@@ -71,3 +71,12 @@ test('rejects a malformed shared configuration document instead of fabricating d
     /must contain a kokoro server entry/,
   )
 })
+
+test('Kitten has its own CPU service configuration and rejects unavailable devices', () => {
+  assert.deepEqual(normalizeVoiceServiceConfig('kitten', { enabled: true, startOnSystemBoot: true }, {}), {
+    enabled: true, startOnSystemBoot: true, port: 9884, device: 'cpu',
+  })
+  assert.equal(normalizeVoiceServiceConfig('kitten', {}, { MH_KITTEN_PORT: '9994' }).port, 9994)
+  assert.throws(() => normalizeVoiceServiceConfig('kitten', { device: 'cuda' }, {}), /CPU only/)
+  assert.throws(() => withVoiceServiceDevice({ servers: { kitten: { device: 'cpu' } } }, 'kitten', 'cuda'), /CPU only/)
+})

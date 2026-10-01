@@ -5,11 +5,12 @@
   import { statusRefreshTrigger } from '../stores/navigation';
   import LocalModelsSettings from './LocalModelsSettings.svelte';
 
-  type DefaultBackend = 'auto' | 'ollama' | 'vllm';
-  type ResolvedBackend = 'ollama' | 'vllm' | 'local-models' | 'remote' | 'offline';
+  type DefaultBackend = 'auto' | 'ollama' | 'vllm' | 'llama-cpp';
+  type ResolvedBackend = 'llama-cpp' | 'ollama' | 'vllm' | 'local-models' | 'remote' | 'offline';
   type BigBrotherProvider = 'claude-code' | 'aider' | 'gemini-cli' | 'qwen-code' | 'codex';
 
   interface BackendAvailability {
+    llamaCpp: { configured: boolean; running: boolean; model?: string; error?: string };
     ollama: { installed: boolean; running: boolean; model?: string };
     vllm: { installed: boolean; running: boolean; model?: string };
   }
@@ -92,6 +93,7 @@
   const defaultBackendOptions: Array<{ value: DefaultBackend; label: string; description: string }> = [
     { value: 'auto', label: 'Auto', description: 'Use the best running local backend, then configured remote fallback.' },
     { value: 'ollama', label: 'Ollama', description: 'Use the local Ollama service for normal chat.' },
+    { value: 'llama-cpp', label: 'llama.cpp', description: 'Use a llama-server for local text responses and image understanding.' },
     { value: 'vllm', label: 'vLLM', description: 'Use the local vLLM server for normal chat.' },
   ];
 
@@ -109,7 +111,7 @@
 
   let activeBackend: DefaultBackend = 'auto';
   let configuredActiveBackend = 'auto';
-  let preferredLocalBackend: 'ollama' | 'vllm' = 'vllm';
+  let preferredLocalBackend: 'ollama' | 'vllm' | 'llama-cpp' = 'vllm';
   let resolvedBackend: ResolvedBackend | null = null;
   let backendStatus: BackendStatus | null = null;
   let available: BackendAvailability | null = null;
@@ -121,6 +123,16 @@
   let checkingVllmCompatibility = false;
   let statusLoading = false;
   let statusWarning: string | null = null;
+
+  let llamaEndpoint = 'http://127.0.0.1:8080';
+  let llamaModel = '';
+  let llamaContextWindow = 4096;
+  let llamaMaxTokens = 512;
+  let llamaTemperature = 0.7;
+  let llamaTopP = 0.9;
+  let llamaImages = false;
+  let llamaThinking = false;
+  let savingLlama = false;
 
   let ollamaEndpoint = 'http://localhost:11434';
   let ollamaModel = DEFAULT_OLLAMA_CHAT_MODEL;
@@ -228,7 +240,7 @@
   });
 
   function isDefaultBackend(value: string): value is DefaultBackend {
-    return value === 'auto' || value === 'ollama' || value === 'vllm';
+    return value === 'auto' || value === 'ollama' || value === 'vllm' || value === 'llama-cpp';
   }
 
   function restartNotice(label = 'Backend configuration saved'): string {
@@ -282,7 +294,15 @@
   function applyBackendConfig(config: any) {
     configuredActiveBackend = config.activeBackend || 'auto';
     activeBackend = isDefaultBackend(configuredActiveBackend) ? configuredActiveBackend : 'auto';
-    preferredLocalBackend = config.preferredLocalBackend === 'ollama' ? 'ollama' : 'vllm';
+    preferredLocalBackend = config.preferredLocalBackend === 'llama-cpp' ? 'llama-cpp' : config.preferredLocalBackend === 'ollama' ? 'ollama' : 'vllm';
+    llamaEndpoint = config.llamaCpp?.endpoint ?? 'http://127.0.0.1:8080';
+    llamaModel = config.llamaCpp?.model ?? '';
+    llamaContextWindow = config.llamaCpp?.contextWindow ?? 4096;
+    llamaMaxTokens = config.llamaCpp?.maxTokens ?? 512;
+    llamaTemperature = config.llamaCpp?.temperature ?? 0.7;
+    llamaTopP = config.llamaCpp?.topP ?? 0.9;
+    llamaImages = config.llamaCpp?.capabilities?.includes('image') ?? false;
+    llamaThinking = config.llamaCpp?.enableThinking ?? false;
 
     ollamaEndpoint = config.ollama?.endpoint || 'http://localhost:11434';
     ollamaModel = config.ollama?.defaultModel || DEFAULT_OLLAMA_CHAT_MODEL;
@@ -582,7 +602,9 @@
     clearMessages();
 
     const updates: Record<string, any> = { activeBackend: to };
-    if (to === 'ollama') {
+    if (to === 'llama-cpp') {
+      updates.preferredLocalBackend = 'llama-cpp';
+    } else if (to === 'ollama') {
       updates.preferredLocalBackend = 'ollama';
       updates.ollama = { autoStart: true };
       updates.vllm = { autoStart: false };
@@ -609,15 +631,38 @@
 
       configuredActiveBackend = to;
       activeBackend = to;
-      savedNotice = restartNotice(`Default chat backend saved as ${getBackendLabel(to)}`);
+      savedNotice = to === 'llama-cpp' ? 'Default chat backend saved as llama.cpp.' : restartNotice(`Default chat backend saved as ${getBackendLabel(to)}`);
       await loadStatus();
-      window.dispatchEvent(new CustomEvent('backend-changed', { detail: { backend: to, requiresRestart: true } }));
+      window.dispatchEvent(new CustomEvent('backend-changed', { detail: { backend: to, requiresRestart: to !== 'llama-cpp' } }));
       statusRefreshTrigger.update(n => n + 1);
     } catch (err) {
       error = 'Failed to save default backend';
     } finally {
       savingDefault = false;
     }
+  }
+
+  async function saveLlamaConfig() {
+    savingLlama = true;
+    clearMessages();
+    try {
+      const response = await apiFetch('/api/llm-backend/config', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activeBackend: 'llama-cpp', preferredLocalBackend: 'llama-cpp', llamaCpp: {
+          endpoint: llamaEndpoint.trim(), model: llamaModel.trim(), contextWindow: llamaContextWindow,
+          maxTokens: llamaMaxTokens, temperature: llamaTemperature, topP: llamaTopP,
+          enableThinking: llamaThinking, capabilities: llamaImages ? ['text', 'image'] : ['text'],
+        } }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Could not save llama.cpp settings');
+      applyBackendConfig(data.config);
+      await loadStatus();
+      savedNotice = 'llama.cpp settings saved and selected.';
+      window.dispatchEvent(new CustomEvent('backend-changed', { detail: { backend: 'llama-cpp', requiresRestart: false } }));
+      statusRefreshTrigger.update(n => n + 1);
+    } catch (err) { error = err instanceof Error ? err.message : 'Could not save llama.cpp settings'; }
+    finally { savingLlama = false; }
   }
 
   async function saveOllamaConfig() {
@@ -907,6 +952,7 @@
 
   function getBackendIcon(backend: string): string {
     switch (backend) {
+      case 'llama-cpp': return '🦙';
       case 'ollama': return '🦙';
       case 'vllm': return '⚡';
       case 'auto': return '🔄';
@@ -918,6 +964,7 @@
 
   function getBackendLabel(backend: string): string {
     switch (backend) {
+      case 'llama-cpp': return 'llama.cpp';
       case 'ollama': return 'Ollama';
       case 'vllm': return 'vLLM';
       case 'auto': return 'Auto';
@@ -978,11 +1025,11 @@
 
       {#if !isDefaultBackend(configuredActiveBackend)}
         <div class="banner banner-warning mb-4">
-          Current config uses {getBackendLabel(configuredActiveBackend)}. Choose Auto, Ollama, or vLLM below to make local chat routing explicit.
+          Current config uses {getBackendLabel(configuredActiveBackend)}. Choose a backend below to make local chat routing explicit.
         </div>
       {/if}
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         {#each defaultBackendOptions as option}
           <button
             class="text-left rounded-lg border-2 p-4 transition-all bg-white dark:bg-gray-800 hover:border-violet-400 disabled:opacity-60 {activeBackend === option.value ? 'border-violet-500 dark:border-violet-400 shadow-sm shadow-violet-500/10' : 'border-gray-200 dark:border-gray-700'}"
@@ -1004,6 +1051,27 @@
 
     <section class="mb-6">
       <h4 class="text-base font-semibold mb-3 text-gray-800 dark:text-gray-100">Local Service Control</h4>
+      <div class="panel p-4 mb-4 {configuredActiveBackend === 'llama-cpp' ? 'border-2 border-violet-500 dark:border-violet-400' : ''}">
+        <div class="flex items-center gap-2 mb-3">
+          <h5 class="m-0 text-lg font-semibold text-gray-900 dark:text-gray-100">llama.cpp</h5>
+          <span class="ml-auto text-sm">{available?.llamaCpp?.running ? 'Running' : 'Offline'}</span>
+        </div>
+        <p class="text-sm text-gray-500 dark:text-gray-400">Connect to your existing llama-server. Start and stop it using its installed service. Context size must match the server; image input requires a vision model and projector.</p>
+        {#if available?.llamaCpp?.error && llamaModel}
+          <p class="text-sm text-red-600 dark:text-red-400">{available.llamaCpp.error}</p>
+        {/if}
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+          <label class="block text-sm"><span class="block mb-1">Server URL</span><input class="input-field font-mono" bind:value={llamaEndpoint} placeholder="http://127.0.0.1:8080" /></label>
+          <label class="block text-sm"><span class="block mb-1">Served model name</span><input class="input-field font-mono" bind:value={llamaModel} placeholder="Model alias reported by the server" /></label>
+          <label class="block text-sm"><span class="block mb-1">Context tokens</span><input class="input-field" type="number" min="256" max="1048576" bind:value={llamaContextWindow} /></label>
+          <label class="block text-sm"><span class="block mb-1">Max output tokens</span><input class="input-field" type="number" min="1" max={llamaContextWindow - 1} bind:value={llamaMaxTokens} /></label>
+          <label class="block text-sm"><span class="block mb-1">Temperature</span><input class="input-field" type="number" min="0" max="5" step="0.1" bind:value={llamaTemperature} /></label>
+          <label class="block text-sm"><span class="block mb-1">Top P</span><input class="input-field" type="number" min="0" max="1" step="0.05" bind:value={llamaTopP} /></label>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={llamaImages} />Model supports image input</label>
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={llamaThinking} />Enable thinking</label>
+        </div>
+        <button class="btn-primary" on:click={saveLlamaConfig} disabled={savingLlama}>{savingLlama ? 'Saving…' : 'Save and use llama.cpp'}</button>
+      </div>
       <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <div class="panel p-4 {configuredActiveBackend === 'ollama' ? 'border-2 border-violet-500 dark:border-violet-400' : ''}">
           <div class="flex items-center gap-2 mb-3">

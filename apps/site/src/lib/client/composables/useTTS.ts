@@ -25,6 +25,16 @@ interface AudioChunk {
   played: boolean;
 }
 
+interface StreamingSpeechOptions {
+  provider?: string;
+  voice?: string;
+  langCode?: string;
+  pitchShift?: number;
+  speed?: number;
+  source?: string;
+  requestId?: string;
+}
+
 export type TTSPlaybackOutcome = 'completed' | 'interrupted' | 'suppressed' | 'failed';
 export type TTSStopReason = 'interrupted' | 'disabled' | 'superseded' | 'cleanup';
 
@@ -200,6 +210,7 @@ function createTTS() {
   let streamReportedSpeaking = false;
   let streamComplete = false; // Track if all chunks have been received
   let streamPlaybackFailed = false;
+  let streamPlaybackCompletion: { token: number; resolve: (completed: boolean) => void } | null = null;
 
   function markPlaybackStopped(reason: TTSStopReason): void {
     if (livePlaybackTokens.has(ttsPlaybackToken) && !playbackStopReasons.has(ttsPlaybackToken)) {
@@ -252,6 +263,8 @@ function createTTS() {
    * Stop streaming TTS playback
    */
   function stopStreaming() {
+    streamPlaybackCompletion?.resolve(false);
+    streamPlaybackCompletion = null;
     // Abort the SSE connection
     if (streamAbortController) {
       streamAbortController.abort();
@@ -531,19 +544,13 @@ function createTTS() {
   }
 
   /**
-   * Speak text using streaming TTS (paragraph-level)
-   * Each paragraph is synthesized as one continuous audio chunk
-   * Pauses occur ONLY at real paragraph boundaries (double newlines)
+   * Play each server-owned speech phrase as it arrives, buffering subsequent
+   * phrases on the same Web Audio timeline while synthesis continues.
    *
    * @param text - Text to speak
    * @param options - Optional parameters for voice control
    */
-  async function speakTextStreaming(text: string, options?: {
-    pitchShift?: number;  // RVC pitch shift (-12 to +12)
-    speed?: number;       // Speaking rate (0.5-2.0)
-    source?: string;
-    requestId?: string;
-  }): Promise<TTSPlaybackOutcome> {
+  async function speakTextStreaming(text: string, options?: StreamingSpeechOptions): Promise<TTSPlaybackOutcome> {
     console.log('[useTTS] speakTextStreaming called with text length:', text.length);
     const speechText = normalizeTextForSpeech(text);
     console.log('[useTTS] normalized text length:', speechText?.length || 0);
@@ -569,13 +576,17 @@ function createTTS() {
     streamPlaybackFailed = false;
     const controller = new AbortController();
     streamAbortController = controller;
+    const playbackComplete = new Promise<boolean>((resolve) => {
+      streamPlaybackCompletion = { token, resolve };
+    });
 
     isStreaming.set(true);
     isLoading.set(true);
 
     try {
       // Fetch voice provider to determine streaming endpoint
-      const provider = await fetchVoiceProvider();
+      const provider = options?.provider ?? await fetchVoiceProvider();
+      if (playbackWasStopped(token)) return finishPlayback(token, false);
       console.log('[useTTS] Streaming with provider:', provider);
 
       // Build request body with provider-specific parameters
@@ -584,6 +595,8 @@ function createTTS() {
         provider: provider,
         source: options?.source,
         requestId: options?.requestId,
+        voice: options?.voice,
+        langCode: options?.langCode,
       };
 
       // Add optional parameters
@@ -613,11 +626,13 @@ function createTTS() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let expectedChunks: number | undefined;
 
       console.log('[useTTS] SSE stream started');
 
       while (true) {
         const { done, value } = await reader.read();
+        if (playbackWasStopped(token)) return finishPlayback(token, false);
 
         if (done) {
           console.log('[useTTS] SSE stream ended');
@@ -643,6 +658,10 @@ function createTTS() {
           }
 
           if (data.event === 'complete') {
+            if (data.total_chunks !== audioQueue.length
+              || (expectedChunks !== undefined && expectedChunks !== audioQueue.length)) {
+              throw new Error('TTS stream completed with missing audio chunks');
+            }
             console.log('[useTTS] Stream complete:', data.total_chunks, 'chunks');
             streamComplete = true;
             isLoading.set(false);
@@ -659,9 +678,12 @@ function createTTS() {
           if (typeof data.audio_base64 === 'string') {
             const chunkIndex = Number(data.chunk_index);
             const totalChunks = Number(data.total_sentences);
-            if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || !Number.isInteger(totalChunks)) {
+            if (streamComplete || !Number.isInteger(chunkIndex) || chunkIndex !== audioQueue.length
+              || !Number.isInteger(totalChunks) || totalChunks < 1 || chunkIndex >= totalChunks
+              || (expectedChunks !== undefined && expectedChunks !== totalChunks)) {
               throw new Error('TTS stream returned invalid chunk metadata');
             }
+            expectedChunks = totalChunks;
             console.log(`[useTTS] Received chunk ${chunkIndex + 1}/${totalChunks}`);
             streamProgress.set({ current: chunkIndex + 1, total: totalChunks });
 
@@ -694,15 +716,11 @@ function createTTS() {
       }
 
       if (!streamComplete) {
-        console.warn('[useTTS] TTS stream ended before its completion event');
-        streamPlaybackFailed = true;
-        streamComplete = true;
-        finishStreamingPlaybackIfComplete(token);
+        throw new Error('TTS stream ended before its completion event');
       }
 
       // Wait for all chunks to finish playing
-      await waitForPlaybackComplete(token);
-      return finishPlayback(token, !streamPlaybackFailed);
+      return finishPlayback(token, await playbackComplete);
 
     } catch (e) {
       if ((e as Error).name === 'AbortError') {
@@ -710,24 +728,31 @@ function createTTS() {
         return finishPlayback(token, false);
       }
       console.warn('[useTTS] Streaming failed:', e);
-      streamPlaybackFailed = true;
-      stopStreaming();
+      if (!playbackWasStopped(token)) {
+        streamPlaybackFailed = true;
+        stopStreaming();
+      }
       return finishPlayback(token, false);
     } finally {
       if (streamAbortController === controller) streamAbortController = null;
-      isLoading.set(false);
-      isStreaming.set(false);
+      if (token === ttsPlaybackToken) {
+        isLoading.set(false);
+        isStreaming.set(false);
+      }
     }
   }
 
   function finishStreamingPlaybackIfComplete(token: number): void {
+    if (playbackWasStopped(token)) return;
     const allPlayed = audioQueue.length === 0 || audioQueue.every(chunk => chunk.played);
     if (!streamComplete || !allPlayed || streamSources.size > 0) return;
-    if (!playbackWasStopped(token)) {
-      isPlaying.set(false);
-      if (streamReportedSpeaking) reportTTSState(false);
-    }
+    isPlaying.set(false);
+    if (streamReportedSpeaking) reportTTSState(false);
     streamReportedSpeaking = false;
+    if (streamPlaybackCompletion?.token === token) {
+      streamPlaybackCompletion.resolve(!streamPlaybackFailed);
+      streamPlaybackCompletion = null;
+    }
   }
 
   /**
@@ -771,28 +796,6 @@ function createTTS() {
         );
       }
     }
-  }
-
-  /**
-   * Wait for all audio chunks to finish playing
-   */
-  function waitForPlaybackComplete(token: number): Promise<void> {
-    return new Promise((resolve) => {
-      const checkComplete = () => {
-        if (playbackWasStopped(token)) {
-          resolve();
-          return;
-        }
-        const allPlayed = audioQueue.length === 0 || audioQueue.every(c => c.played);
-        if (allPlayed && streamSources.size === 0 && streamComplete) {
-          isPlaying.set(false);
-          resolve();
-        } else {
-          setTimeout(checkComplete, 50);
-        }
-      };
-      checkComplete();
-    });
   }
 
   /**
@@ -913,18 +916,14 @@ function createTTS() {
    * Smart speak - uses native TTS if enabled, otherwise server TTS
    * Auto-selects streaming mode for slow providers (RVC) to reduce latency
    */
-  async function speak(text: string, options?: {
+  async function speak(text: string, options?: StreamingSpeechOptions & {
     streaming?: boolean;
-    pitchShift?: number;
-    speed?: number;
-    source?: string;
-    requestId?: string;
   }): Promise<TTSPlaybackOutcome> {
     const playbackRequest = playbackRequests.begin(options?.requestId);
     try {
       // Check if native voice mode is enabled
       if (
-        isNativeVoiceModeEnabled()
+        !options?.provider && isNativeVoiceModeEnabled()
         && isNativeTTSAvailable()
       ) {
         console.log('[useTTS] Native voice mode enabled - using device TTS');
@@ -935,11 +934,11 @@ function createTTS() {
       let useStreaming = options?.streaming;
       // If streaming not explicitly set, auto-detect based on provider
       if (useStreaming === undefined) {
-        const provider = await fetchVoiceProvider();
+        const provider = options?.provider ?? await fetchVoiceProvider();
         if (!playbackRequests.isActive(playbackRequest)) return 'interrupted';
         // RVC is slow (especially on CPU) - always use streaming for lower latency
-        // Kokoro has native streaming support, also benefits from streaming mode
-        useStreaming = provider === 'rvc' || provider === 'kokoro';
+        // KokoroService releases ordered phrases while later synthesis continues.
+        useStreaming = provider === 'rvc' || provider === 'kokoro' || provider === 'kitten';
         if (useStreaming) {
           console.log(`[useTTS] Auto-selecting streaming mode for ${provider} provider`);
         }
@@ -948,6 +947,9 @@ function createTTS() {
       if (!playbackRequests.isActive(playbackRequest)) return 'interrupted';
       if (useStreaming) {
         return await speakTextStreaming(text, {
+          provider: options?.provider,
+          voice: options?.voice,
+          langCode: options?.langCode,
           pitchShift: options?.pitchShift,
           speed: options?.speed,
           source: options?.source,

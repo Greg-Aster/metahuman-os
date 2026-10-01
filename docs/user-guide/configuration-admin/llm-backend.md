@@ -1,7 +1,7 @@
 # LLM Backend Configuration
 
 MetaHuman routes model requests through the deployment backend owner and model
-provider bridge. Supported target families include Ollama, vLLM, the maintained
+provider bridge. Supported target families include Ollama, vLLM, llama.cpp, the maintained
 local-model service, configured remote providers, and automatic selection.
 
 ## Configuration owner
@@ -13,9 +13,10 @@ CLI instead of creating provider-specific routing files.
 
 Important fields include:
 
-- `activeBackend`: `ollama`, `vllm`, `remote`, or the supported automatic mode;
+- `activeBackend`: `ollama`, `vllm`, `llama-cpp`, `local-models`, `remote`, or the supported automatic mode;
 - `ollama.endpoint` and `ollama.defaultModel`;
 - `vllm.endpoint`, model identity, context length, and memory controls;
+- `llamaCpp.endpoint`, served model name, context/output limits and capabilities;
 - `remote.serverUrl` and remote model identity;
 - `preferredLocalBackend` for automatic local routing.
 
@@ -67,6 +68,34 @@ Use the vLLM lifecycle owner so startup parameters, model identity, adapters, an
 ```
 
 Run `./bin/mh vllm` for supported overrides. If startup fails, reduce configured GPU utilization or context length and inspect the reported log rather than launching a second unmanaged server.
+
+## llama.cpp
+
+In **System → Backend**, choose **llama.cpp** or use its **Save and use llama.cpp**
+button. Enter the server root URL (for example `http://127.0.0.1:8080`, without
+`/v1`), the exact model name returned by `/v1/models`, and the context limit used
+when launching the server. Configure a smaller output-token budget. Enable image
+input only when the served model and its loaded vision projector support it.
+Text, image parts and structured output use the same provider path.
+
+Start `llama-server` with the installation's existing service. MetaHuman checks
+its health and model identity; it does not start a competing process or download
+weights. `mh backend start` verifies an externally managed llama.cpp server is
+ready. Connection failures and model mismatches remain visible errors.
+
+Selecting llama.cpp overrides local chat and action-role model assignments on
+this installation. Synced profile registries retain their original assignments;
+embedding services and explicitly chosen cloud/remote-server roles retain their
+own providers. The model inventory displays the effective local model. Automatic
+selection can prefer llama.cpp through `preferredLocalBackend`.
+
+Server Status refreshes when opened, when the page becomes visible, after a
+control action, on backend-change events, or with its refresh button. It has no
+periodic status polling.
+
+The separate Local Model Service panel reads its inventory from that service.
+After requesting a download, use **Refresh model status** to check completion.
+Unavailable inventory is shown as an error.
 
 ## Remote backend
 

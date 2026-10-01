@@ -8,7 +8,7 @@ import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse, errorResponse, badRequestResponse } from '../types.js';
 import { generateSpeech, generateMultiVoiceSpeech, getTTSStatus } from '../../index.js';
 
-type TTSProvider = 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro';
+type TTSProvider = 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro' | 'kitten';
 
 /**
  * Normalize provider name (UI sends "sovits", backend uses "gpt-sovits")
@@ -36,6 +36,7 @@ export async function handleTtsGenerate(req: UnifiedRequest): Promise<UnifiedRes
     // Check if multi-voice mode is requested (for Mutant Super Intelligence)
     if (models && Array.isArray(models) && models.length > 0) {
       // generateMultiVoiceSpeech only supports piper, gpt-sovits, rvc (not kokoro)
+      if (normalizedProvider === 'kitten') return badRequestResponse('Kitten does not support the multi-voice effect');
       const multiProvider = normalizedProvider === 'kokoro' ? 'piper' : normalizedProvider;
       audioBuffer = await generateMultiVoiceSpeech(text, models, {
         speakingRate,
@@ -49,6 +50,8 @@ export async function handleTtsGenerate(req: UnifiedRequest): Promise<UnifiedRes
         pitchShift,
         langCode,
         provider: normalizedProvider,
+        username: req.user.username,
+        signal: req.signal,
       });
     }
 

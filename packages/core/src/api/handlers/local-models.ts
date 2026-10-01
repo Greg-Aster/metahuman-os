@@ -1,7 +1,7 @@
 /**
  * Local Models API Handlers
  *
- * API endpoints for the local-model-service (Transformers.js).
+ * API endpoints for the local-model-service (node-llama-cpp).
  * Handles config, status, model download, and service control.
  * Works for both web (Astro) and mobile (nodejs-mobile).
  */
@@ -168,23 +168,11 @@ export async function handleGetLocalModelsAvailable(_req: UnifiedRequest): Promi
 
     const running = await isLocalModelServiceRunning(endpoint);
     if (!running) {
-      // Return static list if service not running
-      return successResponse({
-        embeddings: [
-          { id: 'qwen3-embedding-0.6b', size: '560MB', dimensions: 1024, downloaded: false },
-          { id: 'qwen3-embedding-4b', size: '2.5GB', dimensions: 1024, downloaded: false },
-          { id: 'all-MiniLM-L6-v2', size: '23MB', dimensions: 384, downloaded: false },
-        ],
-        llm: [
-          { id: 'qwen3-1.7b', size: '1.2GB', downloaded: false },
-          { id: 'qwen2-0.5b', size: '400MB', downloaded: false },
-          { id: 'tinyllama', size: '600MB', downloaded: false },
-        ],
-        serviceRunning: false,
-      });
+      return { status: 503, error: 'Local model service is not running. Start it before requesting its model inventory.' };
     }
 
     const models = await getAvailableLocalModels(endpoint);
+    if (!models) return { status: 502, error: 'Local model service did not return its model inventory' };
     return successResponse({
       ...models,
       serviceRunning: true,

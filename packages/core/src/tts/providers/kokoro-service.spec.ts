@@ -5,6 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import type { CacheConfig, KokoroConfig } from '../interface.js';
 import { KokoroService } from './kokoro-service.js';
+import { getCacheKey } from '../cache.js';
+import { splitSpeechText } from '../speech-chunks.js';
 
 const config: KokoroConfig = {
   langCode: 'a',
@@ -16,7 +18,7 @@ const config: KokoroConfig = {
   outputFormat: 'wav',
 };
 
-test('Kokoro streaming yields the first phrase before synthesizing later phrases and reuses cache', async () => {
+test('Kokoro streams early, bypasses old engine audio, and reuses its ONNX cache', async () => {
   const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-kokoro-cache-'));
   const cache: CacheConfig = { enabled: true, directory: cacheDir, maxSizeMB: 10 };
   const synthesisTexts: string[] = [];
@@ -41,6 +43,11 @@ test('Kokoro streaming yields the first phrase before synthesizing later phrases
     'The third sentence continues with enough detail to require another audio phrase.',
     'The final sentence completes the response after earlier audio is available.',
   ].join(' ');
+
+  for (const chunk of splitSpeechText(text)) {
+    const key = getCacheKey(chunk, 'kokoro:a:af_heart', 1);
+    fs.writeFileSync(path.join(cacheDir, `${key}.wav`), 'old-pytorch-audio');
+  }
 
   try {
     const service = new KokoroService(config, cache);

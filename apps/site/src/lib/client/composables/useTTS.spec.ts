@@ -114,7 +114,7 @@ globalThis.fetch = async (input, init) => {
       : new ReadableStream<Uint8Array>({
           start(controller) {
             controller.enqueue(new TextEncoder().encode(
-              'data: {"chunk_index":0,"total_sentences":2,"audio_base64":"AQ==","is_final":false}\n\n',
+              'data: {"chunk_index":0,"total_sentences":1,"audio_base64":"AQ==","is_final":true}\n\n',
             ));
             controller.enqueue(new TextEncoder().encode(
               'data: {"event":"complete","total_chunks":1}\n\n',

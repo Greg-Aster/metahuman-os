@@ -406,7 +406,7 @@ export async function backendCommand(args: string[]): Promise<void> {
 
   if (!subcommand) {
     console.log(`
-LLM Backend Management — Switch between Ollama and vLLM
+LLM Backend Management — Configure local inference
 ========================================================
 
 Usage: mh backend <subcommand> [options]
@@ -414,7 +414,7 @@ Usage: mh backend <subcommand> [options]
 Subcommands:
   status              Show current backend status and configuration
   start               Start the configured backend
-  switch <backend>    Switch to a different backend (ollama|vllm)
+  switch <backend>    Switch to a different backend (ollama|vllm|llama-cpp)
   detect              Detect available backends on the system
 
 Examples:
@@ -436,6 +436,11 @@ Examples:
         console.log(`\nLLM Backend Status`);
         console.log(`==================`);
         console.log(`Active Backend: ${config.activeBackend.toUpperCase()}`);
+        if (available.llamaCpp.configured) {
+          console.log(`\nllama.cpp: ${available.llamaCpp.running ? 'Running' : 'Offline'} at ${config.llamaCpp.endpoint}`);
+          console.log(`  - Model: ${config.llamaCpp.model}`);
+          if (available.llamaCpp.error) console.log(`  - ${available.llamaCpp.error}`);
+        }
 
         console.log(`\nOllama:`);
         console.log(`  - Status: ${available.ollama.running ? '✅ Running' : available.ollama.installed ? '⚪ Stopped' : '❌ Not installed'}`);
@@ -481,9 +486,9 @@ Examples:
       }
 
       case 'switch': {
-        const backend = args[1] as 'ollama' | 'vllm';
-        if (!backend || !['ollama', 'vllm'].includes(backend)) {
-          console.error('Usage: mh backend switch <ollama|vllm>');
+        const backend = args[1] as 'ollama' | 'vllm' | 'llama-cpp';
+        if (!backend || !['ollama', 'vllm', 'llama-cpp'].includes(backend)) {
+          console.error('Usage: mh backend switch <ollama|vllm|llama-cpp>');
           process.exit(1);
         }
 
@@ -504,6 +509,8 @@ Examples:
         const available = await detectAvailableBackends();
 
         console.log(`\nAvailable Backends:`);
+        console.log(`  llama.cpp: ${available.llamaCpp.running ? 'Running' : available.llamaCpp.configured ? 'Offline' : 'Not configured'}`);
+        if (available.llamaCpp.model) console.log(`    - Model: ${available.llamaCpp.model}`);
         console.log(`  Ollama: ${available.ollama.installed ? '✅ Available' : '❌ Not available'}`);
         if (available.ollama.installed) {
           console.log(`    - Running: ${available.ollama.running ? 'Yes' : 'No'}`);

@@ -298,7 +298,7 @@ export function useOllamaStatus() {
   const hasModels = writable<boolean>(true);
   const modelCount = writable<number>(0);
   const error = writable<string | null>(null);
-  const activeBackend = writable<'ollama' | 'vllm'>('ollama');
+  const activeBackend = writable<'ollama' | 'vllm' | 'llama-cpp'>('ollama');
 
   /**
    * Check backend status without triggering boot-time service work.
@@ -315,7 +315,7 @@ export function useOllamaStatus() {
         hasModels.set(Boolean(status.model));
         modelCount.set(status.model ? 1 : 0);
         error.set(status.running ? null : status.reason || 'Backend is not running');
-        if (status.resolvedBackend === 'ollama' || status.resolvedBackend === 'vllm') {
+        if (status.resolvedBackend === 'ollama' || status.resolvedBackend === 'vllm' || status.resolvedBackend === 'llama-cpp') {
           activeBackend.set(status.resolvedBackend);
         }
       }

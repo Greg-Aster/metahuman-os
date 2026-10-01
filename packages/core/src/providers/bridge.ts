@@ -20,6 +20,7 @@ import {
   normalizeOllamaChatResponse,
   resolveOllamaThinkingMode,
 } from '../ollama.js';
+import { callLlamaCpp, getLlamaCppStatus } from './llama-cpp.js';
 import { vllm, isVLLMRunning, type VLLMConfig } from '../vllm.js';
 import { buildVLLMStartConfig, loadBackendConfig, getBackendStatus } from '../llm-backend.js';
 import { generateWithLocalService, isLocalModelServiceRunning } from './local-models.js';
@@ -245,7 +246,7 @@ export async function callProvider(
 
   // Big Brother not enabled - check local backend availability
   if (!backendStatus.running || backendStatus.health === 'offline') {
-    const errorMsg = `No LLM backend available. ${backendStatus.resolvedBackend} is ${backendStatus.health}. Start vLLM/Ollama or enable Big Brother mode.`;
+    const errorMsg = `No LLM backend available. ${backendStatus.reason || `${backendStatus.backend} is ${backendStatus.health}`}. Check the configured service in System settings.`;
     console.error(`[provider-bridge] ${errorMsg}`);
     throw new Error(errorMsg);
   }
@@ -281,8 +282,15 @@ export async function callProvider(
     return callCloudProvider(providerName, messages, options, config, onProgress);
   }
 
+  if (backendStatus.resolvedBackend === 'llama-cpp'
+    && ['local', 'ollama', 'vllm', 'llama-cpp'].includes(providerName)) {
+    return callLlamaCpp(loadBackendConfig().llamaCpp, messages, options, onProgress);
+  }
+
   // Local providers - check which backend is active
   switch (providerName) {
+    case 'llama-cpp':
+      throw new Error('llama.cpp is not the active backend. Select it in System settings.');
     case 'local':
     case 'ollama': {
       // Use intelligent backend detection for 'local' or 'ollama' provider
@@ -876,6 +884,8 @@ async function callMockProvider(
  */
 export async function isProviderAvailable(providerName: ProviderType): Promise<boolean> {
   switch (providerName) {
+    case 'llama-cpp':
+      return (await getLlamaCppStatus(loadBackendConfig().llamaCpp)).running;
     case 'ollama':
       return ollama.isRunning();
 

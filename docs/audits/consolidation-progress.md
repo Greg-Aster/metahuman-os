@@ -3675,3 +3675,110 @@ Missing-buffer follow-up:
   byte-for-byte; the Q6A chat API returns 30 Conversation, 80 Inner, 30 System and
   100 Robot messages. No scheduled remote polling was added. Temporary SSH
   bootstrap delivery artifacts were removed; maintenance access remains usable.
+
+## 2026-09-29 — llama.cpp backend and System configuration
+
+- Owner-approved backend addition repairs the existing deployment selection,
+  role resolver and provider bridge. System → Backend, status, model inventory
+  and CLI now expose llama.cpp; local chat/action assignments use the selected
+  device model without rewriting synced profile registries.
+- Consolidated duplicate Auto-status branches and removed the redundant resolver
+  fallback wrapper. Repaired the embedded Local Model Service panel's response
+  shape crash and nested metadata. Removed its dead events/reconnect wiring,
+  fabricated offline catalog and Server Status's periodic polling.
+- Fourteen focused tests, existing vLLM runtime/model-default regressions, Core/
+  CLI/Site type checks, architecture checks, Site build and compiled-runtime
+  verification pass. Live text, synthetic-image and schema-constrained requests
+  succeed through the canonical router. Authenticated browser verification saves
+  llama.cpp settings with no uncaught errors.
+- Existing installation launcher/service ownership is preserved. Full workspace,
+  extended-context conversation and physical-robot checks were not performed.
+  Evidence and scope: [llama.cpp repair](2026-09-29-llama-cpp-backend.md).
+
+## 2026-09-29 — profile TTS configuration repair
+
+- Reproduced authenticated streaming HTTP 500: TTS required an absent global
+  voice file before reading complete profile preferences, although Kokoro was
+  healthy. Repaired the existing TTS configuration owner to read profile settings
+  with optional installation defaults. Removed the global cache/preload and
+  swallowed profile-parse failures; retained canonical profile path resolution.
+- The stream handler now catches asynchronous service-construction failures.
+  The ownership guard checks the tracked template instead of requiring ignored
+  machine configuration. Added five behavioral regressions to the existing
+  synthesis validation command; three failed before repair and all now pass.
+- Eleven synthesis tests, seven service/device tests, synthesis/service/node
+  ownership and browser playback tests, Core typecheck, architecture, Site build
+  and compiled-runtime checks pass. No unrelated source or profile data changed.
+- After restart, authenticated Chromium received HTTP 200, decoded three ordered
+  non-silent audio phrases, and received completion from the formerly failing
+  endpoint. CPU generation remains slow (38 seconds to first audio in the longer
+  test). Speaker playback and physical robot behavior remain unverified.
+  Evidence: [TTS configuration repair](2026-09-29-tts-profile-configuration.md).
+
+- Follow-up: reproduced Kokoro health timeouts during CPU inference. Its existing
+  synthesis handlers now run in FastAPI workers with serialized model access,
+  leaving health responsive. Both Python HTTP regressions pass (busy-health
+  failed before repair). Managed restart and live concurrent validation passed:
+  health returned in 10 ms during synthesis and the WAV stream completed.
+- Performance follow-up: confirmed active thermal throttling on the uncooled
+  board. Standard OpenMP defaults of two threads and passive waiting cut measured
+  CPU work by about 54 percent for a short phrase, with similar elapsed time.
+  Applied only through ignored installation environment; voice/model unchanged.
+  Cooling and conversational latency remain unresolved. No NPU port was attempted.
+
+## 2026-09-30 — Kokoro streaming startup and preview buffering
+
+- Reproduced the phrase owner's tail merging holding the opening phrase until an
+  entire short response was synthesized. Release a bounded opening phrase before
+  applying the existing remainder policy; preserve decimal numbers during splits.
+- Voice Settings now uses the shared Web Audio player. Removed its duplicate SSE
+  parser/player, swallowed preview errors, spoken cache-busting timestamps, and
+  shared-player completion polling. Completion and interruption use events; stale
+  cleanup and incomplete/out-of-order streams have focused regressions.
+- Synthesis/playback ownership and behavior tests, Core/Site type checks,
+  architecture, Site build and the launcher's 38-workflow runtime check pass.
+  Authenticated uncached first audio fell from 12.607 to 4.311 seconds for the same
+  text; total generation increased to 17.373 seconds. Browser preview assertions
+  confirm playback before remaining synthesis finishes. Source and runtime evidence
+  are separate from unverified speaker acoustics and physical robot behavior.
+- Current CPU synthesis still causes gaps; this repair does not integrate ONNX or
+  establish real-time throughput. Evidence and diagnostic cleanup details:
+  [Kokoro startup repair](2026-09-30-kokoro-stream-startup.md).
+
+## 2026-09-30 — Kokoro ONNX migration
+
+- Owner-requested switch replaces inference inside the existing managed Kokoro
+  server with ONNX Runtime. Keep pronunciation and imported `.pt` style support;
+  remove PyTorch speech-model execution and its installer download path.
+- The installer pins the tested engine versions, verifies model/voice checksums,
+  and validates the actual execution provider and 54 voices. CPU defaults use two
+  threads without spinning; requested unavailable CUDA fails visibly. Existing
+  server lifecycle, profile preferences and delivery owners remain in place.
+- The canonical cache now distinguishes ONNX audio from the old engine. Voice
+  Settings identifies ONNX and uses real pronunciation-language choices.
+- All 14 Python tests, 15 synthesis tests and ownership checks, Core/Site type
+  checks, architecture, Site build, Python dependency checks, and the launcher's
+  38-workflow runtime verification pass. Live health confirms ONNX on CPU.
+- For the same uncached reply, first audio fell from 4.311 to 1.893 seconds and
+  complete generation from 17.373 to 8.870 seconds. Browser preview starts before
+  remaining synthesis completes; real imported-style synthesis and GUI checks
+  pass. Cooling/load were not controlled, and gaps remain possible. GPU, all
+  languages and speaker acoustics are unverified. Details:
+  [Kokoro ONNX migration](2026-09-30-kokoro-onnx.md).
+
+## 2026-09-30 — Kitten Micro local speech
+
+- Added the Owner-requested Kitten CPU provider through the existing factory,
+  voice service manager, settings and shared streaming player. All eight voices
+  are installed and verified; downloaded assets remain ignored.
+- Three pre-edit regressions proved unsupported provider dispatch and apparent
+  streaming completion after failed inference. The existing generic streamer
+  now prefetches Kitten phrases and reports failure/cancellation accurately.
+- Eleven profile/synthesis tests, five Python HTTP tests, shared playback and
+  service ownership checks, Core/CLI/Site type checks, architecture/remote safety,
+  Site build and diff whitespace checks pass. Live managed health confirms CPU
+  inference and all voices; subjective quality and pauses remain concerns.
+- The Owner requests a Chatterbox Nano trial before further engine selection.
+  Kokoro assets and preferences are retained during evaluation. Robot rendering
+  remains Kokoro-only; no physical delivery is claimed. Details:
+  [Kitten integration](2026-09-30-kitten-tts.md).

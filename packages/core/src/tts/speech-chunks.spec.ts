@@ -6,6 +6,35 @@ test('short speech remains one chunk', () => {
   assert.deepEqual(splitSpeechText('Please stand up.'), ['Please stand up.']);
 });
 
+test('the opening greeting is not held for the rest of a short response', () => {
+  const text = 'Hello! This is a test of the text to speech system.';
+  const chunks = splitSpeechText(text);
+  assert.equal(chunks[0], 'Hello!');
+  assert.equal(chunks.join(' '), text);
+});
+
+test('the opening clause is released before a longer conversational sentence', () => {
+  const text = 'I can see the doorway, and I am waiting for your next instruction.';
+  const chunks = splitSpeechText(text);
+  assert.equal(chunks[0], 'I can see the doorway,');
+  assert.equal(chunks.join(' '), text);
+});
+
+test('tail merging cannot swallow the opening phrase of a three-sentence response', () => {
+  const text = 'I can see the doorway, and I am waiting for your next instruction. '
+    + 'The battery is at 75 percent, and the room temperature is 22 degrees. '
+    + 'I will stay here until you ask me to move.';
+  const chunks = splitSpeechText(text);
+  assert.equal(chunks[0], 'I can see the doorway,');
+  assert.ok(chunks.length > 1);
+  assert.equal(chunks.join(' '), text);
+});
+
+test('splitting speech preserves decimal numbers', () => {
+  const text = 'The reading is 3.14 volts. The battery is ready for the next test.';
+  assert.equal(splitSpeechText(text).join(' '), text);
+});
+
 test('paragraph boundaries are preserved as immediate chunk boundaries', () => {
   assert.deepEqual(
     splitSpeechText('First paragraph.\n\nSecond paragraph.'),

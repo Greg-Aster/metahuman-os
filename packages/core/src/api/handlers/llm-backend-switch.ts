@@ -42,7 +42,7 @@ export async function handleSwitchLlmBackend(req: UnifiedRequest): Promise<Unifi
     }
 
     const backend = body?.backend;
-    const validBackends = ['ollama', 'vllm', 'remote', 'auto'];
+    const validBackends = ['ollama', 'vllm', 'llama-cpp', 'remote', 'auto'];
     if (!backend || !validBackends.includes(backend)) {
       return { status: 400, error: `Invalid backend. Must be one of: ${validBackends.join(', ')}` };
     }

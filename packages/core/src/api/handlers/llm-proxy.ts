@@ -87,6 +87,7 @@ export async function handleLlmChat(req: UnifiedRequest): Promise<UnifiedRespons
         content: m.content || '',
       })),
       {
+        signal: req.signal,
         model: modelToUse,
         temperature: options?.temperature,
         maxTokens: options?.num_predict || options?.max_tokens,

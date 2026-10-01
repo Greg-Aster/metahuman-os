@@ -258,6 +258,12 @@ external/kokoro/*
 !external/kokoro/kokoro_server.py
 !external/kokoro/server_defaults.py
 !external/kokoro/test_server_defaults.py
+!external/kokoro/test_kokoro_server.py
+!external/kitten/
+external/kitten/*
+!external/kitten/kitten_server.py
+!external/kitten/kitten_runtime.py
+!external/kitten/test_kitten_server.py
 vendor/cmake*/
 vendor/*.tar.gz
 vendor/qwen*/

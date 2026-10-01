@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { useTTS } from '../lib/client/composables/useTTS';
   import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
   import { apiFetch } from '../lib/client/api-config';
   import ServerStatusIndicator from './ServerStatusIndicator.svelte';
@@ -29,7 +30,7 @@
       kokoroDeviceLockedByEnvironment: boolean;
       whisperDeviceLockedByEnvironment: boolean;
     };
-    provider: 'piper' | 'sovits' | 'rvc' | 'kokoro';
+    provider: 'piper' | 'sovits' | 'rvc' | 'kokoro' | 'kitten';
     outputTarget: 'local' | 'robot';
     piper?: {
       voices: PiperVoice[];
@@ -55,6 +56,7 @@
       device?: 'cuda' | 'cpu';
       speakers?: Array<{id: string; name: string; hasModel: boolean; hasIndex: boolean}>;
     };
+    kitten?: { voice: string; speed: number; voices: string[] };
     kokoro?: {
       langCode: string;
       voice: string;
@@ -87,6 +89,8 @@
   let error: string | null = null;
   let successMessage: string | null = null;
   let testText = 'Hello! This is a test of the text to speech system.';
+  const ttsApi = useTTS();
+  let previewRequestId: string | null = null;
   let testingVoice = false;
   let testAudio: HTMLAudioElement | null = null;
   let generatingReference = false;
@@ -108,6 +112,12 @@
   let vadStartTime: number | null = null;
 
   const providerInfo = {
+    kitten: {
+      name: 'Kitten TTS',
+      icon: '🐱',
+      description: 'Eight English voices with a small CPU model',
+      color: '#14b8a6',
+    },
     piper: {
       name: 'Piper TTS',
       icon: '🎙️',
@@ -277,88 +287,6 @@
     }
   }
 
-  async function testVoiceStreaming(requestBody: any): Promise<void> {
-    const response = await apiFetch('/api/tts-stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...requestBody, preview: true }),
-    });
-
-    if (!response.ok) throw new Error('Failed to start streaming audio');
-    if (!response.body) throw new Error('No response body for streaming');
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    const audioQueue: HTMLAudioElement[] = [];
-    let currentAudioIndex = 0;
-    let isPlaying = false;
-    let streamComplete = false;
-
-    const playNext = () => {
-      if (currentAudioIndex >= audioQueue.length) {
-        if (streamComplete) testingVoice = false;
-        return;
-      }
-
-      isPlaying = true;
-      const audio = audioQueue[currentAudioIndex];
-      audio.onended = () => {
-        URL.revokeObjectURL(audio.src);
-        currentAudioIndex++;
-        isPlaying = false;
-        playNext();
-      };
-      audio.onerror = () => {
-        URL.revokeObjectURL(audio.src);
-        currentAudioIndex++;
-        isPlaying = false;
-        playNext();
-      };
-      audio.play().catch(() => {
-        currentAudioIndex++;
-        isPlaying = false;
-        playNext();
-      });
-    };
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const events = buffer.split('\n\n');
-      buffer = events.pop() || '';
-
-      for (const event of events) {
-        if (!event.startsWith('data: ')) continue;
-
-        try {
-          const data = JSON.parse(event.slice(6));
-
-          if (data.event === 'complete') {
-            streamComplete = true;
-            if (!isPlaying && currentAudioIndex >= audioQueue.length) testingVoice = false;
-            continue;
-          }
-
-          if (data.event === 'error') throw new Error(data.error);
-
-          if (data.audio_base64) {
-            const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
-            const audioBlob = new Blob([audioBytes], { type: 'audio/wav' });
-            const audioUrl = URL.createObjectURL(audioBlob);
-            const audio = new Audio(audioUrl);
-            audioQueue.push(audio);
-            if (!isPlaying) playNext();
-          }
-        } catch (e) {
-          console.warn('[VoiceSettings] Error parsing SSE event:', e);
-        }
-      }
-    }
-  }
-
   async function testVoice(forceProvider?: Provider) {
     if (!config) return;
     const providerToTest = forceProvider || config.provider;
@@ -372,9 +300,8 @@
         testAudio = null;
       }
 
-      const cacheBustedText = `${testText} [${Date.now()}]`;
-      let requestBody: any = { text: cacheBustedText, provider: providerToTest };
-      const useStreaming = providerToTest === 'rvc' || providerToTest === 'kokoro';
+      const requestBody: any = { text: testText, provider: providerToTest };
+      const useStreaming = providerToTest === 'rvc' || providerToTest === 'kokoro' || providerToTest === 'kitten';
 
       if (providerToTest === 'piper' && config.piper) {
         const voice = config.piper.voices.find(v => v.id === config.piper!.currentVoice);
@@ -392,6 +319,9 @@
         requestBody.voiceId = config.rvc.speakerId;
         requestBody.pitchShift = config.rvc.pitchShift;
         requestBody.speed = config.rvc.speed;
+      } else if (providerToTest === 'kitten' && config.kitten) {
+        requestBody.voiceId = config.kitten.voice;
+        requestBody.speed = config.kitten.speed;
       } else if (providerToTest === 'kokoro' && config.kokoro) {
         if (config.kokoro.voice.startsWith('custom_')) {
           try {
@@ -415,7 +345,25 @@
       }
 
       if (useStreaming) {
-        await testVoiceStreaming(requestBody);
+        const requestId = `voice-preview-${crypto.randomUUID()}`;
+        previewRequestId = requestId;
+        try {
+          const outcome = await ttsApi.speak(testText, {
+            streaming: true,
+            provider: providerToTest,
+            voice: requestBody.voiceId,
+            langCode: requestBody.langCode,
+            speed: requestBody.speed,
+            pitchShift: requestBody.pitchShift,
+            requestId,
+          });
+          if (outcome === 'failed') {
+            throw new Error('Speech preview failed. See the server and browser logs for details.');
+          }
+        } finally {
+          if (previewRequestId === requestId) previewRequestId = null;
+          testingVoice = false;
+        }
         return;
       }
 
@@ -606,6 +554,14 @@
   }
 
   onMount(loadSettings);
+  onDestroy(() => {
+    if (previewRequestId) ttsApi.interruptPlaybackRequest(previewRequestId, 'cleanup');
+    if (testAudio) {
+      testAudio.pause();
+      URL.revokeObjectURL(testAudio.src);
+      testAudio = null;
+    }
+  });
 </script>
 
 <div class="p-6 max-w-[800px]">
@@ -851,9 +807,29 @@
         </div>
       </div>
 
+    {:else if config.provider === 'kitten' && config.kitten}
+      <div class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 mb-6">
+        <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">Kitten Micro Settings</h4>
+        <div class="mb-6">
+          <div class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</div>
+          <ServerStatusIndicator statusEndpoint="/api/kitten-server" controlEndpoint="/api/kitten-server" serverName="Kitten" />
+        </div>
+        <label for="kitten-voice" class="block font-medium mb-2">Voice</label>
+        <select id="kitten-voice" bind:value={config.kitten.voice} disabled={saving} class="input-field mb-6">
+          {#each config.kitten.voices as voice}<option value={voice}>{voice}</option>{/each}
+        </select>
+        <label for="kitten-speed" class="block font-medium mb-2">Speaking speed: {config.kitten.speed.toFixed(2)}×</label>
+        <input id="kitten-speed" type="range" min="0.5" max="2" step="0.05" bind:value={config.kitten.speed} disabled={saving} class="w-full mb-6" />
+        <label for="kitten-test-text" class="block font-medium mb-2">Test Voice</label>
+        <textarea id="kitten-test-text" bind:value={testText} rows="2" disabled={testingVoice || saving} class="input-field"></textarea>
+        <button class="w-full py-3 px-6 rounded-lg font-semibold mt-3 bg-teal-500 text-white hover:bg-teal-600 disabled:opacity-50" on:click={() => testVoice('kitten')} disabled={testingVoice || saving}>
+          {testingVoice ? '🔊 Playing...' : '▶️ Test Kitten'}
+        </button>
+      </div>
+
     {:else if config.provider === 'kokoro' && config.kokoro}
       <div class="bg-gray-50 dark:bg-gray-900 rounded-xl p-6 mb-6">
-        <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">Kokoro TTS Settings</h4>
+        <h4 class="m-0 mb-4 text-lg text-gray-800 dark:text-gray-100">Kokoro ONNX Settings</h4>
 
         <div class="mb-6">
           <div class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Server Status</div>
@@ -886,9 +862,9 @@
           </select>
           <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
             {#if config.kokoro.voices?.some(v => v.isCustom)}
-              Choose from 54 built-in voices or your custom trained voicepacks
+              Choose a built-in voice or an imported voicepack
             {:else}
-              Choose from 54 built-in voices across 8 languages
+              Choose from the installed multilingual voices
             {/if}
           </p>
         </div>
@@ -896,16 +872,17 @@
         <div class="mb-6">
           <label for="kokoro-lang" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Language Code</label>
           <select id="kokoro-lang" bind:value={config.kokoro.langCode} disabled={saving} class="select-field">
-            <option value="a">Auto-detect</option>
-            <option value="en">English</option>
-            <option value="ja">Japanese</option>
-            <option value="zh">Chinese</option>
-            <option value="es">Spanish</option>
-            <option value="fr">French</option>
-            <option value="de">German</option>
-            <option value="ko">Korean</option>
+            <option value="a">American English</option>
+            <option value="b">British English</option>
+            <option value="j">Japanese</option>
+            <option value="z">Mandarin Chinese</option>
+            <option value="e">Spanish</option>
+            <option value="f">French</option>
+            <option value="h">Hindi</option>
+            <option value="i">Italian</option>
+            <option value="p">Brazilian Portuguese</option>
           </select>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Language for text processing (auto-detect recommended)</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Choose the language of the text. Voice and pronunciation language are separate settings.</p>
         </div>
 
         <div class="mb-6">

@@ -423,11 +423,11 @@
   interface LocalModelInfo {
     id: string;
     name: string;
-    provider: 'ollama' | 'vllm' | 'remote';
+    provider: 'llama-cpp' | 'ollama' | 'vllm' | 'remote';
     locked: boolean;
   }
 
-  type BackendType = 'ollama' | 'vllm' | 'remote' | 'auto';
+  type BackendType = 'llama-cpp' | 'ollama' | 'vllm' | 'remote' | 'auto';
   type ModelConfigurationMode = 'dual' | 'agent' | 'emulation' | 'environment';
 
   type ModelRolePresentation = {
@@ -567,6 +567,7 @@
   };
 
   interface BackendAvailability {
+    llamaCpp: { available: boolean; running: boolean; active: boolean; model?: string };
     ollama: { available: boolean; running: boolean; active: boolean; model?: string };
     vllm: { available: boolean; running: boolean; active: boolean; model?: string };
     runpod: { available: boolean; configured: boolean; active: boolean };
@@ -575,6 +576,7 @@
     localModels: { available: boolean; running: boolean; embeddingModel?: string | null; llmModel?: string | null };
   }
   let backendAvailability: BackendAvailability = {
+    llamaCpp: { available: false, running: false, active: false },
     ollama: { available: false, running: false, active: false },
     vllm: { available: false, running: false, active: false },
     runpod: { available: false, configured: false, active: false },
@@ -998,6 +1000,10 @@
 
         <!-- Backend Status Icons -->
         <div class="backend-icons">
+          {#if backendAvailability.llamaCpp?.available}
+            <span class="backend-icon" class:running={backendAvailability.llamaCpp.running} class:active={backendAvailability.llamaCpp.active}
+              title={`llama.cpp: ${backendAvailability.llamaCpp.running ? 'Running' : 'Offline'} (${backendAvailability.llamaCpp.model || ''})`}>🦙</span>
+          {/if}
           {#if backendAvailability.ollama.available}
             <span
               class="backend-icon"
@@ -1054,13 +1060,13 @@
             >🔍</span>
           {/if}
 
-          {#if !backendAvailability.ollama.available && !backendAvailability.vllm.available && !backendAvailability.runpod.available}
+          {#if !backendAvailability.llamaCpp?.available && !backendAvailability.ollama.available && !backendAvailability.vllm.available && !backendAvailability.runpod.available}
             <span class="backend-icon offline" title="No backends configured">❌</span>
           {/if}
         </div>
 
         <!-- vLLM Model Name -->
-        {#if localModel && backendAvailability.vllm.active}
+        {#if localModel && (backendAvailability.vllm.active || backendAvailability.llamaCpp?.active)}
           <div class="vllm-model-info">
             <span class="local-model-name">
               {localModel.name}
@@ -1166,7 +1172,7 @@
                   {#if modelCategories.local.length > 0}
                     <div class="dropdown-category">
                       <span class="category-label">
-                        {activeBackend === 'vllm' ? '⚡ vLLM' : '🦙 Local'}
+                        {activeBackend === 'llama-cpp' ? '🦙 llama.cpp' : activeBackend === 'vllm' ? '⚡ vLLM' : '🦙 Local'}
                       </span>
                       {#each modelCategories.local as model}
                         {@const isCurrentlySelected = isModelAssigned(role, model)}

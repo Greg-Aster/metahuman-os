@@ -3,6 +3,7 @@ import {
   ensureVoiceServiceRunning,
   getVoiceServiceStatus,
   stopVoiceService,
+  type VoiceServiceId,
 } from '../../voice-service-manager.js';
 import {
   getSovitsServerStatus,
@@ -10,18 +11,19 @@ import {
   stopSovitsServer,
 } from '../../tts/server-manager.js';
 
-export const handleKokoroServer: UnifiedHandler = async (req) => {
+function managedVoiceServer(id: VoiceServiceId): UnifiedHandler {
+  return async (req) => {
   try {
-    if (req.method === 'GET') return { status: 200, data: await getVoiceServiceStatus('kokoro') };
+    if (req.method === 'GET') return { status: 200, data: await getVoiceServiceStatus(id) };
 
     const { action } = req.body ?? {};
     if (action === 'start') {
-      const result = await ensureVoiceServiceRunning('kokoro');
-      return { status: 200, data: { success: true, message: 'Kokoro server start accepted', ...result } };
+      const result = await ensureVoiceServiceRunning(id);
+      return { status: 200, data: { success: true, message: `${id} server start accepted`, ...result } };
     }
 
     if (action === 'stop') {
-      const result = await stopVoiceService('kokoro');
+      const result = await stopVoiceService(id);
       return { status: result.success ? 200 : 500, data: result };
     }
 
@@ -29,7 +31,11 @@ export const handleKokoroServer: UnifiedHandler = async (req) => {
   } catch (error) {
     return { status: 500, data: { error: String(error), success: false, running: false } };
   }
-};
+  };
+}
+
+export const handleKokoroServer = managedVoiceServer('kokoro');
+export const handleKittenServer = managedVoiceServer('kitten');
 
 export const handleSovitsServer: UnifiedHandler = async (req) => {
   try {

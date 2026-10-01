@@ -1,7 +1,7 @@
 /**
  * LLM Backend Manager
  *
- * Manages switching between local LLM backends (Ollama and vLLM).
+ * Manages backend selection and status. Externally managed llama.cpp servers keep their own process lifecycle.
  * This is separate from cloud providers (RunPod, HuggingFace), which are
  * managed by the Core provider layer.
  *
@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from './path-builder.js';
 import { audit } from './audit.js';
+import { DEFAULT_LLAMA_CPP_CONFIG, getLlamaCppStatus, validateLlamaCppConfig, type LlamaCppConfig } from './providers/llama-cpp.js';
 import { ollama, isRunning as isOllamaRunning, stopOllamaService, startOllamaService } from './ollama.js';
 import { vllm, isVLLMRunning, preflightVLLMArtifacts, type VLLMConfig } from './vllm.js';
 import { isLocalModelServiceRunning, getLocalModelStatus } from './providers/local-models.js';
@@ -51,15 +52,16 @@ function getVLLMPython(): string {
 
 /**
  * Backend types:
- * - 'ollama' | 'vllm': Local LLM backends (require GPU)
- * - 'local-models': Lightweight local models via Transformers.js (CPU-friendly, mobile-compatible)
+ * - 'ollama' | 'vllm': Managed local LLM backends
+ * - 'llama-cpp': An externally managed llama-server
+ * - 'local-models': Bundled node-llama-cpp embedding/text service
  * - 'remote': Cloud provider (RunPod, Claude, OpenRouter, OpenAI)
  * - 'auto': Intelligent selection - prefer local if available, fallback to remote
  */
-export type BackendType = 'ollama' | 'vllm' | 'local-models' | 'remote' | 'auto';
+export type BackendType = 'llama-cpp' | 'ollama' | 'vllm' | 'local-models' | 'remote' | 'auto';
 
 /** Local backend type (for when using 'auto' or 'remote' with local fallback) */
-export type LocalBackendType = 'ollama' | 'vllm' | 'local-models';
+export type LocalBackendType = 'llama-cpp' | 'ollama' | 'vllm' | 'local-models';
 
 /** Remote provider types supported */
 export type RemoteProviderType = 'claude' | 'runpod' | 'openrouter' | 'openai' | 'server';
@@ -170,13 +172,14 @@ export interface LocalModelsBackendConfig {
 
 export interface BackendConfig {
   activeBackend: BackendType;
+  llamaCpp: LlamaCppConfig;
   /** Preferred local backend when using 'auto' mode */
   preferredLocalBackend?: LocalBackendType;
   ollama: OllamaBackendConfig;
   vllm: VLLMBackendConfig;
   /** Remote/cloud provider configuration */
   remote?: RemoteBackendConfig;
-  /** Local models (Transformers.js) configuration */
+  /** Bundled local-model service configuration */
   localModels?: LocalModelsBackendConfig;
 }
 
@@ -184,7 +187,7 @@ export interface BackendStatus {
   /** Configured backend type */
   backend: BackendType;
   /** Actual active backend (resolved from 'auto') */
-  resolvedBackend: 'ollama' | 'vllm' | 'local-models' | 'remote' | 'offline';
+  resolvedBackend: 'llama-cpp' | 'ollama' | 'vllm' | 'local-models' | 'remote' | 'offline';
   /** Remote provider if using remote */
   remoteProvider?: RemoteProviderType;
   running: boolean;
@@ -198,6 +201,7 @@ export interface BackendStatus {
 }
 
 export interface AvailableBackends {
+  llamaCpp: { configured: boolean; running: boolean; model?: string; error?: string };
   ollama: { installed: boolean; running: boolean; model?: string };
   vllm: { installed: boolean; running: boolean; model?: string };
   localModels: { installed: boolean; running: boolean; embeddingModel?: string; llmModel?: string };
@@ -227,6 +231,7 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
 
   const defaultConfig: BackendConfig = {
     activeBackend: 'ollama',
+    llamaCpp: { ...DEFAULT_LLAMA_CPP_CONFIG },
     ollama: {
       endpoint: 'http://localhost:11434',
       autoStart: false,
@@ -288,6 +293,7 @@ export function loadBackendConfig(forceFresh = false): BackendConfig {
       cachedConfig = {
         ...defaultConfig,
         ...parsed,
+        llamaCpp: { ...defaultConfig.llamaCpp, ...parsed.llamaCpp },
         ollama: { ...defaultConfig.ollama, ...parsed.ollama },
         vllm: { ...defaultConfig.vllm, ...parsed.vllm },
         localModels: { ...defaultConfig.localModels, ...parsed.localModels },
@@ -374,6 +380,9 @@ export function saveBackendConfig(updates: Partial<BackendConfig>): void {
   const config = loadBackendConfig(true);
   const newConfig = { ...config, ...updates };
 
+  if (updates.llamaCpp) newConfig.llamaCpp = { ...config.llamaCpp, ...updates.llamaCpp };
+  if (updates.llamaCpp || newConfig.activeBackend === 'llama-cpp') validateLlamaCppConfig(newConfig.llamaCpp);
+
   // Merge nested objects
   if (updates.ollama) {
     newConfig.ollama = { ...config.ollama, ...updates.ollama };
@@ -396,7 +405,7 @@ export function saveBackendConfig(updates: Partial<BackendConfig>): void {
   } else if (newConfig.activeBackend === 'vllm') {
     newConfig.vllm = { ...newConfig.vllm, autoStart: true };
     newConfig.ollama = { ...newConfig.ollama, autoStart: false };
-  } else if (newConfig.activeBackend === 'remote' || newConfig.activeBackend === 'local-models') {
+  } else if (newConfig.activeBackend === 'remote' || newConfig.activeBackend === 'local-models' || newConfig.activeBackend === 'llama-cpp') {
     newConfig.ollama = { ...newConfig.ollama, autoStart: false };
     newConfig.vllm = { ...newConfig.vllm, autoStart: false };
   }
@@ -421,13 +430,18 @@ export function getActiveBackend(): BackendType {
  * Get status of the active backend
  */
 export async function getBackendStatus(): Promise<BackendStatus> {
-  const config = loadBackendConfig();
+  return configuredBackendStatus(loadBackendConfig());
+}
+
+async function configuredBackendStatus(config: BackendConfig): Promise<BackendStatus> {
   const backend = config.activeBackend;
 
   // Handle 'auto' mode - resolve to actual backend
   if (backend === 'auto') {
     return resolveAutoBackend(config);
   }
+
+  if (backend === 'llama-cpp') return llamaCppBackendStatus(config);
 
   // Handle 'remote' mode
   if (backend === 'remote') {
@@ -521,6 +535,15 @@ export async function getBackendStatus(): Promise<BackendStatus> {
   };
 }
 
+async function llamaCppBackendStatus(config: BackendConfig): Promise<BackendStatus> {
+  const status = await getLlamaCppStatus(config.llamaCpp);
+  return {
+    backend: 'llama-cpp', resolvedBackend: status.running ? 'llama-cpp' : 'offline',
+    running: status.running, model: config.llamaCpp.model, endpoint: config.llamaCpp.endpoint,
+    health: status.running ? 'healthy' : 'offline', reason: status.error,
+  };
+}
+
 /**
  * Resolve 'auto' backend to actual backend based on availability
  *
@@ -533,73 +556,12 @@ export async function getBackendStatus(): Promise<BackendStatus> {
 async function resolveAutoBackend(config: BackendConfig): Promise<BackendStatus> {
   const preferredLocal = config.preferredLocalBackend || 'ollama';
 
-  // Check preferred local backend first
-  if (preferredLocal === 'vllm') {
-    const vllmRunning = await isVLLMRunning();
-    if (vllmRunning) {
-      const model = await vllm.getLoadedModel() || undefined;
-      return {
-        backend: 'auto',
-        resolvedBackend: 'vllm',
-        running: true,
-        model,
-        endpoint: config.vllm.endpoint,
-        health: 'healthy',
-        reason: 'vLLM is running (preferred local backend)',
-      };
-    }
-  } else {
-    const ollamaRunning = await isOllamaRunning();
-    if (ollamaRunning) {
-      let model: string | undefined;
-      try {
-        const result = await ollama.getRunningModels();
-        model = result.models[0]?.name;
-      } catch { }
-      return {
-        backend: 'auto',
-        resolvedBackend: 'ollama',
-        running: true,
-        model,
-        endpoint: config.ollama.endpoint,
-        health: 'healthy',
-        reason: 'Ollama is running (preferred local backend)',
-      };
-    }
-  }
-
-  // Check alternate local backend
-  if (preferredLocal === 'ollama') {
-    const vllmRunning = await isVLLMRunning();
-    if (vllmRunning) {
-      const model = await vllm.getLoadedModel() || undefined;
-      return {
-        backend: 'auto',
-        resolvedBackend: 'vllm',
-        running: true,
-        model,
-        endpoint: config.vllm.endpoint,
-        health: 'healthy',
-        reason: 'vLLM is running (fallback local backend)',
-      };
-    }
-  } else {
-    const ollamaRunning = await isOllamaRunning();
-    if (ollamaRunning) {
-      let model: string | undefined;
-      try {
-        const result = await ollama.getRunningModels();
-        model = result.models[0]?.name;
-      } catch { }
-      return {
-        backend: 'auto',
-        resolvedBackend: 'ollama',
-        running: true,
-        model,
-        endpoint: config.ollama.endpoint,
-        health: 'healthy',
-        reason: 'Ollama is running (fallback local backend)',
-      };
+  const candidates = [...new Set<LocalBackendType>([preferredLocal, 'ollama', 'vllm', 'llama-cpp'])];
+  for (const candidate of candidates) {
+    if (candidate === 'llama-cpp' && !config.llamaCpp.model) continue;
+    const status = await configuredBackendStatus({ ...config, activeBackend: candidate });
+    if (status.running) {
+      return { ...status, backend: 'auto', reason: `${candidate} is running${candidate === preferredLocal ? ' (preferred local backend)' : ''}` };
     }
   }
 
@@ -636,10 +598,11 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
 
   const localModelsEndpoint = config.localModels?.endpoint || 'http://127.0.0.1:4324';
 
-  const [ollamaRunning, vllmRunning, localModelsRunning] = await Promise.all([
+  const [ollamaRunning, vllmRunning, localModelsRunning, llamaCpp] = await Promise.all([
     isOllamaRunning(),
     isVLLMRunning(),
     isLocalModelServiceRunning(localModelsEndpoint),
+    getLlamaCppStatus(config.llamaCpp),
   ]);
 
   // Check if Ollama is installed (by checking if it's running or if ollama command exists)
@@ -704,6 +667,7 @@ export async function detectAvailableBackends(): Promise<AvailableBackends> {
   const hasCredentials = remoteConfigured; // For now, assume configured = has credentials
 
   return {
+    llamaCpp: { configured: !!config.llamaCpp.model, ...llamaCpp, model: config.llamaCpp.model || undefined },
     ollama: { installed: ollamaInstalled, running: ollamaRunning, model: ollamaModel },
     vllm: { installed: vllmInstalled, running: vllmRunning, model: vllmModel },
     localModels: { installed: localModelsInstalled, running: localModelsRunning, embeddingModel: localModelsEmbedding, llmModel: localModelsLLM },
@@ -737,6 +701,11 @@ export async function switchBackend(
 
   if (from === to) {
     return { success: true };
+  }
+
+  if (to === 'llama-cpp') {
+    const status = await getLlamaCppStatus(config.llamaCpp);
+    if (!status.running) return { success: false, error: status.error };
   }
 
   const vllmStartConfig = to === 'vllm' && options?.startNew !== false
@@ -828,6 +797,8 @@ export async function switchBackend(
 export async function autoSelectBackend(): Promise<BackendType> {
   const available = await detectAvailableBackends();
 
+  if (available.llamaCpp.running && loadBackendConfig().preferredLocalBackend === 'llama-cpp') return 'llama-cpp';
+
   // Prefer vLLM if it's already running (higher throughput)
   if (available.vllm.running) {
     return 'vllm';
@@ -837,6 +808,8 @@ export async function autoSelectBackend(): Promise<BackendType> {
   if (available.ollama.running) {
     return 'ollama';
   }
+
+  if (available.llamaCpp.running) return 'llama-cpp';
 
   // Neither running - check what's installed, prefer Ollama (simpler)
   if (available.ollama.installed) {
@@ -860,6 +833,8 @@ export async function ensureBackendRunning(
   const config = loadBackendConfig();
   const backend = config.activeBackend;
   const forceStart = options.forceStart === true;
+
+  if (backend === 'llama-cpp') return getLlamaCppStatus(config.llamaCpp);
 
   async function startConfiguredBackend(target: 'ollama' | 'vllm'): Promise<{ running: boolean; error?: string }> {
     if (target === 'ollama') {

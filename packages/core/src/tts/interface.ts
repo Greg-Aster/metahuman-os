@@ -103,12 +103,19 @@ export interface KokoroConfig {
   outputFormat: 'wav';
 }
 
+export interface KittenConfig {
+  voice: string;
+  speed: number;
+  outputFormat: 'wav';
+}
+
 export interface TTSConfig {
-  provider: 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro';
+  provider: 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro' | 'kitten';
   piper: PiperConfig;
   sovits: SoVITSConfig;
   rvc?: RVCConfig;
   kokoro?: KokoroConfig;
+  kitten?: KittenConfig;
 }
 
 export interface CacheConfig {

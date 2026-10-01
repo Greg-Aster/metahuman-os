@@ -29,6 +29,7 @@ import path from 'node:path';
 // ============================================================================
 
 interface BackendAvailability {
+  llamaCpp: { available: boolean; running: boolean; active: boolean; model?: string };
   ollama: { available: boolean; running: boolean; active: boolean; model?: string };
   vllm: { available: boolean; running: boolean; active: boolean; model?: string };
   runpod: { available: boolean; configured: boolean; active: boolean };
@@ -467,6 +468,7 @@ export async function handleGetStatus(req: UnifiedRequest): Promise<UnifiedRespo
       const isRunPodActive = activeBackendType === 'remote' && backendStatus.remoteProvider === 'runpod';
 
       systemHealth.backendAvailability = {
+        llamaCpp: { available: availableBackends.llamaCpp.configured, running: availableBackends.llamaCpp.running, active: activeBackendType === 'llama-cpp', model: availableBackends.llamaCpp.model },
         ollama: {
           available: availableBackends.ollama.installed,
           running: availableBackends.ollama.running,

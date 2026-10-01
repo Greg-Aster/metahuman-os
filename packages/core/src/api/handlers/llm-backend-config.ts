@@ -7,6 +7,7 @@
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
+import { validateLlamaCppConfig } from '../../providers/llama-cpp.js';
 
 // Dynamic imports
 let loadBackendConfig: any;
@@ -64,9 +65,14 @@ export async function handleSetLlmBackendConfig(req: UnifiedRequest): Promise<Un
     const updates = body || {};
 
     // Validate updates
-    const validBackends = ['ollama', 'vllm', 'remote', 'auto'];
+    const validBackends = ['ollama', 'vllm', 'llama-cpp', 'remote', 'auto'];
     if (updates.activeBackend && !validBackends.includes(updates.activeBackend)) {
       return { status: 400, error: `Invalid activeBackend. Must be one of: ${validBackends.join(', ')}` };
+    }
+
+    if (updates.llamaCpp || updates.activeBackend === 'llama-cpp') {
+      try { validateLlamaCppConfig({ ...loadBackendConfig().llamaCpp, ...updates.llamaCpp }); }
+      catch (error) { return { status: 400, error: (error as Error).message }; }
     }
 
     if (updates.ollama?.defaultModel !== undefined

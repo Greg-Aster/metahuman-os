@@ -4,10 +4,16 @@
   "servers": {
     "kokoro": {
       "enabled": true,
-      "startOnSystemBoot": true,
+      "startOnSystemBoot": false,
       "port": 9882,
       "device": "cpu",
       "langCode": "a"
+    },
+    "kitten": {
+      "enabled": true,
+      "startOnSystemBoot": true,
+      "port": 9884,
+      "device": "cpu"
     },
     "whisper": {
       "enabled": true,

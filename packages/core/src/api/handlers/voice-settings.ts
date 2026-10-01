@@ -10,6 +10,8 @@ import {
   updateVoiceServiceDevice,
 } from '../../voice-service-manager.js';
 import { startSovitsServer, stopSovitsServer } from '../../tts/server-manager.js';
+import { KITTEN_VOICES, validateKittenPreferences } from '../../tts/providers/kitten-service.js';
+import type { KittenConfig } from '../../tts/interface.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -198,6 +200,7 @@ type VoiceConfig = {
       device?: 'cuda' | 'cpu';
       outputFormat?: string;
     };
+    kitten?: KittenConfig;
     kokoro?: {
       langCode: string;
       voice: string;
@@ -260,6 +263,7 @@ function buildDefaultVoiceConfig(
         f0Method: 'rmvpe',
         device: 'cuda',
       },
+      kitten: { voice: 'Jasper', speed: 1, outputFormat: 'wav' },
       kokoro: {
         langCode: 'a',
         voice: 'af_heart',
@@ -448,6 +452,12 @@ function ensureVoiceConfig(
     console.warn('[voice-settings] Unable to ensure RVC directories:', error);
   }
 
+  if (!config.tts.kitten) {
+    config.tts.kitten = { voice: 'Jasper', speed: 1, outputFormat: 'wav' };
+    needsWrite = true;
+  }
+  validateKittenPreferences(config.tts.kitten.voice, config.tts.kitten.speed);
+
   // Ensure Kokoro config exists
   if (!config.tts.kokoro) {
     config.tts.kokoro = {
@@ -615,13 +625,16 @@ export async function handleGetVoiceSettings(req: UnifiedRequest): Promise<Unifi
 
     const activeProvider = config.tts?.provider || 'piper';
     const kokoroStatus = await getVoiceServiceStatus('kokoro');
+    const kittenStatus = await getVoiceServiceStatus('kitten');
     const kokoroSystemConfig = getVoiceServiceConfig('kokoro');
     const whisperSystemConfig = getVoiceServiceConfig('whisper');
     const ttsServerStatus = activeProvider === 'piper'
       ? 'not_needed'
       : activeProvider === 'kokoro'
         ? kokoroStatus.readiness === 'ready' ? 'running' : kokoroStatus.readiness
-        : 'unknown';
+        : activeProvider === 'kitten'
+          ? kittenStatus.readiness === 'ready' ? 'running' : kittenStatus.readiness
+          : 'unknown';
 
     return successResponse({
         systemVoiceControl: {
@@ -656,6 +669,7 @@ export async function handleGetVoiceSettings(req: UnifiedRequest): Promise<Unifi
           device: config.tts.rvc?.device || 'cuda',
           speakers: rvcSpeakers,
         },
+        kitten: { ...config.tts.kitten, voices: [...KITTEN_VOICES] },
         kokoro: {
           langCode: config.tts.kokoro?.langCode || 'a',
           // If using custom voicepack, prepend 'custom_' to the voice ID for the dropdown
@@ -708,7 +722,12 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
   try {
 
     const body = (req.body ?? {}) as any;
-    const { provider, outputTarget, speechDisabled, piper, sovits, rvc, kokoro, stt } = body;
+    const { provider, outputTarget, speechDisabled, piper, sovits, rvc, kokoro, kitten, stt } = body;
+
+    if (kitten) {
+      try { validateKittenPreferences(kitten.voice ?? 'Jasper', kitten.speed ?? 1); }
+      catch (error) { return errorResponse((error as Error).message, 400); }
+    }
 
     const requestedKokoroDevice = kokoro?.device;
     const requestedWhisperDevice = stt?.device;
@@ -746,6 +765,17 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
     const voices = getAvailableVoices(voicesDir);
     const config = ensureVoiceConfig(voiceConfigPath, voicesDir, rootDir, voices);
     const previousProvider = config.tts.provider;
+
+    if (kitten) {
+      const preferences = {
+        voice: kitten.voice ?? config.tts.kitten!.voice,
+        speed: kitten.speed ?? config.tts.kitten!.speed,
+        outputFormat: 'wav' as const,
+      };
+      try { validateKittenPreferences(preferences.voice, preferences.speed); }
+      catch (error) { return errorResponse((error as Error).message, 400); }
+      config.tts.kitten = preferences;
+    }
 
     console.log('[voice-settings POST] Previous provider:', previousProvider, '→ New provider:', provider);
 
@@ -1012,6 +1042,8 @@ async function syncTTSBackends(
       }
     } else if (next === 'rvc') {
       console.log('[voice-settings] Switched to RVC (server will auto-start on next use)');
+    } else if (next === 'kitten') {
+      await ensureVoiceServiceRunning('kitten');
     } else if (next === 'kokoro') {
       await ensureVoiceServiceRunning('kokoro');
       console.log('[voice-settings] Switched to Kokoro (shared system service is running)');

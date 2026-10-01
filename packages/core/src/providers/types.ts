@@ -257,7 +257,7 @@ export interface ProviderConfig {
  * Local providers: ollama, vllm, mock, local-models (handled by core bridge)
  * Cloud providers: runpod_serverless, huggingface
  */
-export type ProviderType = 'ollama' | 'vllm' | 'mock' | 'runpod_serverless' | 'huggingface' | 'openai' | 'local' | 'remote-server' | 'local-models';
+export type ProviderType = 'llama-cpp' | 'ollama' | 'vllm' | 'mock' | 'runpod_serverless' | 'huggingface' | 'openai' | 'local' | 'remote-server' | 'local-models';
 
 /**
  * Check if a provider is a cloud provider.
@@ -279,7 +279,7 @@ export function isRemoteServerProvider(provider: ProviderType): boolean {
  * Check if a provider is a local provider (handled by core)
  */
 export function isLocalProvider(provider: ProviderType): boolean {
-  return provider === 'ollama' || provider === 'vllm' || provider === 'mock' || provider === 'local-models';
+  return provider === 'llama-cpp' || provider === 'ollama' || provider === 'vllm' || provider === 'mock' || provider === 'local-models';
 }
 
 /**

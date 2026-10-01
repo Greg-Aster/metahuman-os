@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
 
   // Model status types
@@ -15,15 +15,17 @@
   interface ServiceStatus {
     running: boolean;
     endpoint: string;
-    embedder: {
-      model: string | null;
-      loaded: boolean;
-      dimensions?: number;
-    };
-    generator: {
-      model: string | null;
-      loaded: boolean;
-    };
+    loadedModels: {
+      embedder: {
+        model: string | null;
+        loaded: boolean;
+        dimensions?: number;
+      };
+      generator: {
+        model: string | null;
+        loaded: boolean;
+      };
+    } | null;
   }
 
   interface LocalModelsConfig {
@@ -52,7 +54,7 @@
 
   // Download state
   let downloading: Record<string, boolean> = {};
-  let downloadProgress: Record<string, number> = {};
+  let downloadNotice: string | null = null;
 
   // Config changes
   let selectedEmbeddingModel = '';
@@ -61,29 +63,23 @@
   let autoStart = true;
   let saving = false;
 
-  // Event source for progress updates
-  let eventSource: EventSource | null = null;
+  onMount(() => { void refreshModels(); });
 
-  onMount(() => {
-    loadStatus();
-    loadConfig();
-    loadModels();
-    connectProgressStream();
-  });
-
-  onDestroy(() => {
-    if (eventSource) {
-      eventSource.close();
-    }
-  });
+  async function refreshModels() {
+    error = null;
+    loading = true;
+    await Promise.all([loadStatus(), loadConfig(), loadModels()]);
+    loading = false;
+  }
 
   async function loadStatus() {
     try {
       const res = await apiFetch('/api/local-models/status');
-      if (res.ok) {
-        status = await res.json();
-      }
+      if (!res.ok) throw new Error(`Local model status returned ${res.status}`);
+      status = await res.json();
     } catch (err) {
+      status = null;
+      error = err instanceof Error ? err.message : 'Could not load local model status';
       console.error('[LocalModelsSettings] Error loading status:', err);
     }
   }
@@ -91,67 +87,39 @@
   async function loadConfig() {
     try {
       const res = await apiFetch('/api/local-models/config');
-      if (res.ok) {
+      if (!res.ok) throw new Error(`Local model configuration returned ${res.status}`);
+      {
         const data = await res.json();
-        config = data.localModels || data;
+        if (!data.localModels) throw new Error('Local model configuration is missing');
+        config = data.localModels;
         selectedEmbeddingModel = config?.embeddings?.model || 'qwen3-embedding-0.6b';
         selectedLLMModel = config?.llm?.model || 'qwen3-1.7b';
         wifiOnlyDownload = config?.downloadOnWifiOnly ?? true;
         autoStart = config?.autoStart ?? true;
       }
     } catch (err) {
+      error = err instanceof Error ? err.message : 'Could not load local model configuration';
       console.error('[LocalModelsSettings] Error loading config:', err);
-    } finally {
-      loading = false;
     }
   }
 
   async function loadModels() {
     try {
       const res = await apiFetch('/api/local-models/models');
-      if (res.ok) {
-        const data = await res.json();
-        embeddingModels = data.embeddings || [];
-        llmModels = data.llm || [];
-      }
+      if (!res.ok) throw new Error(`Local model inventory returned ${res.status}`);
+      const data = await res.json();
+      embeddingModels = data.embeddings.map((model: { id: string; downloaded: boolean; config: Omit<ModelInfo, 'id' | 'downloaded'> }) => ({ ...model.config, id: model.id, downloaded: model.downloaded }));
+      llmModels = data.llm.map((model: { id: string; downloaded: boolean; config: Omit<ModelInfo, 'id' | 'downloaded'> }) => ({ ...model.config, id: model.id, downloaded: model.downloaded }));
     } catch (err) {
+      embeddingModels = []; llmModels = [];
+      error = err instanceof Error ? err.message : 'Could not load local model inventory';
       console.error('[LocalModelsSettings] Error loading models:', err);
-    }
-  }
-
-  function connectProgressStream() {
-    try {
-      eventSource = new EventSource('/api/local-models/events');
-
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.model) {
-            downloadProgress[data.model] = data.progress || 0;
-
-            if (data.status === 'complete' || data.status === 'error') {
-              downloading[data.model] = false;
-              loadModels(); // Refresh model list
-              loadStatus(); // Refresh status
-            }
-          }
-        } catch (e) {
-          console.error('[LocalModelsSettings] Error parsing progress event:', e);
-        }
-      };
-
-      eventSource.onerror = () => {
-        console.warn('[LocalModelsSettings] Progress stream disconnected, reconnecting...');
-        setTimeout(connectProgressStream, 5000);
-      };
-    } catch (err) {
-      console.error('[LocalModelsSettings] Error connecting to progress stream:', err);
     }
   }
 
   async function downloadModel(type: 'embeddings' | 'llm', modelId: string) {
     downloading[modelId] = true;
-    downloadProgress[modelId] = 0;
+    downloadNotice = null;
     error = null;
 
     try {
@@ -164,12 +132,12 @@
       if (!res.ok) {
         const data = await res.json();
         error = data.error || 'Failed to start download';
-        downloading[modelId] = false;
+      } else {
+        downloadNotice = 'Download request accepted. Refresh model status to check completion.';
       }
     } catch (err) {
       error = 'Failed to start download';
-      downloading[modelId] = false;
-    }
+    } finally { downloading[modelId] = false; }
   }
 
   async function saveConfig() {
@@ -234,13 +202,10 @@
     return size;
   }
 
-  function getProgressPercent(modelId: string): number {
-    return Math.round((downloadProgress[modelId] || 0) * 100);
-  }
 </script>
 
 <div>
-  <h3 class="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-100">Local Models (Transformers.js)</h3>
+  <h3 class="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-100">Local Model Service</h3>
   <p class="text-sm text-gray-500 dark:text-gray-400 mb-5">
     Lightweight embedding and LLM models that run locally without Ollama.
     Works on both desktop and mobile devices.
@@ -250,6 +215,9 @@
     <div class="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400 px-4 py-3 rounded-lg mb-4 text-sm">{error}</div>
   {/if}
 
+  <button class="btn-secondary mb-4" on:click={refreshModels} disabled={loading}>Refresh model status</button>
+  {#if downloadNotice}<p class="text-sm mb-4">{downloadNotice}</p>{/if}
+
   {#if loading}
     <div class="text-center py-8 text-gray-500">Loading local models status...</div>
   {:else}
@@ -258,33 +226,35 @@
       <div class="flex items-center gap-2">
         <span class="text-sm">{status?.running ? '🟢' : '🔴'}</span>
         <span class="font-semibold text-gray-700 dark:text-gray-200">
-          {status?.running ? 'Service Running' : 'Service Stopped'}
+          {!status ? 'Service status unavailable' : status.running ? 'Service Running' : 'Service Stopped'}
         </span>
         {#if status?.endpoint}
           <span class="text-xs font-mono text-gray-500 dark:text-gray-400 ml-auto">{status.endpoint}</span>
         {/if}
       </div>
 
-      {#if status?.running}
+      {#if status?.running && status.loadedModels}
         <div class="mt-3 flex flex-col gap-1.5">
           <div class="flex items-center gap-2 text-sm">
             <span class="font-medium text-gray-500 dark:text-gray-400 min-w-[80px]">Embeddings:</span>
-            {#if status.embedder.loaded}
-              <span class="font-mono text-gray-700 dark:text-gray-200">{status.embedder.model}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">({status.embedder.dimensions} dims)</span>
+            {#if status.loadedModels.embedder.loaded}
+              <span class="font-mono text-gray-700 dark:text-gray-200">{status.loadedModels.embedder.model}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">({status.loadedModels.embedder.dimensions} dims)</span>
             {:else}
               <span class="italic text-gray-400">Not loaded</span>
             {/if}
           </div>
           <div class="flex items-center gap-2 text-sm">
             <span class="font-medium text-gray-500 dark:text-gray-400 min-w-[80px]">LLM:</span>
-            {#if status.generator.loaded}
-              <span class="font-mono text-gray-700 dark:text-gray-200">{status.generator.model}</span>
+            {#if status.loadedModels.generator.loaded}
+              <span class="font-mono text-gray-700 dark:text-gray-200">{status.loadedModels.generator.model}</span>
             {:else}
               <span class="italic text-gray-400">Not loaded</span>
             {/if}
           </div>
         </div>
+      {:else if status?.running}
+        <p class="text-sm mt-3">Loaded model information is unavailable.</p>
       {/if}
     </div>
 
@@ -343,10 +313,7 @@
 
             <div class="flex gap-2">
               {#if downloading[model.id]}
-                <div class="flex-1 h-6 bg-gray-200 dark:bg-gray-700 rounded-md relative overflow-hidden">
-                  <div class="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-md transition-all duration-300" style="width: {getProgressPercent(model.id)}%"></div>
-                  <span class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-xs font-semibold text-gray-700 dark:text-gray-200">{getProgressPercent(model.id)}%</span>
-                </div>
+                <span class="text-sm">Requesting download…</span>
               {:else if model.downloaded}
                 <button
                   class="px-3 py-1.5 rounded-md text-[0.8125rem] font-medium cursor-pointer transition-colors border {selectedEmbeddingModel === model.id ? 'bg-violet-500 text-white border-violet-500' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600'}"
@@ -354,7 +321,7 @@
                 >
                   {selectedEmbeddingModel === model.id ? '✓ Selected' : 'Select'}
                 </button>
-                {#if status?.running && (!status.embedder.loaded || status.embedder.model !== model.id)}
+                {#if status?.running && status.loadedModels && (!status.loadedModels.embedder.loaded || status.loadedModels.embedder.model !== model.id)}
                   <button
                     class="px-3 py-1.5 rounded-md text-[0.8125rem] font-medium cursor-pointer transition-colors bg-green-500 text-white border-none hover:bg-green-600"
                     on:click={() => loadModel('embeddings', model.id)}
@@ -403,10 +370,7 @@
 
             <div class="flex gap-2">
               {#if downloading[model.id]}
-                <div class="flex-1 h-6 bg-gray-200 dark:bg-gray-700 rounded-md relative overflow-hidden">
-                  <div class="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-md transition-all duration-300" style="width: {getProgressPercent(model.id)}%"></div>
-                  <span class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-xs font-semibold text-gray-700 dark:text-gray-200">{getProgressPercent(model.id)}%</span>
-                </div>
+                <span class="text-sm">Requesting download…</span>
               {:else if model.downloaded}
                 <button
                   class="px-3 py-1.5 rounded-md text-[0.8125rem] font-medium cursor-pointer transition-colors border {selectedLLMModel === model.id ? 'bg-violet-500 text-white border-violet-500' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-300 dark:border-gray-600 hover:bg-gray-200 dark:hover:bg-gray-600'}"
@@ -414,7 +378,7 @@
                 >
                   {selectedLLMModel === model.id ? '✓ Selected' : 'Select'}
                 </button>
-                {#if status?.running && (!status.generator.loaded || status.generator.model !== model.id)}
+                {#if status?.running && status.loadedModels && (!status.loadedModels.generator.loaded || status.loadedModels.generator.model !== model.id)}
                   <button
                     class="px-3 py-1.5 rounded-md text-[0.8125rem] font-medium cursor-pointer transition-colors bg-green-500 text-white border-none hover:bg-green-600"
                     on:click={() => loadModel('llm', model.id)}

@@ -18,9 +18,9 @@ const sovitsRoutes = read('packages/core/src/api/handlers/tts-service-routes.ts'
 const sovitsCli = read('packages/cli/src/commands/sovits.ts')
 const stopLauncher = read('bin/stop-voice-server')
 
-for (const id of ['kokoro', 'whisper']) {
+for (const id of ['kokoro', 'whisper', 'kitten']) {
   assert.equal(voiceConfig[id]?.enabled, true, `${id} must be enabled in the voice server configuration`)
-  assert.equal(voiceConfig[id]?.startOnSystemBoot, true, `${id} must be enabled for system boot`)
+  assert.equal(voiceConfig[id]?.startOnSystemBoot, id !== 'kokoro', `${id} must respect the selected Kitten boot configuration`)
   assert.equal(agentServices[id], undefined, `${id} must never be registered as an Agent Monitor service`)
 }
 
@@ -32,7 +32,7 @@ const agentMonitorOwners = [
   'packages/core/src/agent-catalog-definitions.ts',
   'scripts/validate-agent-monitor.ts',
 ]
-const forbiddenVoiceServerKnowledge = /voice[- ]server|server status|kokoro server|whisper server|services\/(?:kokoro|whisper)\.ts/i
+const forbiddenVoiceServerKnowledge = /voice[- ]server|server status|kokoro server|whisper server|kitten server|services\/(?:kokoro|whisper|kitten)\.ts/i
 
 for (const file of agentMonitorOwners) {
   assert.doesNotMatch(

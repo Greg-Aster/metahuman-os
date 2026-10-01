@@ -6,12 +6,12 @@ import {
   type VoiceServiceId,
 } from '@metahuman/core'
 
-const VOICE_SERVERS: VoiceServiceId[] = ['kokoro', 'whisper']
+const VOICE_SERVERS: VoiceServiceId[] = ['kokoro', 'whisper', 'kitten']
 
 function targets(value: string | undefined): VoiceServiceId[] {
   if (value === '--all') return VOICE_SERVERS
-  if (value === 'kokoro' || value === 'whisper') return [value]
-  throw new Error('Choose kokoro, whisper, or --all')
+  if (value === 'kokoro' || value === 'whisper' || value === 'kitten') return [value]
+  throw new Error('Choose kokoro, whisper, kitten, or --all')
 }
 
 function showHelp(): void {
@@ -19,9 +19,9 @@ function showHelp(): void {
 Voice Server Management
 
 Usage:
-  mh voice-server status <kokoro|whisper|--all>
-  mh voice-server start <kokoro|whisper|--all> [--boot]
-  mh voice-server stop <kokoro|whisper|--all>
+  mh voice-server status <kokoro|whisper|kitten|--all>
+  mh voice-server start <kokoro|whisper|kitten|--all> [--boot]
+  mh voice-server stop <kokoro|whisper|kitten|--all>
 
 The --boot flag starts only servers enabled for system boot in
 etc/voice-servers.json.

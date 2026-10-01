@@ -30,6 +30,7 @@ import {
 } from '../../index.js';
 import {
   isModelRole,
+  resolveModelById,
   invalidateModelCache,
   updateModelGlobalSettings,
   migrateModelRegistry,
@@ -321,6 +322,18 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       }
     }
 
+    // Project the canonical resolver's device override without rewriting the synced profile registry.
+    if (activeBackend === 'llama-cpp') {
+      availableModels = collapseModelInventory(availableModels.map(model => {
+        const resolved = resolveModelById(model.id, user.username);
+        return resolved.provider === 'llama-cpp'
+          ? { ...model, provider: resolved.provider, model: resolved.model, capabilities: resolved.capabilities,
+              options: resolved.options, adapters: [], baseModel: null,
+              description: `Configured llama.cpp model: ${resolved.model}` }
+          : model;
+      }));
+    }
+
     // Runtime discovery feeds the existing registry UI; it does not become a
     // second configuration source. A discovered model is persisted only when
     // the user assigns or edits it through this handler.
@@ -365,7 +378,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     let localModel: {
       id: string;
       name: string;
-      provider: 'ollama' | 'vllm';
+      provider: 'ollama' | 'vllm' | 'llama-cpp';
       locked: boolean;
     } | null = null;
 
@@ -376,6 +389,11 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
         provider: 'vllm',
         locked: true
       };
+    }
+
+    const llamaModels = availableModels.filter(model => model.provider === 'llama-cpp');
+    if (resolvedBackend === 'llama-cpp' && llamaModels.length) {
+      localModel = { id: llamaModels[0].id, name: backendStatus.model!, provider: 'llama-cpp', locked: true };
     }
 
     // Model categories - only show local models if the server is actually running
@@ -417,7 +435,8 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     }
 
     const modelCategories = {
-      local: activeBackend === 'vllm' && isVLLMRunning
+      local: resolvedBackend === 'llama-cpp' ? llamaModels
+        : activeBackend === 'vllm' && isVLLMRunning
         ? [{ id: 'vllm.active', model: backendStatus.model || 'unknown', provider: 'vllm', locked: true }]
         : isOllamaRunning
           ? installedOllamaModels

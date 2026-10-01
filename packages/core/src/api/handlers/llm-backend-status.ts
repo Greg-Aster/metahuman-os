@@ -48,6 +48,7 @@ export async function handleGetLlmBackendStatus(req: UnifiedRequest): Promise<Un
       available: availableBackends,
       config: {
         activeBackend: config.activeBackend,
+        llamaCpp: config.llamaCpp,
         preferredLocalBackend: config.preferredLocalBackend || 'ollama',
         ollama: {
           endpoint: config.ollama.endpoint,

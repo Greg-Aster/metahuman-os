@@ -43,3 +43,11 @@ test('prevents a standard profile user from changing the shared Whisper device',
   assert.equal(response.status, 403)
   assert.equal(response.error, 'Only the installation owner can change voice service processing devices')
 })
+
+test('rejects unknown Kitten voices and invalid speeds before touching profile storage', async () => {
+  for (const kitten of [{ voice: 'af_heart' }, { speed: 0 }, { speed: '1' }]) {
+    const response = await handleSaveVoiceSettings(request('owner', { kitten }))
+    assert.equal(response.status, 400)
+    assert.match(String(response.error), /Kitten voice|Kitten speed/)
+  }
+})

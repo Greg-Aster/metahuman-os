@@ -1,211 +1,109 @@
 #!/usr/bin/env bash
-# Kokoro TTS Installation Script for MetaHuman OS
-set -e
+# Install the managed Kokoro ONNX runtime and its verified model assets.
+set -euo pipefail
 
-# Parse arguments
-YES_FLAG=false
-if [[ "$1" == "--yes" ]] || [[ "$1" == "-y" ]]; then
-  YES_FLAG=true
-fi
+DEVICE=cpu
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --yes|-y) shift ;;
+        --device)
+            DEVICE="${2:?--device requires cpu or cuda}"
+            shift 2 ;;
+        *) echo "Usage: $0 [--yes] [--device cpu|cuda]" >&2; exit 1 ;;
+    esac
+done
+case "$DEVICE" in cpu|cuda) ;; *) echo "Unsupported device: $DEVICE" >&2; exit 1 ;; esac
 
 METAHUMAN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KOKORO_DIR="$METAHUMAN_ROOT/external/kokoro"
-
-echo "========================================"
-echo "Kokoro TTS Installation for MetaHuman OS"
-echo "========================================"
-echo ""
-
-# Check Python version
-echo "[1/8] Checking Python version..."
 PYTHON_CMD=""
-for cmd in python3.11 python3.10 python3.9 python3 python; do
-    if command -v "$cmd" &> /dev/null; then
-        VERSION=$("$cmd" --version 2>&1 | awk '{print $2}')
-        MAJOR=$(echo "$VERSION" | cut -d. -f1)
-        MINOR=$(echo "$VERSION" | cut -d. -f2)
-        if [ "$MAJOR" -eq 3 ] && [ "$MINOR" -ge 9 ]; then
-            PYTHON_CMD="$cmd"
-            echo "✓ Found Python $VERSION at $(command -v $cmd)"
-            break
-        fi
+for candidate in python3 python3.12 python3.11 python3.10; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 10))'; then
+        PYTHON_CMD="$candidate"
+        break
+    fi
+done
+if [ -z "$PYTHON_CMD" ]; then
+    echo "Python 3.10 or newer is required" >&2
+    exit 1
+fi
+if ! command -v espeak-ng >/dev/null 2>&1; then
+    echo "Install espeak-ng first (Ubuntu/Debian: sudo apt-get install espeak-ng)" >&2
+    exit 1
+fi
+for required in kokoro_server.py server_defaults.py VOICES.md; do
+    if [ ! -f "$KOKORO_DIR/$required" ]; then
+        echo "Missing maintained Kokoro file: $required" >&2
+        exit 1
     fi
 done
 
-if [ -z "$PYTHON_CMD" ]; then
-    echo "✗ Error: Python 3.9+ required but not found"
-    echo "  Please install Python 3.9 or higher"
-    exit 1
-fi
-
-# Check system dependencies
-echo ""
-echo "[2/8] Checking system dependencies..."
-
-# Check espeak-ng
-if command -v espeak-ng &> /dev/null; then
-    echo "✓ espeak-ng found"
-else
-    echo "⚠ espeak-ng not found"
-    echo "  Please install espeak-ng:"
-    echo "    Ubuntu/Debian: sudo apt-get install espeak-ng"
-    echo "    macOS: brew install espeak-ng"
-    echo "    Arch: sudo pacman -S espeak-ng"
-    echo ""
-    if [ "$YES_FLAG" = false ]; then
-        read -p "Continue anyway? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    else
-        echo "  (--yes flag: continuing without espeak-ng)"
-    fi
-fi
-
-# Check ffmpeg
-if command -v ffmpeg &> /dev/null; then
-    echo "✓ ffmpeg found"
-else
-    echo "⚠ ffmpeg not found"
-    echo "  Please install ffmpeg:"
-    echo "    Ubuntu/Debian: sudo apt-get install ffmpeg"
-    echo "    macOS: brew install ffmpeg"
-    echo "    Arch: sudo pacman -S ffmpeg"
-    echo ""
-    if [ "$YES_FLAG" = false ]; then
-        read -p "Continue anyway? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    else
-        echo "  (--yes flag: continuing without ffmpeg)"
-    fi
-fi
-
-# Check CUDA availability
-echo ""
-echo "[3/8] Checking GPU availability..."
-if command -v nvidia-smi &> /dev/null; then
-    CUDA_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
-    if [ -n "$CUDA_VERSION" ]; then
-        echo "✓ NVIDIA GPU detected (Driver: $CUDA_VERSION)"
-        echo "  Kokoro will use GPU acceleration"
-    else
-        echo "⚠ NVIDIA GPU not detected, will use CPU"
-    fi
-else
-    echo "⚠ nvidia-smi not found, will use CPU"
-    echo "  Kokoro works on CPU but GPU is faster"
-fi
-
-# Create directories
-echo ""
-echo "[4/8] Setting up directories..."
-mkdir -p "$METAHUMAN_ROOT/external"
-mkdir -p "$KOKORO_DIR"
-echo "✓ Directories created"
-
-# Create virtual environment
-echo ""
-echo "[5/8] Creating Python virtual environment..."
 cd "$KOKORO_DIR"
-if [ ! -d "venv" ]; then
+if [ ! -d venv ]; then
     "$PYTHON_CMD" -m venv venv
-    echo "✓ Virtual environment created"
-else
-    echo "⚠ Virtual environment already exists"
 fi
 
-# Install Python dependencies
-echo ""
-echo "[6/8] Installing Python dependencies..."
-echo "  This may take a few minutes..."
-./venv/bin/pip install --upgrade pip > /dev/null 2>&1
-
-# Install Kokoro and dependencies
-./venv/bin/pip install "kokoro>=0.9.4" soundfile "fastapi>=0.104.0" "uvicorn>=0.24.0" --quiet
-echo "✓ Core dependencies installed"
-
-# Install optional language support
-echo ""
-echo "  Installing language support packages..."
-./venv/bin/pip install "misaki[en]" "misaki[ja]" "misaki[zh]" espeakng --quiet 2>/dev/null || {
-    echo "⚠ Some language packages failed to install (optional)"
-}
-echo "✓ Dependencies installed"
-
-# Verify the maintained catalog and download base models
-echo ""
-echo "[7/8] Verifying voice catalog and downloading models..."
-echo "  This may take several minutes (~1.5GB of data)"
-
-if [ ! -f "$KOKORO_DIR/VOICES.md" ]; then
-    echo "✗ Maintained voice catalog is missing: $KOKORO_DIR/VOICES.md"
-    exit 1
+# KPipeline supplies pronunciation only; torch reads existing .pt voicepacks.
+# The speech model is executed exclusively by ONNX Runtime.
+echo "Installing Kokoro ONNX ($DEVICE)..."
+./venv/bin/python3 -m pip install 'kokoro==0.9.4' 'misaki[en,ja,zh]==0.9.4' \
+    'kokoro-onnx==0.6.1' 'onnxruntime==1.30.0' soundfile \
+    'fastapi>=0.104.0' 'uvicorn>=0.24.0'
+if [ "$DEVICE" = cuda ]; then
+    ./venv/bin/python3 -m pip install 'onnxruntime-gpu==1.30.0'
 fi
 
-# Download base model using Python
-cat > "$KOKORO_DIR/download_model.py" <<'EOF'
-#!/usr/bin/env python3
+# Assets live beside the managed server, outside profiles and version control.
+# Verify cached files as well as downloads; never accept a partial model.
+./venv/bin/python3 - <<'PYMODELS'
+import hashlib
 import os
-import sys
 from pathlib import Path
+import urllib.request
 
-try:
-    from kokoro import KPipeline
+root = Path("models")
+root.mkdir(exist_ok=True)
+release = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1"
+assets = {
+    "kokoro-v1.0.onnx": "beb0d1848dee9a49da392cc3df26958d46cfa35d321edf434f52949153f0df3a",
+    "voices-v1.0.bin": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+}
 
-    # Initialize pipeline (this will download the base model)
-    print("Initializing Kokoro pipeline...")
-    pipeline = KPipeline(lang='a')
+def digest(path):
+    sha = hashlib.sha256()
+    with path.open("rb") as stream:
+        while block := stream.read(1024 * 1024):
+            sha.update(block)
+    return sha.hexdigest()
 
-    # Download a sample voice to verify installation
-    print("Downloading sample voice (af_heart)...")
-    pipeline.load_voice('af_heart')
+for name, expected in assets.items():
+    destination = root / name
+    if destination.is_file() and digest(destination) == expected:
+        print(f"Verified {name}", flush=True)
+        continue
+    print(f"Downloading and verifying {name}", flush=True)
+    temporary = destination.with_suffix(destination.suffix + ".download")
+    try:
+        with urllib.request.urlopen(f"{release}/{name}", timeout=120) as source, temporary.open("wb") as output:
+            while block := source.read(1024 * 1024):
+                output.write(block)
+        if digest(temporary) != expected:
+            raise RuntimeError(f"Checksum mismatch for {name}")
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+PYMODELS
 
-    print("✓ Models downloaded successfully")
-    sys.exit(0)
+./venv/bin/python3 - "$DEVICE" <<'PYVERIFY'
+import sys
+from kokoro_server import load_model, load_frontend
+model = load_model(sys.argv[1])
+frontend = load_frontend("a")
+assert frontend.model is None, "The pronunciation frontend must not load a second speech model"
+assert "af_heart" in model.voices
+print(f"Verified ONNX provider: {model.sess.get_providers()[0]}; voices: {len(model.voices)}")
+PYVERIFY
 
-except Exception as e:
-    print(f"✗ Error downloading models: {e}")
-    sys.exit(1)
-EOF
-
-chmod +x "$KOKORO_DIR/download_model.py"
-./venv/bin/python3 "$KOKORO_DIR/download_model.py"
-rm -f "$KOKORO_DIR/download_model.py"
-
-echo "✓ Voice catalog and models ready"
-
-# Create helper scripts
-echo ""
-echo "[8/8] Creating helper scripts..."
-
-# The maintained server implementation is tracked in external/kokoro.
-# Do not replace it with an installer-local copy that can drift from runtime.
-if [ ! -f "$KOKORO_DIR/kokoro_server.py" ]; then
-    echo "✗ Maintained Kokoro server is missing: $KOKORO_DIR/kokoro_server.py"
-    exit 1
-fi
-chmod +x "$KOKORO_DIR/kokoro_server.py"
-
-echo "✓ Maintained Kokoro server ready"
-
-echo ""
-echo "========================================"
-echo "✓ Installation Complete!"
-echo "========================================"
-echo ""
-echo "Kokoro TTS is fully installed and ready to use."
-echo ""
-echo "Installation directory: $KOKORO_DIR"
-echo ""
-echo "Next steps:"
-echo "  1. Enable Kokoro in Voice Settings UI"
-echo "  2. Select a voice from 54 built-in options"
-echo "  3. Test synthesis with: mh kokoro test"
-echo ""
-echo "The Kokoro server will auto-start when you select it as provider."
-echo "Or manually start it with: mh kokoro serve start"
-echo ""
+echo "Kokoro ONNX installed in $KOKORO_DIR"
+echo "Use Voice Settings to select a voice; restart Kokoro through its existing service controls."
+echo "CUDA also requires working CUDA/cuDNN libraries; an unavailable requested device fails visibly."

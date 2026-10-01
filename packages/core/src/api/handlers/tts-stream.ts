@@ -5,6 +5,7 @@ import { getProfilePaths } from '../../path-builder.js';
 import { createKokoroTTSService, generateSpeech } from '../../tts.js';
 import { splitSpeechText } from '../../tts/speech-chunks.js';
 import type { KokoroStreamChunk } from '../../tts/providers/kokoro-service.js';
+import type { TTSConfig } from '../../tts/interface.js';
 
 function sse(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
@@ -31,7 +32,7 @@ export const handleTtsStream: UnifiedHandler = async (req) => {
 
     const selectedProvider = provider || 'kokoro';
     if (selectedProvider === 'kokoro') {
-      return handleKokoroTtsStream(req.user.username, req.signal, {
+      return await handleKokoroTtsStream(req.user.username, req.signal, {
         text,
         voice,
         voiceId,
@@ -51,7 +52,7 @@ export const handleTtsStream: UnifiedHandler = async (req) => {
       selectedProvider,
       username: req.user.username,
       signal: req.signal,
-      voice,
+      voice: voiceId || voice,
       speed,
       pitchShift,
     }));
@@ -163,27 +164,26 @@ async function* streamGeneratedSpeech(params: {
   }
 
   const lookahead = 1;
-  const pendingGenerations: Map<number, Promise<Buffer>> = new Map();
+  const controller = new AbortController();
+  const signal = params.signal ? AbortSignal.any([params.signal, controller.signal]) : controller.signal;
+  const pendingGenerations = new Map<number, Promise<{ audio: Buffer } | { error: unknown }>>();
 
   const startPrefetch = (index: number) => {
     if (index >= params.paragraphs.length) return;
     if (pendingGenerations.has(index)) return;
-    if (params.signal?.aborted) return;
+    if (signal.aborted) return;
 
     const paragraph = params.paragraphs[index];
     console.log(`[TTS Stream] Prefetching paragraph ${index + 1}/${params.paragraphs.length} (${paragraph.length} chars)`);
 
     const promise = generateSpeech(paragraph, {
-      provider: params.selectedProvider as 'piper' | 'rvc',
+      provider: params.selectedProvider as TTSConfig['provider'],
       voice: rvcConfig.voice,
       speakingRate: rvcConfig.speed,
       pitchShift: rvcConfig.pitchShift,
       username: params.username,
-      signal: params.signal,
-    }).catch((error) => {
-      console.warn(`[TTS Stream] Failed to generate paragraph ${index}:`, error.message);
-      return Buffer.alloc(0);
-    });
+      signal,
+    }).then(audio => ({ audio }), error => ({ error }));
 
     pendingGenerations.set(index, promise);
   };
@@ -194,20 +194,20 @@ async function* streamGeneratedSpeech(params: {
     }
 
     for (let i = 0; i < params.paragraphs.length; i++) {
-      if (params.signal?.aborted) break;
+      signal.throwIfAborted();
 
       startPrefetch(i);
       for (let j = i + 1; j <= i + lookahead && j < params.paragraphs.length; j++) {
         startPrefetch(j);
       }
 
-      const audioBuffer = await pendingGenerations.get(i);
+      const result = await pendingGenerations.get(i);
       pendingGenerations.delete(i);
-
-      if (!audioBuffer || audioBuffer.length === 0) {
-        console.warn(`[TTS Stream] No audio for paragraph ${i}`);
-        continue;
-      }
+      if (!result) throw new Error(`Missing synthesis for phrase ${i}`);
+      if ('error' in result) throw result.error;
+      const audioBuffer = result.audio;
+      if (audioBuffer.length === 0) throw new Error(`Empty audio for phrase ${i}`);
+      signal.throwIfAborted();
 
       console.log(`[TTS Stream] Streaming paragraph ${i + 1}/${params.paragraphs.length}: ${audioBuffer.length} bytes`);
 
@@ -229,5 +229,8 @@ async function* streamGeneratedSpeech(params: {
     }
     console.error('[TTS Stream] Error:', error);
     yield sse({ event: 'error', error: (error as Error).message });
+  } finally {
+    controller.abort();
+    await Promise.allSettled(pendingGenerations.values());
   }
 }

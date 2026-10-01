@@ -12,8 +12,16 @@ const robotSpeech = read('packages/core/src/tts/robot-speech.ts');
 const browserPlayback = read('apps/site/src/lib/client/composables/useTTS.ts');
 const kokoroServer = read('external/kokoro/kokoro_server.py');
 const voiceIndex = read('packages/core/src/voice/index.ts');
-const voiceConfig = read('etc/voice.json');
 const voiceTemplate = read('etc/voice.json.template');
+const kittenService = read('packages/core/src/tts/providers/kitten-service.ts');
+const kittenServer = read('external/kitten/kitten_server.py');
+
+assert.match(kittenService, /ensureVoiceServiceRunning\('kitten'\)/,
+  'Kitten delegates process lifecycle to the shared manager');
+assert.doesNotMatch(kittenService, /\bspawn\(|synthesizeStream|splitSpeechText/,
+  'Kitten batch requests must not create another lifecycle or streaming owner');
+assert.doesNotMatch(kittenServer, /StreamingResponse|ThreadPoolExecutor|audio_base64|chunk_text/,
+  'Kitten Python serves batch inference without another phrase scheduler');
 
 assert.match(
   tts,
@@ -51,7 +59,7 @@ assert.doesNotMatch(
   'the Python inference server must not retain a second streaming and chunking owner',
 );
 assert.doesNotMatch(
-  `${voiceConfig}\n${voiceTemplate}`,
+  voiceTemplate,
   /splitPattern|voice-stream|audioChunkMs/,
   'maintained voice defaults must not advertise settings with no runtime consumer',
 );

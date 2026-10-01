@@ -160,7 +160,7 @@ export class KokoroService implements ITextToSpeechService {
     const useCustom = isBuiltInVoice ? false : this.config.useCustomVoicepack;
     const customPath = this.config.customVoicepackPath;
     const voiceKey = useCustom ? `custom:${path.basename(customPath)}` : voice;
-    const cacheKey = `kokoro:${langCode}:${voiceKey}`;
+    const cacheKey = `kokoro:onnx-v1.0:${langCode}:${voiceKey}`;
 
     return { langCode, voice, speed, useCustom, customPath, voiceKey, cacheKey };
   }

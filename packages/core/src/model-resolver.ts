@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getProfilePaths } from './path-builder.js';
 import { safeWriteJSON } from './safe-file.js';
-import { loadBackendConfig, type BackendType } from './llm-backend.js';
+import { loadBackendConfig } from './llm-backend.js';
 import {
   DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL,
   DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID,
@@ -40,7 +40,7 @@ export function isModelRole(value: unknown): value is ModelRole {
 export function normalizeModelRole(value: unknown, fallback: ModelRole): ModelRole {
   return isModelRole(value) ? value : fallback;
 }
-export type ModelProvider = 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
+export type ModelProvider = 'llama-cpp' | 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
 export type ModelCapability = 'text' | 'image';
 
 export interface ModelDefinition {
@@ -222,29 +222,14 @@ function persistMigratedRegistry(registryPath: string, registry: ModelRegistry):
 }
 
 /**
- * Get the active LLM backend (ollama or vllm)
- * Used to ensure model resolution respects the configured backend
- */
-function getBackendSelection(): { activeBackend: BackendType; vllmModel?: string } {
-  try {
-    const config = loadBackendConfig();
-    return {
-      activeBackend: config.activeBackend,
-      vllmModel: config.vllm.servedModelName || config.vllm.model,
-    };
-  } catch (error) {
-    console.error(`${LOG_PREFIX} Failed to load backend config, using fallback:`, error);
-    return { activeBackend: 'ollama' }; // Default fallback
-  }
-}
-
-/**
  * Apply backend override to resolved model
  * When vLLM is active but model is configured for Ollama, use vLLM's model instead
  * This ensures consistent behavior regardless of how cognitive mode mappings are configured
  */
 function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry): ResolvedModel {
-  const { activeBackend, vllmModel: configuredVllmModel } = getBackendSelection();
+  const backend = loadBackendConfig();
+  const { activeBackend } = backend;
+  const configuredVllmModel = backend.vllm.servedModelName || backend.vllm.model;
 
 
   // Cloud providers and remote-server are NEVER overridden - user's choice is respected
@@ -257,6 +242,19 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
   // Never override local-models requests since they don't conflict with vLLM/Ollama
   if (resolved.provider === 'local-models') {
     return resolved;
+  }
+
+  if (resolved.roles.includes('embedder')) return resolved;
+
+  if (activeBackend === 'llama-cpp' && ['local', 'ollama', 'vllm', 'llama-cpp'].includes(resolved.provider)) {
+    const llama = backend.llamaCpp;
+    return {
+      ...resolved, provider: 'llama-cpp', model: llama.model, adapters: [], baseModel: undefined,
+      capabilities: llama.capabilities,
+      options: { ...resolved.options, contextWindow: llama.contextWindow, maxTokens: llama.maxTokens,
+        temperature: llama.temperature, topP: llama.topP, enableThinking: llama.enableThinking },
+      metadata: { ...resolved.metadata, backendOverride: 'llama-cpp' },
+    };
   }
 
   // The Environment action selector is a dedicated Ollama system model, not a
@@ -296,12 +294,6 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
       };
     }
 
-  }
-
-  // If resolved model uses vllm but Ollama is active, use default model
-  if (activeBackend === 'ollama' && resolved.provider === 'vllm') {
-    // Keep the original but the bridge will handle routing to Ollama
-    // The model name won't matter since Ollama will use its loaded model
   }
 
   return resolved;

@@ -15,6 +15,7 @@ const log = createLogger('tts');
 import { SoVITSService } from './tts/providers/gpt-sovits-service.js';
 import { RVCService } from './tts/providers/rvc-service.js';
 import { KokoroService } from './tts/providers/kokoro-service.js';
+import { KittenService } from './tts/providers/kitten-service.js';
 import type { ITextToSpeechService, TTSConfig, CacheConfig, TTSSynthesizeOptions, TTSStatus } from './tts/interface.js';
 
 // Re-export types and utilities for external use
@@ -36,102 +37,51 @@ interface VoiceConfig {
   [key: string]: any;
 }
 
-let config: VoiceConfig | null = null;
-// NOTE: Provider caching disabled for multi-user support
-// Services must be created fresh each time to respect per-user path resolution
-
-/**
- * Load voice configuration from etc/voice.json (global config)
- * Returns raw config with unresolved template variables
- * Path resolution happens at service creation time based on user context
- */
-function loadRawConfig(forceReload = false): VoiceConfig {
-  if (config && !forceReload) return config;
-
-  const configPath = path.join(systemPaths.etc, 'voice.json');
-  if (!fs.existsSync(configPath)) {
-    throw new Error('Voice configuration not found at etc/voice.json');
+/** Read an explicitly configured document; absence does not create defaults. */
+function readVoiceConfig(configPath: string): Partial<VoiceConfig> | null {
+  if (!fs.existsSync(configPath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Expected a configuration object');
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(`Invalid voice configuration at ${configPath}: ${(error as Error).message}`, { cause: error });
   }
-
-  config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-
-  return config!;
 }
 
 /**
- * Load user-specific voice configuration with fallback to global config
- * User config at profiles/{username}/etc/voice.json overrides global config settings
- *
- * @param username - Username to load config for (optional)
- * @returns Merged config with user-specific overrides
+ * Profile voice preferences own synthesis configuration. Existing installation
+ * defaults may supply omitted fields, but a complete profile stands alone.
+ * Read fresh for each service so settings changes and profiles stay isolated.
  */
 function loadUserConfig(username?: string): VoiceConfig {
-  // Always start with global config as base
-  const globalConfig = loadRawConfig();
-
-  // Check if we have user context (e.g., guest viewing another profile)
   const userContext = getUserContext();
-
-  // Use context's profilePaths if available (for guest users viewing other profiles)
-  // Otherwise construct from username parameter
   const userConfigPath = userContext?.profilePaths?.voiceConfig ||
     (username && username !== 'anonymous' ? getProfilePaths(username).voiceConfig : null);
-
-  log.debug('loadUserConfig:', {
-    username,
-    hasUserContext: !!userContext,
-    userContextUsername: userContext?.username,
-    configPath: userConfigPath,
-  });
-
-  // If no config path or username is anonymous with no context, return global config
-  if (!userConfigPath) {
-    log.debug('loadUserConfig: No config path, using global config');
-    return globalConfig;
+  const globalConfig = readVoiceConfig(path.join(systemPaths.etc, 'voice.json'));
+  const userConfig = userConfigPath ? readVoiceConfig(userConfigPath) : null;
+  if (!globalConfig && !userConfig) {
+    throw new Error('Voice configuration not found. Configure speech in Voice Settings for this profile.');
   }
 
-  if (!fs.existsSync(userConfigPath)) {
-    // No user config, use global
-    return globalConfig;
+  const merged = {
+    ...globalConfig,
+    ...userConfig,
+    tts: { ...globalConfig?.tts, ...userConfig?.tts },
+    cache: { ...globalConfig?.cache, ...userConfig?.cache },
+  } as VoiceConfig;
+  for (const provider of ['piper', 'sovits', 'rvc', 'kokoro', 'kitten'] as const) {
+    const base = globalConfig?.tts?.[provider];
+    const override = userConfig?.tts?.[provider];
+    if (base || override) Object.assign(merged.tts, { [provider]: { ...base, ...override } });
   }
-
-  try {
-    const userConfig = JSON.parse(fs.readFileSync(userConfigPath, 'utf-8'));
-
-    // Merge configs: user config takes precedence for provider and settings
-    const merged: VoiceConfig = JSON.parse(JSON.stringify(globalConfig));
-
-    // Override provider if user has set one
-    if (userConfig.tts?.provider) {
-      merged.tts.provider = userConfig.tts.provider;
-    }
-
-    // Merge provider-specific settings
-    if (userConfig.tts?.piper) {
-      merged.tts.piper = { ...merged.tts.piper, ...userConfig.tts.piper };
-    }
-    if (userConfig.tts?.sovits) {
-      merged.tts.sovits = { ...merged.tts.sovits, ...userConfig.tts.sovits };
-    }
-    if (userConfig.tts?.rvc) {
-      merged.tts.rvc = { ...merged.tts.rvc, ...userConfig.tts.rvc };
-    }
-    if (userConfig.tts?.kokoro) {
-      merged.tts.kokoro = { ...merged.tts.kokoro, ...userConfig.tts.kokoro };
-    }
-
-    // Merge cache settings
-    if (userConfig.cache) {
-      merged.cache = { ...merged.cache, ...userConfig.cache };
-    }
-
-    log.debug(' Loaded user-specific config for', username, '- provider:', merged.tts.provider);
-
-    return merged;
-  } catch (error) {
-    console.warn('[TTS] Failed to load user config, falling back to global:', error);
-    return globalConfig;
+  if (!merged.tts.provider || typeof merged.cache.enabled !== 'boolean'
+    || typeof merged.cache.directory !== 'string' || !merged.cache.directory) {
+    throw new Error('Voice configuration is incomplete. Configure speech and its cache in Voice Settings.');
   }
+  return merged;
 }
 
 /**
@@ -139,7 +89,7 @@ function loadUserConfig(username?: string): VoiceConfig {
  * Handles {METAHUMAN_ROOT} and {PROFILE_DIR} based on user context
  */
 function resolveConfigPaths(rawConfig: VoiceConfig, username?: string): VoiceConfig {
-  // Clone config to avoid mutating cached version
+  // Clone configuration before resolving profile-specific paths
   const resolved = JSON.parse(JSON.stringify(rawConfig));
 
   // Get user context for profile-aware path resolution
@@ -253,7 +203,6 @@ function buildKokoroService(config: VoiceConfig): KokoroService {
 export function createKokoroTTSService(username?: string): KokoroService {
   const userContext = getUserContext();
   const activeUsername = username || userContext?.username || 'anonymous';
-  loadRawConfig(true);
   return buildKokoroService(resolveConfigPaths(loadUserConfig(activeUsername), activeUsername));
 }
 
@@ -261,7 +210,7 @@ export function createKokoroTTSService(username?: string): KokoroService {
  * Create TTS service for specified provider
  * Uses current user context for profile-aware path resolution
  */
-export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro', username?: string): ITextToSpeechService {
+export function createTTSService(provider?: TTSConfig['provider'], username?: string): ITextToSpeechService {
   // Get user context if not explicitly provided
   const userContext = getUserContext();
   const activeUsername = username || userContext?.username || 'anonymous';
@@ -314,6 +263,9 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'ko
     service = new RVCService(cfg.tts.rvc, cfg.cache, piperService);
   } else if (selectedProvider === 'kokoro') {
     service = buildKokoroService(cfg);
+  } else if (selectedProvider === 'kitten') {
+    if (!cfg.tts.kitten) throw new Error('Kitten is not configured. Select a voice in Voice Settings.');
+    service = new KittenService(cfg.tts.kitten, cfg.cache);
   } else {
     // Default to Piper
     if (!cfg.tts.piper) {
@@ -333,14 +285,11 @@ export function createTTSService(provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'ko
  */
 export async function generateSpeech(
   text: string,
-  options?: TTSSynthesizeOptions & { provider?: 'piper' | 'gpt-sovits' | 'rvc' | 'kokoro'; username?: string }
+  options?: TTSSynthesizeOptions & { provider?: TTSConfig['provider']; username?: string }
 ): Promise<Buffer> {
   const { provider, username, ...synthesizeOptions } = options || {};
 
-  // Always reload config to ensure fresh settings from file (clears cache)
-  loadRawConfig(true);
-
-  // createTTSService will load user-specific config with fallback to global
+  // The service reads current profile preferences and optional installation defaults
   const service = createTTSService(provider, username);
   return service.synthesize(text, synthesizeOptions);
 }

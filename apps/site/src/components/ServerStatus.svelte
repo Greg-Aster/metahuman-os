@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
 
   interface ServerInfo {
@@ -32,7 +32,8 @@
   }
 
   interface LLMBackendInfo {
-    activeBackend: 'auto' | 'ollama' | 'vllm' | 'remote' | 'local-models';
+    llamaCpp: { configured: boolean; running: boolean; model?: string; endpoint: string; error?: string };
+    activeBackend: 'llama-cpp' | 'auto' | 'ollama' | 'vllm' | 'remote' | 'local-models';
     ollama: {
       installed: boolean;
       running: boolean;
@@ -89,7 +90,7 @@
   let eventBus: EventBusInfo | null = null;
   let loading = true;
   let actionInProgress: string | null = null;
-  let refreshInterval: ReturnType<typeof setInterval> | null = null;
+  let mounted = false;
   let isPageVisible = true;
   let statusFetchInProgress = false;
 
@@ -98,6 +99,7 @@
   const serverConfigs = [
     { name: 'whisper', displayName: 'Whisper STT', endpoint: '/api/whisper-server', port: 9883 },
     { name: 'kokoro', displayName: 'Kokoro TTS', endpoint: '/api/kokoro-server', port: 9882 },
+    { name: 'kitten', displayName: 'Kitten TTS', endpoint: '/api/kitten-server', port: 9884 },
     { name: 'sovits', displayName: 'GPT-SoVITS', endpoint: '/api/sovits-server', port: 9880 },
   ];
 
@@ -139,6 +141,7 @@
           const data = await llmResponse.json();
           llmBackend = {
             activeBackend: data.config.activeBackend,
+            llamaCpp: { ...data.available.llamaCpp, endpoint: data.config.llamaCpp.endpoint },
             ollama: {
               installed: data.available.ollama.installed,
               running: data.available.ollama.running,
@@ -280,7 +283,7 @@
     }
   }
 
-  function isBackendActive(backend: 'ollama' | 'vllm'): boolean {
+  function isBackendActive(backend: 'ollama' | 'vllm' | 'llama-cpp'): boolean {
     return llmBackend?.activeBackend === backend;
   }
 
@@ -300,7 +303,7 @@
       if (!response.ok || !data.success) {
         alert(`Failed to ${action} Big Brother: ${data.error || 'Unknown error'}`);
       } else {
-        setTimeout(fetchServerStatus, 2000);
+        await fetchServerStatus();
       }
     } catch (error) {
       alert(`Error ${action}ing Big Brother: ${(error as Error).message}`);
@@ -321,7 +324,7 @@
       if (!response.ok || !data.success) {
         alert(`Failed to ${action} Event Bus: ${data.error || 'Unknown error'}`);
       } else {
-        setTimeout(fetchServerStatus, 2000);
+        await fetchServerStatus();
       }
     } catch (error) {
       alert(`Error ${action}ing Event Bus: ${(error as Error).message}`);
@@ -342,7 +345,7 @@
       if (!response.ok || !data.success) {
         alert(`Failed to ${action} ${server.displayName}: ${data.error || 'Unknown error'}`);
       } else {
-        setTimeout(fetchServerStatus, 1000);
+        await fetchServerStatus();
       }
     } catch (error) {
       alert(`Error ${action}ing ${server.displayName}: ${(error as Error).message}`);
@@ -390,7 +393,7 @@
         if (isCurrentServer) {
           alert('Server stopped. You will need to restart it manually.');
         } else {
-          setTimeout(fetchServerStatus, 1000);
+          await fetchServerStatus();
         }
       }
     } catch (error) {
@@ -400,42 +403,21 @@
     }
   }
 
-  function startPolling() {
-    if (!refreshInterval) {
-      console.log('[ServerStatus] Starting polling (10s interval)');
-      fetchServerStatus();
-      refreshInterval = setInterval(fetchServerStatus, 10000);
-    }
-  }
-
-  function stopPolling() {
-    if (refreshInterval) {
-      console.log('[ServerStatus] Stopping polling');
-      clearInterval(refreshInterval);
-      refreshInterval = null;
-    }
-  }
-
-  $: if (isVisible && isPageVisible) {
-    startPolling();
-  } else {
-    stopPolling();
-  }
+  $: if (mounted && isVisible && isPageVisible) void fetchServerStatus();
 
   function handleVisibilityChange() {
     isPageVisible = !document.hidden;
   }
 
   onMount(() => {
+    isPageVisible = !document.hidden;
+    mounted = true;
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    if (isVisible && isPageVisible) {
-      startPolling();
-    }
-  });
-
-  onDestroy(() => {
-    stopPolling();
-    document.removeEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('backend-changed', fetchServerStatus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('backend-changed', fetchServerStatus);
+    };
   });
 </script>
 
@@ -461,6 +443,16 @@
           <span class="text-base">🧠</span>
           <span class="flex-1">LLM Backend</span>
         </div>
+
+        {#if llmBackend.llamaCpp.configured}
+          <div class="border rounded-lg p-3 bg-white dark:bg-gray-800 {isBackendActive('llama-cpp') ? 'border-emerald-500' : 'border-gray-300 dark:border-gray-700'}">
+            <div class="flex items-center justify-between"><strong>llama.cpp</strong><span>{llmBackend.llamaCpp.running ? 'Running' : 'Offline'}</span></div>
+            <div class="text-sm mt-2">{llmBackend.llamaCpp.model}</div>
+            <div class="text-xs text-gray-500 mt-1">{llmBackend.llamaCpp.endpoint}</div>
+            {#if llmBackend.llamaCpp.error}<p class="text-xs text-red-500">{llmBackend.llamaCpp.error}</p>{/if}
+            <button class="text-sm mt-2 underline" on:click={openBackendSettings}>Configure backend</button>
+          </div>
+        {/if}
 
         <!-- Ollama -->
         <div class="border rounded-lg p-3 bg-white dark:bg-gray-800 transition-all hover:shadow-md dark:hover:shadow-black/30 {isBackendActive('ollama') ? 'border-2 border-emerald-500/40 dark:border-emerald-400/40 bg-emerald-500/[0.02] dark:bg-emerald-400/[0.03]' : 'border-blue-500/20 dark:border-blue-400/20'}">

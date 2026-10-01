@@ -42,7 +42,7 @@ function splitLongUnit(unit: string, preferredChars: number): string[] {
 
 function sentenceUnits(paragraph: string, policy: SpeechChunkPolicy): string[] {
   const sentences = paragraph
-    .match(/[^.!?]+(?:[.!?]+["')\]]*|$)/g)
+    .match(/.+?(?:[.!?]+["')\]]*(?=\s|$)|$)/g)
     ?.map(sentence => sentence.trim())
     .filter(Boolean) ?? [paragraph];
   const units: string[] = [];
@@ -125,5 +125,21 @@ export function splitSpeechText(
     .map(paragraph => paragraph.replace(/\s*\n\s*/g, ' ').replace(/[ \t]+/g, ' ').trim())
     .filter(Boolean);
 
-  return paragraphs.flatMap(paragraph => chunkParagraph(paragraph, policy));
+  if (paragraphs.length === 0) return [];
+
+  // Release one short opening phrase before grouping the remaining speech.
+  // In particular, tail merging must never reunite this phrase with the rest
+  // of the response and make the listener wait for its entire synthesis.
+  const openingChars = Math.min(48, policy.preferredChars);
+  const opening = sentenceUnits(paragraphs[0]!, {
+    ...policy,
+    preferredChars: openingChars,
+    maxChars: openingChars,
+  })[0]!;
+  const remainder = paragraphs[0]!.slice(opening.length).trim();
+  return [
+    opening,
+    ...(remainder ? chunkParagraph(remainder, policy) : []),
+    ...paragraphs.slice(1).flatMap(paragraph => chunkParagraph(paragraph, policy)),
+  ];
 }

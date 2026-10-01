@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { systemPaths } from './path-builder.js'
 
-export type VoiceServiceId = 'kokoro' | 'whisper'
+export type VoiceServiceId = 'kokoro' | 'whisper' | 'kitten'
 
 export interface VoiceServiceStatus {
   id: VoiceServiceId
@@ -55,11 +55,18 @@ const READY_TIMEOUT_MS = 60_000
 const READY_POLL_MS = 250
 
 const serviceMutationTails: Record<VoiceServiceId, Promise<void>> = {
+  kitten: Promise.resolve(),
   kokoro: Promise.resolve(),
   whisper: Promise.resolve(),
 }
 
 const DEFAULTS: Record<VoiceServiceId, VoiceServiceConfig> = {
+  kitten: {
+    enabled: false,
+    startOnSystemBoot: false,
+    port: 9884,
+    device: 'cpu',
+  },
   kokoro: {
     enabled: true,
     startOnSystemBoot: true,
@@ -90,7 +97,7 @@ function readServiceEntry(id: VoiceServiceId): Record<string, unknown> {
 }
 
 function environmentDeviceSetting(id: VoiceServiceId): { variable: string; value: string } | undefined {
-  const variable = id === 'whisper' ? 'MH_WHISPER_DEVICE' : 'MH_KOKORO_DEVICE'
+  const variable = `MH_${id.toUpperCase()}_DEVICE`
   const value = process.env[variable]
   return value === undefined ? undefined : { variable, value }
 }
@@ -108,6 +115,7 @@ export function withVoiceServiceDevice(
   id: VoiceServiceId,
   device: 'cpu' | 'cuda',
 ): Record<string, unknown> {
+  if (id === 'kitten' && device !== 'cpu') throw new Error('Kitten supports CPU only')
   if (!isRecord(document) || !isRecord(document.servers)) {
     throw new Error(`etc/${CONFIG_FILE} must contain a servers object`)
   }
@@ -191,8 +199,11 @@ export function normalizeVoiceServiceConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): VoiceServiceConfig {
   const defaults = DEFAULTS[id]
-  const envPrefix = id === 'whisper' ? 'MH_WHISPER' : 'MH_KOKORO'
+  const envPrefix = `MH_${id.toUpperCase()}`
   const requestedDevice = environment[`${envPrefix}_DEVICE`] ?? entry.device
+  if (id === 'kitten' && requestedDevice !== undefined && requestedDevice !== 'cpu') {
+    throw new Error('Kitten supports CPU only')
+  }
   const device = requestedDevice === 'cuda' ? 'cuda' : 'cpu'
   const port = positivePort(environment[`${envPrefix}_PORT`] ?? entry.port, defaults.port)
   const shared: Pick<VoiceServiceConfig, 'enabled' | 'startOnSystemBoot' | 'port' | 'device'> = {
@@ -203,6 +214,8 @@ export function normalizeVoiceServiceConfig(
     port,
     device,
   }
+
+  if (id === 'kitten') return shared
 
   if (id === 'whisper') {
     const requestedCompute = environment.MH_WHISPER_COMPUTE_TYPE ?? entry.computeType
@@ -233,6 +246,19 @@ export function getVoiceServiceUrl(id: VoiceServiceId): string {
 function getVoiceServiceSpec(id: VoiceServiceId): VoiceServiceSpec {
   const config = getVoiceServiceConfig(id)
   const runDir = path.join(systemPaths.logs, 'run')
+
+  if (id === 'kitten') {
+    const cwd = path.join(systemPaths.root, 'external', 'kitten')
+    const command = path.join(cwd, 'venv', 'bin', 'python3')
+    const script = path.join(cwd, 'kitten_server.py')
+    return {
+      cwd, command, args: [script, '--port', String(config.port)], config,
+      pidFile: path.join(runDir, 'kitten-server.pid'),
+      logFile: path.join(runDir, 'kitten-server.log'),
+      requiredFiles: [command, script, path.join(cwd, 'models', 'config.json'),
+        path.join(cwd, 'models', 'kitten_tts_micro_v0_8.onnx'), path.join(cwd, 'models', 'voices.npz')],
+    }
+  }
 
   if (id === 'whisper') {
     const command = path.join(systemPaths.root, 'venv', 'bin', 'python3')
@@ -331,8 +357,12 @@ export async function getVoiceServiceStatus(id: VoiceServiceId): Promise<VoiceSe
 }
 
 export async function ensureVoiceServiceRunning(id: VoiceServiceId): Promise<VoiceServiceStatus> {
+  return withServiceMutation(id, () => ensureVoiceServiceRunningUnlocked(id))
+}
+
+async function ensureVoiceServiceRunningUnlocked(id: VoiceServiceId): Promise<VoiceServiceStatus> {
   const current = await getVoiceServiceStatus(id)
-  if (current.running) return current
+  if (current.running) return id === 'kitten' && !current.healthy ? waitForVoiceServiceReady(id) : current
 
   const spec = getVoiceServiceSpec(id)
   if (!spec.config.enabled) throw new Error(`${id} service is disabled in etc/${CONFIG_FILE}`)
@@ -362,7 +392,7 @@ export async function ensureVoiceServiceRunning(id: VoiceServiceId): Promise<Voi
     fs.rmSync(spec.pidFile, { force: true })
     throw new Error(`${id} server exited during startup; check ${spec.logFile}`)
   }
-  return status
+  return id === 'kitten' && !status.healthy ? waitForVoiceServiceReady(id) : status
 }
 
 function signalManagedProcess(pid: number, signal: NodeJS.Signals): void {
@@ -418,6 +448,7 @@ export async function updateVoiceServiceDevice(
   id: VoiceServiceId,
   device: 'cpu' | 'cuda',
 ): Promise<VoiceServiceDeviceUpdate> {
+  if (id === 'kitten' && device !== 'cpu') throw new Error('Kitten supports CPU only')
   return withServiceMutation(id, async () => {
     const override = environmentDeviceSetting(id)
     if (override && override.value !== device) {
@@ -459,7 +490,7 @@ export async function updateVoiceServiceDevice(
 
     const stopped = await stopVoiceService(id)
     if (!stopped.success) throw new Error(stopped.message)
-    await ensureVoiceServiceRunning(id)
+    await ensureVoiceServiceRunningUnlocked(id)
     const status = await waitForVoiceServiceReady(id)
     return {
       changed,

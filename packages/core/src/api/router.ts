@@ -298,7 +298,7 @@ import {
 } from './handlers/big-brother-terminal.js';
 import { handleGetNodePipeline, handleSetNodePipeline } from './handlers/node-pipeline.js';
 import { handleDecryptProfilePath, handleEncryptProfilePath } from './handlers/profile-encryption.js';
-import { handleKokoroServer, handleSovitsServer } from './handlers/tts-service-routes.js';
+import { handleKokoroServer, handleKittenServer, handleSovitsServer } from './handlers/tts-service-routes.js';
 import { handleWhisperServer } from './handlers/whisper-server.js';
 import { handleBufferStream } from './handlers/buffer-stream.js';
 import { handleMonitorStream } from './handlers/monitor-stream.js';
@@ -464,6 +464,8 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/profile-path/encrypt', handler: handleEncryptProfilePath, requiresAuth: true },
   { method: 'POST', pattern: '/api/profile-path/decrypt', handler: handleDecryptProfilePath, requiresAuth: true },
   { method: 'GET', pattern: '/api/kokoro-server', handler: handleKokoroServer },
+  { method: 'GET', pattern: '/api/kitten-server', handler: handleKittenServer },
+  { method: 'POST', pattern: '/api/kitten-server', handler: handleKittenServer, requiresAuth: true },
   { method: 'POST', pattern: '/api/kokoro-server', handler: handleKokoroServer, requiresAuth: true },
   { method: ['GET', 'POST'], pattern: '/api/sovits-server', handler: handleSovitsServer, requiresAuth: true, guard: 'owner' },
   { method: ['GET', 'POST'], pattern: '/api/whisper-server', handler: handleWhisperServer, requiresAuth: true },
