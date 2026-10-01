@@ -1,6 +1,5 @@
 export { robotOperatorInputNode } from './input.node.js';
 export {
-  robotActionResultContextNode,
   robotAutonomyControllerContextNode,
   robotAutonomyExecutorContextNode,
   robotAutonomyPlannerContextNode,
@@ -8,7 +7,6 @@ export {
 } from './context-builder.node.js';
 export { robotOperatorDecisionParserNode } from './decision-parser.node.js';
 export { robotOperatorEnvironmentDispatchNode } from './environment-dispatch.node.js';
-export { robotActionResultParserNode } from './action-result-parser.node.js';
 export { robotGoalReviewParserNode } from './goal-review-parser.node.js';
 export { robotAutonomyControllerParserNode } from './autonomy-controller-parser.node.js';
 export { robotAutonomyTaskCatalogNode } from './task-catalog.node.js';

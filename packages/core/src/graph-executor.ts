@@ -913,7 +913,7 @@ export async function executeGraph(
 
       const activeLoopEdges = outgoingLoopEdges.filter(edge => isEdgeActive(edge, executionState));
       if (activeLoopEdges.length > 0) {
-        if (iterCount >= maxLoopIterations) {
+        if (maxLoopIterations > 0 && iterCount >= maxLoopIterations) {
           throw new Error(`Loop at node ${nodeId} exceeded maximum iterations (${maxLoopIterations})`);
         }
 
@@ -970,7 +970,7 @@ export async function executeGraph(
       configurable: { ...durable?.config?.configurable, ...(durable ? { thread_id: durable.lease.executionId } : {}) },
       durability: 'sync' as const,
       // This is the existing saved graph loop bound, not an additional behavior limit.
-      recursionLimit: graph.nodes.length * (maxLoopIterations + 1) + 2,
+      recursionLimit: maxLoopIterations === 0 ? Number.MAX_SAFE_INTEGER : graph.nodes.length * (maxLoopIterations + 1) + 2,
     };
     const ownsInvocation = durable && (!durable.invocationId || durable.externalChild);
     if (durable?.resumeEventId) durable.store.event(durable.lease.executionId, durable.resumeEventId);

@@ -719,9 +719,12 @@ export class ExecutionStore {
     const execution = this.get(event.executionId)
     if (execution.cancelledAt !== null || ['completed', 'failed'].includes(execution.status)
       || event.sequence <= execution.lastProcessedSequence) return
+    const effectId = `${event.executionId}:resume:${event.eventId}`
+    const previous = this.db.prepare('SELECT payload FROM execution_outbox WHERE effect_id=?').get(effectId) as { payload: string } | undefined
     this.insertDispatch(event.executionId, `event:${event.sequence}`, {
-      effectId: `${event.executionId}:resume:${event.eventId}`, kind: 'graph_resume',
-      payload: { executionId: event.executionId, eventId: event.eventId },
+      effectId, kind: 'graph_resume',
+      payload: previous ? this.decodeDocument(previous.payload) : { executionId: event.executionId, eventId: event.eventId,
+        ...(execution.waitingReason?.startsWith('active_task:') ? { resource: `execution:${event.executionId}` } : {}) },
     })
   }
 

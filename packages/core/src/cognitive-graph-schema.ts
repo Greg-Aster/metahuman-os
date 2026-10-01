@@ -448,8 +448,8 @@ export function validateSvelteFlowGraph(graph: any): SvelteFlowGraph {
     if (scheduler.sideEffectOrder !== 'serial-topological') {
       errors.push('Scheduler sideEffectOrder must be "serial-topological"');
     }
-    if (!Number.isInteger(scheduler.maxLoopIterations) || scheduler.maxLoopIterations < 1 || scheduler.maxLoopIterations > 100) {
-      errors.push('Scheduler maxLoopIterations must be an integer from 1 to 100');
+    if (!Number.isInteger(scheduler.maxLoopIterations) || scheduler.maxLoopIterations < 0 || scheduler.maxLoopIterations > 100) {
+      errors.push('Scheduler maxLoopIterations must be an integer from 0 to 100 (0 continues until the loop exits)');
     }
   }
 

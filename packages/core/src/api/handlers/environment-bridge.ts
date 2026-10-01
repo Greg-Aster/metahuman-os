@@ -20,6 +20,7 @@ import {
   recordEnvironmentObservation,
   recordEnvironmentBridgeDiagnosticObservation,
   recordEnvironmentRobotStatus,
+  recordEnvironmentPerception,
   recordEnvironmentBridgeTelemetry,
   recordEnvironmentActionResult,
   sanitizeEnvironmentBridgeObservation,
@@ -246,6 +247,10 @@ export async function handleEnvironmentBridgeTelemetry(req: UnifiedRequest): Pro
       )
     : undefined;
   try {
+    if (body.perception !== undefined) {
+      return successResponse({ success: true,
+        perceptionAccepted: await recordEnvironmentPerception(body.sessionId, body.perception) });
+    }
     const diagnostics = recordEnvironmentBridgeTelemetry({
       sessionId: body.sessionId,
       timestamp: typeof body.timestamp === 'string' ? body.timestamp : undefined,

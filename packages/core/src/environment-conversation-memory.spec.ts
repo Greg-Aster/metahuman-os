@@ -67,14 +67,13 @@ const contextId = nodeId('environment_context_builder');
 const personaLoaderId = nodeId('persona_loader');
 const personaFormatterId = nodeId('persona_formatter');
 const actionParserId = nodeId('environment_action_parser');
-const bridgeId = nodeId('environment_send_action');
-const robotBufferId = nodeId('robot_buffer');
+const activeId = nodeId('environment_active_task');
 const bufferId = nodeId('conversation_buffer');
 const captureId = nodeId('memory_capture');
 const streamId = nodeId('stream_writer');
 const ttsId = nodeId('tts');
 const robotStatusId = nodeId('robot_status');
-const robotStatusOutId = nodeId('robot_status_out');
+const robotStatusOutId = 'robot-status-out';
 
 assert.ok(hasEdge(historyId, 'history', contextId, 'conversationHistory'));
 assert.ok(hasEdge(savedInputId, 'passthrough', orchestratorId, 'message'));
@@ -115,8 +114,8 @@ assert.doesNotMatch(
   /environmentTaskInstruction|environmentActionSource/,
   'The queue owner must not inject hidden instruction or provenance channels around graph edges',
 );
-assert.ok(hasEdge(actionParserId, 'actions', bridgeId, 'actions'));
-assert.ok(hasEdge(bridgeId, 'bridgeRecord', robotStatusOutId, 'bridgeRecord'));
+assert.ok(hasEdge(actionParserId, 'program', activeId, 'program'));
+assert.ok(hasEdge(activeId, 'taskDecision', 'task-result', 'taskDecision'));
 assert.ok(hasEdge(actionParserId, 'taskDecision', robotStatusOutId, 'taskDecision'));
 assert.equal(
   graph.nodes.some(node => [
@@ -131,11 +130,10 @@ assert.ok(hasEdge(bufferId, 'entries', captureId, 'entries'));
 assert.ok(hasEdge(bufferId, 'response', captureId, 'passthrough'));
 assert.ok(hasEdge(captureId, 'passthrough', streamId, 'response'));
 assert.ok(hasEdge(captureId, 'passthrough', ttsId, 'conversation'));
-assert.ok(hasEdge(bridgeId, 'bridgeRecord', robotBufferId, 'bridgeRecord'));
 assert.equal(
   graph.nodes.some(node => ['environment_action_context_input', 'environment_feedback'].includes(node.data?.nodeType || '')),
   false,
-  'Interactive Environment Mode must leave action-result correlation to Robot Action Result',
+  'Interactive Environment Mode must leave action-result correlation to the active executor',
 );
 assert.equal(
   graph.nodes.some(node => node.data?.nodeType === 'response_synthesizer'),
@@ -148,7 +146,6 @@ assert.equal(
   false,
   'Environment Mode must not retain legacy buffer writers',
 );
-assert.equal(graph.nodes.find(node => node.id === robotBufferId)?.data?.properties?.recordNoAction, false);
 assert.equal(RobotBufferNode.id, 'robot_buffer');
 
 const robotMessage = createRobotBufferMessage({

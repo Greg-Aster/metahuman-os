@@ -376,8 +376,10 @@ export class UnifiedQueueManager {
     if (resource.currentRunning >= resource.config.maxConcurrent) return false;
     if (task.type === 'environment_command' && task.input?.type !== 'stop') {
       const bodyId = task.input?.sessionId;
+      const sharesBodyOwner = task.input?.type === 'captureImage' || Boolean(task.input?.movementUpdate);
       if ([...this.tasks.values()].some(other => other.id !== task.id && !TERMINAL_STATES.has(other.state)
-        && (other.bodyLease?.bodyId === bodyId
+        && ((other.bodyLease?.bodyId === bodyId && !(sharesBodyOwner && task.durable
+          && other.bodyLease?.executionId === task.durable.executionId))
           || (other.type === 'environment_command' && other.input?.sessionId === bodyId && other.input?.type === 'stop'
             && this.recoveryEligible(other))))) return false;
     }
@@ -429,7 +431,9 @@ export class UnifiedQueueManager {
     if (task.type === 'environment_command') {
       const bodyId = String(task.input.sessionId);
       const current = this.bodyOwners.get(bodyId);
-      task.bodyLease = Object.freeze({ bodyId, executionId: task.durable?.executionId ?? task.id,
+      const sharedBodyOwner = (task.input.type === 'captureImage' || task.input.movementUpdate) && current
+        && task.durable?.executionId === current.executionId;
+      task.bodyLease = sharedBodyOwner ? current : Object.freeze({ bodyId, executionId: task.durable?.executionId ?? task.id,
         generation: (current?.generation ?? 0) + 1 });
       this.bodyOwners.set(bodyId, task.bodyLease);
     }

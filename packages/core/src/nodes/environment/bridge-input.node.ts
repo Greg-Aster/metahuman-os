@@ -2,6 +2,8 @@ import { defineNode } from '../types.js';
 import {
   getEnvironmentBridgeDiagnosticsSnapshot,
   getLatestEnvironmentObservation,
+  getEnvironmentPerception,
+  projectCurrentEnvironmentPerception,
   sanitizeEnvironmentBridgeObservation,
   summarizeEnvironmentBridgeState,
 } from '../../environment-interface/index.js';
@@ -93,6 +95,7 @@ export const environmentBridgeInputNode = defineNode({
     { name: 'capabilities', type: 'object', description: 'Actions and robot commands currently advertised by the Ainekio adapter', group: 'Observation' },
     { name: 'text', type: 'array', description: 'Text and microphone transcript events carried by the Ainekio bridge', group: 'Observation' },
     { name: 'state', type: 'object', description: 'Complete Ainekio gateway, body, safety, transport, and movement state', group: 'Observation' },
+    { name: 'perception', type: 'object', optional: true, description: 'Latest unexpired local recognition, fenced to this robot and gateway session; null when unavailable', group: 'Observation' },
     { name: 'visual', type: 'object', label: 'current camera frame', description: 'Current Ainekio camera frame, when supplied', group: 'Observation' },
     { name: 'visuals', type: 'array', label: 'observation frames', description: 'Camera frames carried by the current Ainekio observation; this is not durable image history', group: 'Observation' },
     { name: 'feedback', type: 'array', description: 'Ainekio action acceptance, completion, rejection, expiry, or failure events', group: 'Observation' },
@@ -207,7 +210,10 @@ export const environmentBridgeInputNode = defineNode({
       ?? getLatestEnvironmentObservation(requestedSessionId)
       ?? null;
     const observation = sourceObservation
-      ? projectAinekioBridgeObservation(sanitizeEnvironmentBridgeObservation(sourceObservation))
+      ? projectAinekioBridgeObservation(projectCurrentEnvironmentPerception(
+        sanitizeEnvironmentBridgeObservation(sourceObservation),
+        getEnvironmentPerception(sourceObservation.sessionId),
+      ))
       : null;
     const bridgeSummary = summarizeEnvironmentBridgeState();
     const diagnosticsSnapshot = getEnvironmentBridgeDiagnosticsSnapshot();
@@ -246,6 +252,7 @@ export const environmentBridgeInputNode = defineNode({
       capabilities: observation?.capabilities ?? null,
       text: observation?.text ?? [],
       state,
+      perception: state?.perception ?? null,
       visual: observation?.visual ?? null,
       visuals: observation?.visuals ?? [],
       feedback: observation?.feedback ?? [],

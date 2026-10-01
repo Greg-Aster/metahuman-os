@@ -62,19 +62,19 @@ test('a current user instruction owns provenance over an unfinished autonomous R
   assert.match((result.jsonSchema as any).anyOf[0].properties.taskDecision.description, /durable objective/i)
 })
 
-test('a standalone action may omit task lifecycle state', async () => {
+test('a requested capture enters a complete program with its own lifecycle state', async () => {
   const parsed = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I will request a fresh frame.',
-      actions: [{ type: 'captureImage' }],
-      movementRequest: null,
-      taskDecision: null,
+      program: { steps: [{ kind: 'action', action: { type: 'captureImage' } }] },
+      taskDecision: { objective: 'Take a fresh picture.', completionCriteria: 'A fresh picture is received.',
+        outcome: 'act', reason: 'The user requested a picture.', continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
     }),
     observation,
     sessionId: observation.sessionId,
   }, {}, {})
 
-  assert.equal(parsed.actions[0]?.type, 'captureImage')
-  assert.equal(parsed.taskDecision, null)
+  assert.equal(parsed.program.steps[0]?.action.type, 'captureImage')
+  assert.equal(parsed.taskDecision.objectiveComplete, false)
   assert.equal(parsed.error, '')
 })

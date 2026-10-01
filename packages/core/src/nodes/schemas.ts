@@ -1334,32 +1334,54 @@ export const nodeSchemas: NodeSchema[] = [
     "description": "Packages only the context selected by Intent Orchestrator for one Environment Action Selector call."
   }),
   defineSchema({
-    id: 'environment_action_parser',
-    name: 'Environment Action Parser',
-    category: 'environment',
-    inputs: [
-    { name: 'frames', type: 'array', optional: true, description: 'Exact source images attached to the model call' },
-      { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
-      { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands and capabilities' },
-      { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
-      { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
-      { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
-    ],
-    outputs: [
-    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of task decisions' },
-      { name: 'actions', type: 'array', description: 'Parsed environment actions' },
-      { name: 'firstAction', type: 'object', description: 'First parsed action' },
-      { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
-      { name: 'movementRequested', type: 'boolean', description: 'Whether off-script generation was requested' },
-      { name: 'taskDecision', type: 'object', description: 'Optional durable task decision; null for conversation or standalone action' },
-      { name: 'actionAdmission', type: 'object', description: 'Typed capability admission result' },
-      { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
-      { name: 'hasActions', type: 'boolean', description: 'Whether an admitted preset action is ready for Environment Bridge Out' },
-      { name: 'hasResponse', type: 'boolean', description: 'Whether the Environment LLM chose to produce conversation text' },
-      { name: 'error', type: 'string', description: 'Parser error message' },
-      { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
-    ],
-    description: 'Separates a structured model response into conversational text and validated semantic actions.',
+  id: 'environment_active_task', name: 'Execute Robot Task', category: 'environment',
+  execution: { timeoutOwner: 'children' },
+  description: 'Owns the complete task program within the existing durable execution.',
+  inputs: [{ name: 'program', type: 'object', description: 'MetaHuman-selected ordered actions and ongoing behaviors' },
+    { name: 'taskDecision', type: 'object', description: 'Whole objective and completion criteria' },
+    { name: 'sessionId', type: 'string', description: 'Current body session' }],
+  outputs: [{ name: 'finished', type: 'boolean', description: 'Program reached completion or a reported physical failure' },
+    { name: 'completed', type: 'boolean', description: 'All task phases completed' },
+    { name: 'result', type: 'object', description: 'Execution progress and phase evidence' },
+    { name: 'userInput', type: 'object', description: 'New instruction returned to existing intent routing' },
+    { name: 'taskDecision', type: 'object', description: 'Decision from this execution' },
+    { name: 'observation', type: 'object', description: 'Latest observation references' }],
+  }),
+  defineSchema({
+  id: 'environment_active_task_step', name: 'Advance Active Task', category: 'environment',
+  execution: { activation: 'always' },
+  description: 'Advances task phases and updates the admitted gait without waiting for remote inference.',
+  inputs: [{ name: 'state', type: 'object', optional: true, description: 'Saved active task state' }],
+  outputs: [{ name: 'state', type: 'object', description: 'Current phase, movement and image references' }],
+  }),
+  defineSchema({
+  id: 'environment_active_task_wait', name: 'Receive Active Task Event', category: 'environment',
+  description: 'Consumes observations and physical results within the current task phase.',
+  inputs: [{ name: 'state', type: 'object', description: 'Current task phase and requests' }],
+  outputs: [{ name: 'state', type: 'object', description: 'Updated task progress' },
+    { name: 'continue', type: 'boolean', description: 'Advance the same execution' }],
+  }),
+  defineSchema({
+    id: 'environment_action_parser', name: 'Environment Task Parser', category: 'environment',
+  inputs: [
+    { name: 'frames', type: 'array', optional: true, description: 'Exact images supplied by the context builder to this model call' },
+    { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
+    { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
+    { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
+    { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
+    { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
+  ],
+  outputs: [
+    { name: 'program', type: 'object', description: 'Complete task program for the canonical active executor' },
+    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of the task decision' },
+    { name: 'taskDecision', type: 'object', description: 'Validated task decision authored by the Environment LLM' },
+    { name: 'actionAdmission', type: 'object', description: 'Typed capability-admission result for diagnostics' },
+    { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
+    { name: 'hasResponse', type: 'boolean', description: 'Whether the Environment LLM chose to produce conversation text' },
+    { name: 'error', type: 'string', description: 'Parser error message' },
+    { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
+  ],
+  description: 'Separates a structured model response into conversational text and validated semantic actions.',
   }),
   defineSchema({
     id: 'movement_generator',
@@ -2036,107 +2058,6 @@ export const nodeSchemas: NodeSchema[] = [
     "description": "Builds correlated perception and narrative context for one planner that may delegate a high-level intention."
   }),
   defineSchema({
-    "id": "robot_action_result_context",
-    "name": "Robot Action Result Context",
-    "category": "operator",
-    "inputs": [
-      {
-        "name": "execution",
-        "type": "object",
-        "optional": true,
-        "description": "Checkpointed task and ordered events from Current Execution"
-      },
-      {
-        "name": "instruction",
-        "type": "string",
-        "description": "Graph-owned instructions for this one LLM task"
-      },
-      {
-        "name": "observation",
-        "type": "object",
-        "optional": true,
-        "description": "Environment Bridge observation supplied to this workflow"
-      },
-      {
-        "name": "images",
-        "type": "array",
-        "optional": true,
-        "description": "Validated image content parts"
-      },
-      {
-        "name": "frames",
-        "type": "array",
-        "optional": true,
-        "description": "Validated visual frame metadata"
-      },
-      {
-        "name": "robotStatus",
-        "type": "object",
-        "optional": true,
-        "description": "Canonical Robot Status snapshot"
-      },
-      {
-        "name": "robotObserver",
-        "type": "object",
-        "optional": true,
-        "description": "Current Robot Operator cycle"
-      },
-      {
-        "name": "actionContext",
-        "type": "object",
-        "optional": true,
-        "description": "Work Coordinator action record matched to the returned robot report"
-      },
-      {
-        "name": "sourceObservationAt",
-        "type": "string",
-        "optional": true,
-        "description": "Timestamp of the bridge observation that started this cycle"
-      },
-      {
-        "name": "currentVisualEvidence",
-        "type": "boolean",
-        "optional": true,
-        "description": "Whether Environment Image Input verified the attached frame for this decision"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "messages",
-        "type": "array",
-        "description": "Multimodal messages for this workflow LLM"
-      },
-      {
-        "name": "jsonSchema",
-        "type": "object",
-        "description": "Structured output contract for this workflow LLM"
-      },
-      {
-        "name": "context",
-        "type": "object",
-        "description": "Inspectable context summary"
-      },
-      {
-        "name": "stimulusReady",
-        "type": "boolean",
-        "description": "Whether correlated image or action-result evidence is available"
-      },
-      {
-        "name": "valid",
-        "type": "boolean",
-        "description": "Whether context construction succeeded"
-      },
-      {
-        "name": "error",
-        "type": "string",
-        "description": "Visible input error"
-      }
-    ],
-    "properties": {},
-    "propertySchemas": {},
-    "description": "Builds the evidence package for interpreting one correlated terminal robot action report."
-  }),
-  defineSchema({
     "id": "robot_goal_review_context",
     "name": "Robot Goal Review Context",
     "category": "operator",
@@ -2422,40 +2343,6 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'error', type: 'string', description: 'Visible contract error' },
     ],
     description: 'Strictly validates one contextual boredom-planner instruction.',
-  }),
-  defineSchema({
-    "id": "robot_action_result_parser",
-    "name": "Interpret Robot Action Result",
-    "category": "operator",
-    "inputs": [
-    { name: 'frames', type: 'array', optional: true, description: 'Exact source images attached to the model call' },
-      {
-        "name": "response",
-        "type": "any",
-        "description": "Strict JSON from the Robot Action Result LLM"
-      },
-      {
-        "name": "execution",
-        "type": "object",
-        "description": "Checkpointed execution whose objective may be affected by this result"
-      }
-    ],
-    "outputs": [
-    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of task decisions' },
-      {
-        "name": "taskDecision",
-        "type": "object",
-        "description": "Validated task effect, or null when the returned action was standalone"
-      },
-      {
-        "name": "response",
-        "type": "string",
-        "description": "Optional concise conversation authored by the LLM"
-      }
-    ],
-    "properties": {},
-    "propertySchemas": {},
-    "description": "Validates one LLM interpretation of a correlated robot success or failure. It neither sends an action nor schedules another workflow."
   }),
   defineSchema({
     "id": "robot_goal_review_parser",

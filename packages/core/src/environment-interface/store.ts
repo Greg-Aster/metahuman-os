@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { openExecutionStore } from '../durable-execution/storage.js';
 import { contentHash } from '../durable-execution/store.js';
 import { ExecutionConflictError, type NewExecutionEvent } from '../durable-execution/types.js';
-import { executionWorkInput } from '../durable-execution/coordinator-outbox.js';
+import { executionWorkInput, relayExecutionOutbox } from '../durable-execution/coordinator-outbox.js';
 import type {
   EnvironmentAction,
   EnvironmentActionQueueOptions,
@@ -37,6 +37,7 @@ import {
   normalizeEnvironmentVisualInspectionTarget,
   normalizeEnvironmentVisualTarget,
 } from './visual-approach.js';
+import { currentEnvironmentPerception, normalizeEnvironmentPerception, projectCurrentEnvironmentPerception } from './perception.js';
 const STATE_FILE = path.join(systemPaths.run, 'environment-bridge-state.json');
 const STALE_AFTER_MS = 45_000;
 const FUTURE_CLOCK_SKEW_MS = 5_000;
@@ -70,7 +71,7 @@ function environmentBodyEpoch(observation: EnvironmentObservation | undefined): 
   return robotId && epoch ? `${robotId}:${epoch}` : undefined;
 }
 
-function carryCommandedPose(
+function carryEnvironmentState(
   observation: EnvironmentObservation,
   existing: EnvironmentObservation | undefined,
 ): EnvironmentObservation {
@@ -82,6 +83,9 @@ function carryCommandedPose(
   const currentBodyEpoch = environmentBodyEpoch(observation);
   const sameBodyEpoch = prior?.bodyEpoch === currentBodyEpoch;
   if (prior && !bodyOffline && sameBodyEpoch) state.commandedPose = prior;
+  const perception = currentEnvironmentPerception(observation, state.perception ?? existing?.state?.perception);
+  delete state.perception;
+  if (perception) state.perception = perception;
   return { ...observation, state };
 }
 
@@ -361,7 +365,7 @@ function persistEnvironmentObservation(
   const contextualObservation = environmentBridgeObservation(observation);
   const state = readEnvironmentBridgeState();
   const existing = state.sessions[contextualObservation.sessionId];
-  const poseAwareObservation = carryCommandedPose(
+  const poseAwareObservation = carryEnvironmentState(
     contextualObservation,
     existing?.latestObservation,
   );
@@ -465,6 +469,52 @@ export function recordEnvironmentRobotStatus(
   return summarizeEnvironmentBridgeState(writeEnvironmentBridgeState(state));
 }
 
+/** Update sensor state and wake an existing local behavior; never admit a new objective. */
+export async function recordEnvironmentPerception(sessionId: string, value: unknown,
+  enqueue?: (input: TaskInput) => Promise<QueuedTask>): Promise<boolean> {
+  const perception = normalizeEnvironmentPerception(value);
+  const state = readEnvironmentBridgeState();
+  const session = state.sessions[sessionId];
+  const observation = session?.latestObservation;
+  if (!session || sessionStatus(session) !== 'connected'
+    || !currentEnvironmentPerception(observation, perception)) return false;
+  const previous = observation?.state?.perception;
+  if (previous) {
+    const older = normalizeEnvironmentPerception(previous);
+    if (older.gatewayInstance === perception.gatewayInstance && older.epoch === perception.epoch) {
+      const advance = (perception.frameCounter - older.frameCounter) >>> 0;
+      if (advance === 0 || advance >= 0x80000000) return false;
+    }
+  }
+  session.latestObservation = { ...observation!, state: { ...(observation!.state ?? {}), perception } };
+  // Recognition cannot renew the control session's heartbeat or erase a still.
+  writeEnvironmentBridgeState(state);
+  // Sensor updates wake only the already-admitted local behavior for this body.
+  // The execution ledger/outbox remains the single continuation owner.
+  const owners = getQueueManager().getAllTasks().filter(task => task.input.sessionId === sessionId && task.durable);
+  for (const username of new Set(owners.map(task => task.username))) {
+    const executions = openExecutionStore(username);
+    try {
+      for (const execution of executions.list(username).filter(record => record.status === 'waiting'
+        && record.waitingReason === `active_task:${sessionId}`)) {
+        executions.deliverEvent(execution.executionId, {
+          eventId: `perception:${perception.gatewayInstance}:${perception.epoch}:${perception.frameCounter}`,
+          kind: 'perception_received', payload: { sessionId, perception },
+        });
+        await relayExecutionOutbox(executions, execution.executionId, enqueue);
+      }
+    } finally { executions.close(); }
+  }
+  return true;
+}
+
+export function getEnvironmentPerception(sessionId: string) {
+  const state = readEnvironmentBridgeState();
+  const session = state.sessions[sessionId];
+  return session && sessionStatus(session) === 'connected'
+    ? currentEnvironmentPerception(session.latestObservation) : null;
+}
+
 export function publishEnvironmentObservation(
   observation: EnvironmentObservation,
   options: { username: string; graph?: string; ttsGeneration?: number; sourceObservation?: EnvironmentObservation },
@@ -566,12 +616,16 @@ export function claimEnvironmentTextEvents(observation: EnvironmentObservation):
 
 export function getLatestEnvironmentObservation(sessionId?: string): EnvironmentObservation | undefined {
   const state = readEnvironmentBridgeState();
-  if (sessionId) return state.sessions[sessionId]?.latestObservation;
+  if (sessionId) {
+    const observation = state.sessions[sessionId]?.latestObservation;
+    return observation ? projectCurrentEnvironmentPerception(observation) : undefined;
+  }
   const now = Date.now();
-  return Object.values(state.sessions)
+  const observation = Object.values(state.sessions)
     .filter(session => sessionStatus(session, now) === 'connected')
     .sort((a, b) => sessionLastSeenMs(b) - sessionLastSeenMs(a))[0]
     ?.latestObservation;
+  return observation ? projectCurrentEnvironmentPerception(observation) : undefined;
 }
 
 export function getEnvironmentFeedback(options: { actionId?: string; limit?: number } = {}): EnvironmentFeedback[] {
@@ -594,8 +648,10 @@ function normalizeAction(
     : DEFAULT_MAX_ACTION_DURATION_MS;
   let durationMs = action.durationMs;
   if (durationMs !== undefined) {
-    if (!Number.isFinite(durationMs) || durationMs <= 0) throw new Error(`Invalid durationMs: ${String(durationMs)}`);
+    if (!Number.isFinite(durationMs) || durationMs < 0 || (durationMs === 0 && action.continuous !== true)) throw new Error(`Invalid durationMs: ${String(durationMs)}`);
     durationMs = Math.min(maxDurationMs, Math.floor(durationMs));
+  } else if (action.continuous === true) {
+    durationMs = 0;
   } else if (action.type === 'move' || action.type === 'look') {
     if (!Number.isFinite(options.defaultDurationMs) || options.defaultDurationMs! <= 0) {
       throw new Error(`Environment action "${action.type}" requires durationMs`);
@@ -654,6 +710,8 @@ function normalizeAction(
     units: typeof action.units === 'number' ? Math.max(0, Math.floor(action.units)) : undefined,
     amount: typeof action.amount === 'number' ? Math.max(0, Math.min(1, action.amount)) : undefined,
     durationMs,
+    continuous: action.continuous, speed: action.speed, stride: action.stride, rate: action.rate,
+    gait: action.gait, forward: action.forward, turn: action.turn,
     target: action.target,
     frames: motionPlan?.frames,
     endPose: motionPlan?.endPose,
@@ -675,7 +733,8 @@ export function prepareEnvironmentCommand(
   return {
     type: 'environment_command',
     handler: 'environment.command',
-    resource: normalized.type === 'stop' ? `environment-stop:${sessionId}` : `environment:${sessionId}`,
+    resource: normalized.type === 'stop' ? `environment-stop:${sessionId}`
+      : normalized.type === 'captureImage' ? `environment-camera:${sessionId}` : `environment:${sessionId}`,
     source: options.source || 'system',
     priority: normalized.type === 'stop' ? 'critical' : 'normal',
     input: { ...normalized, id: action.id || randomUUID() },
@@ -849,6 +908,10 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
         const execution = store.get(effect.executionId);
         admitted = admitted && execution.cancelledAt === null && ['running', 'waiting'].includes(execution.status)
           && ['accepted', 'outcome_unknown'].includes(accepted.status);
+        if (admitted) store.deliverEvent(effect.executionId, {
+          eventId: `accepted:${feedback.id}`, kind: 'action_accepted', actionId: feedback.actionId,
+          workItemId: task.id, payload: { feedback },
+        });
       } else if (feedback.type !== 'status') {
         const previous = store.findEvent(effect.executionId, feedback.id);
         const delivery = isRecord(feedback.data?.delivery) ? feedback.data.delivery : undefined;

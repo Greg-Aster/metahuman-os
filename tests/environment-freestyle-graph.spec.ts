@@ -31,30 +31,17 @@ function hasEdge(source: string, sourceHandle: string, target: string, targetHan
   ));
 }
 
-test('Environment Mode has one explicit off-script generation branch that rejoins Bridge Out', () => {
-  const generators = graph.nodes.filter(node => node.data.nodeType === 'movement_generator');
-  assert.equal(generators.length, 1);
-  const generator = generators[0]!;
+test('Environment Mode sends all physical phases to one active executor', () => {
+  const active = graph.nodes.filter(node => node.data.nodeType === 'environment_active_task');
   const parser = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')!;
-  const bridge = graph.nodes.find(node => node.data.nodeType === 'environment_send_action')!;
-  const statusOut = graph.nodes.find(node => node.data.nodeType === 'robot_status_out')!;
-
-  assert.equal(hasEdge(parser.id, 'actions', bridge.id, 'actions'), true);
-  assert.equal(hasEdge(parser.id, 'movementRequest', generator.id, 'movementRequest'), true);
-  assert.deepEqual(generator.data.activation?.when, [
-    { nodeId: parser.id, output: 'movementRequest', truthy: true },
-  ]);
-  assert.deepEqual(bridge.data.activation?.when, [
-    { nodeId: parser.id, output: 'valid', truthy: true },
-  ]);
-  assert.equal(hasEdge(generator.id, 'actions', bridge.id, 'generatedActions'), true);
-  assert.equal(hasEdge(generator.id, 'response', bridge.id, 'generatedResponse'), false);
-  assert.equal(hasEdge(parser.id, 'taskDecision', statusOut.id, 'taskDecision'), true);
-  assert.equal(hasEdge(bridge.id, 'bridgeRecord', statusOut.id, 'bridgeRecord'), true);
-  assert.equal(
-    (bridge.data.properties?.allowedActions as string[]).includes('robotMotionPlan'),
-    true,
-  );
+  assert.equal(active.length, 1);
+  assert.equal(hasEdge(parser.id, 'program', active[0]!.id, 'program'), true);
+  assert.equal(hasEdge(parser.id, 'taskDecision', active[0]!.id, 'taskDecision'), true);
+  assert.deepEqual(active[0]!.data.activation?.when, [{ nodeId: parser.id, output: 'program', truthy: true }]);
+  for (const retired of ['movement_generator', 'environment_send_action', 'environment_result_wait']) {
+    assert.equal(graph.nodes.some(node => node.data.nodeType === retired), false);
+  }
+  assert.equal(graph.nodes.some(node => node.data.properties?.graph === 'robot-action-result'), false);
 });
 
 test('Environment Mode uses one route-only orchestrator before selected context and one action selector', () => {
@@ -70,7 +57,7 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   const imageInput = graph.nodes.find(node => node.data.nodeType === 'environment_image_input')!;
   const statusInput = graph.nodes.find(node => node.data.nodeType === 'robot_status')!;
   const statusOut = graph.nodes.find(node => node.data.nodeType === 'robot_status_out')!;
-  const bridge = graph.nodes.find(node => node.data.nodeType === 'environment_send_action')!;
+  const active = graph.nodes.find(node => node.data.nodeType === 'environment_active_task')!;
   const environmentLlm = graph.nodes.find(node => node.data.nodeType === 'model_router')!;
 
   assert.ok(memoryRouter);
@@ -110,21 +97,9 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   );
   assert.equal('recentHistoryLimit' in (contextBuilder.data.properties ?? {}), false,
     'The connected Buffer History node owns the conversation window');
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /command result establishes execution, not necessarily the whole objective/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Images show what was visible at their visualFrames times/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Address currentInstruction using selectedRoutes and the supplied capabilities/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Speech can accompany any choice/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /If more recent evidence is needed, advertised captureImage obtains it/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /not whether the camera works/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /advertised action whose description implements the intended effect/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /novel body-local movement not covered by an advertised action, movementRequest delegates/i);
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /actions and movementRequest are exclusive/i);
-  assert.match(
-    String(contextBuilder.data.properties?.systemPrompt),
-    /whole intended outcome separately from this turn's reply or effect/i,
-  );
-  assert.match(String(contextBuilder.data.properties?.systemPrompt), /Accepting a request or beginning an activity is not completing it/i);
-  assert.doesNotMatch(String(contextBuilder.data.properties?.systemPrompt), /objectiveComplete/);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /complete.*program/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /generatedMotion/i);
+  assert.match(String(contextBuilder.data.properties?.systemPrompt), /completion/i);
   assert.equal(hasEdge('11', 'frames', contextBuilder.id, 'frames'), true, 'Image Input owns the matching frame metadata');
 
   assert.equal(graph.nodes.some(node => node.data.nodeType === 'instruction_resolver'), false);
@@ -158,9 +133,8 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.equal(hasEdge(statusInput.id, 'context', contextBuilder.id, 'robotStatus'), true);
   assert.equal(graph.nodes.some(node => node.data.nodeType === 'thinking_stripper'), false);
   assert.equal(hasEdge(environmentLlm.id, 'response', actionParser.id, 'response'), true);
-  assert.equal(hasEdge(actionParser.id, 'actions', bridge.id, 'actions'), true);
+  assert.equal(hasEdge(actionParser.id, 'program', active.id, 'program'), true);
   assert.equal(hasEdge(actionParser.id, 'taskDecision', statusOut.id, 'taskDecision'), true);
-  assert.equal(hasEdge(bridge.id, 'bridgeRecord', statusOut.id, 'bridgeRecord'), true);
   for (const retired of [
     'smart_router',
     'search_interpreter',

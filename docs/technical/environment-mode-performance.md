@@ -6,40 +6,35 @@ This document is the maintained paper trail for Environment Mode response-time w
 
 ## Current Status
 
-Efficiency update: 2026-09-08. The existing model configuration now supports the
-tested 16,384-token context without changing the selected model or removing
-context inputs. The checked-in local-model lane has no timed post-job cooldown;
-its concurrency remains one. Durable recovery retires already-satisfied,
-unstarted resume jobs before they claim model capacity, while accepted runners
-remain recoverable through unfinished result review. Inactive nodes still appear
-as skipped but share the next executed node's checkpoint instead of each causing
-a separate checkpoint cycle.
+2026-09-30: the active task program is the sole physical execution path in both
+Environment Mode and the autonomy executor. The selector returns `response`,
+`program`, `taskDecision` and optional `visualObservation`. A program contains
+ordered `action`, `generatedMotion`, and ongoing `behavior` phases. The existing
+durable execution owns their state; Work Coordinator and Environment Bridge
+retain dispatch and transport ownership. Direct commands and novel gestures
+share this executor. The old per-command Action Result workflow, parser/context
+registrations, and temporary `localTask` workflow have been removed.
 
-The actual saved Controller → Executor → Action Result fixture retained four
-model calls and one mocked physical action; checkpoint puts fell from 72 to 64.
-Six isolated comparison runs measured median fixture time of 2.65 versus 2.37
-seconds, with overlapping ranges. This is not a deployed robot speed claim.
-The 193-test durable suite, Core/Brain/tests typechecks, all 38 graph definitions,
-architecture guard, and isolated Site build pass. See the
-[repair record](../audits/consolidation-progress.md#durable-execution-efficiency--2026-09-08)
-for evidence and deployment limits. Current execution ownership is defined by
-`MAINTAINED_SURFACE.md`; the routing snapshot below predates the durable migration.
+A behavior starts one continuous gait. Fresh recognition updates composed
+forward/turn settings on that original movement while finite image-identification
+work runs asynchronously through the configured model provider. Its target and
+phase criteria are free text; detector labels are hints. A confirmed match ends
+that behavior via the semantic stop, then the remaining gestures execute.
+Only completion of all phases records whole-task completion. Conversation has
+no physical program. Unfinished conversational objectives retain task-level
+Goal Review, without inserting model review between physical phases.
 
-### Routing snapshot — 2026-09-04
+The Bridge keeps newest-frame recognition separate from physical receipts.
+Same-execution capture and settings jobs share the current body lease. P4 keeps
+its existing local gait/servo timing and interpolates steering without a phase
+restart. IMU acquisition, metric navigation, tracking, a deployed detector, and
+combined Q6A workloads are still prototype integration work. No new obstacle,
+lost-vision or model-error motion policy was added.
 
-Source reconciled: 2026-09-04. Environment Mode has 20 nodes and 51 edges;
-Robot Autonomy Executor has 22 nodes and 62 edges. Both workflows begin with a
-route-only Intent Orchestrator and conditionally admit memory, Robot Status,
-bridge, and image context before their existing Environment Action Selector.
-The autonomous instance interprets the unchanged internal planner intention as
-the robot's own prospective choice and keeps its response/action decision
-self-directed. Robot-originated turns may use the exact observation that
-triggered the run. A typed chat turn never treats a saved bridge frame as current;
-the selector may choose the advertised `captureImage` action when current vision
-is needed. This source repair did not restart the application, exercise a
-configured profile, contact the Environment Bridge, or run a physical robot.
-The dated work log and validation record below remain historical evidence; they
-are not a claim that the same commands or runtime results are current.
+The measurements and work log below are historical, preceding this cutover;
+their old `actions` / `movementRequest` contracts and graph chains do not describe
+the current executor. Current source ownership is defined in
+[MAINTAINED_SURFACE.md](MAINTAINED_SURFACE.md).
 
 ## Maintenance Rule
 
@@ -51,21 +46,14 @@ are not a claim that the same commands or runtime results are current.
 
 ## Performance Contract
 
-- Optimize the measured critical path before changing model quality.
-- Do not bypass the cognitive graph or add keyword-based intent shortcuts.
-- The Environment Intent Orchestrator owns only independent route switches. It neither rewrites the instruction nor chooses a response, command, or movement.
-- The Environment Action Selector is the sole semantic output owner for each interactive turn. From the selected context routes, it may author conversation, select one exact advertised action, select one body-local movement request, or combine optional conversation with one action.
-- The selector model must be vision-capable because one Environment decision owns both attached robot images and action selection. Movement Generator may generate a requested off-script motion plan only after the selector has already owned and typed the body-local movement request; it never reinterprets or overrides a selected action.
-- The interactive workflow is split by responsibility: User Input supplies the unchanged instruction, Intent Orchestrator selects context and output routes, Environment Bridge Input supplies read-only bridge data with source provenance, Image Input admits only current-run frames, Context Builder creates one selector package, Action Parser validates the selector output, Environment Bridge Out transports an admitted action, and Robot Status Out persists the turn. Result correlation and interpretation remain in Robot Action Result.
-- A user or autonomous input may produce a conversational response, one executable action, both, or an explicit failure diagnostic. Speech remains optional and is not evidence that an action executed.
-- Correlated terminal feedback runs Robot Action Result once. Robot Status Out records that decision and result without applying a deterministic completion policy or re-entering the Environment workflow.
-- Failed actions and incomplete external objectives remain in Robot Status for a later separately admitted Robot Goal Review. No action or result workflow loops itself.
-- Fresh correlated images are admitted for current visual work. A claimed external change requires an ordered baseline and current frame; an absolute current-scene fact requires one current correlated frame.
-- Raw correlated sensory observations remain available in graph state even when a particular LLM call does not process the image. Context admission controls model input, not sensor existence.
-- The robot-mounted camera may evaluate the external scene but cannot prove the robot's own pose or dynamic body motion.
-- Missing or malformed model output must produce an explicit diagnostic rather than silent suppression or a second LLM attempt.
-- Model roles must reflect coherent responsibilities. Do not create an adapter or model assignment for every individual node or output field.
-- Parallel execution may be introduced only for dependency-independent work. Action authority, task lifecycle, and stateful output ordering must remain explicit.
+Intent Orchestrator chooses context and execution disposition. The configured
+Environment Action Selector authors a complete program, preserving requested
+motion detail and the robot's advertised commands. The active executor advances
+physical phases without another model call per receipt. Generated-motion phases
+use the existing generator; ongoing behavior uses perception and asynchronous
+image identification. Task ownership, conversation, persona and memory remain
+with their existing owners. Physical responsiveness and Q6A resource use must be
+measured on the assembled prototype; fixture timings do not establish them.
 
 ## Baseline
 

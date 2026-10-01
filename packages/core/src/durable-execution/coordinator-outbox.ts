@@ -11,7 +11,8 @@ import { getAuthenticatedRuntimeId, getCurrentlyActiveUser } from '../sessions.j
 /** The same admission contract is used by relay and by an early accepting worker. */
 export function executionWorkInput(store: ExecutionStore, effect: DispatchRecord): TaskInput {
   const input: TaskInput = effect.kind === 'graph_resume' ? {
-    type: 'generic', handler: 'graph.resume', resource: 'local-llm', source: 'system', priority: 'high',
+    type: 'generic', handler: 'graph.resume', resource: (effect.payload as { resource?: string }).resource ?? 'local-llm',
+    source: 'system', priority: 'high',
     input: effect.payload as Record<string, unknown>, username: store.get(effect.executionId).username,
     metadata: { producer: 'durable-execution' },
   } : effect.payload as TaskInput

@@ -3,10 +3,6 @@ import test from 'node:test'
 import { NodeInputValidationError } from '../types.js'
 import { withVisualObservationSchema } from '../../visual-observation.js'
 import {
-  ROBOT_ACTION_RESULT_JSON_SCHEMA,
-  robotActionResultParserNode,
-} from './action-result-parser.node.js'
-import {
   buildRobotGoalReviewJsonSchema,
   robotGoalReviewParserNode,
 } from './goal-review-parser.node.js'
@@ -19,10 +15,6 @@ const goalCatalog = [{ id: 'robot-autonomy-executor', name: 'Executor', descript
 const ROBOT_GOAL_REVIEW_JSON_SCHEMA = buildRobotGoalReviewJsonSchema(goalCatalog)
 
 test('robot result parsers derive completion and expose instructions only for continuation', async () => {
-  assert.equal('allOf' in ROBOT_ACTION_RESULT_JSON_SCHEMA, false)
-  assert.equal('objectiveComplete' in ROBOT_ACTION_RESULT_JSON_SCHEMA.properties.taskDecision, false)
-  assert.equal('continuationPolicy' in ROBOT_ACTION_RESULT_JSON_SCHEMA.properties.taskDecision, false)
-  assert.equal('objective' in ROBOT_ACTION_RESULT_JSON_SCHEMA.properties.taskDecision, false)
   assert.equal('allOf' in ROBOT_GOAL_REVIEW_JSON_SCHEMA, false)
   for (const branch of ROBOT_GOAL_REVIEW_JSON_SCHEMA.anyOf) {
     assert.equal('objectiveComplete' in branch.properties, false)
@@ -37,61 +29,6 @@ test('robot result parsers derive completion and expose instructions only for co
     assert.equal(branch.additionalProperties, false)
     assert.deepEqual(branch.required.slice().sort(), Object.keys(branch.properties).sort())
   }
-
-  const actionResult = await robotActionResultParserNode.execute({
-    response: JSON.stringify({
-      response: '',
-      taskDecision: {
-        overallObjectiveState: 'not_achieved',
-        reason: 'The action finished, but the objective still needs visual evidence.',
-        requiredCompletionBasis: 'visual_observation',
-        observationSummary: 'The current view does not contain a cat.',
-        completionEvidence: '',
-      },
-    }),
-    execution: { task: { objective: 'Find the cat.' } },
-  }, {}, {})
-  assert.equal(actionResult.taskDecision.objectiveComplete, false)
-
-  const completedAction = await robotActionResultParserNode.execute({
-    response: JSON.stringify({
-      response: '',
-      taskDecision: {
-        overallObjectiveState: 'achieved',
-        reason: 'The objective is established by the returned evidence.',
-        requiredCompletionBasis: 'action_result',
-        observationSummary: 'The stand action completed.',
-        completionEvidence: 'The matched terminal report recorded successful execution.',
-      },
-    }),
-    execution: { task: { objective: 'Stand up.' } },
-  }, {}, {})
-  assert.equal(completedAction.taskDecision.objectiveComplete, true)
-
-  await assert.rejects(
-    robotActionResultParserNode.execute({
-      response: JSON.stringify({
-        response: '',
-        taskDecision: {
-          overallObjectiveState: 'achieved',
-          reason: 'The objective is claimed complete without evidence.',
-          requiredCompletionBasis: 'visual_observation',
-          observationSummary: 'No supporting observation was supplied.',
-          completionEvidence: '',
-        },
-      }),
-      execution: { task: { objective: 'Find the cat.' } },
-    }, {}, {}),
-    /requires supplied completion evidence/,
-  )
-
-  const standaloneAction = await robotActionResultParserNode.execute({
-    response: JSON.stringify({
-      response: '',
-      taskDecision: null,
-    }),
-  }, {}, {})
-  assert.equal(standaloneAction.taskDecision, null)
 
   const goalReview = await robotGoalReviewParserNode.execute({
     availableTasks: goalCatalog,
@@ -240,21 +177,4 @@ test('Robot Autonomy Controller exposes one contextual task choice from its supp
     }, {}, {}),
     /outside its available catalog/,
   )
-})
-test('visual interpretations are independent of goal and speech outputs and identify the images actually supplied', async () => {
-  const frames = [{ id: 'image-a', timestamp: '2026-01-01T00:00:00Z', dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=' }]
-  const visualObservation = { summary: 'A small object is visible.', frameIds: ['image-a'], uncertainties: ['Its identity is uncertain.'] }
-  const response = JSON.stringify({ response: '', taskDecision: null, visualObservation })
-  const result = await robotActionResultParserNode.execute({ response, frames, execution: { task: null } }, {}, {})
-  assert.equal(result.taskDecision, null)
-  assert.equal(result.response, '')
-  assert.deepEqual(result.visualObservation, visualObservation)
-  await assert.rejects(robotActionResultParserNode.execute({ response, frames: [], execution: { task: null } }, {}, {}),
-    (error: unknown) => error instanceof NodeInputValidationError && /attached/.test(error.message))
-  await assert.rejects(robotActionResultParserNode.execute({ response: JSON.stringify({ response: '', taskDecision: null,
-    visualObservation: { ...visualObservation, frameIds: ['different-image'] } }), frames }, {}, {}), /attached/)
-  assert.deepEqual(withVisualObservationSchema(ROBOT_ACTION_RESULT_JSON_SCHEMA, []).properties.visualObservation, { type: 'null' })
-  const schema = withVisualObservationSchema(ROBOT_ACTION_RESULT_JSON_SCHEMA, frames)
-  assert.deepEqual(schema.properties.visualObservation.anyOf[1].properties.frameIds.items.enum, ['image-a'])
-  assert.equal(schema.required.includes('visualObservation'), false, 'The model may omit the optional observation output')
 })

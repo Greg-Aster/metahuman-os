@@ -685,8 +685,7 @@ try {
 
   const structured = validateEnvironmentSelectorOutput(JSON.stringify({
     response: 'Walking forward.',
-    actions: [{ type: 'robotCommand', command: 'walk', units: 3 }],
-    movementRequest: null,
+    program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'walk', units: 3 } }] },
     taskDecision: {
       objective: 'Walk forward once.',
       completionCriteria: 'The walk command has completed.',
@@ -700,16 +699,15 @@ try {
   }), 'robot-1');
   assert.equal(structured.valid, true);
   assert.equal(structured.value?.response, 'Walking forward.');
-  assert.equal(structured.value?.actions.length, 1);
-  assert.equal(structured.value?.actions[0]?.type, 'robotCommand');
-  assert.equal(structured.value?.actions[0]?.sessionId, 'robot-1');
-  assert.equal(structured.value?.actions[0]?.command, 'walk');
-  assert.equal(structured.value?.actions[0]?.units, 3);
+  assert.equal(structured.value?.program?.steps.length, 1);
+  assert.equal((structured.value?.program?.steps[0] as any)?.action?.type, 'robotCommand');
+  assert.equal((structured.value?.program?.steps[0] as any)?.action?.sessionId, 'robot-1');
+  assert.equal((structured.value?.program?.steps[0] as any)?.action?.command, 'walk');
+  assert.equal((structured.value?.program?.steps[0] as any)?.action?.units, 3);
   assert.equal(structured.value?.taskDecision?.motionClass, 'open_loop_displacement');
   const completed = validateEnvironmentSelectorOutput(JSON.stringify({
     response: 'The current frame confirms the requested view.',
-    actions: [],
-    movementRequest: null,
+    program: null,
     taskDecision: {
       objective: 'Confirm the requested view.',
       completionCriteria: 'The requested view is established in a correlated frame.',
@@ -728,8 +726,7 @@ try {
   assert.equal(validateEnvironmentSelectorOutput('walk forward', 'robot-1').valid, false);
   assert.equal(validateEnvironmentSelectorOutput(JSON.stringify({
     response: 'Turning curiously.',
-    actions: [{ type: 'move', command: 'curious', durationMs: 750 }],
-    movementRequest: null,
+    program: { steps: [{ kind: 'action', action: { type: 'move', command: 'curious', durationMs: 750 } }] },
     taskDecision: {
       objective: 'Reorient the robot.',
       completionCriteria: 'The robot has reoriented.',
@@ -1156,8 +1153,7 @@ try {
   const parsedTerminalFeedback = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'The wave completed, and the post-action image has returned.',
-      actions: [{ type: 'robotCommand', command: 'wave' }],
-      movementRequest: null,
+      program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] },
       taskDecision: {
         objective: 'Continue the original objective.',
         completionCriteria: 'The requested expressive wave has completed.',
@@ -1176,10 +1172,8 @@ try {
     sessionId: 'robot-1',
     routingAnalysis: { needsAction: true, actionType: 'robot_movement' },
   }, {});
-  assert.equal(parsedTerminalFeedback.actions.length, 1);
-  assert.equal(parsedTerminalFeedback.actions[0].command, 'wave');
-  assert.equal(parsedTerminalFeedback.movementRequest, null);
-  assert.equal(parsedTerminalFeedback.movementRequested, false);
+  assert.equal(parsedTerminalFeedback.program.steps.length, 1);
+  assert.equal(parsedTerminalFeedback.program.steps[0].action.command, 'wave');
   assert.equal(
     parsedTerminalFeedback.response,
     'The wave completed, and the post-action image has returned.',
@@ -1309,8 +1303,7 @@ try {
   const parsedSatisfiedCapture = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I see a blue object and several lights.',
-      actions: [],
-      movementRequest: null,
+      program: null,
       taskDecision: {
         objective: captureGoal,
         completionCriteria: 'The fresh image has been interpreted to answer the visual question.',
@@ -1328,7 +1321,7 @@ try {
     sessionId: 'robot-1',
     routingAnalysis: { needsAction: true, actionType: 'environment_action' },
   }, {});
-  assert.deepEqual(parsedSatisfiedCapture.actions, []);
+  assert.equal(parsedSatisfiedCapture.program, null);
   assert.equal(parsedSatisfiedCapture.response, 'I see a blue object and several lights.');
 
   const contextOutput = await environmentContextBuilderNode.execute({

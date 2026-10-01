@@ -1,0 +1,72 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 0
+  },
+  "name": "Robot Active Task Mode",
+  "description": "Canonical task execution: ordered actions, ongoing visual behaviors, asynchronous identification and live gait steering.",
+  "cognitiveMode": "environment",
+  "last_modified": "2026-09-30",
+  "nodes": [
+    {
+      "id": "step",
+      "type": "environmentNode",
+      "position": {
+        "x": 40,
+        "y": 40
+      },
+      "data": {
+        "label": "Advance Active Task",
+        "nodeType": "environment_active_task_step",
+        "properties": {}
+      }
+    },
+    {
+      "id": "wait",
+      "type": "environmentNode",
+      "position": {
+        "x": 600,
+        "y": 40
+      },
+      "data": {
+        "label": "Wait for Evidence",
+        "nodeType": "environment_active_task_wait",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "local-step-state-wait-state",
+      "source": "step",
+      "target": "wait",
+      "sourceHandle": "state",
+      "targetHandle": "state",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "local-wait-state-step-state",
+      "source": "wait",
+      "target": "step",
+      "sourceHandle": "state",
+      "targetHandle": "state",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "when": {
+          "output": "continue",
+          "truthy": true
+        },
+        "loop": true
+      }
+    }
+  ]
+}

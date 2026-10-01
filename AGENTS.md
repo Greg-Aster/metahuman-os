@@ -26,6 +26,14 @@ that scope and continue authorized work without seeking fresh approval. Ask when
 ambiguity materially affects scope, permissions, or external effects. Audit
 findings, comments, old plans, and unrelated tasks do not grant additional scope.
 
+Any new safety mechanism, runtime check, guard, verification gate, or fallback
+requires the Installation Owner's explicit authorization for that specific
+behavior. General authorization to implement a feature does not authorize these
+additions. Do not assume automatic stops or pauses, restrictive defaults,
+capability restrictions, obstacle/edge avoidance, or extra sensor requirements.
+Explain a concrete concern and its tradeoff before proposing a mechanism; do not
+silently limit an experimental system.
+
 ## Work Modes and Concurrent Work
 
 - Review, explanation, diagnosis, inspection, audit, and reporting are read-only

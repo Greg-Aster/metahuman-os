@@ -27,6 +27,7 @@ export interface GraphSchedulerContract {
   activation: 'demand';
   skippedState: 'explicit';
   sideEffectOrder: 'serial-topological';
+  /** 0 permits an ongoing event-driven behavior; positive values bound graph loops. */
   maxLoopIterations: number;
   /** Explicit input tail to resume when new input arrives as this invocation finishes. */
   eventInputNodeId?: string;

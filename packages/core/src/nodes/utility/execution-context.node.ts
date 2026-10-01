@@ -61,7 +61,7 @@ export const executionContextNode = defineNode({
     const events = context.graphExecution.events()
     const limit = Number(properties?.eventLimit)
     if (!Number.isInteger(limit) || limit < 0) throw new Error('Recent Events must be a non-negative integer')
-    const hasActiveTask = Boolean(task && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete'].includes(task.decision.outcome))
+    const hasActiveTask = Boolean(task && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete', 'failed'].includes(task.decision.outcome))
     return {
       activeExecutions: context.graphExecution.activeExecutions(),
       context: { executionId: context.graphExecution.executionId, task,

@@ -117,10 +117,11 @@ export function summarizeEnvironmentGraphEffect(
     };
   }
 
-  const actionResult = completedNodeOutput(graphState, 'robot_action_result_parser')
-    ?? completedNodeOutput(graphState, 'robot_goal_review_parser');
+  const actionResult = completedNodeOutput(graphState, 'robot_goal_review_parser');
   const taskDecision = compactTaskDecision(actionResult?.taskDecision);
   if (taskDecision) effect.objectiveEvaluation = taskDecision;
+  const activeTask = completedNodeOutput(graphState, 'environment_active_task');
+  if (activeTask?.finished) effect.objectiveEvaluation = compactTaskDecision(activeTask.taskDecision);
 
   const statusOut = completedNodeOutput(graphState, 'robot_status_out');
   if (statusOut) effect.robotStatusPersisted = statusOut.persisted === true;
@@ -222,6 +223,10 @@ export class ExecutionEngine {
   }
 
   private registerDefaultHandlers(): void {
+    this.registerHandler('environment.identify', (task, context) => withTaskUserContext(task, async () => {
+      const { identifyActiveTaskImage } = await import('../environment-interface/active-task.js');
+      return identifyActiveTaskImage(task.input as Parameters<typeof identifyActiveTaskImage>[0], context.signal);
+    }));
     this.registerHandler('graph.signal', async (task, context) => {
       const store = openExecutionStore(task.username);
       try {

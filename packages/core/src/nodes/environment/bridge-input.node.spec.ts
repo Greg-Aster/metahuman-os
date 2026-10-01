@@ -123,6 +123,7 @@ test('Environment Bridge Input always exposes complete Ainekio observation and b
       'capabilities',
       'text',
       'state',
+      'perception',
       'visual',
       'visuals',
       'feedback',

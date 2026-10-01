@@ -15,8 +15,7 @@ import {
 function authorizesPhysicalWork(output: string): boolean {
   const validation = validateEnvironmentSelectorOutput(output)
   return Boolean(
-    validation.value?.actions.some(action => action.type === 'robotCommand' || action.type === 'visualApproach')
-    || validation.value?.movementRequest,
+    validation.value?.program?.steps.some(step => step.kind === 'generatedMotion' || step.kind === 'behavior' || step.kind === 'action' && ['robotCommand', 'visualApproach'].includes(step.action.type!)),
   )
 }
 
@@ -36,7 +35,7 @@ test('all sanitized source outputs satisfy the shared strict Core contract', asy
       observation: sourceCase.observation,
       sessionId: sourceCase.observation.sessionId,
     }, {} as never, {} as never)
-    const expectedWork = sourceCase.expected.actions.length > 0 || sourceCase.expected.movementRequest !== null
+    const expectedWork = Boolean(sourceCase.expected.program)
     assert.equal(Boolean(parsed.valid), expectedWork, `${sourceCase.id}: capability admission changed`)
   }
 })
@@ -51,8 +50,7 @@ test('generator uses the runtime formatter and excludes profile, persona, and pr
   assert.equal(records.every(record => {
     const parsed = JSON.parse(record.output) as Record<string, unknown>
     return JSON.stringify(Object.keys(parsed).sort()) === JSON.stringify([
-      'actions',
-      'movementRequest',
+      'program',
       'response',
       'taskDecision',
     ])
@@ -65,9 +63,9 @@ test('corpus balances positive work with negative authority and covers required 
   const negative = cases.filter(value => !authorizesPhysicalWork(JSON.stringify(value.expected)))
   assert.ok(positive.length >= 18)
   assert.ok(negative.length >= 24)
-  assert.ok(cases.some(value => value.expected.actions[0]?.type === 'robotCommand'))
-  assert.ok(cases.some(value => value.expected.movementRequest !== null))
-  assert.ok(cases.some(value => value.expected.actions[0]?.type === 'captureImage'))
+  assert.ok(cases.some(value => value.expected.program?.steps.some(step => step.kind === 'action' && step.action.type === 'robotCommand')))
+  assert.ok(cases.some(value => value.expected.program?.steps.some(step => step.kind === 'generatedMotion')))
+  assert.ok(cases.some(value => value.expected.program?.steps.some(step => step.kind === 'action' && step.action.type === 'captureImage')))
   assert.ok(cases.some(value => value.suite === 'negation'))
   assert.ok(cases.some(value => value.suite === 'quoted'))
   assert.ok(cases.some(value => value.suite === 'hypothetical'))

@@ -16,7 +16,6 @@ import {
 } from '../environment/helpers.js';
 import type { NodeSlot } from '../types.js';
 import { ROBOT_OPERATOR_DECISION_JSON_SCHEMA } from './decision-parser.node.js';
-import { buildRobotActionResultJsonSchema } from './action-result-parser.node.js';
 import { buildRobotGoalReviewJsonSchema } from './goal-review-parser.node.js';
 import { buildRobotAutonomyControllerJsonSchema } from './autonomy-controller-parser.node.js';
 
@@ -298,7 +297,7 @@ function verifiedActionHistory(value: unknown): Array<Record<string, unknown>> {
   return [...actions.values()].filter(entry => entry.requested);
 }
 
-type RobotOperatorContextContract = 'environment' | 'delegation' | 'action_result' | 'goal_review' | 'autonomy_controller';
+type RobotOperatorContextContract = 'environment' | 'delegation' | 'goal_review' | 'autonomy_controller';
 
 const CONTEXT_OUTPUTS: NodeSlot[] = [
   { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
@@ -630,8 +629,6 @@ async function buildRobotOperatorContext(
       frames: selectedFrames,
       jsonSchema: withVisualObservationSchema(outputContract === 'delegation'
         ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA
-        : outputContract === 'action_result'
-          ? buildRobotActionResultJsonSchema(inputs.execution)
           : outputContract === 'goal_review'
             ? buildRobotGoalReviewJsonSchema(inputs.availableTasks)
             : outputContract === 'autonomy_controller'
@@ -718,17 +715,6 @@ export const robotAutonomyPlannerContextNode = fixedContextNode(
     'currentVisualEvidence',
   ),
   'delegation',
-);
-
-export const robotActionResultContextNode = fixedContextNode(
-  'robot_action_result_context',
-  'Robot Action Result Context',
-  'Builds the evidence package for interpreting one correlated terminal robot action report.',
-  contextInputs(
-    'instruction', 'observation', 'images', 'frames', 'robotStatus', 'robotObserver',
-    'actionContext', 'sourceObservationAt', 'currentVisualEvidence',
-  ),
-  'action_result',
 );
 
 export const robotGoalReviewContextNode = fixedContextNode(

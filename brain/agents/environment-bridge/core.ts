@@ -11,6 +11,7 @@ import {
   attachEnvironmentObservationTiming,
   environmentActionStageDurations,
   mergeEnvironmentActionTiming,
+  normalizeEnvironmentPerception,
   type EnvironmentActionTiming,
   type EnvironmentFeedback,
   type EnvironmentObservation,
@@ -188,6 +189,7 @@ async function postJson(
   config: BridgeConfig,
   route: string,
   payload: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown> | undefined> {
   const response = await fetch(`${config.coreUrl}${route}`, {
     method: 'POST',
@@ -197,7 +199,7 @@ async function postJson(
       'X-MetaHuman-Environment-Graph': config.graph,
     },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(30_000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
   });
   if (!response.ok) {
     throw new Error(`MetaHuman environment API failed (${response.status}): ${await response.text()}`);
@@ -327,6 +329,15 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       }
     };
     const mediaUploads = new Set<Promise<void>>();
+    let pendingPerception: Record<string, unknown> | undefined;
+    let observedPerceptionFlush: Promise<void> | undefined;
+    const flushPerception = createCoalescedTaskRunner(async () => {
+      const current = pendingPerception;
+      pendingPerception = undefined;
+      if (current && !localAbort.signal.aborted) {
+        await postJson(config, '/api/environment-bridge/telemetry', current, localAbort.signal);
+      }
+    });
     const diagnostics: DiagnosticWindow = {
       startedAt: Date.now(),
       inboundBytes: 0,
@@ -419,8 +430,25 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       });
     };
 
+    const movementUpdates = new Map<string, string>();
     const sendAction = async (action: Record<string, unknown>) => {
       const actionId = typeof action.id === 'string' ? action.id : '';
+      if (action.movementUpdate) {
+        const update = action.movementUpdate as { actionId: string; revision: number; controls: Record<string, number> };
+        const state = latestObservation?.state;
+        const owner = state?.activeMovementUpdates as Record<string, unknown> | undefined;
+        movementUpdates.set(`${update.actionId}:${update.revision}`, actionId);
+        try {
+          sendMessage({ type: 'environment.action.update', version: 1, sessionId: action.sessionId,
+            gatewayInstance: owner?.gatewayInstance, robotId: owner?.robotId, epoch: owner?.epoch,
+            actionId: update.actionId, bodyLease: action.bodyLease, revision: update.revision,
+            validForMs: owner?.maxValidityMs, controls: update.controls });
+        } catch (error) {
+          movementUpdates.delete(`${update.actionId}:${update.revision}`);
+          await reportActionDelivery(actionId, (error as Error).message, 'send');
+        }
+        return;
+      }
       const actionTiming = mergeEnvironmentActionTiming(
         action.timing,
         { bridgeActionSentAt: new Date().toISOString() },
@@ -716,12 +744,33 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           enqueueAudioUtterance(incoming);
           return;
         }
-        inboundMessages?.enqueue(async () => {
-          const encoded = incoming.toString();
-          if (Buffer.byteLength(encoded) > MAX_MESSAGE_BYTES) {
-            throw new Error('Environment adapter message exceeds its size limit');
+        let message: Record<string, unknown>;
+        try {
+          if (incoming.length > MAX_MESSAGE_BYTES) throw new Error('Environment adapter message exceeds its size limit');
+          message = JSON.parse(incoming.toString()) as Record<string, unknown>;
+          if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('Invalid adapter message');
+          const telemetry = message.telemetry as Record<string, unknown> | undefined;
+          if (message.type === 'environment.telemetry' && telemetry?.kind === 'vision.recognition') {
+            if (message.sessionId !== latestObservation?.sessionId || localAbort.signal.aborted) return;
+            const perception = normalizeEnvironmentPerception(telemetry.perception);
+            pendingPerception = { sessionId: message.sessionId, perception };
+            const operation = flushPerception();
+            if (operation !== observedPerceptionFlush) {
+              observedPerceptionFlush = operation;
+              void operation.catch(error => {
+                if (!localAbort.signal.aborted) {
+                  console.error(`${LOG_PREFIX} perception delivery failed: ${(error as Error).message}`);
+                  websocket.close(1011, 'perception delivery failed');
+                }
+              });
+            }
+            return;
           }
-          const message = JSON.parse(encoded) as Record<string, unknown>;
+        } catch (error) {
+          inboundMessages?.enqueue(async () => { throw error; });
+          return;
+        }
+        inboundMessages?.enqueue(async () => {
           if (message.type === 'bridge.ready') {
             const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
             if (!sessionId) throw new Error('Environment adapter omitted sessionId');
@@ -792,6 +841,19 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
                 );
               }
               if (!joined) sendMessage({ type: 'environment.observation.ack', observationId: receivedObservation.id, admitted: true });
+            }
+            return;
+          }
+          if (message.type === 'environment.action.update.result') {
+            const key = `${message.actionId}:${message.revision}`;
+            const requestId = movementUpdates.get(key);
+            if (requestId) {
+              movementUpdates.delete(key);
+              await postJson(config, '/api/environment-bridge/action-result', {
+                id: `update:${requestId}`, timestamp: message.timestamp,
+                type: message.status === 'acknowledged' ? 'completed' : message.status === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
+                actionId: requestId, message: message.message, data: { movementUpdate: message },
+              });
             }
             return;
           }
@@ -910,6 +972,8 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       connectionFailure = error;
     });
     localAbort.abort();
+    pendingPerception = undefined;
+    await observedPerceptionFlush?.catch(() => undefined); // Aborted delivery is drained before reconnecting.
     if (!signal.aborted) await inboundMessages?.drain();
     await Promise.allSettled([...awaitingAdapterAcceptance].map(actionId => (
       reportActionDelivery(actionId, 'environment adapter disconnected before acceptance was confirmed', 'acceptance')

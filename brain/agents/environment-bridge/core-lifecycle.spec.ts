@@ -20,12 +20,14 @@ assert.equal(publicCore.ROOT, isolatedRoot);
 publicCore.setAuditEnabled(false);
 let scenario = '';
 let sent = 0;
+let wireUpdates: Record<string, any>[] = [];
 let acknowledgements: Record<string, unknown>[] = [];
 let finishFixture = () => {};
+let fixtureSocket: FakeWebSocket;
 class FakeWebSocket extends EventEmitter {
   static OPEN = 1;
   readyState = 1;
-  constructor() { super(); queueMicrotask(() => this.emit('open')); }
+  constructor() { super(); fixtureSocket = this; queueMicrotask(() => this.emit('open')); }
   send(payload: string | Buffer, callback?: (error?: Error) => void) {
     if (Buffer.isBuffer(payload)) {
       sent++;
@@ -34,7 +36,18 @@ class FakeWebSocket extends EventEmitter {
     }
     const message = JSON.parse(payload);
     if (message.type === 'bridge.connect') {
-      queueMicrotask(() => this.emit('message', JSON.stringify({ type: 'bridge.ready', sessionId: 'robot-session' }), false));
+      queueMicrotask(() => this.emit('message', JSON.stringify({ type: 'bridge.ready', sessionId: 'robot-session',
+        ...((scenario === 'perception' || scenario.startsWith('update')) ? { observation: { environmentId: 'ainekio', adapter: 'ainekio-gateway',
+          sessionId: 'robot-session', timestamp: new Date().toISOString(), capabilities: { actions: [] },
+          state: { activeMovementUpdates: { gatewayInstance: 'gateway-fixture', robotId: 'body-fixture', epoch: 7, maxValidityMs: 1000 } } } } : {}) }), false));
+    } else if (message.type === 'environment.action.update') {
+      wireUpdates.push(message);
+      if (scenario === 'update-send') throw new Error('Fixture settings send failed');
+      queueMicrotask(() => this.emit('message', JSON.stringify({
+        type: 'environment.action.update.result', actionId: message.actionId, revision: message.revision,
+        status: scenario === 'update-unknown' ? 'outcome_unknown' : 'acknowledged',
+        timestamp: new Date().toISOString(), message: 'Fixture update result', sequence: 12,
+      }), false));
     } else if (message.type === 'environment.action') {
       sent++;
       if (scenario === 'send') throw new Error('Fixture action socket send failed');
@@ -46,7 +59,7 @@ class FakeWebSocket extends EventEmitter {
       } else queueMicrotask(() => this.close());
     } else if (message.type === 'environment.feedback.ack') {
       acknowledgements.push(message);
-      queueMicrotask(finishFixture);
+      if (scenario !== 'perception') queueMicrotask(finishFixture);
     }
   }
   close() { if (this.readyState !== 3) { this.readyState = 3; this.emit('close'); } }
@@ -156,6 +169,118 @@ test('the Bridge distinguishes ambiguous delivery from preparation that never se
   } finally {
     globalThis.fetch = originalFetch;
     envKeys.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index]; });
+  }
+});
+
+test('recognition delivery keeps only the newest waiting result and does not block control receipts', async () => {
+  const envKeys = ['MH_ENVIRONMENT_ADAPTER_URL', 'MH_ENVIRONMENT_ADAPTER_TOKEN', 'MH_ENVIRONMENT_BRIDGE_TOKEN', 'MH_ENVIRONMENT_CORE_URL'];
+  const previous = envKeys.map(key => process.env[key]);
+  process.env.MH_ENVIRONMENT_ADAPTER_URL = 'ws://fixture.invalid/environment';
+  process.env.MH_ENVIRONMENT_ADAPTER_TOKEN = 'fixture-adapter';
+  process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'fixture-core';
+  process.env.MH_ENVIRONMENT_CORE_URL = 'http://fixture.invalid';
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  const delivered: number[] = [];
+  let releaseFirst: () => void = () => {};
+  let firstStarted: () => void = () => {};
+  const started = new Promise<void>(resolve => { firstStarted = resolve; });
+  let controlReceived: () => void = () => {};
+  const receipt = new Promise<void>(resolve => { controlReceived = resolve; });
+  const recognition = (frameCounter: number) => {
+    const now = Date.now();
+    fixtureSocket.emit('message', JSON.stringify({ type: 'environment.telemetry', sessionId: 'robot-session',
+      telemetry: { kind: 'vision.recognition', perception: { version: 1, timeBasis: 'gateway_receipt',
+        robotId: 'robot', epoch: 1, gatewayInstance: 'fixture', frameCounter,
+        observedAt: new Date(now).toISOString(), expiresAt: new Date(now + 1000).toISOString(),
+        backend: 'fixture', model: 'fixture', summary: 'table', objects: [], uncertainties: [] } } }), false);
+  };
+  scenario = 'perception';
+  acknowledgements = [];
+  globalThis.fetch = async (url, options) => {
+    const pathname = new URL(String(url)).pathname;
+    if (pathname === '/api/environment-bridge/stream') {
+      return new Response(new ReadableStream<Uint8Array>({ start(stream) {
+        options?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+        setImmediate(() => recognition(1));
+      } }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    const body = JSON.parse(String(options?.body));
+    if (pathname === '/api/environment-bridge/telemetry' && body.perception) {
+      delivered.push(body.perception.frameCounter);
+      if (delivered.length === 1) {
+        firstStarted();
+        await new Promise<void>((resolve, reject) => {
+          releaseFirst = resolve;
+          options?.signal?.addEventListener('abort', () => reject(new Error('Aborted fixture perception')), { once: true });
+        });
+      } else queueMicrotask(() => controller.abort());
+    } else if (pathname === '/api/environment-bridge/action-result') {
+      controlReceived();
+      return new Response(JSON.stringify({ success: true, admitted: true }), { status: 200 });
+    } else assert.ok(['/api/environment-bridge/telemetry', '/api/environment-bridge/observation'].includes(pathname));
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  };
+  const timeout = setTimeout(() => controller.abort(new Error('Recognition fixture timed out')), 5000);
+  try {
+    const run = runEnvironmentBridgeAgent(controller.signal);
+    await started;
+    recognition(2); recognition(3);
+    fixtureSocket.emit('message', JSON.stringify({ type: 'environment.feedback', feedback: {
+      id: 'fixture-status', actionId: 'fixture-action', type: 'status',
+      timestamp: new Date().toISOString(), message: 'Still active' } }), false);
+    await receipt;
+    assert.deepEqual(delivered, [1], 'control receipt must arrive while recognition delivery is blocked');
+    releaseFirst();
+    await run;
+    assert.deepEqual(delivered, [1, 3], 'intermediate recognition must not accumulate');
+  } finally {
+    controller.abort(); releaseFirst(); clearTimeout(timeout);
+    globalThis.fetch = originalFetch;
+    envKeys.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index]; });
+  }
+});
+
+test('ongoing updates preserve movement identity and lease while receipts finish only the settings job', async () => {
+  const keys = ['MH_ENVIRONMENT_ADAPTER_URL', 'MH_ENVIRONMENT_ADAPTER_TOKEN', 'MH_ENVIRONMENT_BRIDGE_TOKEN', 'MH_ENVIRONMENT_CORE_URL'];
+  const previous = keys.map(key => process.env[key]);
+  const originalFetch = globalThis.fetch;
+  process.env.MH_ENVIRONMENT_ADAPTER_URL = 'ws://fixture.invalid/environment';
+  process.env.MH_ENVIRONMENT_ADAPTER_TOKEN = 'fixture-adapter';
+  process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'fixture-core';
+  process.env.MH_ENVIRONMENT_CORE_URL = 'http://fixture.invalid';
+  try {
+    for (scenario of ['update-acknowledged', 'update-unknown', 'update-send']) {
+      const controller = new AbortController();
+      const results: any[] = [];
+      wireUpdates = [];
+      const action = { id: 'settings-job', type: 'move', sessionId: 'robot-session',
+        bodyLease: { owner: 'execution-fixture', generation: 4 },
+        movementUpdate: { actionId: 'running-walk', revision: 3, controls: { speed: 60, forward: 80, turn: -25 } } };
+      globalThis.fetch = async (url, options) => {
+        const pathname = new URL(String(url)).pathname;
+        if (pathname === '/api/environment-bridge/stream') return new Response(new ReadableStream<Uint8Array>({ start(stream) {
+          stream.enqueue(new TextEncoder().encode(`event: actions\ndata: ${JSON.stringify({ actions: [action] })}\n\n`));
+          options?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+        } }), { headers: { 'Content-Type': 'text/event-stream' } });
+        if (pathname === '/api/environment-bridge/action-result') {
+          results.push(JSON.parse(String(options?.body))); queueMicrotask(() => controller.abort());
+        }
+        return Response.json({ success: true });
+      };
+      const timeout = setTimeout(() => controller.abort(new Error('Update fixture timed out')), 5000);
+      try { await runEnvironmentBridgeAgent(controller.signal); } finally { clearTimeout(timeout); }
+      assert.equal(wireUpdates.length, 1);
+      assert.deepEqual(wireUpdates[0], { type: 'environment.action.update', version: 1, sessionId: 'robot-session',
+        gatewayInstance: 'gateway-fixture', robotId: 'body-fixture', epoch: 7, actionId: 'running-walk',
+        bodyLease: action.bodyLease, revision: 3, validForMs: 1000, controls: action.movementUpdate.controls });
+      assert.equal(results.length, 1);
+      assert.equal(results[0].actionId, 'settings-job', 'The original gait cannot complete from a settings receipt');
+      assert.equal(results[0].type, scenario === 'update-acknowledged' ? 'completed' : 'outcome_unknown');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    keys.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index]; });
   }
 });
 

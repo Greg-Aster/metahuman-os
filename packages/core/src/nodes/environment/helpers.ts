@@ -1,4 +1,5 @@
 import { projectDesireAwareness } from '../../agency/lifecycle-policy.js'
+import type { EnvironmentTaskProgram, EnvironmentTaskStep } from '../../environment-interface/active-task.js'
 import {
   ENVIRONMENT_MOTION_CLASSES,
   normalizeEnvironmentVisualInspectionTarget,
@@ -282,14 +283,17 @@ function selectorCapabilityRules(capabilities: EnvironmentCapabilities): string[
     actions.has('robotCommand')
       ? Object.keys(commandDescriptions).length > 0
         ? actions.has('robotMotionPlan')
-          ? 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. For a multi-step objective, select a command whenever its described effect is an appropriate current step, then reassess after feedback. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail; use movementRequest only when no description covers that current movement.'
-          : 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. For a multi-step objective, select a command whenever its described effect is an appropriate current step, then reassess after feedback. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail.'
+          ? 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. Represent the complete requested task as program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail; use a generatedMotion step only when no description covers that current movement.'
+          : 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. Represent the complete requested task as program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail.'
         : actions.has('robotMotionPlan')
-          ? 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects; use movementRequest when a named effect cannot be identified confidently.'
+          ? 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects; use a generatedMotion step when a named effect cannot be identified confidently.'
           : 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects.'
       : '',
+    actions.has('robotCommand')
+      ? 'For ongoing named motions described by the adapter, set continuous:true. For live walking and turning together, select continuous move with forward and turn controls.'
+      : '',
     actions.has('robotMotionPlan')
-      ? 'robotMotionPlan: request off-script body_local motion through movementRequest; never author a motion plan directly.'
+      ? 'robotMotionPlan: request off-script body_local motion through a generatedMotion step; never author a motion plan directly.'
       : '',
     actions.has('captureImage')
       ? 'captureImage: request one fresh frame when current visual evidence is absent.'
@@ -465,6 +469,13 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
     units: typeof record.units === 'number' ? record.units : undefined,
     amount: typeof record.amount === 'number' ? record.amount : undefined,
     durationMs: typeof record.durationMs === 'number' ? record.durationMs : undefined,
+    continuous: typeof record.continuous === 'boolean' ? record.continuous : undefined,
+    speed: typeof record.speed === 'number' ? record.speed : undefined,
+    stride: typeof record.stride === 'number' ? record.stride : undefined,
+    rate: typeof record.rate === 'number' ? record.rate : undefined,
+    gait: typeof record.gait === 'string' ? record.gait as EnvironmentAction['gait'] : undefined,
+    forward: typeof record.forward === 'number' ? record.forward : undefined,
+    turn: typeof record.turn === 'number' ? record.turn : undefined,
     target: typeof record.target === 'string' ? record.target : undefined,
     inspectionTarget,
     visualTarget,
@@ -475,28 +486,6 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
   };
 }
 
-function parseMovementRequest(
-  value: unknown,
-  sessionId?: string,
-): { request: EnvironmentMovementRequest | null; error: string } {
-  if (value === undefined || value === null) return { request: null, error: '' };
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { request: null, error: 'movementRequest must be an object or null' };
-  }
-  const record = value as Record<string, unknown>;
-  const unknown = Object.keys(record).filter(key => key !== 'description');
-  if (unknown.length > 0) {
-    return {
-      request: null,
-      error: `movementRequest contains unsupported field(s): ${unknown.join(', ')}`,
-    };
-  }
-  const description = typeof record.description === 'string' ? record.description.trim() : '';
-  if (!description || description.length > 500) {
-    return { request: null, error: 'movementRequest description must contain 1..500 characters' };
-  }
-  return { request: { description, sessionId, motionClass: 'body_local' }, error: '' };
-}
 
 function parseTaskDecision(
   value: unknown,
@@ -595,10 +584,7 @@ function parseTaskDecision(
 export interface EnvironmentModelOutput {
   visualObservation?: unknown;
   response: string;
-  actions: Partial<EnvironmentAction>[];
-  movementRequest: (Omit<EnvironmentMovementRequest, 'motionClass'> & {
-    motionClass?: EnvironmentMovementRequest['motionClass'];
-  }) | null;
+  program: EnvironmentTaskProgram | null;
   taskDecision: (Omit<EnvironmentTaskDecision, 'objectiveComplete' | 'completionCriteria'> & {
     completionCriteria: string;
   }) | null;
@@ -640,6 +626,9 @@ const SELECTOR_SCHEMA_ACTION_PROPERTIES = {
   inspectionTarget: { type: 'object' },
   visualTarget: { type: 'object' },
   metadata: { type: 'object' },
+  continuous: { type: 'boolean' }, speed: { type: 'number' }, stride: { type: 'number' }, rate: { type: 'number' },
+  gait: { type: 'string', enum: ['walk', 'crawl', 'run', 'crab'] },
+  forward: { type: 'number', minimum: -100, maximum: 100 }, turn: { type: 'number', minimum: -100, maximum: 100 },
 } as const;
 
 function selectorActionItemSchema(
@@ -670,6 +659,12 @@ function selectorActionItemSchema(
       amount: SELECTOR_SCHEMA_ACTION_PROPERTIES.amount,
       durationMs: SELECTOR_SCHEMA_ACTION_PROPERTIES.durationMs,
       metadata: SELECTOR_SCHEMA_ACTION_PROPERTIES.metadata,
+      direction: SELECTOR_SCHEMA_ACTION_PROPERTIES.direction,
+      continuous: SELECTOR_SCHEMA_ACTION_PROPERTIES.continuous,
+      speed: SELECTOR_SCHEMA_ACTION_PROPERTIES.speed,
+      stride: SELECTOR_SCHEMA_ACTION_PROPERTIES.stride,
+      rate: SELECTOR_SCHEMA_ACTION_PROPERTIES.rate,
+      gait: SELECTOR_SCHEMA_ACTION_PROPERTIES.gait,
     },
   };
 
@@ -736,51 +731,33 @@ export function buildEnvironmentSelectorJsonSchema(
     ...SELECTOR_SCHEMA_STRING,
     description: 'Optional natural speech. It may accompany a selected consequence but never substitutes for a required physical or sensing action.',
   };
-  const emptyActions = { type: 'array', maxItems: 0, items: { type: 'object' } };
-  const noMovement = { type: 'null' };
-  const branch = (properties: Record<string, unknown>) => ({
-    type: 'object',
-    additionalProperties: false,
-    required: ['taskDecision', 'response', 'actions', 'movementRequest'],
-    properties: { taskDecision: properties.taskDecision, response: properties.response,
-      actions: properties.actions, movementRequest: properties.movementRequest },
-  });
+  const branch = (program: unknown, decision: unknown) => ({ type: 'object', additionalProperties: false,
+    required: ['response', 'program', 'taskDecision'], properties: { response, program, taskDecision: decision } });
   const alternatives: Record<string, unknown>[] = [];
-  const actionAvailable = directActionTypes.length > 0 || movementSupported;
-  if (!input.requireAction || !actionAvailable) {
-    const outcome = { type: 'string', enum: nonActionOutcomes };
-    alternatives.push(branch({
-      response: { ...response, minLength: 1 }, actions: emptyActions,
-      movementRequest: noMovement, taskDecision: taskSchema({ outcome }),
-    }), branch({
-      response: { ...response, maxLength: 0 }, actions: emptyActions,
-      movementRequest: noMovement, taskDecision: taskSchema({ outcome }, false),
-    }));
+  if (!input.requireAction || (!directActionTypes.length && !movementSupported)) {
+    alternatives.push(branch({ type: 'null' }, taskSchema({ outcome: { type: 'string', enum: nonActionOutcomes } })));
   }
-  const pending = { outcome: { type: 'string', enum: ENVIRONMENT_TASK_OUTCOMES.filter(outcome => outcome !== 'complete') } };
-  if (directActionTypes.length > 0) alternatives.push(branch({
-      response,
-      actions: {
-        type: 'array',
-        description: 'One advertised action only when its supplied capability meaning implements the intended effect.',
-        minItems: 1, maxItems: 1,
-        items: selectorActionItemSchema(directActionTypes, robotCommands),
-      },
-      movementRequest: noMovement,
-      taskDecision: taskSchema(pending),
-  }));
-  if (movementSupported) alternatives.push(branch({
-      response, actions: emptyActions,
-      movementRequest: {
-        type: 'object', additionalProperties: false, required: ['description'],
-        description: 'A novel body-local movement whose intended effect is not implemented by an advertised action. The dedicated movement generator authors the plan.',
-        properties: { description: { type: 'string', minLength: 1, maxLength: 500 } },
-      },
-      taskDecision: taskSchema({ ...pending, motionClass: { type: 'string', enum: ['body_local'] } }),
-  }));
-  // Keep each alternative complete. Ollama's grammar converter ignores allOf
-  // refinements beside properties, so intersecting partial object schemas here
-  // allowed mutually incompatible routes and caused repeated parser rejection.
+  const steps: Record<string, unknown>[] = [];
+  const action = selectorActionItemSchema(directActionTypes, robotCommands);
+  if (directActionTypes.length) steps.push({ type: 'object', additionalProperties: false,
+    required: ['kind', 'action'], properties: { kind: { const: 'action' }, action } });
+  if (movementSupported) steps.push({ type: 'object', additionalProperties: false,
+    required: ['kind', 'description'], properties: { kind: { const: 'generatedMotion' }, description: { type: 'string', minLength: 1, maxLength: 500 } } });
+  if (directActionTypes.includes('move') && (!capabilityBound || advertisedActions.has('captureImage'))) {
+    steps.push({ type: 'object', additionalProperties: false,
+      required: ['kind', 'target', 'completionCriteria', 'motion', 'candidateLabels', 'identifyEveryFrames', 'steering'],
+      properties: { kind: { const: 'behavior' }, target: { type: 'string', minLength: 1 },
+        completionCriteria: { type: 'string', minLength: 1 }, motion: { type: 'object', additionalProperties: false,
+          required: ['type', 'direction', 'continuous'], properties: {
+            ...SELECTOR_SCHEMA_ACTION_PROPERTIES, type: { const: 'move' }, continuous: { const: true } } },
+        candidateLabels: { type: 'array', items: { type: 'string' } },
+        identifyEveryFrames: { type: 'integer', minimum: 1 },
+        steering: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false,
+          required: ['label', 'gain'], properties: { label: { type: 'string' }, gain: { type: 'number' } } }] } } });
+  }
+  if (steps.length) alternatives.push(branch({ type: 'object', additionalProperties: false,
+    required: ['steps'], properties: { steps: { type: 'array', minItems: 1, items: { anyOf: steps } } } },
+    taskSchema({ outcome: { type: 'string', enum: ENVIRONMENT_TASK_OUTCOMES.filter(value => value !== 'complete') } }, false)));
   return { anyOf: alternatives };
 }
 
@@ -795,8 +772,7 @@ export interface EnvironmentSelectorValidationResult {
 
 const SELECTOR_OUTPUT_FIELDS = new Set([
   'response',
-  'actions',
-  'movementRequest',
+  'program',
   'taskDecision',
 ]);
 
@@ -828,7 +804,7 @@ const SELECTOR_ACTION_FIELDS = new Set([
   'inspectionTarget',
   'visualTarget',
   'vector',
-  'metadata',
+  'metadata', 'continuous', 'speed', 'stride', 'rate', 'gait', 'forward', 'turn',
 ]);
 
 /**
@@ -869,101 +845,55 @@ export function validateEnvironmentSelectorOutput(
   }
 
   const errors: string[] = [];
-  for (const field of SELECTOR_OUTPUT_FIELDS) {
-    if (!(field in raw)) errors.push(`${field} is required`);
-  }
-  for (const field of Object.keys(raw)) {
-    if (!SELECTOR_OUTPUT_FIELDS.has(field) && field !== 'visualObservation') errors.push(`${field} is not an Environment model-output field`);
-  }
+  for (const field of SELECTOR_OUTPUT_FIELDS) if (!(field in raw)) errors.push(`${field} is required`);
+  for (const field of Object.keys(raw)) if (!SELECTOR_OUTPUT_FIELDS.has(field) && field !== 'visualObservation') errors.push(`${field} is not an Environment model-output field`);
   if (typeof raw.response !== 'string') errors.push('response must be a string');
-  if (!Array.isArray(raw.actions)) errors.push('actions must be an array');
-  if (raw.movementRequest !== null && !isRecord(raw.movementRequest)) {
-    errors.push('movementRequest must be an object or null');
-  }
-  if (raw.taskDecision !== null && !isRecord(raw.taskDecision)) {
-    errors.push('taskDecision must be an object or null');
-  } else if (isRecord(raw.taskDecision)) {
-    for (const field of Object.keys(raw.taskDecision)) {
-      if (!SELECTOR_TASK_DECISION_FIELDS.has(field)) {
-        errors.push(`taskDecision.${field} is not supported`);
-      }
-    }
-    for (const field of [
-      'outcome',
-      'reason',
-      'objective',
-      'completionCriteria',
-      'continuationPolicy',
-      'requiredCompletionBasis',
-    ]) {
-      if (!(field in raw.taskDecision)) errors.push(`taskDecision.${field} is required`);
-    }
-    if (typeof raw.taskDecision.reason !== 'string' || !raw.taskDecision.reason.trim()) {
-      errors.push('taskDecision.reason must be a non-empty string');
-    }
-    if (typeof raw.taskDecision.objective !== 'string' || !raw.taskDecision.objective.trim()) {
-      errors.push('taskDecision.objective must be a non-empty string');
-    }
-  }
-
-  const actions = Array.isArray(raw.actions)
-    ? raw.actions.map(action => normalizeAction(action, sessionId))
-    : [];
-  if (Array.isArray(raw.actions)) {
-    raw.actions.forEach((action, index) => {
-      if (!isRecord(action)) return;
-      for (const field of Object.keys(action)) {
-        if (!SELECTOR_ACTION_FIELDS.has(field)) {
-          errors.push(`actions[${index}].${field} is not an Environment action field`);
-        }
-      }
-    });
-  }
-  if (Array.isArray(raw.actions) && actions.some(action => action === null)) {
-    errors.push('every action must be a valid typed Environment action');
-  }
-  if (actions.length > 1) errors.push('selector output may contain at most one action');
-  const normalizedActions = actions.filter((action): action is Partial<EnvironmentAction> => action !== null);
-  const movement = parseMovementRequest(raw.movementRequest, sessionId);
-  if (movement.error) errors.push(movement.error);
-  if (normalizedActions.length > 0 && movement.request) {
-    errors.push('selector output must choose either actions or movementRequest, not both');
-  }
   const task = parseTaskDecision(raw.taskDecision);
   if (task.error) errors.push(task.error);
-
-  const decision = task.decision;
-  const response = typeof raw.response === 'string' ? raw.response.trim() : '';
-  const physicalWorkSelected = normalizedActions.length > 0 || Boolean(movement.request);
-  if (!response && !physicalWorkSelected && !decision && !isRecord(raw.visualObservation)) {
-    errors.push(
-      'selector output must include a non-empty response, action, movementRequest, taskDecision, or visualObservation',
-    );
+  if (isRecord(raw.taskDecision)) {
+    for (const field of Object.keys(raw.taskDecision)) if (!SELECTOR_TASK_DECISION_FIELDS.has(field)) errors.push(`taskDecision.${field} is not supported`);
+    for (const field of SELECTOR_SCHEMA_DECISION_REQUIRED) if (!(field in raw.taskDecision)) errors.push(`taskDecision.${field} is required`);
   }
-  if (decision && physicalWorkSelected && decision.objectiveComplete) {
-    errors.push('a newly selected action cannot establish objective completion before its result');
-  }
-  if (decision && !physicalWorkSelected && decision.outcome === 'act') {
-    errors.push('taskDecision outcome=act requires an action or movementRequest');
-  }
-  if (errors.length > 0) {
-    return { jsonValid: true, valid: false, errors };
-  }
-  return {
-    jsonValid: true,
-    valid: true,
-    errors,
-    value: {
-      ...(raw.visualObservation !== undefined ? { visualObservation: raw.visualObservation } : {}),
-      response,
-      actions: normalizedActions,
-      movementRequest: movement.request
-        ? {
-            description: movement.request.description,
-            ...(movement.request.sessionId ? { sessionId: movement.request.sessionId } : {}),
-          }
-        : null,
-      taskDecision: decision,
-    },
+  const action = (value: unknown): Partial<EnvironmentAction> | null => {
+    if (!isRecord(value) || Object.keys(value).some(key => !SELECTOR_ACTION_FIELDS.has(key))) return null;
+    return normalizeAction(value, sessionId);
   };
+  let program: EnvironmentTaskProgram | null = null;
+  if (raw.program !== null) {
+    if (!isRecord(raw.program) || Object.keys(raw.program).some(key => key !== 'steps') || !Array.isArray(raw.program.steps) || !raw.program.steps.length) errors.push('program requires non-empty steps');
+    else {
+      const steps: EnvironmentTaskStep[] = [];
+      for (const step of raw.program.steps) {
+        if (!isRecord(step)) { errors.push('program step must be an object'); continue; }
+        if (step.kind === 'action' && Object.keys(step).every(key => ['kind', 'action'].includes(key))) {
+          const normalized = action(step.action);
+          if (normalized) steps.push({ kind: 'action', action: normalized });
+          else errors.push('action step requires a typed semantic action');
+        } else if (step.kind === 'generatedMotion' && Object.keys(step).every(key => ['kind', 'description'].includes(key))
+          && typeof step.description === 'string' && step.description.trim() && step.description.length <= 500) {
+          steps.push({ kind: 'generatedMotion', description: step.description.trim() });
+        } else if (step.kind === 'behavior') {
+          const motion = action(step.motion);
+          const steering = step.steering;
+          if (Object.keys(step).some(key => !['kind', 'target', 'completionCriteria', 'motion', 'candidateLabels', 'identifyEveryFrames', 'steering'].includes(key))
+            || typeof step.target !== 'string' || !step.target.trim() || typeof step.completionCriteria !== 'string' || !step.completionCriteria.trim()
+            || motion?.type !== 'move' || motion.continuous !== true || !Array.isArray(step.candidateLabels)
+            || step.candidateLabels.some(label => typeof label !== 'string') || !Number.isInteger(step.identifyEveryFrames) || Number(step.identifyEveryFrames) < 1
+            || (steering !== null && (!isRecord(steering) || typeof steering.label !== 'string' || typeof steering.gain !== 'number'))) errors.push('behavior requires target, phase criteria, ongoing motion, candidate labels, frame cadence and steering');
+          else steps.push({ kind: 'behavior', target: step.target, completionCriteria: step.completionCriteria,
+            motion, candidateLabels: step.candidateLabels as string[], identifyEveryFrames: Number(step.identifyEveryFrames),
+            steering: steering as { label: string; gain: number } | null });
+        } else errors.push('program step kind is unsupported');
+      }
+      if (steps.length === raw.program.steps.length) program = { steps };
+    }
+    if (!task.decision) errors.push('a task program requires its objective decision');
+    if (task.decision?.objectiveComplete) errors.push('a newly selected program cannot establish completion before its results');
+  }
+  const response = typeof raw.response === 'string' ? raw.response.trim() : '';
+  if (!response && !program && !task.decision && !isRecord(raw.visualObservation)) errors.push('selector output requires response, program, taskDecision, or visualObservation');
+  if (!program && task.decision?.outcome === 'act') errors.push('taskDecision outcome=act requires a program');
+  if (errors.length) return { jsonValid: true, valid: false, errors };
+  return { jsonValid: true, valid: true, errors, value: { response, program, taskDecision: task.decision,
+    ...(raw.visualObservation !== undefined ? { visualObservation: raw.visualObservation } : {}) } };
 }

@@ -250,6 +250,16 @@ test('Environment graph receipts distinguish queued work from physical completio
   assert.equal('physicalActionCompleted' in effect, false)
 })
 
+test('active task summaries report successful and failed objectives from the execution owner', () => {
+  for (const completed of [true, false]) {
+    const taskDecision = { objective: 'Execute the requested program.', objectiveComplete: completed,
+      outcome: completed ? 'complete' : 'failed', reason: completed ? 'All phases completed.' : 'The body reported failure.' }
+    const graphState = { nodes: new Map([['active', { status: 'completed',
+      definition: { type: 'environment_active_task' }, outputs: { finished: true, completed, taskDecision } }]]) } as any
+    assert.deepEqual(summarizeEnvironmentGraphEffect(graphState).objectiveEvaluation, taskDecision)
+  }
+})
+
 test('Autonomy activity retains a controller no-task decision without inventing downstream work', () => {
   const receipts = summarizeRobotAutonomyActivity([{
     id: 'controller-none',
@@ -380,10 +390,10 @@ test('each boredom child keeps its specialized policy in the editable workflow',
 
   const executive = message('boredom-autonomy', 'executive-policy')
   assert.match(executive, /advertised action whose description implements the intention/i)
-  assert.match(executive, /body-local movementRequest for the dedicated movement generator when no advertised action fits/i)
-  assert.match(executive, /delegated instruction describes the intended effect/i)
+  assert.match(executive, /generatedMotion handles uncovered body-local gestures/i)
+  assert.match(executive, /instruction describes the intended effect/i)
   assert.match(executive, /accepting or starting work is not completion/i)
-  assert.match(executive, /Robot Action Result supplies the evidence from dispatched work/i)
+  assert.match(executive, /active executor advances from physical receipts without per-movement model review/i)
 
   const observer = message('boredom-observer', 'planner-policy')
   assert.match(observer, /fresh correlated camera image as current evidence/i)
@@ -533,15 +543,13 @@ test('structured captureImage remains available and capability gated', async () 
   const allowed = environmentSendActionNode.properties?.allowedActions as string[]
   assert.equal(allowed.includes('captureImage'), true)
   const graph = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc', 'cognitive-graphs', 'environment-mode.json'), 'utf8'))
-  const bridge = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_send_action')
-  assert.equal(bridge.data.properties.allowedActions.includes('captureImage'), true)
+  assert.equal(graph.nodes.filter((node: any) => node.data?.nodeType === 'environment_active_task').length, 1)
   assert.equal(graph.nodes.some((node: any) => node.data?.nodeType === 'boredom_movement'), false)
 
   const parsed = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I need a fresh view before answering.',
-      actions: [{ type: 'captureImage' }],
-      movementRequest: null,
+      program: { steps: [{ kind: 'action', action: { type: 'captureImage' } }] },
       taskDecision: {
         outcome: 'act',
         reason: 'A current image is needed.',
@@ -562,14 +570,13 @@ test('structured captureImage remains available and capability gated', async () 
     },
     sessionId: 'ainekio-01',
   }, {})
-  assert.equal(parsed.actions.length, 1)
-  assert.equal(parsed.actions[0]?.type, 'captureImage')
+  assert.equal(parsed.program.steps.length, 1)
+  assert.equal(parsed.program.steps[0]?.action.type, 'captureImage')
 
   const unavailable = await environmentActionParserNode.execute({
     response: JSON.stringify({
       response: 'I need current visual perception.',
-      actions: [{ type: 'captureImage' }],
-      movementRequest: null,
+      program: { steps: [{ kind: 'action', action: { type: 'captureImage' } }] },
       taskDecision: {
         outcome: 'act',
         reason: 'A current image is needed.',
@@ -587,7 +594,7 @@ test('structured captureImage remains available and capability gated', async () 
     },
     sessionId: 'ainekio-01',
   }, {})
-  assert.equal(unavailable.actions.length, 0)
+  assert.equal(unavailable.program, null)
   assert.equal(unavailable.response, '')
   assert.match(unavailable.error, /camera is not currently available/i)
 })

@@ -26,7 +26,6 @@ const { robotStatusNode } = await import('./nodes/robot-status/status.node.js')
 const { robotStatusOutNode } = await import('./nodes/robot-status/out.node.js')
 const { robotStatusWriterNode } = await import('./nodes/robot-status/writer.node.js')
 const { buildEnvironmentSelectorEnvelope } = await import('./nodes/environment/helpers.js')
-const { robotActionResultParserNode } = await import('./nodes/robot-operator/action-result-parser.node.js')
 const { robotGoalReviewParserNode } = await import('./nodes/robot-operator/goal-review-parser.node.js')
 const { runDurableGraph } = await import('./durable-execution/runtime.js')
 const { openExecutionStore } = await import('./durable-execution/storage.js')
@@ -828,9 +827,9 @@ test('Robot Status has one editable refresh graph and is read and written by act
       'utf8',
     ))
     assert.equal(consumer.nodes.filter((node: any) => node.data?.nodeType === 'robot_status').length, 1)
-    assert.equal(consumer.nodes.filter((node: any) => node.data?.nodeType === 'robot_status_out').length, 1)
+    assert.equal(consumer.nodes.filter((node: any) => node.data?.nodeType === 'robot_status_out').length, 2)
     assert.equal(consumer.edges.some((edge: any) => edge.targetHandle === 'robotStatus'), true)
-    assert.equal(consumer.edges.some((edge: any) => edge.targetHandle === 'bridgeRecord'
+    assert.equal(consumer.edges.some((edge: any) => edge.source === 'active-task' && edge.targetHandle === 'taskDecision'
       && consumer.nodes.find((node: any) => node.id === edge.target)?.data?.nodeType === 'robot_status_out'), true)
     for (const retired of [
       'environment_task_input',
@@ -856,51 +855,25 @@ test('Robot Status has one editable refresh graph and is read and written by act
   }
 })
 
-test('Robot task lifecycle waits and reviews as explicit children instead of starting a feedback graph', async () => {
+test('Robot task programs use the sole active executor and retain task-level cognitive review', async () => {
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..')
   const readGraph = (name: string) => JSON.parse(fs.readFileSync(
-    path.join(repositoryRoot, `etc/cognitive-graphs/${name}-mode.json`),
-    'utf8',
-  ))
-  const environment = readGraph('environment')
-  const autonomy = readGraph('boredom-autonomy')
-  const resultGraph = readGraph('robot-action-result')
-  const reviewGraph = readGraph('robot-goal-review')
-
-  for (const graph of [environment, autonomy]) {
-    const bridge = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_send_action')
-    assert.equal('feedbackGraph' in bridge.data.properties, false)
-    const wait = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_result_wait')
-    const review = graph.nodes.find((node: any) => node.data?.nodeType === 'workflow_call'
-      && node.data.properties.graph === 'robot-action-result')
-    assert.ok(wait)
-    assert.ok(review)
-    assert.ok(graph.edges.some((edge: any) => edge.source === bridge.id && edge.sourceHandle === 'commands'
-      && edge.target === wait.id && edge.targetHandle === 'commands'))
-    assert.ok(graph.edges.some((edge: any) => edge.source === wait.id && edge.sourceHandle === 'context'
-      && edge.target === review.id && edge.targetHandle === 'context'))
+    path.join(repositoryRoot, `etc/cognitive-graphs/${name}-mode.json`), 'utf8'))
+  for (const name of ['environment', 'boredom-autonomy']) {
+    const graph = readGraph(name)
+    const active = graph.nodes.filter((node: any) => node.data?.nodeType === 'environment_active_task')
+    assert.equal(active.length, 1)
+    assert.equal(graph.nodes.some((node: any) => node.data?.nodeType === 'environment_send_action'), false)
+    assert.equal(graph.nodes.some((node: any) => node.data?.properties?.graph === 'robot-action-result'), false)
+    const parser = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_action_parser')
+    assert.ok(graph.edges.some((edge: any) => edge.source === parser.id && edge.sourceHandle === 'program'
+      && edge.target === active[0].id && edge.targetHandle === 'program'))
   }
-
-  const resultTypes = resultGraph.nodes.map((node: any) => node.data?.nodeType)
-  assert.equal(resultTypes.filter((type: string) => type === 'model_router').length, 1)
-  assert.equal(resultTypes.filter((type: string) => type === 'robot_status_out').length, 1)
-  assert.equal(resultTypes.filter((type: string) => type === 'environment_action_context_input').length, 1)
-  assert.equal(
-    resultGraph.nodes.find((node: any) => node.data?.nodeType === 'environment_action_context_input')?.data?.label,
-    'Verify Matched Sent Action',
-  )
-  assert.equal(resultTypes.includes('environment_send_action'), false)
-  assert.equal(resultTypes.includes('robot_operator_environment_dispatch'), false)
-
-  const resultPolicy = resultGraph.nodes.find((node: any) => node.data?.label === 'Action Result Interpretation Task')
-  assert.match(resultPolicy?.data?.properties?.message, /use response for one concise, natural sentence/i)
-  assert.equal(resultGraph.edges.some((edge: any) => (
-    edge.source === 'parser'
-    && edge.sourceHandle === 'response'
-    && edge.target === 'conversation'
-    && edge.targetHandle === 'response'
-  )), true)
-
+  const activeGraph = readGraph('robot-active-task')
+  assert.deepEqual(activeGraph.nodes.map((node: any) => node.data.nodeType).sort(),
+    ['environment_active_task_step', 'environment_active_task_wait'])
+  assert.equal(fs.existsSync(path.join(repositoryRoot, 'etc/cognitive-graphs/robot-action-result-mode.json')), false)
+  const reviewGraph = readGraph('robot-goal-review')
   const reviewTypes = reviewGraph.nodes.map((node: any) => node.data?.nodeType)
   assert.equal(reviewTypes.filter((type: string) => type === 'model_router').length, 1)
   assert.equal(reviewTypes.filter((type: string) => type === 'robot_status_out').length, 1)
@@ -932,22 +905,6 @@ test('Robot task lifecycle waits and reviews as explicit children instead of sta
     && edge.target === 'prompt-out'
     && edge.targetHandle === 'decision'
   )), true)
-
-  const interpreted = await robotActionResultParserNode.execute({
-    response: JSON.stringify({
-      response: '',
-      taskDecision: {
-        overallObjectiveState: 'not_achieved',
-        reason: 'The requested turn completed, but the target is not visible.',
-        requiredCompletionBasis: 'visual_observation',
-        observationSummary: 'The new view contains no visible cat.',
-        completionEvidence: '',
-      },
-    }),
-    execution: { task: { objective: 'Find the cat.' } },
-  }, {})
-  assert.equal(interpreted.taskDecision.objectiveComplete, false)
-  assert.equal('decision' in interpreted, false)
 
   const reviewed = await robotGoalReviewParserNode.execute({
     response: JSON.stringify({

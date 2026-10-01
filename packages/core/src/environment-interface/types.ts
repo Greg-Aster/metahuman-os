@@ -321,6 +321,16 @@ export interface EnvironmentAction {
   text?: string;
   vector?: { x?: number; y?: number; z?: number };
   direction?: 'forward' | 'back' | 'left' | 'right';
+  continuous?: boolean;
+  speed?: number;
+  stride?: number;
+  rate?: number;
+  gait?: 'walk' | 'crawl' | 'run' | 'crab';
+  forward?: number;
+  turn?: number;
+  /** Internal update of the admitted motion, never a new model-selected action. */
+  movementUpdate?: { actionId: string; revision: number; controls: Record<string, number> };
+
   command?: string;
   units?: number;
   amount?: number;

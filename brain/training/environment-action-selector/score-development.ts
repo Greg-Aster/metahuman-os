@@ -56,11 +56,13 @@ function rawRecord(value: unknown): Record<string, unknown> | null {
 
 function rawSelection(value: unknown): string {
   const record = rawRecord(value)
-  const actions = Array.isArray(record?.actions) ? record.actions : []
-  const action = actions.find(candidate => candidate && typeof candidate === 'object') as Record<string, unknown> | undefined
+  const program = record?.program as { steps?: Array<{ kind: string; action?: Record<string, unknown> }> } | undefined
+  const step = program?.steps?.[0]
+  const action = step?.action
   if (action?.type === 'robotCommand') return `robotCommand:${typeof action.command === 'string' ? action.command : ''}`
   if (typeof action?.type === 'string') return action.type
-  if (record?.movementRequest && typeof record.movementRequest === 'object') return 'movementRequest:body_local'
+  if (step?.kind === 'generatedMotion') return 'generatedMotion:body_local'
+  if (step?.kind === 'behavior') return 'behavior'
   return 'none'
 }
 
@@ -95,7 +97,7 @@ function decisionView(value: unknown): DecisionView | null {
 
 function isPhysicalSelection(selection: string): boolean {
   return selection.startsWith('robotCommand:')
-    || selection.startsWith('movementRequest:')
+    || selection.startsWith('generatedMotion:')
     || selection === 'visualApproach'
 }
 

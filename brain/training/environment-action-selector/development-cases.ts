@@ -73,8 +73,7 @@ function complete(response: string, basis: 'response' | 'environment_state' | 'v
   void basis;
   return {
     response,
-    actions: [],
-    movementRequest: null,
+    program: null,
     taskDecision: null,
   };
 }
@@ -87,8 +86,7 @@ function completeObjective(
 ): EnvironmentModelOutput {
   return {
     response,
-    actions: [],
-    movementRequest: null,
+    program: null,
     taskDecision: {
       objective,
       completionCriteria: objective,
@@ -109,9 +107,9 @@ function namedAction(
 ): EnvironmentModelOutput {
   return {
     response,
-    actions: [{ type: 'robotCommand', command }],
-    movementRequest: null,
-    taskDecision: null,
+    program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command } }] },
+    taskDecision: { objective: `Perform ${command}.`, completionCriteria: `The ${command} command completes.`,
+      outcome: 'act', reason: 'The explicit instruction selects this advertised effect.', continuationPolicy: 'none', requiredCompletionBasis: 'action_result', motionClass },
   };
 }
 
@@ -123,8 +121,7 @@ function advertisedObjectiveStep(
 ): EnvironmentModelOutput {
   return {
     response,
-    actions: [{ type: 'robotCommand', command }],
-    movementRequest: null,
+    program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command } }] },
     taskDecision: {
       objective,
       completionCriteria: objective,
@@ -142,17 +139,16 @@ function advertisedObjectiveStep(
 function generatedMovement(description: string): EnvironmentModelOutput {
   return {
     response: 'Preparing the requested off-script body motion.',
-    actions: [],
-    movementRequest: { description },
-    taskDecision: null,
+    program: { steps: [{ kind: 'generatedMotion', description }] },
+    taskDecision: { objective: description, completionCriteria: 'The generated motion completes.', outcome: 'act',
+      reason: 'The explicit instruction requests this novel body movement.', continuationPolicy: 'none', requiredCompletionBasis: 'action_result', motionClass: 'body_local' },
   };
 }
 
 function capture(): EnvironmentModelOutput {
   return {
     response: 'Requesting one fresh camera frame.',
-    actions: [{ type: 'captureImage' }],
-    movementRequest: null,
+    program: { steps: [{ kind: 'action', action: { type: 'captureImage' } }] },
     taskDecision: {
       objective: 'Answer the current request using a fresh camera frame.',
       completionCriteria: 'A fresh camera frame has been interpreted to answer the visual question.',
@@ -532,8 +528,7 @@ const targetObservation = observation({
 });
 add('target-relative', 'high', ['Move closer to the selected visible target.', 'Approach the currently selected object.', 'Use visual feedback to move toward the selected target.', 'Get closer to the frame-bound target.'], {
   response: 'Starting a feedback-controlled visual approach.',
-  actions: [{ type: 'visualApproach', visualTarget: target }],
-  movementRequest: null,
+  program: { steps: [{ kind: 'action', action: { type: 'visualApproach', visualTarget: target } }] },
   taskDecision: {
     objective: 'Move closer to the visible object.',
     completionCriteria: 'Correlated visual evidence confirms a closer viewpoint of the object.',
@@ -812,8 +807,7 @@ for (let fold = 0; fold < 4; fold += 1) {
     `Use the advertised target-relative action for selected target ${fold}.`,
   ), {
     response: 'Starting a feedback-controlled visual approach.',
-    actions: [{ type: 'visualApproach', visualTarget }],
-    movementRequest: null,
+    program: { steps: [{ kind: 'action', action: { type: 'visualApproach', visualTarget } }] },
     taskDecision: {
       objective: `Approach sanitized target ${fold}.`,
       completionCriteria: `Correlated visual evidence confirms a closer viewpoint of target ${fold}.`,

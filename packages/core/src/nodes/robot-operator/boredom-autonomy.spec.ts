@@ -30,7 +30,6 @@ const { ConversationHistoryNode } = await import('../context/conversation-histor
 const { TextInputNode } = await import('../input/text-input.node.js');
 const { ModelRouterNode } = await import('../llm/model-router.node.js');
 const {
-  robotActionResultContextNode,
   robotAutonomyControllerContextNode,
   robotAutonomyExecutorContextNode,
   robotAutonomyPlannerContextNode,
@@ -365,7 +364,7 @@ test('Robot Operator context consolidates separate instructions, conversation, i
   assert.equal(result.context.innerContextCount, 1);
   assert.equal(result.context.personaIncluded, true);
   assert.equal(result.context.memoryContextCount, 1);
-  assert.ok(result.jsonSchema.anyOf[0].properties.taskDecision.anyOf[1].required.includes('objective'));
+  assert.ok(result.jsonSchema.anyOf.find((branch: any) => branch.properties.program.type === 'object').properties.taskDecision.required.includes('objective'));
   assert.equal(result.messages[0]?.content, instruction);
   assert.doesNotMatch(String(result.messages[0]?.content), /curious: high|blue ball/i);
   assert.equal(result.messages.length, 2);
@@ -659,9 +658,9 @@ test('Robot Autonomy Executor context carries trigger, semantic memory, delegate
     },
   );
   const consequenceBranches = (result.jsonSchema as any).anyOf;
-  const physicalBranch = consequenceBranches.find((branch: any) => branch.properties.actions.minItems === 1);
-  const generatedMovementBranch = consequenceBranches.find((branch: any) => branch.properties.movementRequest.type === 'object');
-  const taskDecision = physicalBranch.properties.taskDecision.anyOf[1];
+  const physicalBranch = consequenceBranches.find((branch: any) => branch.properties.program.type === 'object');
+  const generatedMovementBranch = physicalBranch.properties.program.properties.steps.items.anyOf.find((step: any) => step.properties.kind.const === 'generatedMotion');
+  const taskDecision = physicalBranch.properties.taskDecision;
   assert.equal('presentation' in taskDecision.properties, false);
   assert.equal(taskDecision.required.includes('actionPurpose'), false);
   assert.equal(taskDecision.required.includes('motionClass'), false);
@@ -670,24 +669,24 @@ test('Robot Autonomy Executor context carries trigger, semantic memory, delegate
   assert.equal('escalation' in taskDecision.properties, false);
   assert.equal(taskDecision.properties.outcome.enum.includes('escalate'), false);
   assert.equal(taskDecision.properties.objective.minLength, 1);
-  const actionBranches = physicalBranch.properties.actions.items.anyOf;
+  const actionBranches = physicalBranch.properties.program.properties.steps.items.anyOf.find((step: any) => step.properties.kind.const === 'action').properties.action.anyOf;
   const commandBranch = actionBranches.find((branch: any) => (
     branch.properties.type.enum.includes('robotCommand')
   ));
   assert.deepEqual(commandBranch.properties.command.enum, ['walk', 'wave', 'stop']);
   assert.equal(taskDecision.required.includes('actionPurpose'), false);
   assert.ok(generatedMovementBranch);
-  assert.equal(consequenceBranches.length, 2);
+  assert.equal(consequenceBranches.length, 1);
   assert.ok(taskDecision.properties.outcome.enum.includes('continue'));
   assert.ok(taskDecision.properties.outcome.enum.includes('act'));
   for (const branch of consequenceBranches) {
-    assert.deepEqual(branch.properties.taskDecision.anyOf[0], { type: 'null' }, 'An action does not require a new objective');
-    assert.ok(branch.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('continue'));
-    assert.equal(branch.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('complete'), false);
+    assert.equal(branch.properties.taskDecision.type, 'object', 'Every physical program carries its objective');
+    assert.ok(branch.properties.taskDecision.properties.outcome.enum.includes('continue'));
+    assert.equal(branch.properties.taskDecision.properties.outcome.enum.includes('complete'), false);
     assert.equal(branch.properties.response.type, 'string');
   }
-  assert.match(physicalBranch.properties.actions.description, /implements the intended effect/i);
-  assert.match(generatedMovementBranch.properties.movementRequest.description, /not implemented by an advertised action/i);
+  assert.equal(physicalBranch.properties.program.properties.steps.minItems, 1);
+  assert.equal(generatedMovementBranch.properties.description.minLength, 1);
 });
 
 test('Robot Autonomy context admits only the routes selected for an internal intention', async () => {
@@ -737,8 +736,7 @@ test('Robot Autonomy context admits only the routes selected for an internal int
     serialized,
     /UNSELECTED_CONVERSATION|UNSELECTED_REFLECTION|UNSELECTED_ACTION_HISTORY|UNSELECTED_MEMORY|UNSELECTED_STATUS|data:image/,
   );
-  assert.ok((result.jsonSchema as any).anyOf.every((branch: any) => branch.properties.actions.maxItems === 0));
-  assert.ok((result.jsonSchema as any).anyOf.every((branch: any) => branch.properties.movementRequest.type === 'null'));
+  assert.ok((result.jsonSchema as any).anyOf.every((branch: any) => branch.properties.program.type === 'null'));
 });
 
 test('Robot Operator context keeps prior action context without treating it as current evidence', async () => {
@@ -767,48 +765,6 @@ test('Robot Operator context keeps prior action context without treating it as c
     'bow',
   );
   assert.equal(supporting.robotOperatorContext.recentActionContext.currentEvidence, false);
-});
-
-test('Robot Action Result context exposes the correlated result as current evidence exactly once', async () => {
-  for (const autonomous of [false, true]) {
-    const observation: any = robotObservation();
-    if (!autonomous) {
-      delete observation.metadata.robotObserver;
-      delete observation.metadata.correlationId;
-    }
-    observation.metadata.actionId = 'current-action';
-    observation.feedback = [{ id: 'matched-report', type: 'completed', actionId: 'current-action',
-      timestamp: observation.timestamp, message: 'Canonical completion receipt' }];
-    const actionContext = {
-      actionId: 'current-action',
-      correlationId: 'cycle-1',
-      status: 'completed',
-      requested: { type: 'robotCommand', command: 'nod' },
-      result: { type: 'completed', message: 'nod completed' },
-    };
-    const inputs = {
-      instruction: 'Interpret the matched result.',
-      observation,
-      robotObserver: observation.metadata.robotObserver,
-      actionContext,
-      execution: { task: null },
-    };
-    const result = await robotActionResultContextNode.execute(inputs, {}, {});
-    assert.equal(result.context.stimulus.verifiedCurrentAction?.requested.command, 'nod');
-    assert.equal(result.context.stimulus.feedback[0]?.id, 'matched-report');
-    assert.equal(result.context.historicalLatestActionIncluded, false);
-    assert.equal(JSON.stringify(result.messages).match(/nod completed/g)?.length, 1);
-    assert.deepEqual(result.jsonSchema.properties.taskDecision, { type: 'null' });
-
-    const objectiveResult = await robotActionResultContextNode.execute({ ...inputs,
-      execution: { task: { objective: 'Observe the doorway.' } } }, {}, {});
-    assert.equal(objectiveResult.jsonSchema.properties.taskDecision.anyOf.length, 2);
-
-    observation.metadata.actionId = 'different-action';
-    const mismatched = await robotActionResultContextNode.execute(inputs, {}, {});
-    assert.equal(mismatched.context.stimulus.verifiedCurrentAction, null,
-      'A shared autonomy cycle must not make a different action current');
-  }
 });
 
 test('Boredom Reflection places sampled memories in the final deliberation input exactly once', async () => {
@@ -856,11 +812,11 @@ test('Robot Operator parser accepts only complete grounded observation decisions
 
   await assert.rejects(robotOperatorDecisionParserNode.execute({
     response: '{"observed":"The room is dark.","instruction":"I want to understand the room.","reason":"The image prompted this interest.","category":"model-authored"}',
-  }, {}), /exactly observed, instruction, and reason/i);
+  }, {}), /requires observed, instruction, and reason/i);
 
   await assert.rejects(robotOperatorDecisionParserNode.execute({
     response: '{"observed":"A doorway is visible.","instruction":"I have chosen a next intention."}',
-  }, {}), /exactly observed, instruction, and reason/i);
+  }, {}), /requires observed, instruction, and reason/i);
 });
 
 test('Robot Operator prepares only a planner-selected child invocation and preserves correlated context', async () => {
@@ -1379,14 +1335,11 @@ test('three boredom planners feed one editable one-pass executor with reusable R
     'robot_autonomy_executor_context',
     'model_router',
     'environment_action_parser',
-    'movement_generator',
-    'environment_send_action',
-    'robot_buffer',
+    'environment_active_task',
     'conversation_buffer',
     'tts',
     'robot_status_out',
     'execution_context',
-    'environment_result_wait',
     'workflow_call',
   ]) {
     assert.ok(autonomyTypes.includes(required), `Robot Autonomy Executor requires ${required}`);
@@ -1491,9 +1444,9 @@ test('three boredom planners feed one editable one-pass executor with reusable R
   assert.match(executivePrompt, /my own prospective intent, not a user request/i);
   assert.match(executivePrompt, /Speech is optional, first-person/i);
   assert.match(executivePrompt, /advertised action whose description implements the intention/i);
-  assert.match(executivePrompt, /taskDecision defines or updates the whole objective separately from this pass/i);
+  assert.match(executivePrompt, /taskDecision defines the whole objective/i);
   assert.match(executivePrompt, /accepting or starting work is not completion/i);
-  assert.match(executivePrompt, /Robot Action Result supplies the evidence from dispatched work/i);
+  assert.match(executivePrompt, /active executor advances from physical receipts without per-movement model review/i);
   assert.doesNotMatch(executivePrompt, /objectiveComplete/);
   assert.match(executivePrompt, /one or two sentences/i);
   assert.ok(autonomy.edges.some((edge: any) => (
@@ -1507,23 +1460,11 @@ test('three boredom planners feed one editable one-pass executor with reusable R
     && edge.target === 'image-input'
     && edge.targetHandle === 'execution'
   )));
-  assert.ok(autonomy.edges.some((edge: any) => (
-    edge.source === 'action-parser'
-    && edge.sourceHandle === 'actions'
-    && edge.target === 'bridge-out'
-    && edge.targetHandle === 'actions'
-  )));
-  assert.ok(autonomy.edges.some((edge: any) => (
-    edge.source === 'bridge-out'
-    && edge.sourceHandle === 'bridgeRecord'
-    && edge.target === 'robot-status-out'
-    && edge.targetHandle === 'bridgeRecord'
-  )));
-  const autonomyBridge = autonomy.nodes.find((node: any) => node.id === 'bridge-out');
-  assert.equal('feedbackGraph' in autonomyBridge.data.properties, false);
-  assert.ok(autonomy.edges.some((edge: any) => edge.source === 'bridge-out' && edge.sourceHandle === 'commands'
-    && edge.target === 'action-results' && edge.targetHandle === 'commands'));
-  assert.equal(autonomy.nodes.find((node: any) => node.id === 'review-action')?.data?.properties?.graph, 'robot-action-result');
+  assert.ok(autonomy.edges.some((edge: any) => edge.source === 'action-parser' && edge.sourceHandle === 'program'
+    && edge.target === 'active-task' && edge.targetHandle === 'program'));
+  assert.equal(autonomyTypes.filter((type: string) => type === 'environment_active_task').length, 1);
+  assert.equal(autonomyTypes.includes('environment_send_action'), false);
+  assert.equal(autonomy.nodes.some((node: any) => node.data?.properties?.graph === 'robot-action-result'), false);
   assert.ok(autonomy.edges.some((edge: any) => (
     edge.source === 'robot-operator-input'
     && edge.sourceHandle === 'responseMetadata'

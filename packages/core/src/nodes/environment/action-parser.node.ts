@@ -132,28 +132,24 @@ export const environmentActionParserNode = defineNode({
   category: 'environment',
   inputs: [
     { name: 'frames', type: 'array', optional: true, description: 'Exact images supplied by the context builder to this model call' },
-    { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
+    { name: 'response', type: 'any', description: 'Structured complete-task selection' },
     { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Default target session' },
     { name: 'robotObserver', type: 'object', optional: true, description: 'Robot Operator cycle from its dedicated input node' },
     { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
   ],
   outputs: [
+    { name: 'program', type: 'object', description: 'Complete task program for the canonical active executor' },
     { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of the task decision' },
-    { name: 'actions', type: 'array', description: 'Parsed environment actions' },
-    { name: 'firstAction', type: 'object', description: 'First parsed action' },
-    { name: 'movementRequest', type: 'object', description: 'Eligible off-script movement request for Movement Generator' },
-    { name: 'movementRequested', type: 'boolean', description: 'Whether the model deliberately requested off-script movement generation' },
     { name: 'taskDecision', type: 'object', description: 'Validated task decision authored by the Environment LLM' },
     { name: 'actionAdmission', type: 'object', description: 'Typed capability-admission result for diagnostics' },
-    { name: 'valid', type: 'boolean', description: 'Whether at least one action was parsed' },
-    { name: 'hasActions', type: 'boolean', description: 'Whether an admitted preset action is ready for Environment Bridge Out' },
+    { name: 'valid', type: 'boolean', description: 'Whether the complete program was admitted' },
     { name: 'hasResponse', type: 'boolean', description: 'Whether the Environment LLM chose to produce conversation text' },
     { name: 'error', type: 'string', description: 'Parser error message' },
     { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
   ],
   description: 'Separates a structured model response into conversational text and validated semantic actions.',
-  async execute(inputs, _context) {
+  async execute(inputs, context) {
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
     const observation = inputs.observation && typeof inputs.observation === 'object'
       ? inputs.observation as EnvironmentObservation
@@ -169,13 +165,16 @@ export const environmentActionParserNode = defineNode({
     if (!validation.value) throw new NodeInputValidationError('response',
       `Environment Action Selector output is invalid: ${validation.errors.join('; ')}`,
     );
-    const validated = validation.value;
+    const continuation = context.activeTaskContinuation as import('../../environment-interface/active-task.js').ActiveTaskContinuation | undefined;
+    const validated = !validation.value.program && continuation && !validation.value.taskDecision?.objectiveComplete
+      ? { ...validation.value, program: continuation.program, taskDecision: validation.value.taskDecision ?? continuation.decision }
+      : validation.value;
     const visualObservation = visualObservationOutput(validated.visualObservation, inputs.frames);
-    const parsed = {
-      ...validated,
-      movementRequest: validated.movementRequest
-        ? { ...validated.movementRequest, motionClass: 'body_local' as const }
-        : null,
+    const phases = validated.program?.steps ?? [];
+    const generated = phases.find(step => step.kind === 'generatedMotion');
+    const parsed = { ...validated,
+      actions: phases.flatMap(step => step.kind === 'action' ? [step.action] : step.kind === 'behavior' ? [step.motion] : []),
+      movementRequest: generated?.kind === 'generatedMotion' ? { description: generated.description, motionClass: 'body_local' as const } : null,
     };
     const motionClass = normalizedEnvironmentMotionClass(parsed.taskDecision?.motionClass)
       ?? (parsed.movementRequest ? 'body_local' : null);
@@ -221,20 +220,13 @@ export const environmentActionParserNode = defineNode({
     }
     const admissionBlocked = Boolean(admissionBlockedReason);
     const requiresGeneratedMovement = !admissionBlocked
-      && motionClass === 'body_local'
       && Boolean(parsed.movementRequest);
-    const movementRequested = Boolean(requiresGeneratedMovement);
     const movementRequest = requiresGeneratedMovement && movementSupported
       ? {
           ...parsed.movementRequest!,
           motionClass: 'body_local' as const,
         }
       : null;
-    const actions = movementRequest
-      ? []
-      : !admissionBlocked
-        ? supportedParsedActions
-        : [];
     const movementError = motionAdmissionMessage(admissionBlockedReason)
       || (requiresGeneratedMovement && !connectedSession
         ? 'The requested robot movement cannot run because no robot session is connected.'
@@ -246,7 +238,7 @@ export const environmentActionParserNode = defineNode({
     // and actionAdmission; this node does not replace model speech with a
     // hard-coded conversational message.
     const response = admissionBlocked ? '' : parsed.response || '';
-    const valid = actions.length > 0 || movementRequest !== null;
+    const valid = !admissionBlocked && Boolean(parsed.program) && (!requiresGeneratedMovement || Boolean(movementRequest));
     const actionAdmission = supportedParsedActions.some(isPhysicalMotionAction) || admissionBlocked
       ? {
           kind: 'environment_action_admission',
@@ -258,15 +250,11 @@ export const environmentActionParserNode = defineNode({
       : null;
     const taskDecision = parsed.taskDecision;
     return {
-      actions,
-      firstAction: actions[0] ?? null,
-      movementRequest,
-      movementRequested,
+      program: valid ? parsed.program : null,
       taskDecision,
       visualObservation,
       actionAdmission,
       valid,
-      hasActions: actions.length > 0,
       hasResponse: Boolean(response.trim()),
       error: valid
         ? ''

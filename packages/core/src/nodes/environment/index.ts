@@ -12,3 +12,4 @@ export { movementGeneratorNode } from './movement-generator.node.js';
 export { environmentSendActionNode } from './send-action.node.js';
 export { environmentSendTextNode } from './send-text.node.js';
 export { environmentResultWaitNode } from './result-wait.node.js';
+export { environmentActiveTaskNode, environmentActiveTaskStepNode, environmentActiveTaskWaitNode } from './active-task.node.js';

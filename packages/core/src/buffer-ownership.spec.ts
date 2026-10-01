@@ -192,7 +192,6 @@ assert.deepEqual(conversationGraphFiles.sort(), [
   'emulation-mode.json',
   'environment-mode.json',
   'response-pipeline.json',
-  'robot-action-result-mode.json',
   'robot-autonomy-controller-mode.json',
   'robot-goal-review-mode.json',
 ]);

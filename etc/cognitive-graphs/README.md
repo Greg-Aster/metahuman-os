@@ -36,12 +36,15 @@ executor and the web editor.
   Review, one controller LLM may select one of those tasks, delegate one
   high-level embodied intention to Robot Autonomy Executor, and optionally
   speak.
-- Boredom Observer, Movement, and Reflection are contextual planner graphs;
-  Robot Autonomy Executor (`boredom-autonomy-mode.json`, stable runtime key
-  `boredom-autonomy`) routes the unchanged internal intention, executes one
-  self-directed consequence, records Robot Status, and ends.
-- `robot-action-result-mode.json` interprets one correlated returned action result
-  and records it in Robot Status without selecting or dispatching another action.
+- Boredom Observer, Movement, and Reflection retain contextual planning. Robot
+  Autonomy Executor (`boredom-autonomy-mode.json`, stable runtime key
+  `boredom-autonomy`) routes the internal intention and authors a full task program.
+- `robot-active-task-mode.json` is the sole physical task executor used by both
+  Environment Mode and the autonomy executor. Its ordered semantic actions,
+  generated gestures and ongoing behaviors run inside the existing durable parent.
+  It updates an ongoing gait from fresh perception while image identification runs
+  as finite Coordinator work. Identification finishes a behavior phase; remaining
+  gestures complete before the whole objective. No per-movement model review runs.
 - `robot-goal-review-mode.json` reviews an unfinished Current Execution objective
   inside the same durable parent after a correlated result. It receives
   conversation and reflection, verified outcomes, Robot Status, bridge facts,

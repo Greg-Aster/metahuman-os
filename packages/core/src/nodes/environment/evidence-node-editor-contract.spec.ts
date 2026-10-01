@@ -72,7 +72,7 @@ test('Matched Sent Action verifies Core-provided context without owning lookup o
       cycleId: 'cycle-1',
       step: 2,
       triggerSource: 'autonomy',
-      graph: 'robot-action-result',
+      graph: 'boredom-observer',
       requestedBy: 'boredom-movement',
     },
   };
