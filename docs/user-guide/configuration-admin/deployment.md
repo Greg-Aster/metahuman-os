@@ -54,6 +54,32 @@ fallbacks, queues, or credential files.
 Remote model execution does not expose the MetaHuman web application. Use the
 tunnel path below when a browser must reach a local installation remotely.
 
+### Q6A robot task placement
+
+The existing durable graph execution and Work Coordinator run task coordination
+on Q6A. Active-task image identification and generated motion plans are finite
+`remote-llm` jobs with explicit `executionTarget: remote` at the model router.
+The provider bridge must dispatch them to a remote provider; the lane name alone
+does not select a backend. These calls neither require local inference health nor
+start a local model or use local Big Brother execution. A missing login, unsupported
+image transport, remote failure or cancellation returns an explicit result to the
+same task. Heavy inference does not run inside the active task's event step.
+
+For a MetaHuman server, connect under **Settings → Backend → Remote Server**
+using the selected profile. The existing credential owner saves its server URL
+and session privately. In `etc/llm-backend.json`, the existing `remote.provider`
+must be `server`; `remote.model` selects the server's vision-capable model. An
+empty model asks that server for its configured default. The server must preserve
+image content and structured output at `/api/llm/chat`. A system URL without the
+profile's authenticated session is insufficient. Keep local backend preferences
+for lightweight work; remote task placement is explicit per call.
+
+Verify the authenticated inference request, selected model and returned evidence
+against the actual server before runtime acceptance. Tests use an isolated HTTP
+server and simulated bodies; they establish dispatch and cancellation contracts,
+not remote model quality, Q6A performance or physical movement. This configuration
+does not provision or deploy a server.
+
 ## Cloudflare tunnel ownership
 
 MetaHuman's built-in tunnel manager currently owns a **locally managed named

@@ -31,6 +31,8 @@ export interface RouterMessage {
 
 export interface RouterCallOptions {
   signal?: AbortSignal;
+  /** Placement required by an asynchronous task; never permits local inference. */
+  executionTarget?: 'remote';
   role: ModelRole;
   messages: RouterMessage[];
   cognitiveMode?: string;
@@ -201,6 +203,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
       messages,
       {
         model: resolved.model,
+        executionTarget: callOptions.executionTarget,
         signal: callOptions.signal,
         temperature: mergedOptions.temperature,
         maxTokens: mergedOptions.maxTokens || mergedOptions.num_predict,

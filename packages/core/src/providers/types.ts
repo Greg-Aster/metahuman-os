@@ -178,6 +178,7 @@ export function inspectProviderMessages(
 
 export interface ProviderOptions {
   signal?: AbortSignal;
+  executionTarget?: 'remote';
   model?: string;
   temperature?: number;
   maxTokens?: number;

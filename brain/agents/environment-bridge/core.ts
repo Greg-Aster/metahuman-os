@@ -42,6 +42,7 @@ const MAX_PENDING_ADAPTER_MESSAGES = 128;
 const DIAGNOSTIC_TELEMETRY_INTERVAL_MS = 1_000;
 const MAX_DIAGNOSTIC_EVENTS_PER_WINDOW = 20;
 const MAX_ACTION_TIMINGS = 256;
+const MOVEMENT_UPDATE_RECEIPT_TIMEOUT_MS = 5_000;
 const AUDIO_UTTERANCE_MAGIC = Buffer.from('AIKAUD01', 'ascii');
 
 interface DiagnosticEvent {
@@ -430,21 +431,41 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       });
     };
 
-    const movementUpdates = new Map<string, string>();
+    const movementUpdates = new Map<string, { requestId: string; sessionId: unknown; timer?: ReturnType<typeof setTimeout>; unknown: boolean }>();
+    const uncertainUpdate = async (pending: { requestId: string; timer?: ReturnType<typeof setTimeout>; unknown: boolean }, reason: string) => {
+      clearTimeout(pending.timer);
+      if (pending.unknown) return;
+      pending.unknown = true;
+      await reportActionDelivery(pending.requestId, reason, 'acceptance');
+    };
     const sendAction = async (action: Record<string, unknown>) => {
       const actionId = typeof action.id === 'string' ? action.id : '';
       if (action.movementUpdate) {
         const update = action.movementUpdate as { actionId: string; revision: number; controls: Record<string, number> };
         const state = latestObservation?.state;
         const owner = state?.activeMovementUpdates as Record<string, unknown> | undefined;
-        movementUpdates.set(`${update.actionId}:${update.revision}`, actionId);
+        const key = `${update.actionId}:${update.revision}`;
+        const pending = { requestId: actionId, sessionId: action.sessionId, unknown: false,
+          timer: undefined as ReturnType<typeof setTimeout> | undefined };
+        if (owner?.version !== 1 || owner.available !== true) {
+          await reportActionDelivery(actionId, 'Active steering v1 is unsupported or unavailable on this body session', 'prepare');
+          return;
+        }
+        movementUpdates.set(key, pending);
+        pending.timer = setTimeout(() => {
+          void uncertainUpdate(pending, 'Steering acknowledgement timed out; reconcile delivery before another update').catch(error => {
+            connectionFailure = error;
+            websocket.close(1011, 'steering receipt delivery failed');
+          });
+        }, MOVEMENT_UPDATE_RECEIPT_TIMEOUT_MS);
         try {
           sendMessage({ type: 'environment.action.update', version: 1, sessionId: action.sessionId,
             gatewayInstance: owner?.gatewayInstance, robotId: owner?.robotId, epoch: owner?.epoch,
             actionId: update.actionId, bodyLease: action.bodyLease, revision: update.revision,
             validForMs: owner?.maxValidityMs, controls: update.controls });
         } catch (error) {
-          movementUpdates.delete(`${update.actionId}:${update.revision}`);
+          clearTimeout(pending.timer);
+          movementUpdates.delete(key);
           await reportActionDelivery(actionId, (error as Error).message, 'send');
         }
         return;
@@ -846,14 +867,19 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           }
           if (message.type === 'environment.action.update.result') {
             const key = `${message.actionId}:${message.revision}`;
-            const requestId = movementUpdates.get(key);
-            if (requestId) {
-              movementUpdates.delete(key);
+            const pending = movementUpdates.get(key);
+            if (pending && message.version === 1 && message.sessionId === pending.sessionId && typeof message.status === 'string'
+              && ['acknowledged', 'rejected', 'outcome_unknown'].includes(message.status)) {
+              clearTimeout(pending.timer);
+              if (message.status === 'outcome_unknown') pending.unknown = true;
+              else movementUpdates.delete(key);
               await postJson(config, '/api/environment-bridge/action-result', {
-                id: `update:${requestId}`, timestamp: message.timestamp,
-                type: message.status === 'acknowledged' ? 'completed' : message.status === 'outcome_unknown' ? 'outcome_unknown' : 'failed',
-                actionId: requestId, message: message.message, data: { movementUpdate: message },
+                id: `update:${pending.requestId}:${message.status}`, timestamp: message.timestamp,
+                type: message.status === 'acknowledged' ? 'completed' : message.status === 'outcome_unknown' ? 'outcome_unknown' : 'rejected',
+                actionId: pending.requestId, message: message.message, data: { movementUpdate: message },
               });
+            } else if (pending) {
+              await uncertainUpdate(pending, 'Invalid or mismatched steering v1 reply; delivery remains uncertain');
             }
             return;
           }
@@ -979,6 +1005,9 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       reportActionDelivery(actionId, 'environment adapter disconnected before acceptance was confirmed', 'acceptance')
     )));
     awaitingAdapterAcceptance.clear();
+    await Promise.all([...movementUpdates.values()].map(pending => uncertainUpdate(pending,
+      'Environment adapter disconnected before steering acknowledgement; reconcile delivery before another update')));
+    movementUpdates.clear();
     audioVisualJoin.close();
     if (diagnosticTimer) clearInterval(diagnosticTimer);
     await audioQueue;

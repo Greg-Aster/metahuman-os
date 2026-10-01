@@ -1,6 +1,6 @@
 # Robot Active Operator Roadmap
 
-Status: active product roadmap; source reconciled 2026-09-01
+Status: active product roadmap; task execution source reconciled 2026-10-01
 
 This roadmap describes intended Robot Active Operator outcomes and the evidence
 required to accept them. It is not architecture authority and does not authorize
@@ -33,15 +33,17 @@ observation, and physical result.
 ```text
 Active Operator mode
   -> Robot Operator service timing and admission
-  -> Robot Goal Review for one unresolved correlated result, otherwise Robot Autonomy Controller
-  -> one catalog-backed finite agent or one-pass Robot Autonomy Executor
-  -> Environment selector and specialized evidence inputs
+  -> one contextual Robot Autonomy Controller, or an existing execution's saved wait
+  -> one catalog-backed finite agent or Robot Autonomy Executor
+  -> Environment intent routing, selector and specialized evidence inputs
+  -> environment_active_task in the same durable execution
+  -> asynchronous remote perception/motion-generation through the same Work Coordinator
   -> Environment Bridge transport
   -> Ainekio body runtime and safety
   -> correlated result and fresh observation
-  -> one-pass Robot Action Result evaluation
-  -> Robot Status Out task and action update
-  -> later Robot Goal Review when the result records the objective as incomplete or failed
+  -> correlated active-task phase result and required completion evidence
+  -> Robot Status Out projection
+  -> existing task-level Robot Goal Review for an unfinished objective
 ```
 
 The maintained owners are:
@@ -51,13 +53,13 @@ The maintained owners are:
 | Reactive, Semi, and Full mode transitions | `packages/core/src/active-operator/mode-controller.ts` |
 | Full-mode completion-driven admission | `brain/services/robot-operator.ts` |
 | Finite-work ordering and execution admission | `packages/core/src/queue/queue-system.ts` |
-| Semi Robot Status, Goal Review, and boredom timing; Full result-review/controller admission | `brain/services/robot-operator.ts` |
+| Semi workflow timing and Full saved-wait/controller admission | `brain/services/robot-operator.ts` |
 | Full contextual task selection | `etc/cognitive-graphs/robot-autonomy-controller-mode.json` |
 | Reusable profile-resolved situational snapshot | `packages/core/src/robot-status.ts` and `etc/cognitive-graphs/robot-status-mode.json` |
 | Contextual autonomous intentions | `boredom-observer-mode.json`, `boredom-movement-mode.json`, and `boredom-reflection-mode.json` |
-| One-pass autonomous action selection and execution | `etc/cognitive-graphs/boredom-autonomy-mode.json` |
+| Autonomous complete-program selection and shared execution | `etc/cognitive-graphs/boredom-autonomy-mode.json` and `robot-active-task-mode.json` |
 | Reactive user-instruction execution | `etc/cognitive-graphs/environment-mode.json` |
-| Correlated result interpretation | `etc/cognitive-graphs/robot-action-result-mode.json` |
+| Correlated phase results, steering state and asynchronous evidence | `packages/core/src/nodes/environment/active-task.node.ts` |
 | Later persona-guided goal outcome and continuation review | `etc/cognitive-graphs/robot-goal-review-mode.json` |
 | Objective continuity and persisted status | `packages/core/src/robot-status.ts` and `packages/core/src/nodes/robot-status/out.node.ts` |
 | Terminal feedback correlation and visual frame selection | `feedback.node.ts` and `image-input.node.ts` |
@@ -74,11 +76,11 @@ bridge, or retry loop around these owners.
 | Area | Current source state | Evidence still required |
 | --- | --- | --- |
 | Active Operator modes | Implemented in the mode controller and coordinator contracts | Current-build runtime transition and suppression evidence |
-| Robot Operator admission | Registered as a persistent service; Semi owns five workflow timers; Full admits one Goal Review for an unresolved correlated result and otherwise the finite autonomy controller | Current-build Agent Monitor and queue admission evidence |
+| Robot Operator admission | Registered as a persistent service; Semi owns configured workflow timers; Full signals saved waits and otherwise admits the finite autonomy controller | Current-build Agent Monitor and queue admission evidence |
 | Robot Status | Implemented as one bounded graph and profile-resolved snapshot owner | Current profile read/write and downstream-consumption evidence |
-| Boredom planning | Three separate planner graphs feed one-pass Robot Autonomy Executor runs | Repeated runtime cycles proving no competing execution path |
-| Environment execution | Environment Mode and Robot Autonomy Executor choose one action; Robot Action Result evaluates returned evidence once | Success, explicit failure, cancellation, and repeated-invocation evidence |
-| Goal continuation | Robot Goal Review reads bounded status, dialogue, reflection, verified action outcomes, bridge facts, active desires, persona, and current camera evidence; in Full mode the admission owner invokes it once for an unresolved correlated result | Semi timer and Full lifecycle-routing evidence |
+| Boredom planning | Existing contextual planner graphs feed the shared program executor | Repeated runtime cycles proving no competing execution path |
+| Environment execution | Environment Mode and Robot Autonomy Executor select one complete ordered program; active-task nodes consume correlated physical and remote perception results | Simulated success, failure, cancellation, reordered replies and dispatch regressions; installed runtime and physical evidence remain separate |
+| Goal continuation | The existing task-level Robot Goal Review receives unfinished objectives and explicit failure or perception evidence within the same execution | Semi timer and Full lifecycle-routing evidence |
 | Environment transport | One Environment Bridge service owns the external connection | Authenticated adapter connection and correlated round-trip evidence |
 | Physical behavior | Body runtime owns device-specific execution and safety | Fresh, correlated physical observation for each claimed behavior |
 
@@ -93,11 +95,11 @@ it must not be presented as proof of the current build without a fresh retest.
 
 - Keep the five Robot Operator child workflows registered through the existing
   Agent Catalog and Work Coordinator.
-- Keep planner graphs contextual; Robot Autonomy Executor performs one action and
-  never owns its own continuation.
+- Keep planner graphs contextual; Robot Autonomy Executor delegates its complete
+  selected program to the existing durable active-task owner.
 - Keep feedback correlation and image selection in their specialized Environment
-  nodes. Robot Action Result interprets one return, Robot Status Out persists it,
-  and a later Robot Goal Review owns any completion, deferral, abandonment, or continuation decision.
+  nodes and active-task state. Robot Status Out projects the result; the existing
+  task-level Goal Review owns any remaining cognitive continuation decision.
 - Reject unsupported capabilities, malformed results, missing correlations, and
   exhausted action budgets explicitly.
 - Remove superseded nodes, graph wiring, configuration, tests, and documentation

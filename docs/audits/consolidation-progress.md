@@ -3782,3 +3782,139 @@ Missing-buffer follow-up:
   Kokoro assets and preferences are retained during evaluation. Robot rendering
   remains Kokoro-only; no physical delivery is claimed. Details:
   [Kitten integration](2026-09-30-kitten-tts.md).
+
+## 2026-10-01 — Active robot task receipts and remote evidence
+
+The initial handoff authorized implementation and simulated testing only.
+No commit, push, merge, deployment, flashing or physical movement was performed
+at that stage. The Owner subsequently requested publication of the local fixes
+to `dev`; machine-specific backend preferences and runtime outputs remain local.
+Read the repository authorities and Ainekio's supplied `docs/AGENT_PREP.md` before
+repairing the existing durable active-task owner.
+
+Starting state and reconciliation:
+
+- MetaHuman local `main` and fetched `origin/dev`:
+  `3445379711a58c2360928e700d418728e839bd4b`; `origin/main`:
+  `c3f56d41dfb396cd68391d12a2910aee8c32870b`.
+- Ainekio local `main` and `origin/dev`:
+  `022bda54ebd97711d656313513d29c3a80bb3f28`. Its existing dirty files were
+  inspected and preserved; that repository's source was not edited.
+- MetaHuman's only initial change was `etc/llm-backend.json`, selecting the local
+  llama.cpp/Qwen backend. Preserved it without modifying it for this repair.
+  The existing remote provider is `server`, with a privately saved server URL
+  and no selected remote model.
+- Older speech/catalog patches were reconciled against the owners already
+  consolidated in `62a28f7e`, `dc2d18c5` and `34453797`. The older autostash
+  `2110ebc9` was not reapplied or deleted; no parallel speech or catalog path was
+  introduced.
+- The original environment-perception suite passed 11 tests. New state
+  regressions then failed six tests before repair. Remote-handler regressions
+  separately established dropped structured-output schema and incorrect
+  `default` model forwarding (two failures), and a transport regression proved
+  that a local text-only role incorrectly rejected remote vision (one failure).
+
+Contract and canonical repair:
+
+- The Owner confirmed existing steering v1: original motion, session, gateway
+  instance, robot, epoch, body lease and increasing revision; one update in
+  flight. Replies correlate to session, motion and revision. Acknowledgement
+  means accepted controls, not verified physical movement. Unknown delivery
+  blocks another update or replacement until reconciled; emergency stop and
+  P4 physical limits retain their existing owners.
+- `active-task.node.ts` and `active-task.ts` now separate desired, pending and
+  acknowledged controls in the existing checkpoint. Preserve failed, expired,
+  unsupported and unknown results and explicit reasons for model consumption.
+  Correlation and terminal-state checks reject duplicate, reordered, unrelated
+  and cancelled work. A late acknowledgement reconciles only its pending
+  controls; it cannot acknowledge newer intent. A later terminal physical
+  receipt is projected as physical evidence without discarding the steering
+  history; a pre-edit regression established that projection defect separately.
+- The existing Brain bridge checks the advertised v1 capability and validates
+  replies. A missing receipt after five seconds, malformed reply or disconnect
+  produces explicit uncertainty. Retain correlation for a late receipt; never
+  turn a settings acknowledgement into the parent motion's completion.
+- A capture receipt records only capture progress. Correlated, fresh image bytes
+  enter the existing asynchronous `environment.identify` job. The remote model
+  evaluates the target and supplied completion criteria, returning positive,
+  negative or ambiguous evidence. Stale and failed perception are explicit.
+  Unfinished objectives return to existing task-level Goal Review; no keyword
+  substitute determines image identity or goal success.
+- Generated motion now uses a finite `environment.generate-motion` job on the
+  same Work Coordinator, invoking the existing movement generator. Inference
+  waits outside the active task's event step; user steering and cancellation
+  remain independently consumable. Invalid generation returns an explicit job
+  failure before any body command is dispatched.
+- The model router/provider bridge uses explicit remote placement, the profile's
+  existing server credential owner and actual authenticated `/api/llm/chat`
+  transport. Remote work bypasses local health/startup and local Big Brother;
+  there is no local inference fallback. The remote model's capability is not
+  inferred from the lightweight local role. The server handler forwards images,
+  structured schema, thinking and cancellation, resolves its configured default
+  model, and fails explicitly when its backend/model is unavailable.
+- Removed pre-acknowledgement `lastControls`/`updateId`, inline motion inference,
+  the duplicate remote-server routing branch, mismatched token/session mapping,
+  credential logging and fabricated server model/provider defaults. Node version
+  2 uses the existing executable-version guard to reject incompatible older
+  checkpoints; no state migration or second execution owner was added.
+- Updated the existing maintained-surface contract, deployment guide and robot
+  roadmap. Reconciled workflow fixtures with model-reviewed visual evidence and
+  the asynchronous generator. Fixed a pre-existing compatibility-test dependency
+  on an absent optional Whisper checkout with its existing simulated JPEG form;
+  malformed and oversized image assertions remain intact.
+
+Validation on the final task changes:
+
+- Workspace typechecks passed for Core, Brain, CLI, agent runtime, local-model
+  service, scripts, tests, maintained React Native and Site. Site diagnostics:
+  369 files, zero errors, warnings or hints. Architecture/remote-safety check:
+  zero violations.
+- Registered `pnpm test:environment-perception`: 41 passed, zero failed,
+  including actual HTTP transport dispatch, remote outage while steering,
+  cancellation, five server-handler contracts and physical-receipt projection.
+- Registered `pnpm test:durable-execution`: 222 passed, zero failed, including
+  restart, cancellation, reordered/duplicate replies, asynchronous generation,
+  approved Desire image evidence, bridge lifecycle and one-execution/no-replay
+  checks. Launcher: eight passed; saved Environment graph contracts: four passed;
+  model defaults and dual-mode graph checks passed.
+- `pnpm verify` exited 1 in `validate:environment-action-selector`: three passed,
+  two failed with `ENOENT` for
+  `out/environment-classifier/training/qwen3.5-0.8b-final-001/final/locked-evaluation-receipt.json`.
+  The loader, corpus tests, held-out lock and selector contract are unchanged
+  from starting `HEAD` (`git diff --exit-code HEAD --` those paths returned 0).
+  This missing, untracked historical training receipt is a separate baseline
+  blocker; no receipt was fabricated and no assertion or validator was weakened.
+- All validators preceding that failure passed. Ran only the unreached remaining
+  checks separately: `pnpm validate:user-agnostic` passed (751 maintained runtime
+  files); `pnpm validate:terminal-lifecycle` passed 22 tests;
+  `pnpm validate:big-brother-session` passed six tests; `pnpm build` exited 0
+  (Site server build, 47.14 seconds, module-chunk warnings). The full aggregate
+  remains failed despite these successful checks.
+- Final read-only Ainekio simulation used its existing virtualenv. The equivalent
+  command from that repository's root is:
+  `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=.:Master:Slave/software:Emulator/tests .venv/bin/python -m unittest Emulator.tests.test_active_movement`.
+  Result: 26 tests passed in 0.916 seconds. No physical device was used.
+- No dedicated lint target exists for the changed Core/Brain/Site owners; used
+  their registered source validators, architecture checker and diff whitespace
+  check rather than adding a linter or dependency.
+- Final affected-symbol/reference review and `git diff --check` passed. Reviewed
+  new test files and the complete task diff; validation logs are ignored under
+  `logs/validation/`. Source changes were uncommitted at the implementation handoff.
+
+Configuration and acceptance limits:
+
+- No machine backend preference, credentials, deployment, service lifecycle or
+  P4 firmware changed. Per-call placement and the registered test command changed;
+  the existing remote server login/model configuration is documented in the
+  deployment guide. An empty remote model selects the remote server's configured
+  default; the server must have an available vision-capable backend.
+- The Owner selected the saved server provisionally; the actual server/model is
+  not finalized. A read-only request to the saved server returned HTTP 530.
+  A final read-only recheck returned the same status. Actual authenticated
+  inference and remote model quality remain blocked, and the missing training
+  receipt separately prevents a passing full verification gate.
+- Software evidence uses isolated profile storage, the real provider HTTP
+  transport, simulated inference responses and simulated body devices. It does
+  not establish Q6A latency/throughput, remote image-understanding quality,
+  physical motion, emergency-stop timing, joint calibration or P4 hardware
+  execution under load. Existing body authority and limits remain unchanged.

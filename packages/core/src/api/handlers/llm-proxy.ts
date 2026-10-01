@@ -6,10 +6,8 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { ProviderInputError } from '../../providers/types.js';
-import { DEFAULT_OLLAMA_CHAT_MODEL } from '../../model-defaults.js';
 // Dynamic imports for LLM functions
 let callProvider: any;
-let loadBackendConfig: any;
 let getBackendStatus: any;
 
 async function ensureLlmFunctions(): Promise<boolean> {
@@ -17,9 +15,8 @@ async function ensureLlmFunctions(): Promise<boolean> {
     const bridge = await import('../../providers/bridge.js');
     const backend = await import('../../llm-backend.js');
     callProvider = bridge.callProvider;
-    loadBackendConfig = backend.loadBackendConfig;
     getBackendStatus = backend.getBackendStatus;
-    return !!(callProvider && loadBackendConfig && getBackendStatus);
+    return !!(callProvider && getBackendStatus);
   } catch (err) {
     console.error('[llm-proxy] Failed to load LLM functions:', err);
     return false;
@@ -72,10 +69,13 @@ export async function handleLlmChat(req: UnifiedRequest): Promise<UnifiedRespons
 
     // Get backend status to determine which provider to use
     const backendStatus = await getBackendStatus();
-    const provider = backendStatus.resolvedBackend || 'ollama';
+    const provider = backendStatus.resolvedBackend;
 
     // Determine model to use
-    const modelToUse = model || backendStatus.model || DEFAULT_OLLAMA_CHAT_MODEL;
+    const modelToUse = model && model !== 'default' ? model : backendStatus.model;
+    if (!provider || !modelToUse) {
+      return { status: 503, error: 'Remote server has no configured and available inference backend or model' };
+    }
 
     console.log(`[llm-proxy] Chat request: provider=${provider}, model=${modelToUse}, messages=${messages.length}`);
 
@@ -92,8 +92,10 @@ export async function handleLlmChat(req: UnifiedRequest): Promise<UnifiedRespons
         temperature: options?.temperature,
         maxTokens: options?.num_predict || options?.max_tokens,
         topP: options?.top_p,
+        format: typeof options?.format === 'string' ? options.format : undefined,
+        jsonSchema: options?.format && typeof options.format === 'object' ? options.format : undefined,
         contextWindow: options?.num_ctx || options?.contextWindow,
-        enableThinking: options?.enableThinking,
+        enableThinking: options?.think ?? options?.enableThinking,
         maxImages: options?.maxImages,
         maxImageBytes: options?.maxImageBytes,
         allowedImageMimeTypes: options?.allowedImageMimeTypes,

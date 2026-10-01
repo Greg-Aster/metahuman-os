@@ -104,7 +104,11 @@ export async function callProvider(
   const contentInspection = inspectProviderMessages(messages, imagePolicy)
   const hasImages = contentInspection.imageCount > 0
   const declaredCapabilities = options.modelCapabilities || []
-  if (hasImages && declaredCapabilities.length > 0
+  // Explicit placement replaces a local role with the configured remote model.
+  // Its image capability is checked by that server/provider, not the local role.
+  const configuredRemote = options.executionTarget === 'remote'
+    && !isRemoteServerProvider(providerName) && !isCloudProvider(providerName)
+  if (hasImages && !configuredRemote && declaredCapabilities.length > 0
     && !declaredCapabilities.some(capability => capability === 'image' || capability === 'vision')) {
     throw new ProviderInputError(`The selected model ${options.model || 'unknown'} is not configured for image input.`)
   }
@@ -131,6 +135,20 @@ export async function callProvider(
       : deploymentConfig.server?.runpod,
     huggingface: deploymentConfig.server?.huggingface,
   };
+
+  // Explicit remote placement and remote role assignments must not probe,
+  // start, or depend on a local model (including local Big Brother execution).
+  if (isRemoteServerProvider(providerName)) {
+    return callRemoteServerProvider(messages, options, onProgress);
+  }
+  if (options.executionTarget === 'remote') {
+    if (isCloudProvider(providerName)) {
+      assertAdapterPreservesImageInput(providerName, contentInspection.imageCount)
+      return callCloudProvider(providerName, messages, options, config, onProgress);
+    }
+    const backend = loadBackendConfig();
+    return callRemoteProvider(messages, { ...options, model: backend.remote?.model || 'default' }, backend, onProgress);
+  }
 
   // =========================================================================
   // BACKEND AVAILABILITY CHECK: Fail fast if no LLM backend is available
@@ -252,31 +270,6 @@ export async function callProvider(
   }
 
   // Route to appropriate handler
-  if (isRemoteServerProvider(providerName)) {
-    // Remote server provider - proxy LLM requests to a connected MetaHuman server
-    // Load credentials from USER PROFILE (not system config) - consistent with other providers
-    const serverCreds = username ? resolveCredentials(username, 'server') : null;
-
-    if (!serverCreds || serverCreds.provider !== 'server') {
-      console.error('[provider-bridge] No remote-server credentials found for user:', username);
-      throw new Error('Remote server not configured. Go to Settings → Backend → Remote Server to connect.');
-    }
-
-    console.log('[provider-bridge] Remote server routing - serverUrl:', serverCreds.endpoint);
-    console.log('[provider-bridge] Remote server routing - has credentials:', !!serverCreds.apiKey);
-
-    // Build config in the format callRemoteServerProvider expects
-    const remoteConfig = {
-      remote: {
-        serverUrl: serverCreds.endpoint,
-        credentials: {
-          token: serverCreds.apiKey,
-        },
-      },
-    };
-    return callRemoteServerProvider(messages, options, remoteConfig as any, onProgress);
-  }
-
   if (isCloudProvider(providerName)) {
     assertAdapterPreservesImageInput(providerName, contentInspection.imageCount)
     return callCloudProvider(providerName, messages, options, config, onProgress);
@@ -388,6 +381,9 @@ async function callRemoteProvider(
   backendConfig: any,
   onProgress?: ProviderProgressCallback
 ): Promise<ProviderResponse> {
+  if (backendConfig.remote?.provider === 'server') {
+    return callRemoteServerProvider(messages, options, onProgress);
+  }
   const inspection = inspectProviderMessages(messages, providerImagePolicyFromOptions(options))
   assertAdapterPreservesImageInput('Remote provider', inspection.imageCount)
   const remoteConfig = backendConfig.remote;
@@ -440,21 +436,13 @@ async function callRemoteProvider(
 async function callRemoteServerProvider(
   messages: ProviderMessage[],
   options: ProviderOptions,
-  backendConfig: any,
   onProgress?: ProviderProgressCallback
 ): Promise<ProviderResponse> {
-  const remoteConfig = backendConfig.remote;
-  if (!remoteConfig?.serverUrl) {
-    throw new Error('No remote server URL configured. Configure in Settings → Backend → Remote Server.');
-  }
-
-  const serverUrl = remoteConfig.serverUrl.replace(/\/$/, '');
+  const username = getUserContext()?.username;
+  const credentials = username ? resolveCredentials(username, 'server') : null;
+  if (!credentials?.endpoint || !credentials.apiKey) throw new Error('Remote server login is unavailable. Connect in Settings → Backend → Remote Server.');
+  const serverUrl = credentials.endpoint.replace(/\/$/, '');
   const model = options.model || 'default';
-
-  console.log('[callRemoteServerProvider] serverUrl:', serverUrl);
-  console.log('[callRemoteServerProvider] remoteConfig:', JSON.stringify(remoteConfig, null, 2));
-  console.log('[callRemoteServerProvider] has credentials:', !!remoteConfig.credentials);
-  console.log('[callRemoteServerProvider] has sessionId:', !!remoteConfig.credentials?.sessionId);
 
   onProgress?.({ phase: 'loading', message: `Connecting to remote server...` });
 
@@ -465,12 +453,7 @@ async function callRemoteServerProvider(
   };
 
   // Use session cookie - obtained via /api/auth/login on connect
-  if (remoteConfig.credentials?.sessionId) {
-    headers['Cookie'] = `mh_session=${remoteConfig.credentials.sessionId}`;
-    console.log('[callRemoteServerProvider] Added session cookie');
-  } else {
-    console.log('[callRemoteServerProvider] NO session - reconnect to remote server required');
-  }
+  headers['Cookie'] = `mh_session=${credentials.apiKey}`;
 
   onProgress?.({ phase: 'running', message: `Generating with remote server (${model})...` });
 
@@ -480,7 +463,7 @@ async function callRemoteServerProvider(
     const llmUrl = `${serverUrl}/api/llm/chat`;
 
     const response = await fetch(llmUrl, {
-      signal: options.signal,
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -490,6 +473,12 @@ async function callRemoteServerProvider(
           temperature: options.temperature,
           num_predict: options.maxTokens,
           top_p: options.topP,
+          format: options.jsonSchema || options.format,
+          num_ctx: options.contextWindow,
+          think: options.enableThinking,
+          maxImages: options.maxImages,
+          maxImageBytes: options.maxImageBytes,
+          allowedImageMimeTypes: options.allowedImageMimeTypes,
         },
       }),
     });
@@ -505,7 +494,8 @@ async function callRemoteServerProvider(
 
     // Handle response from /api/llm/chat endpoint
     // Format: { message: { role, content }, model, done, provider, usage }
-    const content = data.message?.content || data.choices?.[0]?.message?.content || data.content || '';
+    const content = data.message?.content || data.choices?.[0]?.message?.content || data.content;
+    if (typeof content !== 'string' || !content.trim()) throw new Error('Remote server returned no model content');
 
     return {
       content,

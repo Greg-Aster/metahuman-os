@@ -68,6 +68,8 @@ const { loadRobotStatus } = await import('../robot-status.js')
 const { validateSvelteFlowGraph } = await import('../cognitive-graph-schema.js')
 const { invalidateModelCache } = await import('../model-resolver.js')
 const username = 'workflow-fixture'
+const { createUser } = await import('../users.js')
+if (!restartRequest) createUser(username, 'fixture-only-password', 'owner')
 const profile = getProfilePaths(username)
 const { createDefaultPersonaFacetConfig } = await import('../persona-facets.js')
 if (!restartRequest) {
@@ -182,6 +184,12 @@ function goalReview(outcome: 'continue' | 'wait' | 'request_user') {
   return { response: '', outcome, reason: 'The current evidence does not yet establish the target location.',
     requiredCompletionBasis: 'visual_observation', observationSummary: 'The visible floor area does not contain the target.',
     taskId: outcome === 'continue' ? 'robot-autonomy-executor' : 'none', completionEvidence: '', instruction: outcome === 'continue' ? 'Inspect the adjacent area to locate the same fixture target.' : '' }
+}
+
+function goalCompletion(frameId: string) {
+  return { response: '', outcome: 'complete', reason: 'The returned image identifies the target and its location.',
+    requiredCompletionBasis: 'visual_observation', observationSummary: `Target identified in ${frameId}.`,
+    taskId: 'none', instruction: '', completionEvidence: `The target and its location are visible in ${frameId}.` }
 }
 
 const adapterActions = new Map<string, EnvironmentCommandWork[]>()
@@ -310,9 +318,10 @@ test('an equivalent editor save resumes the saved Environment result without rep
           assert.throws(() => store.assertDefinition(executionId, executionDefinition(changed)), /does not match/, change)
         }
         const beforeResumeCalls = calls.length
-          const resumed = await run({ graph: edited, context: context(current), executionId })
+        replies.push(goalCompletion('editor-save-after'))
+        const resumed = await run({ graph: edited, context: context(current), executionId })
         assert.equal(resumed.status, 'completed', resumed.error?.stack)
-        assert.equal(calls.length, beforeResumeCalls, 'Completing a task phase requires no model review')
+        assert.equal(calls.length, beforeResumeCalls + 1, 'Physical completion still requires one model assessment of the visual goal')
         assert.equal(store.task(executionId)?.objectiveId, objectiveId)
         assert.equal(store.task(executionId)?.decision.objectiveComplete, true)
         assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0, 'The earlier action is not replayed')
@@ -390,9 +399,10 @@ test('saved Controller calls the real Executor and resumes its preset action und
       const { action, after } = completeAction(current, 'robotCommand', 'controller-preset-after')
       assert.equal(action.command, 'walk')
       assert.equal(action.executionId, executionId)
+      replies.push(goalCompletion('controller-preset-after'))
       const resumed = await run({ graph: graph('robot-autonomy-controller'), context: controllerContext(after), executionId })
       assert.equal(resumed.status, 'completed', resumed.error?.stack)
-      assert.equal(calls.length, beforeCalls + 3, 'Resuming must not rerun initial decisions or the action')
+      assert.equal(calls.length, beforeCalls + 4, 'Resuming adds only visual goal assessment, without replaying decisions or the action')
       assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-autonomy', 'robot-active-task'])
       assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
       assert.equal(replies.length, 0)
@@ -424,9 +434,10 @@ test('saved Controller selects Observer, waits for its image, then calls Executo
       assert.equal(moved.action.command, 'walk')
       assert.equal(moved.action.executionId, executionId)
       assert.notEqual(moved.action.id, captured.action.id)
+      replies.push(goalCompletion('controller-observer-after'))
       const finished = await run({ graph: graph('robot-autonomy-controller'), context: controllerContext(moved.after), executionId })
       assert.equal(finished.status, 'completed', finished.error?.stack)
-      assert.equal(calls.length, beforeCalls + 4)
+      assert.equal(calls.length, beforeCalls + 5)
       assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-observer', 'boredom-autonomy', 'robot-active-task'])
       const store = openExecutionStore(username)
       try {
@@ -459,8 +470,17 @@ test('saved Environment invokes freestyle only when selected and persists the ge
           continuationPolicy: 'bounded', motionClass: 'body_local' } }, generated)
       const started = await run({ graph: graph('environment'), context: { ...context(current), userMessage: 'Lift and lower a front limb.' } })
       assert.equal(started.status, 'waiting', started.error?.stack)
-      assert.equal(calls.length, beforeCalls + 3, 'The dedicated generator adds one model call only on the freestyle branch')
+      assert.equal(calls.length, beforeCalls + 2, 'Only routing and program selection run in the lightweight graph step')
       const executionId = started.executionId!
+      assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0, 'A pending generation job cannot dispatch physical work')
+      const generation = manager.getAllTasks().find(task => task.handler === 'environment.generate-motion' && task.durable?.executionId === executionId)!
+      assert.ok(generation)
+      assert.ok(manager.claim(generation.id))
+      await (engine as unknown as { execute(task: typeof generation): Promise<void> }).execute(generation)
+      assert.equal(manager.getTask(generation.id)?.state, 'completed', manager.getTask(generation.id)?.error?.message)
+      assert.equal(calls.at(-1)?.options.executionTarget, 'remote')
+      assert.equal(calls.length, beforeCalls + 3, 'The dedicated generator adds one asynchronous model call')
+      assert.equal((await run({ graph: graph('environment'), context: context(current), executionId })).status, 'waiting')
       const { action, after } = completeAction(current, 'robotMotionPlan', 'freestyle-after')
       assert.equal(action.executionId, executionId)
       assert.equal(action.endPose, 'stand')
@@ -565,7 +585,7 @@ test('a new process resumes the saved Controller child wait without reconstructi
       const requestPath = path.join(root, 'process-restart-request.json')
       const outputPath = path.join(root, 'process-restart-result.json')
       fs.writeFileSync(requestPath, JSON.stringify({ root, graphName: 'robot-autonomy-controller',
-        executionId, replies: [], output: outputPath }))
+        executionId, replies: [goalCompletion('process-restart-after')], output: outputPath }))
       const child = spawnSync(process.execPath, ['--experimental-test-module-mocks', '--import', 'tsx', fileURLToPath(import.meta.url)], {
         cwd: repo, env: { ...process.env, METAHUMAN_WORKFLOW_TEST_RESUME: requestPath },
         encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024,
@@ -575,7 +595,7 @@ test('a new process resumes the saved Controller child wait without reconstructi
       const resumed = JSON.parse(fs.readFileSync(outputPath, 'utf8'))
       assert.equal(resumed.status, 'completed', resumed.error)
       assert.equal(resumed.executionId, executionId)
-      assert.equal(resumed.calls.length, 0, 'Physical completion requires no model call after restart')
+      assert.equal(resumed.calls.length, 1, 'Visual goal assessment runs after restart without replaying physical work')
       assert.equal(resumed.physicalJobs, 0, 'The completed movement must not be admitted again')
       assert.equal(resumed.remainingReplies, 0)
       assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-autonomy', 'robot-active-task'])
@@ -773,6 +793,7 @@ test('saved Controller and Goal Review return incomplete executor instructions t
       assert.equal(calls.length, before + 4)
       assertCorrection(calls[before], calls[before + 1], invalidChoice)
       completeAction(current, 'robotCommand', 'choice-correction-after')
+      replies.push(goalCompletion('choice-correction-after'))
       const completed = await run({ graph: graph('robot-autonomy-controller'), context: controllerContext(current), executionId })
       assert.equal(completed.status, 'completed', completed.error?.stack)
       assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-autonomy', 'robot-active-task'])
@@ -797,6 +818,7 @@ test('user and Controller selectors correct rejected programs before dispatch', 
       assert.match(calls.at(-1)!.messages.at(-1).content, /requires a program/)
       assert.equal(calls.length, before + (entry === 'environment' ? 3 : 4))
       const { action } = completeAction(current, 'robotCommand', `corrected-${entry}`)
+      replies.push(goalCompletion(`corrected-${entry}`))
       assert.equal(action.executionId, started.executionId)
       const finished = await run({ graph: graph(entry), context: context(current), executionId: started.executionId })
       assert.equal(finished.status, 'completed', finished.error?.stack)
@@ -842,7 +864,8 @@ test('a no-action objective enters the existing review wait and keeps its criter
         const moving = await run({ graph: graph(entry), context: initialContext, executionId })
         assert.equal(moving.status, 'waiting', moving.error?.stack)
         const completed = completeAction(current, 'robotCommand', `${entry}-objective-after`)
-          const finished = await run({ graph: graph(entry), context: initialContext, executionId })
+        replies.push(goalCompletion(`${entry}-objective-after`))
+        const finished = await run({ graph: graph(entry), context: initialContext, executionId })
         assert.equal(finished.status, 'completed', finished.error?.stack)
         const saved = openExecutionStore(username)
         try {
@@ -895,7 +918,7 @@ test('user input retains one buffer and memory identity across a workflow handof
       const originalMemory = memories()[0]
       completeAction(current, 'robotCommand', 'input-identity-after')
       replies.push( conversationRoutes,
-        { response: 'The movement finished.', program: null,  taskDecision: null })
+        { response: 'The movement finished.', program: null,  taskDecision: null }, goalCompletion('input-identity-after'))
       const finished = await run({ graph: graph('environment'), context: initialContext, executionId })
       assert.equal(finished.status, 'completed', finished.error?.stack)
       assert.deepEqual(entries(), [originalEntry], 'Handoff preserves one admitted entry, including its original timestamp and ID')
@@ -1289,24 +1312,43 @@ for (const satisfied of [true, false]) test(`Desire robot steps stop at outcome 
         planId: plan.id, planVersion: plan.version, stepsCompleted: 0, stepsTotal: 2, stepResults: [] },
     }
     const workflow = validateSvelteFlowGraph(JSON.parse(fs.readFileSync(path.join(root, 'etc/cognitive-graphs/desire-executor.json'), 'utf8')))
+    const inspectArea = (index: number) => ({ response: '',
+      program: { steps: [{ kind: 'action', action: { type: 'captureImage' } }] },
+      taskDecision: { ...presetChoice().taskDecision, objective: plan.steps[index].action,
+        completionCriteria: plan.steps[index].expectedOutcome } })
+    const finishInspection = async (executionId: string, after: EnvironmentObservation) => {
+      const pending = await run({ graph: workflow, executionId, context: { ...context(after), userMessage: '', desire } })
+      assert.equal(pending.status, 'waiting', pending.error?.stack)
+      const perception = manager.getAllTasks().find(task => task.handler === 'environment.identify'
+        && task.durable?.executionId === executionId && task.state === 'queued')!
+      assert.ok(perception, 'Documenting an area requires interpretation of the returned image')
+      assert.ok(manager.claim(perception.id))
+      await (engine as unknown as { execute(task: typeof perception): Promise<void> }).execute(perception)
+      assert.equal(manager.getTask(perception.id)?.state, 'completed', manager.getTask(perception.id)?.error?.message)
+      return run({ graph: workflow, executionId, context: { ...context(after), userMessage: '', desire } })
+    }
+    const inspected = { matchesTarget: true, completionSatisfied: true, outcome: 'positive',
+      description: 'The returned image documents the inspected area.', evidence: 'The area and its contents are visible in the returned frame.' }
     try {
       await saveDesire(desire, username)
       recordEnvironmentObservation(current)
-      replies.push(routes, presetChoice())
+      replies.push(routes, inspectArea(0))
       const alteredInput = structuredClone(desire)
       alteredInput.plan.steps[0].action = 'Unreviewed motion style inserted into a graph input'
       const first = await run({ graph: workflow, context: { ...context(current), userMessage: '', desire: alteredInput } })
       assert.equal(first.status, 'waiting', first.error?.stack)
       const executionId = first.executionId!
-      const firstReceipt = completeAction(current, 'robotCommand', 'desire-area-one', satisfied ? 'completed' : 'failed')
-      if (satisfied) replies.push(routes, presetChoice())
-      const second = await run({ graph: workflow, executionId, context: { ...context(firstReceipt.after), userMessage: '', desire } })
+      const firstReceipt = completeAction(current, 'captureImage', 'desire-area-one', satisfied ? 'completed' : 'failed')
+      if (satisfied) replies.push(inspected, routes, inspectArea(1))
+      const second = satisfied ? await finishInspection(executionId, firstReceipt.after)
+        : await run({ graph: workflow, executionId, context: { ...context(firstReceipt.after), userMessage: '', desire } })
       const afterFirst = await loadDesire(id, username)
       assert.equal(afterFirst?.execution?.stepResults?.length, 1, 'The first receipt is durably retained across the next wait')
       if (satisfied) {
         assert.equal(second.status, 'waiting', second.error?.stack)
-        const secondReceipt = completeAction(firstReceipt.after, 'robotCommand', 'desire-area-two')
-          const end = await run({ graph: workflow, executionId, context: { ...context(secondReceipt.after), userMessage: '', desire } })
+        const secondReceipt = completeAction(firstReceipt.after, 'captureImage', 'desire-area-two')
+        replies.push(inspected)
+        const end = await finishInspection(executionId, secondReceipt.after)
         assert.equal(end.status, 'waiting', end.error?.stack)
       } else {
         assert.equal(second.status, 'waiting', second.error?.stack)

@@ -39,15 +39,24 @@ class FakeWebSocket extends EventEmitter {
       queueMicrotask(() => this.emit('message', JSON.stringify({ type: 'bridge.ready', sessionId: 'robot-session',
         ...((scenario === 'perception' || scenario.startsWith('update')) ? { observation: { environmentId: 'ainekio', adapter: 'ainekio-gateway',
           sessionId: 'robot-session', timestamp: new Date().toISOString(), capabilities: { actions: [] },
-          state: { activeMovementUpdates: { gatewayInstance: 'gateway-fixture', robotId: 'body-fixture', epoch: 7, maxValidityMs: 1000 } } } } : {}) }), false));
+          state: { activeMovementUpdates: { version: 1, available: true, gatewayInstance: 'gateway-fixture', robotId: 'body-fixture', epoch: 7, maxValidityMs: 1000 } } } } : {}) }), false));
     } else if (message.type === 'environment.action.update') {
       wireUpdates.push(message);
       if (scenario === 'update-send') throw new Error('Fixture settings send failed');
-      queueMicrotask(() => this.emit('message', JSON.stringify({
-        type: 'environment.action.update.result', actionId: message.actionId, revision: message.revision,
-        status: scenario === 'update-unknown' ? 'outcome_unknown' : 'acknowledged',
+      if (scenario === 'update-disconnect') { queueMicrotask(() => this.close()); return; }
+      if (scenario === 'update-timeout') return;
+      const receipt = {
+        type: 'environment.action.update.result', version: 1, sessionId: message.sessionId, actionId: message.actionId, revision: message.revision,
+        status: scenario === 'update-unknown' || scenario === 'update-late' ? 'outcome_unknown'
+          : scenario === 'update-rejected' ? 'rejected' : 'acknowledged',
         timestamp: new Date().toISOString(), message: 'Fixture update result', sequence: 12,
-      }), false));
+      };
+      if (scenario === 'update-wrong-session') receipt.sessionId = 'another-body-session';
+      queueMicrotask(() => {
+        this.emit('message', JSON.stringify(receipt), false);
+        if (scenario === 'update-late') this.emit('message', JSON.stringify({ ...receipt, status: 'acknowledged' }), false);
+        if (scenario === 'update-duplicate') this.emit('message', JSON.stringify(receipt), false);
+      });
     } else if (message.type === 'environment.action') {
       sent++;
       if (scenario === 'send') throw new Error('Fixture action socket send failed');
@@ -250,7 +259,8 @@ test('ongoing updates preserve movement identity and lease while receipts finish
   process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'fixture-core';
   process.env.MH_ENVIRONMENT_CORE_URL = 'http://fixture.invalid';
   try {
-    for (scenario of ['update-acknowledged', 'update-unknown', 'update-send']) {
+    for (scenario of ['update-acknowledged', 'update-unknown', 'update-send', 'update-rejected', 'update-disconnect',
+      'update-timeout', 'update-wrong-session', 'update-late', 'update-duplicate']) {
       const controller = new AbortController();
       const results: any[] = [];
       wireUpdates = [];
@@ -264,19 +274,22 @@ test('ongoing updates preserve movement identity and lease while receipts finish
           options?.signal?.addEventListener('abort', () => stream.close(), { once: true });
         } }), { headers: { 'Content-Type': 'text/event-stream' } });
         if (pathname === '/api/environment-bridge/action-result') {
-          results.push(JSON.parse(String(options?.body))); queueMicrotask(() => controller.abort());
+          results.push(JSON.parse(String(options?.body)));
+          if (scenario !== 'update-late' || results.length === 2) queueMicrotask(() => controller.abort());
         }
         return Response.json({ success: true });
       };
-      const timeout = setTimeout(() => controller.abort(new Error('Update fixture timed out')), 5000);
+      const timeout = setTimeout(() => controller.abort(new Error('Update fixture timed out')), 10000);
       try { await runEnvironmentBridgeAgent(controller.signal); } finally { clearTimeout(timeout); }
       assert.equal(wireUpdates.length, 1);
       assert.deepEqual(wireUpdates[0], { type: 'environment.action.update', version: 1, sessionId: 'robot-session',
         gatewayInstance: 'gateway-fixture', robotId: 'body-fixture', epoch: 7, actionId: 'running-walk',
         bodyLease: action.bodyLease, revision: 3, validForMs: 1000, controls: action.movementUpdate.controls });
-      assert.equal(results.length, 1);
+      assert.equal(results.length, scenario === 'update-late' ? 2 : 1);
       assert.equal(results[0].actionId, 'settings-job', 'The original gait cannot complete from a settings receipt');
-      assert.equal(results[0].type, scenario === 'update-acknowledged' ? 'completed' : 'outcome_unknown');
+      assert.equal(results[0].type, ['update-acknowledged', 'update-duplicate'].includes(scenario) ? 'completed'
+        : scenario === 'update-rejected' ? 'rejected' : 'outcome_unknown');
+      if (scenario === 'update-late') assert.equal(results[1].type, 'completed', 'Late correlated acknowledgement must reconcile the uncertain update');
     }
   } finally {
     globalThis.fetch = originalFetch;

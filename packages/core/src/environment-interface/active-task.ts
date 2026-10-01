@@ -10,7 +10,13 @@ export type EnvironmentTaskStep =
       motion: Partial<EnvironmentAction>; candidateLabels: string[];
       identifyEveryFrames: number; steering: { label: string; gain: number } | null }
 export interface EnvironmentTaskProgram { steps: EnvironmentTaskStep[] }
-export interface ActiveTaskIdentification { matchesTarget: boolean; description: string; evidence: string }
+export interface ActiveTaskIdentification {
+  matchesTarget: boolean
+  completionSatisfied: boolean
+  outcome: 'positive' | 'negative' | 'ambiguous'
+  description: string
+  evidence: string
+}
 export interface ActiveTaskContinuation {
   program: EnvironmentTaskProgram
   decision: import('../nodes/environment/helpers.js').EnvironmentTaskDecision
@@ -24,13 +30,24 @@ export interface ActiveTaskState {
   accepted?: boolean
   snapshotId?: string
   identificationEffectId?: string
+  generationEffectId?: string
   image?: EnvironmentVisualFrame
   perception?: EnvironmentPerception
   lastIdentifiedFrame?: number
   identification?: ActiveTaskIdentification
-  updateId?: string
   updateRevision: number
-  lastControls?: string
+  desiredControls?: string
+  acknowledgedControls?: string
+  pendingControls?: { commandId: string; motionId: string; revision: number; controls: string }
+  awaitingReplacement?: boolean
+  steeringResult?: EnvironmentFeedback
+  retrySteering?: boolean
+  captureCompleted?: boolean
+  captureRequestedAt?: string
+  identificationRequest?: { effectId: string; frameId: string; stepIndex: number; gatewayInstance?: unknown; epoch?: unknown; expiresAt?: string }
+  perceptionOutcome?: ActiveTaskIdentification['outcome'] | 'failed' | 'stale'
+  visualCompletionSatisfied?: boolean
+  objectiveComplete?: boolean
   stopId?: string
   done?: boolean
   userInput?: Record<string, unknown>
@@ -47,10 +64,11 @@ export async function identifyActiveTaskImage(input: {
   target: string; objective: string; completionCriteria: string
   image: EnvironmentVisualFrame; perception?: EnvironmentPerception
 }, signal: AbortSignal): Promise<ActiveTaskIdentification> {
+  if (!input.image.dataUrl) throw new Error('Image identification requires the correlated image bytes')
   const response = await callLLM({
-    role: 'orchestrator', cognitiveMode: 'environment', signal,
+    role: 'orchestrator', cognitiveMode: 'environment', signal, executionTarget: 'remote',
     messages: [
-      { role: 'system', content: 'Identify objects of interest for the supplied target and phase criteria from this image. Detector labels are hints and may omit the target. Return matchesTarget, description, and evidence. Describe uncertainty in evidence. You do not command the robot.' },
+      { role: 'system', content: 'Evaluate the supplied target and completion criteria using this image. Detector labels are hints, never evidence of identity. Return matchesTarget, completionSatisfied, outcome (positive, negative, or ambiguous), description, and evidence. Positive requires visible evidence of the target AND satisfaction of the supplied completion criteria. Negative and ambiguous cannot satisfy completion. A capture receipt is not evidence of finding a target. Describe uncertainty explicitly. You do not command the robot.' },
       { role: 'user', content: [
         { type: 'text', text: JSON.stringify({ target: input.target, objective: input.objective,
           completionCriteria: input.completionCriteria, perception: input.perception,
@@ -59,12 +77,17 @@ export async function identifyActiveTaskImage(input: {
       ] },
     ],
     options: { format: 'json', jsonSchema: { type: 'object', additionalProperties: false,
-      required: ['matchesTarget', 'description', 'evidence'], properties: {
+      required: ['matchesTarget', 'completionSatisfied', 'outcome', 'description', 'evidence'], properties: {
         matchesTarget: { type: 'boolean' }, description: { type: 'string' }, evidence: { type: 'string' },
+        completionSatisfied: { type: 'boolean' }, outcome: { type: 'string', enum: ['positive', 'negative', 'ambiguous'] },
       } } },
   })
   const result = JSON.parse(response.content) as ActiveTaskIdentification
-  if (typeof result.matchesTarget !== 'boolean' || typeof result.description !== 'string'
-    || typeof result.evidence !== 'string') throw new Error('Image identification returned an invalid result')
+  if (!result || typeof result.matchesTarget !== 'boolean' || typeof result.description !== 'string' || !result.description.trim()
+    || typeof result.evidence !== 'string' || !result.evidence.trim() || typeof result.completionSatisfied !== 'boolean'
+    || !['positive', 'negative', 'ambiguous'].includes(result.outcome)
+    || (result.outcome === 'positive' ? !result.matchesTarget || !result.completionSatisfied : result.completionSatisfied)) {
+    throw new Error('Image identification returned an invalid or contradictory result')
+  }
   return result
 }

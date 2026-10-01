@@ -1217,10 +1217,8 @@ try {
     id: 'camera-1',
     timestamp: new Date().toISOString(),
     mimeType: 'image/jpeg',
-    dataUrl: `data:image/jpeg;base64,${fs.readFileSync(new URL(
-      '../../../../vendor/whisper.cpp/examples/whisper.android.java/README_files/1.jpg',
-      import.meta.url,
-    )).toString('base64')}`,
+    // The bridge envelope validator needs JPEG markers, not an optional vendor checkout.
+    dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=',
   };
   const malformedImageOutput = await environmentImageInputNode.execute({
     visual: { ...visual, dataUrl: 'data:image/jpeg;base64,/9j/2Q==' },

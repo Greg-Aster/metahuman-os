@@ -103,6 +103,21 @@ The default is intentionally simple: an existing file returned by `git ls-files`
 
 These are the high-risk single-owner constraints that refactor work must preserve. They are not an inventory of every runtime component.
 
+The active-task nodes' version 2 contract separates desired, pending and
+acknowledged steering controls in the existing checkpoint. Steering v1 receipts
+correlate to the original motion, command, revision and session; acceptance does
+not establish physical movement. Failed, unsupported and uncertain outcomes
+remain model-visible, and uncertainty must be reconciled before another update
+or replacement motion. A capture receipt establishes only the capture step:
+the correlated image goes through the existing model router/provider bridge in
+an asynchronous Coordinator job with explicit remote placement. Positive target
+and completion-criteria evidence advances the phase; negative, ambiguous, stale
+and failed perception leaves the objective unfinished for the existing LLM-led
+loop. Generated motion uses that same finite-job path and the existing movement
+generator. No heavy inference blocks the active task's event step. Existing
+durable executable-version checks reject incompatible old checkpoints instead
+of interpreting their pre-acknowledgement steering state as a fresh motion.
+
 - `packages/core/src/terminal/` owns shell sessions, bounded screen state, Claude Code/Codex provider execution, and verified process-session cleanup. `brain/services/terminal.ts` exposes this owner as the on-demand `terminal` Agent Monitor service; its registration defaults disable boot startup and automatic restart. `terminal/client.ts` is the sole cross-process control interface over a private Unix socket, and owner-guarded Core API handlers expose same-origin transport. `apps/site/src/components/terminal/` owns only the mounted display and its connection; hiding it retains sessions, while closing a session or stopping the agent terminates owned work. Provider admission is single-flight before asynchronous initialization. Disabling Big Brother or changing provider must stop the prior session before saving the change. Receipts retain Linux process-session identities until cleanup is confirmed; recovery terminates saved work and never replays commands. There is no ttyd listener, browser-owned shell, detached provider fallback, or terminal-specific subscription while the panel is hidden.
 - `packages/core/src/agent-catalog.ts` owns the merged installed/runtime Agent Catalog; `agent-catalog-definitions.ts` owns built-in identity, aliases, risk, workflow relations, and safe registration defaults. Registration only adds or removes finite Trigger Manager membership and never deletes executable source, logs, history, or admitted work.
 - `packages/core/src/queue/queue-system.ts` owns the server Work Coordinator and its observable TriggerManager runtime. Non-owner processes submit through `packages/core/src/queue/work-submission.ts`; they do not start private coordinators.

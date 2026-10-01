@@ -223,6 +223,13 @@ export class ExecutionEngine {
   }
 
   private registerDefaultHandlers(): void {
+    this.registerHandler('environment.generate-motion', (task, context) => withTaskUserContext(task, async () => {
+      const { movementGeneratorNode } = await import('../nodes/environment/movement-generator.node.js');
+      const result = await movementGeneratorNode.execute(task.input, { username: task.username, userId: task.username,
+        abortSignal: context.signal }, { executionTarget: 'remote' });
+      if (!result.valid) throw new Error(String(result.error || 'Remote motion generation returned no valid plan'));
+      return result;
+    }));
     this.registerHandler('environment.identify', (task, context) => withTaskUserContext(task, async () => {
       const { identifyActiveTaskImage } = await import('../environment-interface/active-task.js');
       return identifyActiveTaskImage(task.input as Parameters<typeof identifyActiveTaskImage>[0], context.signal);

@@ -384,6 +384,7 @@ export const movementGeneratorNode = defineNode({
       const messages = movementGeneratorPrompt(request, instruction, observation);
       const callGenerator = (generatorMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => callLLM({
         signal: context.abortSignal,
+        executionTarget: properties?.executionTarget,
         role: properties?.role || 'orchestrator',
         messages: generatorMessages,
         userId: context.userId || context.username,
