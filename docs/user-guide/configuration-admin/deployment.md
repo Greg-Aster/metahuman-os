@@ -80,6 +80,65 @@ server and simulated bodies; they establish dispatch and cancellation contracts,
 not remote model quality, Q6A performance or physical movement. This configuration
 does not provision or deploy a server.
 
+## Desktop Environment Bridge to a remote Q6A gateway
+
+MetaHuman OS and the Environment Bridge can remain together on the desktop while
+the Ubuntu Q6A runs Ainekio's gateway. The desktop connects outward through a
+Cloudflare Access TCP hostname to the Q6A gateway; no phone or public MetaHuman
+Site tunnel is needed for this connection.
+
+On the Q6A, follow the Ainekio checkout's `Master/gateway/README.md` section
+**Desktop MetaHuman connected to a Q6A through Cloudflare**. Its existing relay
+launcher adds `AINEKIO_CLOUDFLARE_ENVIRONMENT_HOSTNAME` as a TCP route to
+`127.0.0.1:8790` (or the configured gateway port). Create a Cloudflare Access
+application and login policy for that hostname. The existing HTTP `/robot` relay
+is a separate route; an HTTP tunnel to `/environment` is rejected by the gateway.
+
+Install `cloudflared` on the desktop using the
+[official download instructions](https://developers.cloudflare.com/tunnel/downloads/).
+Start the desktop forwarder from this checkout, replacing the hostname:
+
+```bash
+./bin/connect-environment bridge.ainek.io
+```
+
+The command owns only the TCP forwarding process, stays in the foreground, and
+can be launched from a desktop shortcut. It does not start another Bridge or
+change the MetaHuman Site tunnel manager. An optional second argument selects a
+different local port; the default is 18790, allowing a local gateway to continue
+using 8790 during setup.
+
+Configure the desktop's ignored `.env`:
+
+```dotenv
+MH_ENVIRONMENT_ADAPTER_URL=ws://127.0.0.1:18790/environment
+MH_ENVIRONMENT_ADAPTER_TOKEN=<same secret as AINEKIO_ENVIRONMENT_ADAPTER_TOKEN on Q6A>
+MH_ENVIRONMENT_BRIDGE_TOKEN=<desktop internal Bridge service token>
+```
+
+Use the existing internal Bridge token when already configured. Keep all secrets
+out of tracked files and shell command arguments. Restart MetaHuman after changing
+`.env`; Agent Monitor remains the existing service owner. If no
+`MH_ENVIRONMENT_ADAPTER_URL` environment override is set, **Agent Monitor →
+Environment Bridge → Adapter URL** can instead store the forwarding URL. The
+Bridge and Core retain their existing local service connection.
+
+When the Bridge opens the forwarding connection, `cloudflared` launches a browser
+for the Cloudflare Access login. Signing into the Cloudflare administration
+dashboard alone does not authenticate this client. Cloudflare documents this
+[Access TCP browser-login workflow](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/non-http/cloudflared-authentication/arbitrary-tcp/).
+The Q6A connector then opens a loopback socket to the gateway while preserving
+the inner WebSocket request. The gateway's existing adapter-token authentication
+still applies. TCP carries the entire gateway port, including `/robot`; the
+separate dashboard port is not forwarded by this route.
+
+Keep the gateway, Q6A connector, desktop forwarder and MetaHuman running. Use
+Agent Monitor's Environment Bridge state/diagnostics to confirm the gateway
+session and connected robot, then exercise owner-selected commands and the
+needed media paths on the actual machines. Local tests do not establish
+Cloudflare login or physical demo readiness. Cloudflare recommends
+[Client-to-Tunnel for long-lived connections](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/protocols/).
+
 ## Cloudflare tunnel ownership
 
 MetaHuman's built-in tunnel manager currently owns a **locally managed named

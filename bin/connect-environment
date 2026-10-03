@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  echo "Usage: $0 CLOUDFLARE_HOSTNAME [LOCAL_PORT]"
+  echo "Forward Cloudflare Access TCP to a loopback port for the Environment Bridge."
+  echo "LOCAL_PORT defaults to 18790. Keep this command running while using the Bridge."
+  exit 0
+fi
+if (( $# < 1 || $# > 2 )); then
+  echo "Usage: $0 CLOUDFLARE_HOSTNAME [LOCAL_PORT]" >&2
+  exit 2
+fi
+
+hostname="$1"
+local_port="${2:-18790}"
+echo "Environment Bridge adapter URL: ws://127.0.0.1:${local_port}/environment"
+echo "Cloudflare Access login opens in your browser when the Bridge connects."
+exec cloudflared access tcp --hostname "$hostname" --url "127.0.0.1:${local_port}"
