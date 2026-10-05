@@ -189,3 +189,12 @@ export function stopAllAgents(force = false): {
     total: running.length,
   };
 }
+
+export async function waitForProcessExit(pid: number, timeoutMs = 2500): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) return true;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  return !isProcessRunning(pid);
+}

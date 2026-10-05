@@ -10,6 +10,10 @@ import type { BridgeConfig } from './core.js';
 const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-bridge-lifecycle-'));
 assert.equal(fs.realpathSync(isolatedRoot), isolatedRoot);
 process.env.METAHUMAN_ROOT = isolatedRoot;
+fs.mkdirSync(path.join(isolatedRoot, 'etc'), { recursive: true });
+fs.writeFileSync(path.join(isolatedRoot, 'etc/services.json'), JSON.stringify({ services: {
+  'environment-bridge-local': { adapterUrl: 'ws://fixture.invalid/environment' },
+} }));
 globalThis.fetch = async () => { throw new Error('Bridge lifecycle tests prohibit network'); };
 mock.method(Socket.prototype, 'connect', function (this: Socket) {
   queueMicrotask(() => this.destroy(Object.assign(new Error('Test transport disabled'), { code: 'ECONNREFUSED' })));

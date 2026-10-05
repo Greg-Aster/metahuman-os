@@ -9,7 +9,7 @@ import { ensureQueueSystemStarted } from '../../queue/index.js';
 import {
   clearAgentFailure,
   isAgentRunning,
-  isProcessRunning,
+  waitForProcessExit,
   stopAgent,
 } from '../../agent-monitor-registry.js';
 
@@ -74,15 +74,6 @@ async function runAllowedService(agentName: string, args: string[], actor: strin
       error: (error as Error).message,
     };
   }
-}
-
-async function waitForProcessExit(pid: number, timeoutMs = 2500): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isProcessRunning(pid)) return true;
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-  return !isProcessRunning(pid);
 }
 
 /**

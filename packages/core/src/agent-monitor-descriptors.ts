@@ -19,7 +19,7 @@ import type { AgentCatalogItem } from './agent-catalog.js';
 import { AGENT_CATALOG_DEFINITIONS, getAgentCatalogDefinition, type AgentCatalogDefinition } from './agent-catalog-definitions.js';
 
 function monitorKind(definition: AgentCatalogDefinition): AgentKind {
-  if (definition.id === 'environment-bridge') return 'connection';
+  if (definition.id === 'environment-bridge-local' || definition.id === 'environment-bridge-remote') return 'connection';
   if (definition.lifecycle === 'service') return 'service';
   if (definition.id === 'audio-organizer') return 'one-shot';
   if (definition.defaultTrigger?.type === 'manual') return 'manual';
@@ -36,7 +36,7 @@ export const DESCRIPTORS: Record<string, Omit<AgentDescriptor, 'variables'>> = O
     kind: monitorKind(definition),
     startable: true,
     bootEligible: definition.lifecycle === 'service',
-    dependencyNotes: definition.id === 'environment-bridge'
+    dependencyNotes: (definition.id === 'environment-bridge-local' || definition.id === 'environment-bridge-remote')
       ? ['Requires internal and adapter tokens plus a WebSocket adapter URL.']
       : definition.id === 'audio-organizer'
         ? ['Finite audio processing runs through the Work Coordinator only when explicitly requested.']
@@ -52,6 +52,8 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'interval',
   'inactivityThreshold',
   'adapterUrl',
+  'cloudflareHostname',
+  'accessEnvFile',
   'graph',
   'environmentGraph',
   'jitterMs',
@@ -271,7 +273,7 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
     })
   }
 
-  if (id === 'environment-bridge') {
+  if (id === 'environment-bridge-local' || id === 'environment-bridge-remote') {
     variables.push(
       {
         key: 'adapterUrl',
@@ -291,6 +293,17 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         writable: true,
         description: 'Cognitive graph mode used for returned observations.',
       },
+    );
+  }
+
+  if (id === 'environment-bridge-remote') {
+    variables.push(
+      { key: 'cloudflareHostname', label: 'Cloudflare Hostname', type: 'text',
+        value: typeof effective.cloudflareHostname === 'string' ? effective.cloudflareHostname : '',
+        applyMode: 'restart', writable: true, description: 'Access TCP hostname for remote Body Control.' },
+      { key: 'accessEnvFile', label: 'Service Token File', type: 'text',
+        value: typeof effective.accessEnvFile === 'string' ? effective.accessEnvFile : '',
+        applyMode: 'restart', writable: true, description: 'Private environment file with the existing Cloudflare service token. Empty uses browser login.' },
     );
   }
 
@@ -578,7 +591,7 @@ export function buildAgentDescriptor(id: string, catalogEntry?: AgentCatalogEntr
     variables: [
       ...catalogOwnershipVariables(catalogItem),
       ...serviceLifecycleVariables(catalogEntry, id, kind, bootEligible),
-      ...(id === 'environment-bridge' ? environmentBridgeVariables() : []),
+      ...((id === 'environment-bridge-local' || id === 'environment-bridge-remote') ? environmentBridgeVariables() : []),
     ],
   };
 }

@@ -17,7 +17,7 @@ assert.equal(
   'every public maintained definition must appear exactly once',
 );
 assert.equal(live.counts.triggerRegistered, 13, 'only configured Trigger Manager registrations must be counted');
-assert.equal(live.counts.services, 3, 'persistent lifecycle must expose the three configured system services');
+assert.equal(live.counts.services, 5, 'persistent lifecycle exposes both Bridge choices, Robot Operator, Maintenance, and Terminal');
 assert.equal(live.counts.missingSource, 0, 'every maintained catalog item must have a resolvable implementation');
 assert.deepEqual(
   live.agents.filter(agent => agent.canRegister).map(agent => agent.id),
@@ -27,6 +27,7 @@ assert.deepEqual(
 assert.equal(live.agents.find(agent => agent.id === 'curiosity')?.sourceAgentId, 'curiosity-service', 'source aliases must not create duplicate catalog entries');
 assert.equal(live.agents.some(agent => agent.id === 'curiosity-service'), false, 'aliased source id must not appear as a second agent');
 assert.equal(live.agents.some(agent => agent.id === 'transcriber'), false, 'the retired duplicate Transcriber must not return to the agent catalog');
+assert.equal(live.agents.some(agent => agent.id === 'environment-bridge'), false, 'the old shared entrypoint must not be offered alongside Local and Remote');
 assert.equal(live.agents.find(agent => agent.id === 'mood')?.enabled, false, 'Mood must remain opt-in even while registered');
 assert.equal(AGENT_CATALOG_DEFINITIONS.mood.defaultTrigger?.enabled, false, 're-registering Mood must preserve its disabled default');
 assert.equal(live.agents.some(agent => agent.id === 'desire-agent'), true, 'the sole Desire Agent must be public');
@@ -40,7 +41,7 @@ for (const childId of ['boredom-observer', 'boredom-movement', 'boredom-reflecti
   assert.equal(child?.canUnregister, false, `${childId} cannot be removed through Trigger Manager controls`);
   assert.equal(child?.canRun, true, `${childId} must remain manually runnable from Agent Monitor`);
 }
-for (const serviceId of ['environment-bridge', 'maintenance-service', 'robot-operator']) {
+for (const serviceId of ['environment-bridge-local', 'environment-bridge-remote', 'maintenance-service', 'robot-operator']) {
   assert.equal(
     AGENT_CATALOG_DEFINITIONS[serviceId]?.executionContext,
     'system',

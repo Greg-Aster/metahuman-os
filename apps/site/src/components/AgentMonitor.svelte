@@ -675,7 +675,7 @@
               </div>
             {/if}
 
-            {#if selectedAgent.agentId === 'environment-bridge' && selectedAgent.diagnostics}
+            {#if (selectedAgent.agentId === 'environment-bridge-local' || selectedAgent.agentId === 'environment-bridge-remote') && selectedAgent.diagnostics}
               <EnvironmentBridgeDiagnostics diagnostics={selectedAgent.diagnostics} />
             {/if}
 

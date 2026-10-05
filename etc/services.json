@@ -2,20 +2,6 @@
   "version": "1.0.0",
   "description": "Persistent service lifecycle configuration",
   "services": {
-    "environment-bridge": {
-      "id": "environment-bridge",
-      "enabled": true,
-      "type": "manual",
-      "priority": "high",
-      "agentPath": "environment-bridge/index.ts",
-      "usesLLM": false,
-      "startOnSystemBoot": true,
-      "autoRestart": true,
-      "maxRetries": 3,
-      "adapterUrl": "ws://127.0.0.1:8790/environment",
-      "graph": "environment",
-      "comment": "Generic event-driven environment adapter connection."
-    },
     "robot-operator": {
       "id": "robot-operator",
       "enabled": true,
@@ -69,6 +55,36 @@
       "autoRestart": false,
       "maxRetries": 0,
       "comment": "On-demand shell and Big Brother session owner. Stopping closes all owned sessions."
+    },
+    "environment-bridge-local": {
+      "id": "environment-bridge-local",
+      "enabled": true,
+      "type": "manual",
+      "priority": "high",
+      "agentPath": "environment-bridge/local.ts",
+      "usesLLM": false,
+      "startOnSystemBoot": true,
+      "autoRestart": true,
+      "maxRetries": 3,
+      "adapterUrl": "ws://127.0.0.1:8790/environment",
+      "graph": "environment",
+      "comment": "Environment Bridge Local; starting switches the active connection."
+    },
+    "environment-bridge-remote": {
+      "id": "environment-bridge-remote",
+      "enabled": true,
+      "type": "manual",
+      "priority": "high",
+      "agentPath": "environment-bridge/remote.ts",
+      "usesLLM": false,
+      "startOnSystemBoot": false,
+      "autoRestart": true,
+      "maxRetries": 3,
+      "adapterUrl": "ws://127.0.0.1:18790/environment",
+      "graph": "environment",
+      "comment": "Environment Bridge Remote; starting switches the active connection.",
+      "cloudflareHostname": "",
+      "accessEnvFile": ""
     }
   }
 }

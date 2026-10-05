@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { runCloudflareForwarder } from './cloudflare.js';
 import path from 'node:path';
 import WebSocket, { type RawData } from 'ws';
 import {
@@ -103,16 +104,15 @@ function configValue(config: Record<string, unknown>, key: string): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function readConfig(): BridgeConfig {
+export function readConfig(agentId = 'environment-bridge-local'): BridgeConfig {
   let serviceConfig: ServiceConfig = {};
   try {
     serviceConfig = JSON.parse(
       fs.readFileSync(path.join(ROOT, 'etc', 'services.json'), 'utf8'),
     ) as ServiceConfig;
   } catch {}
-  const service = serviceConfig.services?.['environment-bridge'] ?? {};
-  const adapterUrl = process.env.MH_ENVIRONMENT_ADAPTER_URL?.trim()
-    || configValue(service, 'adapterUrl');
+  const service = serviceConfig.services?.[agentId] ?? {};
+  const adapterUrl = configValue(service, 'adapterUrl');
   const graph = process.env.MH_ENVIRONMENT_GRAPH?.trim()
     || configValue(service, 'graph')
     || 'environment';
@@ -1030,17 +1030,15 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
   }
 }
 
-export async function runEnvironmentBridgeAgent(signal: AbortSignal): Promise<void> {
+export async function runEnvironmentBridgeAgent(signal: AbortSignal, config = readConfig()): Promise<void> {
   let lock;
   try {
-    lock = acquireLock('agent-environment-bridge');
+    lock = acquireLock('agent-environment-bridge', { exitOnSignal: false });
   } catch {
-    console.log(`${LOG_PREFIX} another instance is already running`);
-    return;
+    throw new Error('Another Environment Bridge is already running');
   }
 
   try {
-    const config = readConfig();
     console.log(`${LOG_PREFIX} starting mode=event-driven adapter=${config.adapterUrl} graph=${config.graph}`);
     while (!signal.aborted) {
       try {
@@ -1057,13 +1055,18 @@ export async function runEnvironmentBridgeAgent(signal: AbortSignal): Promise<vo
   }
 }
 
-export async function run(): Promise<void> {
+export async function run(agentId: 'environment-bridge-local' | 'environment-bridge-remote' = 'environment-bridge-local'): Promise<void> {
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
   try {
-    await runEnvironmentBridgeAgent(controller.signal);
+    const config = readConfig(agentId);
+    if (agentId === 'environment-bridge-remote') {
+      await runCloudflareForwarder(config.adapterUrl, controller, () => runEnvironmentBridgeAgent(controller.signal, config));
+    } else {
+      await runEnvironmentBridgeAgent(controller.signal, config);
+    }
   } finally {
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);

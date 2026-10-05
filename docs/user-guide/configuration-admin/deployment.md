@@ -96,34 +96,39 @@ is a separate route; an HTTP tunnel to `/environment` is rejected by the gateway
 
 Install `cloudflared` on the desktop using the
 [official download instructions](https://developers.cloudflare.com/tunnel/downloads/).
-Start the desktop forwarder from this checkout, replacing the hostname:
+In **Agent Monitor**, select **Environment Bridge Remote** and configure:
 
-```bash
-./bin/connect-environment bridge.ainek.io
-```
+- **Adapter URL**: `ws://127.0.0.1:18790/environment`.
+- **Cloudflare Hostname**: the Q6A Access hostname, such as `bridge.ainek.io`.
+- **Service Token File**: optional private environment file containing
+  `TUNNEL_SERVICE_TOKEN_ID` and `TUNNEL_SERVICE_TOKEN_SECRET`. With the existing
+  Access Service Auth policy, the connection needs no extra human login.
 
-The command owns only the TCP forwarding process, stays in the foreground, and
-can be launched from a desktop shortcut. It does not start another Bridge or
-change the MetaHuman Site tunnel manager. An optional second argument selects a
-different local port; the default is 18790, allowing a local gateway to continue
-using 8790 during setup.
-
-Configure the desktop's ignored `.env`:
+Keep the existing tokens in the desktop's ignored `.env`:
 
 ```dotenv
-MH_ENVIRONMENT_ADAPTER_URL=ws://127.0.0.1:18790/environment
 MH_ENVIRONMENT_ADAPTER_TOKEN=<same secret as AINEKIO_ENVIRONMENT_ADAPTER_TOKEN on Q6A>
 MH_ENVIRONMENT_BRIDGE_TOKEN=<desktop internal Bridge service token>
 ```
 
-Use the existing internal Bridge token when already configured. Keep all secrets
-out of tracked files and shell command arguments. Restart MetaHuman after changing
-`.env`; Agent Monitor remains the existing service owner. If no
-`MH_ENVIRONMENT_ADAPTER_URL` environment override is set, **Agent Monitor →
-Environment Bridge → Adapter URL** can instead store the forwarding URL. The
-Bridge and Core retain their existing local service connection.
+Click **Start** for Remote. It owns the existing `bin/connect-environment` TCP
+launcher and stops that forwarder when stopped. Do not run a separate desktop
+forwarding service alongside it. The Q6A gateway and connector remain running.
 
-When the Bridge opens the forwarding connection, `cloudflared` launches a browser
+To use local Body Control without Cloudflare, configure **Environment Bridge
+Local → Adapter URL** (default `ws://127.0.0.1:8790/environment`) and start Local.
+Body Control must run on that computer, or an authenticated LAN TCP forward must
+provide the loopback endpoint. Ainekio's `/environment` remains loopback-only.
+Starting either agent stops the other; both use the same bridge state, actions,
+feedback and observations. The selected agent is remembered for system startup.
+The old shared `MH_ENVIRONMENT_ADAPTER_URL` override does not select both agents;
+edit their separate Adapter URL fields. Local/remote LLM selection remains in
+Backend settings independently of the Body Control connection.
+
+The forwarding launcher can still be used manually for diagnostics:
+`./bin/connect-environment HOSTNAME [LOCAL_PORT]`, while Remote is stopped.
+
+Without a service token, when the Bridge opens the forwarding connection, `cloudflared` launches a browser
 for the Cloudflare Access login. Signing into the Cloudflare administration
 dashboard alone does not authenticate this client. Cloudflare documents this
 [Access TCP browser-login workflow](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/non-http/cloudflared-authentication/arbitrary-tcp/).

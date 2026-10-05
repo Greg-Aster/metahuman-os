@@ -36,12 +36,14 @@ Agent Monitor and Boot Manager own persistent services configured in
 
 | Service | Purpose |
 |---------|---------|
-| `environment-bridge` | Transfers semantic actions, observations, speech, and correlated feedback through the configured environment adapter |
+| `environment-bridge-local` | Connects directly to local Body Control without Cloudflare |
+| `environment-bridge-remote` | Owns Cloudflare Access TCP forwarding to remote Body Control |
 | `robot-operator` | Owns robot-autonomy timing, mutual exclusion, and admission; Full reviews unresolved action results, then returns other settled chains to the contextual autonomy controller |
 | `maintenance-service` | Performs stale-lock health checks, audit-log cleanup, and embedding preload |
 
-Environment Bridge is the only persistent service whose source remains under
-`brain/agents`; it is supervised through Agent Monitor and configured in
+The two Environment Bridge choices share one transport worker under
+`brain/agents`; starting either stops the other and remembers the startup choice.
+They are supervised through Agent Monitor and configured in
 `etc/services.json`, not scheduled through Trigger Manager. Robot Operator and
 Maintenance Service live under `brain/services`.
 

@@ -210,9 +210,9 @@ function environmentBridgeReadiness(
 }
 
 function dataPanelForAgent(card: AgentMonitorCard, descriptor: AgentDescriptor): AgentDataPanel {
-  const logs = card.name === 'environment-bridge' ? [] : getAgentLogs(card.name, 80);
+  const logs = (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote') ? [] : getAgentLogs(card.name, 80);
   const errors = logs.filter(log => log.level === 'error').slice(-10).map(errorFromLog);
-  const bridgeStatus = card.name === 'environment-bridge'
+  const bridgeStatus = (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote')
     ? environmentBridgeReadiness(card.status, descriptor, [...card.errors, ...errors.map(error => error.message)])
     : undefined;
   return {
@@ -229,7 +229,7 @@ function dataPanelForAgent(card: AgentMonitorCard, descriptor: AgentDescriptor):
     variables: descriptor.variables,
     logs,
     errors,
-    diagnostics: card.name === 'environment-bridge'
+    diagnostics: (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote')
       ? getEnvironmentBridgeDiagnosticsSnapshot()
       : undefined,
   };
@@ -243,7 +243,7 @@ function dataPanelForFailure(card: AgentMonitorCard, descriptor: AgentDescriptor
     message: failure.stderr || failure.error,
     agent: failure.agent,
   };
-  const bridgeStatus = card.name === 'environment-bridge'
+  const bridgeStatus = (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote')
     ? environmentBridgeReadiness('error', descriptor, [failure.error, failure.stderr ?? ''])
     : undefined;
   return {
@@ -259,7 +259,7 @@ function dataPanelForFailure(card: AgentMonitorCard, descriptor: AgentDescriptor
     variables: descriptor.variables,
     logs: [...logs, failureLog].slice(-80),
     errors: [errorFromFailure(failure)],
-    diagnostics: card.name === 'environment-bridge'
+    diagnostics: (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote')
       ? getEnvironmentBridgeDiagnosticsSnapshot()
       : undefined,
   };
@@ -734,7 +734,7 @@ export function setAgentVariable(agentName: string, key: string, rawValue: unkno
 
   const value = coerceAgentVariable(rawValue, variable);
 
-  if (agentName === 'environment-bridge' && ENVIRONMENT_BRIDGE_FIELDS.has(key)) {
+  if ((agentName === 'environment-bridge-local' || agentName === 'environment-bridge-remote') && ENVIRONMENT_BRIDGE_FIELDS.has(key)) {
     updateEnvironmentBridgeVariable(key, value);
   } else {
     if (!SERVICE_LIFECYCLE_FIELDS.has(key)) {
@@ -758,6 +758,10 @@ export function setAgentVariable(agentName: string, key: string, rawValue: unkno
       ...config.services,
       [agentName]: { ...agent, ...serviceUpdates },
     };
+    if ((agentName === 'environment-bridge-local' || agentName === 'environment-bridge-remote') && key === 'startOnSystemBoot' && value === true) {
+      const other = config.services[agentName === 'environment-bridge-local' ? 'environment-bridge-remote' : 'environment-bridge-local'];
+      if (other) other.startOnSystemBoot = false;
+    }
     writeServiceConfig(config);
   }
 

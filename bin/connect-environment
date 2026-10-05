@@ -15,5 +15,9 @@ fi
 hostname="$1"
 local_port="${2:-18790}"
 echo "Environment Bridge adapter URL: ws://127.0.0.1:${local_port}/environment"
-echo "Cloudflare Access login opens in your browser when the Bridge connects."
+if [[ -n "${TUNNEL_SERVICE_TOKEN_ID:-}" && -n "${TUNNEL_SERVICE_TOKEN_SECRET:-}" ]]; then
+  echo "Cloudflare Access uses the configured service token."
+else
+  echo "Cloudflare Access login opens in your browser when the Bridge connects."
+fi
 exec cloudflared access tcp --hostname "$hostname" --url "127.0.0.1:${local_port}"

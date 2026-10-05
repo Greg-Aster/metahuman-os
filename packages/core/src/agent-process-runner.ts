@@ -2,7 +2,8 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { audit } from './audit.js';
-import { getLockOwnerPid } from './locks.js';
+import { acquireLock, getLockOwnerPid, type LockHandle } from './locks.js';
+import { readAgentMonitorConfig, writeServiceConfig } from './agent-monitor-descriptors.js';
 import { ROOT, systemPaths } from './path-builder.js';
 import {
   buildAgentNodePath,
@@ -12,6 +13,8 @@ import {
 import {
   clearAgentFailure,
   isAgentRunning,
+  stopAgent,
+  waitForProcessExit,
   recordAgentFailure,
   registerAgent,
   unregisterAgent,
@@ -82,6 +85,7 @@ export function agentFailureMessage(agentName: string, code: number | null, outp
 }
 
 function processLockName(agentName: string): string {
+  if (agentName === 'environment-bridge-local' || agentName === 'environment-bridge-remote') return 'agent-environment-bridge';
   if (agentName === 'maintenance-service') return 'service-maintenance';
   return `agent-${agentName}`;
 }
@@ -93,10 +97,24 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
   const detached = options.detached ?? true;
   const useBootstrap = options.useBootstrap ?? true;
   const waitForMs = options.waitForMs ?? 0;
+  const bridgeChoice = agentName === 'environment-bridge-local' || agentName === 'environment-bridge-remote';
+  let selectionLock: LockHandle | undefined;
 
   try {
     if (isAgentRunning(agentName)) {
       return { agent: agentName, started: false, success: false, alreadyRunning: true };
+    }
+
+    if (bridgeChoice) {
+      selectionLock = acquireLock('environment-bridge-selection', { exitOnSignal: false });
+      for (const other of ['environment-bridge-local', 'environment-bridge-remote', 'environment-bridge']) {
+        if (other === agentName || !isAgentRunning(other)) continue;
+        const stopped = stopAgent(other);
+        if (!stopped.success) throw new Error(stopped.message);
+        if (stopped.pid && !await waitForProcessExit(stopped.pid)) {
+          throw new Error(`${other} did not stop in time`);
+        }
+      }
     }
 
     const lockOwnerPid = options.checkLock ? getLockOwnerPid(processLockName(agentName)) : undefined;
@@ -302,6 +320,14 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
       };
     }
 
+    if (bridgeChoice) {
+      const config = readAgentMonitorConfig();
+      for (const id of ['environment-bridge-local', 'environment-bridge-remote']) {
+        const service = config.services?.[id];
+        if (service) service.startOnSystemBoot = id === agentName;
+      }
+      writeServiceConfig(config);
+    }
     return { agent: agentName, started: true, success: true, pid };
   } catch (error) {
     return failedStart(
@@ -309,5 +335,7 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
       source,
       error instanceof Error ? error.message : String(error),
     );
+  } finally {
+    selectionLock?.release();
   }
 }

@@ -19,7 +19,7 @@ function copyFixture(relative: string): void {
 
 // Copy maintained configuration and executable entries for real catalog discovery.
 // Runtime state stays private; source assertions below inspect the actual repository.
-for (const file of ['etc/agents.json', 'etc/services.json']) copyFixture(file);
+for (const file of ['etc/agents.json', 'etc/services.json', 'brain/agents/environment-bridge/local.ts', 'brain/agents/environment-bridge/remote.ts']) copyFixture(file);
 for (const entry of fs.readdirSync(path.join(SOURCE_ROOT, 'brain/agents'), { withFileTypes: true })) {
   if (!entry.isDirectory()) continue;
   for (const name of ['cli.ts', 'index.ts']) {
@@ -84,7 +84,7 @@ async function runVariableChecks(): Promise<Check[]> {
   const { handleSetMonitorAgentVariable } = await import('../packages/core/src/api/handlers/monitor');
   const checks: Check[] = [];
   const enabledResponse = await handleSetMonitorAgentVariable(ownerRequest('/api/monitor/agent-variable', {
-    agent: 'environment-bridge',
+    agent: 'environment-bridge-local',
     key: 'deliveryEnabled',
     value: true,
   }));
@@ -104,7 +104,7 @@ async function runVariableChecks(): Promise<Check[]> {
   const adapterUrlResponse = await handleSetMonitorAgentVariable(ownerRequest(
     '/api/monitor/agent-variable',
     {
-      agent: 'environment-bridge',
+      agent: 'environment-bridge-local',
       key: 'adapterUrl',
       value: 'ws://127.0.0.1:8790/environment',
     },
@@ -251,12 +251,12 @@ async function main() {
   }
   checks.push(check(
     'bootAgents includes the Environment Bridge process',
-    snapshot.bootAgents.some(agent => agent.agentId === 'environment-bridge'),
+    snapshot.bootAgents.some(agent => agent.agentId === 'environment-bridge-local'),
   ));
   checks.push(check(
     'Environment Bridge has runnable process source',
     fs.existsSync(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts'))
-      && fs.existsSync(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'index.ts')),
+      && fs.existsSync(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'local.ts')),
   ));
 
   for (const legacyAgent of ['update-check', 'babysitter']) {
@@ -270,7 +270,7 @@ async function main() {
     ));
   }
 
-  const environmentBridge = snapshot.agentData['environment-bridge'];
+  const environmentBridge = snapshot.agentData['environment-bridge-local'];
   checks.push(check(
     'environment-bridge Agent Data exists',
     Boolean(environmentBridge),
@@ -395,7 +395,7 @@ async function main() {
   ));
   checks.push(check(
     'Environment Bridge holds a process-lifetime singleton lock',
-    sourceContains(environmentBridgeAgent, /acquireLock\(['"]agent-environment-bridge['"]\)/)
+    sourceContains(environmentBridgeAgent, /acquireLock\(['"]agent-environment-bridge['"]/)
       && sourceContains(environmentBridgeAgent, /lock\.release\(\)/),
   ));
   checks.push(check(

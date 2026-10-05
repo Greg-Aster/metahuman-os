@@ -30,7 +30,7 @@ start_background_services() {
   start_task event-bus "$REPO_ROOT/bin/start-event-bus"
   start_task llm-backend "$REPO_ROOT/bin/mh" backend start
   start_task agents "$REPO_ROOT/bin/mh" start --no-restart
-  start_task cloudflare "$REPO_ROOT/bin/start-cloudflare"
+  start_task cloudflare pnpm --dir "$REPO_ROOT" exec tsx "$REPO_ROOT/bin/start-cloudflare"
   start_task voice-server "$REPO_ROOT/bin/start-voice-server"
   start_task local-models "$REPO_ROOT/bin/start-local-models"
 
