@@ -38,7 +38,11 @@ export const executionEventWaitNode = defineNode({
         if (event.kind === 'autonomy_trigger' && getOperatorMode() === 'reactive') continue
         kind = event.kind
         const received = event.payload as Record<string, unknown>
-        payload = { ...inputs.evidence, ...received,
+        payload = { ...inputs.evidence,
+          // Later input replaces turn metadata, not the settled continuation
+          // returned by the active task immediately before this drain.
+          ...(supplied?.activeTaskContinuation ? { activeTaskContinuation: supplied.activeTaskContinuation } : {}),
+          ...received,
           environmentObservationCurrent: received.environmentObservation ? received.environmentObservationCurrent : false }
       }
       return { selection: null, invocation: kind ? {

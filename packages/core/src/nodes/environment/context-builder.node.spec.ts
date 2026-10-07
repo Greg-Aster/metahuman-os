@@ -264,51 +264,86 @@ test('Environment Context Builder does not present a saved camera frame as curre
     ['null', 'object'], 'Goal decisions belong to the informed selector even when no action route was selected')
 })
 
-test('Environment selector schema exposes conversation, advertised action, and Freestyle as the three LLM-owned routes', () => {
-  const schema = buildEnvironmentSelectorJsonSchema({
-    actions: ['robotCommand', 'robotMotionPlan'],
-    robotCommands: ['stand', '#1', '#2'],
-  }) as any
-  const routes = schema.anyOf
-  assert.equal('properties' in schema, false, 'Provider union alternatives must be complete instead of sibling allOf refinements')
+test('Environment selector schema describes conversation or an ordered program with evidence-based task completion', () => {
+  const capabilities = { actions: ['robotCommand', 'robotMotionPlan'], robotCommands: ['stand', '#1', '#2'] }
+  const schema = buildEnvironmentSelectorJsonSchema(capabilities) as any
+  assert.equal('properties' in schema, false, 'Provider alternatives are complete object contracts')
   assert.equal('allOf' in schema, false)
-  assert.equal(routes.length, 4)
-  for (const route of routes) {
+  for (const route of schema.anyOf) {
     assert.equal(route.type, 'object')
     assert.equal(route.additionalProperties, false)
-    assert.deepEqual(route.required, ['taskDecision', 'response', 'actions', 'movementRequest'])
+    assert.deepEqual(route.required, ['response', 'program', 'taskDecision'])
+    assert.deepEqual(Object.keys(route.properties).sort(), ['program', 'response', 'taskDecision'])
     assert.equal('allOf' in route, false)
+    assert.equal(route.properties.response.type, 'string')
   }
-  assert.equal(routes[0].properties.actions.maxItems, 0)
-  assert.deepEqual(routes[0].properties.movementRequest, { type: 'null' })
-  assert.equal(routes[0].properties.response.minLength, 1)
-  assert.equal(routes[0].properties.taskDecision.anyOf[1].properties.outcome.enum.includes('act'), false)
-  assert.deepEqual(routes[0].properties.taskDecision.anyOf[0], { type: 'null' })
-  assert.equal(routes[1].properties.actions.maxItems, 0)
-  assert.deepEqual(routes[1].properties.movementRequest, { type: 'null' })
-  assert.equal(routes[1].properties.response.maxLength, 0)
-  assert.equal(routes[1].properties.taskDecision.type, 'object', 'A silent non-action output requires a meaningful objective decision')
-  assert.equal(routes[2].properties.actions.minItems, 1)
-  assert.equal(routes[2].properties.actions.maxItems, 1)
-  assert.deepEqual(routes[2].properties.movementRequest, { type: 'null' })
-  assert.equal(routes[3].properties.actions.maxItems, 0)
-  assert.equal(routes[3].properties.movementRequest.type, 'object')
-  assert.deepEqual(routes[3].properties.taskDecision.anyOf[1].properties.motionClass.enum, ['body_local'])
-  for (const route of routes.slice(2)) {
-    assert.deepEqual(route.properties.taskDecision.anyOf[0], { type: 'null' })
-    assert.ok(route.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('continue'))
-    assert.ok(route.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('act'))
-    assert.equal(route.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('complete'), false)
-  }
+  const conversation = schema.anyOf.find((route: any) => route.properties.program.type === 'null')
+  const activity = schema.anyOf.find((route: any) => route.properties.program.type === 'object')
+  assert.ok(conversation)
+  assert.ok(activity)
+  assert.deepEqual(conversation.properties.taskDecision.anyOf[0], { type: 'null' })
+  assert.equal(conversation.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('act'), false)
+  const program = activity.properties.program
+  assert.equal(program.additionalProperties, false)
+  assert.deepEqual(program.required, ['steps'])
+  assert.equal(program.properties.steps.type, 'array')
+  assert.equal(program.properties.steps.minItems, 1)
+  assert.equal('maxItems' in program.properties.steps, false, 'The program can express every ordered phase')
+  const steps = program.properties.steps.items.anyOf
+  assert.deepEqual(steps.map((step: any) => step.properties.kind.const), ['action', 'generatedMotion'])
+  for (const step of steps) assert.equal(step.additionalProperties, false)
+  assert.deepEqual(steps[0].required, ['kind', 'action'])
+  assert.deepEqual(steps[0].properties.action.required, ['type', 'command'])
+  assert.deepEqual(steps[0].properties.action.properties.type.enum, ['robotCommand'])
+  assert.deepEqual(steps[0].properties.action.properties.command.enum, capabilities.robotCommands)
+  assert.deepEqual(steps[1].required, ['kind', 'description'])
+  assert.equal(steps[1].properties.description.minLength, 1)
+  assert.equal(activity.properties.taskDecision.type, 'object', 'A physical program requires its objective decision')
+  assert.equal(activity.properties.taskDecision.additionalProperties, false)
+  const outcomes = activity.properties.taskDecision.properties.outcome.enum
+  assert.ok(outcomes.includes('act'))
+  assert.ok(outcomes.includes('continue'))
+  assert.equal(outcomes.includes('complete'), false, 'Selecting a program is not proof of execution')
+  const required = buildEnvironmentSelectorJsonSchema({ ...capabilities, requireAction: true }) as any
+  assert.deepEqual(required.anyOf, [activity], 'Requiring action uses the same complete program contract')
+})
 
-  const standaloneSchema = buildEnvironmentSelectorJsonSchema({
-    actions: ['robotCommand', 'robotMotionPlan'],
-    robotCommands: ['stand', '#1', '#2'],
-    requireAction: true,
-  }) as any
-  assert.deepEqual(standaloneSchema.anyOf, routes.slice(2),
-    'A selected action route retains the same preset/freestyle contracts and optional goals')
-  assert.match(standaloneSchema.anyOf[0].properties.response.description, /never substitutes/i)
+test('program steps remain restricted to advertised commands, generation and feedback capabilities', () => {
+  for (const [actions, robotCommands, expectedKinds, expectedActions] of [
+    [[], [], [], []],
+    [['robotCommand'], [], [], []],
+    [['robotCommand'], ['wave'], ['action'], ['robotCommand']],
+    [['robotMotionPlan'], [], ['generatedMotion'], []],
+    [['move'], [], ['action'], ['move']],
+    [['captureImage'], [], ['action'], ['captureImage']],
+    [['move', 'captureImage'], [], ['action', 'behavior'], ['move', 'captureImage']],
+    [['robotCommand', 'robotMotionPlan', 'move', 'captureImage'], ['wave'], ['action', 'generatedMotion', 'behavior'], ['move', 'captureImage', 'robotCommand']],
+  ] as const) {
+    const schema = buildEnvironmentSelectorJsonSchema({ actions, robotCommands }) as any
+    const activity = schema.anyOf.find((route: any) => route.properties.program.type === 'object')
+    const steps = activity?.properties.program.properties.steps.items.anyOf ?? []
+    assert.deepEqual(steps.map((step: any) => step.properties.kind.const), expectedKinds, JSON.stringify(actions))
+    const action = steps.find((step: any) => step.properties.kind.const === 'action')?.properties.action
+    const choices = action ? action.anyOf ?? [action] : []
+    assert.deepEqual(choices.flatMap((choice: any) => choice.properties.type.enum).sort(), [...expectedActions].sort())
+    for (const choice of choices) {
+      assert.equal(choice.additionalProperties, false)
+      if (choice.properties.command) assert.deepEqual(choice.properties.command.enum, robotCommands)
+    }
+    const behavior = steps.find((step: any) => step.properties.kind.const === 'behavior')
+    if (behavior) {
+      assert.equal(behavior.additionalProperties, false)
+      assert.deepEqual(behavior.required, ['kind', 'target', 'completionCriteria', 'motion', 'candidateLabels', 'identifyEveryFrames', 'steering'])
+      assert.equal(behavior.properties.target.minLength, 1)
+      assert.equal(behavior.properties.completionCriteria.minLength, 1)
+      assert.equal(behavior.properties.motion.properties.type.const, 'move')
+      assert.equal(behavior.properties.motion.properties.continuous.const, true)
+      assert.equal(behavior.properties.identifyEveryFrames.minimum, 1)
+    }
+    const disabled = buildEnvironmentSelectorJsonSchema({ actions, robotCommands, actionRouteSelected: false, requireAction: true }) as any
+    assert.ok(disabled.anyOf.every((route: any) => route.properties.program.type === 'null'))
+    assert.ok(disabled.anyOf.every((route: any) => !route.properties.taskDecision.anyOf[1].properties.outcome.enum.includes('act')))
+  }
 })
 
 test('Environment Image Input distinguishes a saved view from evidence for a specific action', async () => {

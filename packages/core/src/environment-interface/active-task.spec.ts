@@ -601,3 +601,90 @@ test('Coordinator deadline wakes a silent feedback stream and requests cancellat
     } finally { f.unsubscribe() }
   })
 })
+
+for (const termination of ['finish', 'cancel'] as const) {
+  test(`instructions buffered during ${termination} cross the real graph handoff before another ongoing phase`, async () => {
+    await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+      const f = fixture(`buffered-${termination}-body`)
+      const nextBehavior = { ...behavior, target: 'the doorway', motion: { ...behavior.motion, speed: 35, turn: -20 } }
+      const phases = { steps: [behavior, nextBehavior] }
+      try {
+        replies.push(route, { response: '', taskDecision: decision, program: phases })
+        const started = await f.run(); const id = started.executionId!
+        const [motion, capture] = f.received.splice(0)
+        f.feedback(motion, 'accepted'); f.complete(capture)
+        core.publishEnvironmentObservation({ ...f.observation, metadata: { actionId: capture.id },
+          visual: { ...f.observation.visual!, id: `buffered-${termination}-image`, timestamp: new Date().toISOString(),
+            metadata: { actionId: capture.id } } }, { username })
+        await f.run(id)
+        const [settings] = f.received.splice(0); f.complete(settings)
+        const identify = manager.getAllTasks().find(task => task.handler === 'environment.identify' && task.durable?.executionId === id)!
+        replies.push(termination === 'finish'
+          ? { matchesTarget: true, completionSatisfied: true, outcome: 'positive', description: 'Cup found', evidence: 'Fresh cup image' }
+          : () => { throw new Error('Required identification failed') })
+        assert.ok(manager.claim(identify.id))
+        await (engine as unknown as { execute(task: typeof identify): Promise<void> }).execute(identify)
+        await f.run(id)
+        if (termination === 'finish') {
+          const [finish] = f.received.splice(0)
+          assert.equal(finish.movementUpdate?.actionId, motion.id)
+          assert.equal(finish.movementUpdate?.controls.speed, 0)
+          f.complete(finish)
+        } else {
+          const owned = manager.findTask(task => task.type === 'environment_command' && task.input.id === motion.id)!
+          assert.ok(owned.cancellationRequestedAt)
+        }
+        const input = (message: string, generation: number) => {
+          const store = openExecutionStore(username)
+          try { store.deliverEvent(id, { eventId: randomUUID(), kind: 'user_steering', payload: {
+            userMessage: message, conversationInput: message, sessionId: f.observation.sessionId, ttsGeneration: generation,
+          } }) } finally { store.close() }
+        }
+        input('What have you found?', 1)
+        input('Explain before the next search.', 2)
+        const before = calls.length
+        assert.equal((await f.run(id)).status, 'waiting')
+        assert.equal(calls.length, before, 'Interpretation waits for command termination')
+        assert.equal(f.received.length, 0, 'No next ongoing behavior while termination is pending')
+        if (termination === 'cancel') {
+          f.feedback(motion, 'outcome_unknown')
+          assert.equal((await f.run(id)).status, 'waiting')
+          assert.equal(calls.length, before)
+          assert.equal(f.received.length, 0)
+        }
+        f.feedback(motion, termination === 'finish' ? 'completed' : 'cancelled')
+        input('Now tell me, then look for the doorway.', 3)
+        replies.push(() => {
+          assert.equal(f.received.length, 0, 'Pending user input must route before another body command')
+          return { ...route, needsResponse: true, needsVision: false }
+        }, () => {
+          const content = calls.at(-1).messages.at(-1).content
+          const envelope = JSON.parse(typeof content === 'string' ? content : content.find((part: any) => part.type === 'text').text)
+          assert.equal(envelope.currentInstruction, 'Now tell me, then look for the doorway.')
+          assert.equal(f.received.length, 0)
+          // Conversation resumes the remaining settled program; a revised
+          // program after cancellation must receive a fresh action identity.
+          return { response: 'The previous search has ended.',
+            program: termination === 'finish' ? null : { steps: [nextBehavior] },
+            taskDecision: termination === 'finish' ? null : decision }
+        })
+        await f.perception(2, .4)
+        assert.equal((await f.run(id)).status, 'waiting')
+        assert.equal(calls.length, before + 2)
+        const next = f.received.splice(0)
+        const newMotion = next.find(action => action.type === 'move' && !action.movementUpdate)!
+        assert.ok(newMotion, 'The selected next behavior receives a new command')
+        assert.notEqual(newMotion.id, motion.id, 'Never adopt the terminated gait identity')
+        assert.equal(newMotion.speed, nextBehavior.motion.speed)
+        assert.equal(newMotion.turn, nextBehavior.motion.turn)
+        assert.equal(next.some(action => action.movementUpdate?.actionId === motion.id), false)
+        const store = openExecutionStore(username)
+        try {
+          assert.deepEqual(store.events(id).filter(event => event.kind === 'user_steering')
+            .map(event => (event.payload as any).ttsGeneration), [1, 2, 3])
+          store.cancel(id, { eventId: randomUUID(), kind: 'user_cancelled', payload: {} })
+        } finally { store.close() }
+      } finally { f.unsubscribe() }
+    })
+  })
+}

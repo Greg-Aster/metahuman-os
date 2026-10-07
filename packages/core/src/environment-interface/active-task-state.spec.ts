@@ -36,7 +36,7 @@ function fixture(activeProgram = program) {
     graphExecution: { executionId: 'execution', occurrenceId: 'occurrence', task: () => task,
       recordTask: (value: unknown) => { task = value }, recordFrames: () => {},
       dispatch: (value: any) => { (value.kind === 'robot_status' ? statusEffects : dispatches).push(value); return { effectId: `effect-${dispatches.length}` } },
-      waitForEvent: () => { throw new Error('WAIT') } } } as never
+      pendingEvents: () => [], waitForEvent: () => { throw new Error('WAIT') } } } as never
   const state: ActiveTaskState = { stepIndex: 0, evidence: [], updateRevision: 0, action: motion, motionId: 'motion', accepted: true }
   const advance = async (value: ActiveTaskState) => (await step.execute({ state: value }, context, {})).state as ActiveTaskState
   const receive = async (value: ActiveTaskState, actionId: string, type: EnvironmentFeedback['type'], data?: Record<string, unknown>) => {
@@ -329,3 +329,106 @@ test('delayed image inference discards expired evidence while fresh local feedba
     assert.equal(f.dispatches.filter(item => item.payload.handler === 'environment.active-task-deadline').length, 1)
   } finally { recordEnvironmentObservation(observation) }
 })
+
+for (const termination of ['finish', 'cancel'] as const) {
+  test(`buffered instructions during ${termination} route from settled state before another ongoing behavior`, async () => {
+    const next = { ...search.steps[0], target: 'door' } as typeof search.steps[number]
+    const activeProgram = { steps: [...search.steps, next] }
+    const f = fixture(activeProgram)
+    const terminating = await f.advance({ ...f.state, ...(termination === 'finish'
+      ? { identification: identified } : { identificationError: 'Required feedback failed' }) })
+    const instruction = (text: string, generation: number) => ({ kind: 'user_steering',
+      payload: { userMessage: text, ttsGeneration: generation, sessionId: observation.sessionId } })
+    const first = instruction('Tell me what happened.', 1)
+    const second = instruction('Actually, stay here and explain.', 2)
+    const feedback = (type: string) => ({ kind: 'physical_result', actionId: 'motion',
+      payload: { feedback: { id: type, actionId: 'motion', type, message: type, timestamp: new Date().toISOString() } } })
+    const pending = (await wait.execute({ state: { ...terminating,
+      pendingEvents: [first, second, feedback('outcome_unknown')] } }, f.context, {}))
+    assert.equal(pending.continue, true)
+    assert.equal(pending.state.done, undefined)
+    assert.equal(pending.state.feedback.type, 'outcome_unknown')
+    const unknown = await f.advance(pending.state)
+    assert.equal(unknown.done, undefined, 'Input cannot release a motion with an unknown outcome')
+    const received = await wait.execute({ state: { ...unknown,
+      pendingEvents: [feedback(termination === 'finish' ? 'completed' : 'cancelled')] } }, f.context, {})
+    const routed = received.continue
+      ? await wait.execute({ state: await f.advance(received.state) }, f.context, {}) : received
+    assert.equal(routed.continue, false, 'Route pending input before admitting the next behavior')
+    assert.equal(routed.state.userInput.userMessage, second.payload.userMessage)
+    assert.equal(routed.state.userInput.ttsGeneration, 2)
+    assert.deepEqual(routed.state.userInput.executionEvents, [first, second], 'Do not silently drop earlier buffered instructions')
+    const continuation = routed.state.userInput.activeTaskContinuation
+    assert.equal(continuation.state.userInput, undefined)
+    assert.equal(continuation.state.motionId, undefined)
+    assert.equal(continuation.state.action, undefined)
+    assert.equal(continuation.state.pendingControls, undefined)
+    assert.equal(continuation.state.finishRequestedAt, undefined)
+    assert.equal(continuation.state.cancellationRequestedAt, undefined)
+    assert.equal(continuation.state.completedActionId, 'motion')
+    assert.equal(continuation.state.feedback.type, termination === 'finish' ? 'completed' : 'cancelled')
+    // Unknown during Finish invokes failure cleanup: it cannot later masquerade
+    // as successful visual completion, even if the original gait reports done.
+    assert.equal(continuation.state.done, true)
+    assert.equal(continuation.decision.outcome, 'continue', 'The continuation retains the settled failure decision')
+    assert.equal(continuation.state.objectiveComplete, false)
+    assert.equal(f.dispatches.some(item => item.payload.input.type === 'move' && !item.payload.input.movementUpdate), false)
+    const resumed = await f.advance(continuation.state)
+    assert.equal(resumed.done, true, 'A conversational continuation cannot restart the terminated phase')
+  })
+}
+
+test('Finish routes buffered input with the advanced phase and carries it through newer queued input', async () => {
+  const { executionEventWaitNode } = await import('../nodes/utility/execution-event-wait.node.js')
+  const f = fixture({ steps: [...search.steps, { ...search.steps[0], target: 'door' } as typeof search.steps[number]] })
+  const finishing = await f.advance({ ...f.state, identification: identified })
+  const first = { kind: 'user_steering', payload: { userMessage: 'Wait here.', ttsGeneration: 1 } }
+  const terminal = { kind: 'physical_result', actionId: 'motion', payload: { feedback: {
+    id: 'done', actionId: 'motion', type: 'completed', message: 'Finished', timestamp: new Date().toISOString() } } }
+  const received = await wait.execute({ state: { ...finishing, pendingEvents: [first, terminal] } }, f.context, {})
+  assert.equal(received.continue, false)
+  const settled = received.state.userInput.activeTaskContinuation.state
+  assert.equal(settled.stepIndex, 1)
+  assert.equal(settled.motionId, undefined)
+  assert.equal(settled.action, undefined)
+  assert.equal(settled.pendingControls, undefined)
+  assert.equal(settled.finishRequestedAt, undefined)
+  assert.equal(settled.visualCompletionSatisfied, true)
+  assert.deepEqual(settled.evidence, [identified.evidence])
+  const latest = { kind: 'user_steering', payload: { userMessage: 'Explain before moving again.', ttsGeneration: 2 } }
+  const queue = [latest]
+  const output = await executionEventWaitNode.execute({ receivedInput: received.state.userInput }, {
+    _graphExecutorIteration: 1, graphExecution: { pendingEvents: () => queue, waitForEvent: () => queue.shift() },
+  } as never, { drain: true, userGraph: 'environment' })
+  assert.equal(output.invocation.context.userMessage, latest.payload.userMessage)
+  assert.equal(output.invocation.context.ttsGeneration, 2)
+  assert.deepEqual(output.invocation.context.activeTaskContinuation.state, settled)
+  assert.deepEqual(output.invocation.context.executionEvents, [first, latest])
+  assert.equal(f.dispatches.some(item => item.payload.input.type === 'move' && !item.payload.input.movementUpdate), false)
+})
+
+for (const queueOwner of ['checkpoint', 'execution'] as const) {
+  test(`input queued after the Finish receipt in ${queueOwner} is routed before the next phase`, async () => {
+    const f = fixture({ steps: [...search.steps, ...search.steps] })
+    const finishing = await f.advance({ ...f.state, identification: identified })
+    const first = { kind: 'user_steering', payload: { userMessage: 'Wait for me.', ttsGeneration: 1 } }
+    const latest = { kind: 'user_steering', payload: { userMessage: 'Explain first.', ttsGeneration: 2 } }
+    const observationEvent = { kind: 'perception_received', payload: {} }
+    const terminal = { kind: 'physical_result', actionId: 'motion', payload: { feedback: {
+      id: 'done', actionId: 'motion', type: 'completed', message: 'Finished', timestamp: new Date().toISOString() } } }
+    const events = [terminal, first, observationEvent, latest]
+    const context = queueOwner === 'execution' ? { ...(f.context as any), graphExecution: {
+      ...(f.context as any).graphExecution, pendingEvents: () => events, waitForEvent: () => events.shift(),
+    } } : f.context
+    const received = await wait.execute({ state: { ...finishing,
+      pendingEvents: queueOwner === 'checkpoint' ? events : [] } }, context, {})
+    assert.equal(received.continue, false)
+    const { activeTaskContinuation, executionEvents, ...input } = received.state.userInput
+    assert.equal(input.userMessage, latest.payload.userMessage)
+    assert.deepEqual(executionEvents, [first, latest])
+    assert.equal(activeTaskContinuation.state.stepIndex, 1)
+    assert.equal(activeTaskContinuation.state.motionId, undefined)
+    assert.deepEqual(activeTaskContinuation.state.pendingEvents, [observationEvent], 'Do not lose non-input events at the handoff')
+    assert.equal(f.dispatches.some(item => item.payload.input.type === 'move' && !item.payload.input.movementUpdate), false)
+  })
+}

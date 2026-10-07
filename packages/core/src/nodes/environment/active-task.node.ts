@@ -28,6 +28,15 @@ function clearDeadline(state: ActiveTaskState, context: NodeExecutionContext) {
   delete state.deadlineEffectId; delete state.deadlineAt
 }
 
+// A terminal receipt settles command identity before input may reuse a program.
+// Keep the receipt/failure as evidence, never as an active movement to adopt.
+function settleAction(state: ActiveTaskState, context: NodeExecutionContext) {
+  clearDeadline(state, context)
+  state.completedActionId = state.motionId
+  for (const field of ['motionId', 'action', 'accepted', 'snapshotId', 'identificationEffectId', 'identificationRequest', 'generationEffectId', 'image', 'identification', 'lastIdentifiedFrame', 'finishRequestedAt', 'cancellationRequestedAt', 'feedbackRequiredSince', 'pendingControls', 'desiredControls', 'acknowledgedControls', 'retrySteering', 'captureRequestedAt', 'captureCompleted'] as const) delete state[field]
+  state.updateRevision = 0
+}
+
 function observationReference(observation: EnvironmentObservation): EnvironmentObservation {
   const reference = ({ dataUrl: _pixels, ...frame }: EnvironmentVisualFrame) => frame
   return { ...observation, visual: observation.visual ? reference(observation.visual) : undefined,
@@ -180,7 +189,9 @@ export const environmentActiveTaskStepNode = defineNode({
       state.objectiveComplete = false
       const confirmed = state.feedback && state.feedback.actionId === state.motionId && terminalTypes.includes(state.feedback.type)
       if (!state.motionId || !state.action?.continuous || confirmed) {
-        clearDeadline(state, context); state.done = true
+        if (confirmed) settleAction(state, context)
+        else clearDeadline(state, context)
+        state.done = true
       } else {
         if (!state.cancellationRequestedAt) {
           cancelOwnedWork(context, { actionId: state.motionId,
@@ -316,17 +327,37 @@ export const environmentActiveTaskWaitNode = defineNode({
     { name: 'continue', type: 'boolean', description: 'Advance the same execution' }],
   async execute(inputs, context) {
     const state = structuredClone(inputs.state) as ActiveTaskState
-    if (state.done) return { state, continue: false }
     context.abortSignal?.throwIfAborted()
     const execution = context.graphExecution!
     const program = context.activeProgram as EnvironmentTaskProgram
+    const bufferInput = (event: NonNullable<ActiveTaskState['pendingEvents']>[number]) => {
+      state.userInput = { ...(event.payload as Record<string, unknown>), executionEvents: [
+        ...((state.userInput?.executionEvents as unknown[]) ?? []), event,
+      ] }
+    }
+    const routeInput = () => {
+      // Input may be queued immediately after the terminal receipt. Receive it
+      // before another phase can dispatch, retaining other events for that phase.
+      const pending = state.pendingEvents ?? []
+      if (execution.pendingEvents().some((event: { kind: string }) => event.kind === 'user_steering')) {
+        while (execution.pendingEvents().length) pending.push(execution.waitForEvent('pending_input'))
+      }
+      state.pendingEvents = pending.filter(event => {
+        if (event.kind !== 'user_steering') return true
+        bufferInput(event); return false
+      })
+      if (!state.userInput) return false
+      // Build this only at the handoff, after phase advancement or termination
+      // reconciliation. An arrival-time snapshot could resurrect the old gait.
+      state.userInput.activeTaskContinuation = { program, decision: execution.task()?.decision ?? context.activeTaskDecision,
+        state: { ...state, userInput: undefined } }
+      return true
+    }
+    if (state.done) { routeInput(); return { state, continue: false } }
     const advance = (evidence: string) => {
-      clearDeadline(state, context)
-      state.completedActionId = state.motionId
+      settleAction(state, context)
       state.evidence = [...state.evidence, evidence]; state.stepIndex += 1
-      for (const field of ['motionId', 'action', 'accepted', 'snapshotId', 'identificationEffectId', 'identificationRequest', 'generationEffectId', 'image', 'identification', 'lastIdentifiedFrame', 'finishRequestedAt', 'cancellationRequestedAt', 'feedbackRequiredSince', 'pendingControls', 'desiredControls', 'acknowledgedControls', 'retrySteering', 'captureRequestedAt', 'captureCompleted'] as const) delete state[field]
-      state.updateRevision = 0
-      return { state, continue: true }
+      return { state, continue: !routeInput() }
     }
     const captureResult = () => {
       if (!state.captureCompleted || !state.identification) return { state, continue: true }
@@ -344,10 +375,11 @@ export const environmentActiveTaskWaitNode = defineNode({
         return { state, continue: true }
       }
       if (event.kind === 'user_steering') {
-        state.userInput = { ...payload, activeTaskContinuation: { program, decision: context.activeTaskDecision,
-          state: { ...state, userInput: undefined } } }
+        bufferInput(event)
         if (state.finishRequestedAt || state.cancellationRequestedAt) continue
-        if (program.steps[state.stepIndex].kind === 'behavior' || state.action?.continuous || !state.motionId) return { state, continue: false }
+        if (program.steps[state.stepIndex].kind === 'behavior' || state.action?.continuous || !state.motionId) {
+          routeInput(); return { state, continue: false }
+        }
         continue
       }
       if (event.kind === 'perception_received') { state.retrySteering = true; return { state, continue: true } }
@@ -435,12 +467,7 @@ export const environmentActiveTaskWaitNode = defineNode({
         if (program.steps[state.stepIndex].kind !== 'behavior') {
           if (feedback.type === 'completed') {
             if (state.action?.type === 'captureImage') { state.captureCompleted = true; return captureResult() }
-            const result = advance(feedback.message || `Action ${event.actionId} completed`)
-            if (state.userInput) {
-              state.userInput.activeTaskContinuation = { program, decision: context.activeTaskDecision, state: { ...state, userInput: undefined } }
-              return { state, continue: false }
-            }
-            return result
+            return advance(feedback.message || `Action ${event.actionId} completed`)
           }
           if (['failed', 'rejected', 'expired', 'cancelled', 'outcome_unknown'].includes(feedback.type)) {
             state.failure = feedback; return { state, continue: true }

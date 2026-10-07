@@ -45,6 +45,17 @@ subject to worker/transport availability, not a P4 hard real-time watchdog.
 No acceptance/update ACK or successful cleanup job proves commanded termination.
 Even a correlated device terminal receipt is not measured physical rest.
 
+Buffered input at termination: Finish and cancellation reconcile the original
+command before handing pending instructions back to intent routing. A successful
+Finish advances the phase index, then yields before admitting the next phase;
+a failed/cancelled phase yields with its settled failure. The continuation is
+rebuilt from that settled state with the old command identity and pending controls
+cleared. Unknown outcomes keep waiting and cannot authorize a replacement.
+Several buffered instructions retain their ordered event evidence; the existing
+input drain routes the latest turn and preserves the settled continuation even
+when newer input follows the terminal receipt. Conversation cannot resurrect a
+terminated phase; an explicitly selected new behavior gets a new command identity.
+
 Gateway cancellation checks the saved gateway instance, robot epoch, body lease,
 and most recent body/speaker dispatch while holding the wire-send lock. Manual
 controls invalidate that fence. Late cleanup cannot Stop a newer owner. Disconnect
@@ -64,7 +75,9 @@ Stage-1-only reverse patches, never a repository reset.
 Next proposed slice: dispatch instruction interpretation as finite Coordinator
 work and consume its correlated result in this same active execution, so feedback
 and cancellation continue while that inference is pending. No second controller
-or motion channel; IMU acquisition is a separate slice.
+or motion channel; IMU acquisition is a separate slice. Older speech-cleanup edge
+cases remain separate follow-up work: this motion-boundary correction does not
+redesign speech cancellation or claim those cases are covered.
 
 The measurements and work log below are historical, preceding this cutover;
 their old `actions` / `movementRequest` contracts and graph chains do not describe
