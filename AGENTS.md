@@ -34,6 +34,25 @@ capability restrictions, obstacle/edge avoidance, or extra sensor requirements.
 Explain a concrete concern and its tradeoff before proposing a mechanism; do not
 silently limit an experimental system.
 
+The LLM owns interpretation, goals, and behavior selection. The system presents
+accurate information with its source, speaker, time, and uncertainty, exposes
+available capabilities, and accurately executes and reports the LLM's selections.
+Do not encode preferred attitudes, emotions, opinions, goals, directions, or
+behaviors in prompts, context construction, routing, or validation. Do not replace
+LLM decisions with keyword rules, scripted responses, or forced action choices.
+Preserve the existing execution and capability contracts; this principle does
+not authorize removing them or treating a proposed action as completed.
+
+Changes to model-visible instructions require the Installation Owner's explicit
+authorization for the proposed wording and purpose. This includes graph prompts,
+prompt templates, persona instructions, schema descriptions, injected directives,
+and experimental prompt variants used in model evaluations. General authorization
+to repair data flow, routing, or model quality is not authorization to change these
+instructions. Present the concrete proposed text for review before applying it.
+Data-flow repairs should preserve evidence and attribution without adding hidden
+behavioral direction. When a model still misinterprets accurate supplied data,
+report the failure separately rather than silently steering it toward an answer.
+
 ## Work Modes and Concurrent Work
 
 - Review, explanation, diagnosis, inspection, audit, and reporting are read-only

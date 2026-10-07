@@ -299,7 +299,7 @@ export async function escalate(
     actor: 'escalation-backend',
   });
 
-  const result = await backend.execute(prompt, execOptions);
+  const result = await backend.execute(prompt, { ...execOptions, username });
   if (execOptions.signal?.aborted) {
     throw execOptions.signal.reason instanceof Error
       ? execOptions.signal.reason

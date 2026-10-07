@@ -540,6 +540,32 @@
         },
         "comment": "Task-level cognitive continuation after the complete active program or a conversation. Never runs between physical phases."
       }
+    },
+    {
+      "id": "await-objective-input",
+      "type": "utilityNode",
+      "position": {
+        "x": 6800,
+        "y": 550
+      },
+      "data": {
+        "label": "Await Requested Context",
+        "nodeType": "execution_event_wait",
+        "properties": {
+          "waitForEvent": true,
+          "userGraph": "environment",
+          "autonomyGraph": "robot-autonomy-controller"
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "remaining-objective",
+              "output": "awaitContext",
+              "truthy": true
+            }
+          ]
+        }
+      }
     }
   ],
   "edges": [
@@ -1379,6 +1405,37 @@
         "when": {
           "truthy": true,
           "output": "invocation"
+        }
+      }
+    },
+    {
+      "id": "remaining-objective-await-input",
+      "source": "remaining-objective",
+      "sourceHandle": "awaitContext",
+      "target": "await-objective-input",
+      "targetHandle": "control",
+      "data": {
+        "kind": "control",
+        "type": "boolean",
+        "when": {
+          "output": "awaitContext",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "await-objective-input-continue",
+      "source": "await-objective-input",
+      "sourceHandle": "invocation",
+      "target": "continue-user-input",
+      "targetHandle": "invocation",
+      "data": {
+        "kind": "data",
+        "type": "object",
+        "loop": true,
+        "when": {
+          "output": "invocation",
+          "truthy": true
         }
       }
     }

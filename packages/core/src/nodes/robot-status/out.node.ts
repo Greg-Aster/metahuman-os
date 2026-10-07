@@ -13,7 +13,7 @@ import {
   type RobotStatusTask,
   type RobotStatusTaskAction,
 } from '../../robot-status.js'
-import { defineNode } from '../types.js'
+import { defineNode, type NodeExecutionContext } from '../types.js'
 import { randomUUID } from 'node:crypto'
 import type { ExecutionObjective } from '../../durable-execution/types.js'
 
@@ -93,7 +93,10 @@ function lastAction(
       || cleanText(bridgeRecord?.message, 500)
       || matchingPrevious?.message
       || '',
-    completedAt: terminal ? observedAt : matchingPrevious?.completedAt || '',
+    completedAt: terminal ? cleanText(terminal.timestamp, 80) || observedAt : matchingPrevious?.completedAt || '',
+    observedAt,
+    sessionId: cleanText((inputs.observation as EnvironmentObservation | undefined)?.sessionId, 160),
+    robotId: cleanText(((inputs.observation as EnvironmentObservation | undefined)?.state?.body as Record<string, unknown> | undefined)?.robotId, 160),
   }
 }
 
@@ -243,73 +246,79 @@ export const robotStatusOutNode = defineNode({
     const username = cleanText(context.username, 160)
     if (!username) throw new Error('Robot Status Out requires an authenticated username')
     if (!context.graphExecution) throw new Error('Robot Status Out requires checkpointed execution')
-    const previous = loadRobotStatus(username)
-    const observation = isRecord(inputs.observation)
-      ? inputs.observation as unknown as EnvironmentObservation
-      : null
-    const now = new Date().toISOString()
-    const task = statusTask(inputs, context.graphExecution.task(), now, context.graphExecution.executionId)
+    const task = statusTask(inputs, context.graphExecution.task(), new Date().toISOString(), context.graphExecution.executionId)
     if (task) context.graphExecution.recordTask(task)
-    const action = lastAction(inputs, previous, now)
-    const decision = isRecord(inputs.taskDecision) ? inputs.taskDecision : null
-    const response = cleanText(inputs.response, 1_000)
-    const visualObservation = inputs.visualObservation as import('../../visual-observation.js').VisualObservationRecord | null | undefined
-    const userInstruction = cleanText(inputs.userInstruction, 500)
-    const semanticSummary = cleanText(visualObservation?.summary, 1_000)
-      || cleanText(decision?.observationSummary, 1_000)
-      || response
-      || cleanText(decision?.reason, 1_000)
-      || cleanText((inputs.terminalFeedback as Record<string, unknown> | undefined)?.message, 500)
-      || userInstruction
-      || previous?.situation.situationalSummary
-      || ''
-    const previousSituation = previous?.situation
-    const nextSituation = {
-      situationalSummary: semanticSummary,
-      environmentDescription: cleanText(visualObservation?.summary, 1_000)
-        || cleanText(decision?.observationSummary, 1_000)
-        || previousSituation?.environmentDescription
-        || semanticSummary,
-      currentGoal: task?.decision.objectiveComplete === true || task?.decision.outcome === 'abandon'
-        ? ''
-        : task?.objective || previousSituation?.currentGoal || '',
-      currentIntent: cleanText(decision?.reason, 500)
-        || context.graphExecution.task()?.decision.reason
-        || '',
-      userContext: userInstruction || previousSituation?.userContext || '',
-      uncertainties: previousSituation?.uncertainties ?? [],
-    }
-    const situation = nextSituation
-    const sourceUpdatedAt = previous?.sourceUpdatedAt ?? {
-      environment: '',
-      telemetry: '',
-      conversation: '',
-      robotHistory: '',
-      agency: '',
-    }
-    const sources = {
-      ...(visualObservation ? { latestVisualObservation: visualObservation } : {}),
-      generatedAt: now,
-      sourceUpdatedAt: {
-        ...sourceUpdatedAt,
-        environment: observation?.timestamp || sourceUpdatedAt.environment,
-        conversation: userInstruction || response ? now : sourceUpdatedAt.conversation,
-        robotHistory: isRecord(inputs.terminalFeedback) || isRecord(inputs.bridgeRecord) ? now : sourceUpdatedAt.robotHistory,
-      },
-      body: bodyFromObservation(observation, previous),
-      lastAction: action,
-      task,
-      activeDesires: previous?.agency.activeDesires ?? [],
-    }
-    context.graphExecution.dispatch({ kind: 'robot_status', payload: { situation, sources } })
-    const status = buildRobotStatusProjection(previous, task ?? context.graphExecution.task(), situation, sources)
-    return {
-      status,
-      context: status,
-      task: task ?? context.graphExecution.task(),
-      lastAction: status.lastAction,
-      path: robotStatusPath(username),
-      persisted: true,
-    }
+    return projectRobotStatus(inputs, context, task)
   },
 })
+
+/** Publish owned action facts without replacing the active executor's task. */
+export function projectRobotStatus(inputs: Record<string, unknown>, context: NodeExecutionContext, task?: ExecutionObjective) {
+  const username = cleanText(context.username, 160)
+  const previous = loadRobotStatus(username)
+  const observation = isRecord(inputs.observation)
+    ? inputs.observation as unknown as EnvironmentObservation
+    : null
+  const now = new Date().toISOString()
+  const action = lastAction(inputs, previous, now)
+  const decision = isRecord(inputs.taskDecision) ? inputs.taskDecision : null
+  const response = cleanText(inputs.response, 1_000)
+  const visualObservation = inputs.visualObservation as import('../../visual-observation.js').VisualObservationRecord | null | undefined
+  const userInstruction = cleanText(inputs.userInstruction, 500)
+  const semanticSummary = cleanText(visualObservation?.summary, 1_000)
+    || cleanText(decision?.observationSummary, 1_000)
+    || response
+    || cleanText(decision?.reason, 1_000)
+    || cleanText((inputs.terminalFeedback as Record<string, unknown> | undefined)?.message, 500)
+    || userInstruction
+    || previous?.situation.situationalSummary
+    || ''
+  const previousSituation = previous?.situation
+  const nextSituation = {
+    situationalSummary: semanticSummary,
+    environmentDescription: cleanText(visualObservation?.summary, 1_000)
+      || cleanText(decision?.observationSummary, 1_000)
+      || previousSituation?.environmentDescription
+      || semanticSummary,
+    currentGoal: task?.decision.objectiveComplete === true || task?.decision.outcome === 'abandon'
+      ? ''
+      : task?.objective || previousSituation?.currentGoal || '',
+    currentIntent: cleanText(decision?.reason, 500)
+      || context.graphExecution!.task()?.decision.reason
+      || '',
+    userContext: userInstruction || previousSituation?.userContext || '',
+    uncertainties: previousSituation?.uncertainties ?? [],
+  }
+  const situation = nextSituation
+  const sourceUpdatedAt = previous?.sourceUpdatedAt ?? {
+    environment: '',
+    telemetry: '',
+    conversation: '',
+    robotHistory: '',
+    agency: '',
+  }
+  const sources = {
+    ...(visualObservation ? { latestVisualObservation: visualObservation } : {}),
+    generatedAt: now,
+    sourceUpdatedAt: {
+      ...sourceUpdatedAt,
+      environment: observation?.timestamp || sourceUpdatedAt.environment,
+      conversation: userInstruction || response ? now : sourceUpdatedAt.conversation,
+      robotHistory: isRecord(inputs.terminalFeedback) || isRecord(inputs.bridgeRecord) ? now : sourceUpdatedAt.robotHistory,
+    },
+    body: bodyFromObservation(observation, previous),
+    lastAction: action,
+    task,
+    activeDesires: previous?.agency.activeDesires ?? [],
+  }
+  context.graphExecution!.dispatch({ kind: 'robot_status', payload: { situation, sources } })
+  const status = buildRobotStatusProjection(previous, task ?? context.graphExecution!.task(), situation, sources)
+  return {
+    status,
+    context: status,
+    task: task ?? context.graphExecution!.task(),
+    lastAction: status.lastAction,
+    path: robotStatusPath(username),
+    persisted: true,
+  }
+}

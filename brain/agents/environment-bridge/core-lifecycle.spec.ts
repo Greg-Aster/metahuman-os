@@ -24,6 +24,7 @@ assert.equal(publicCore.ROOT, isolatedRoot);
 publicCore.setAuditEnabled(false);
 let scenario = '';
 let sent = 0;
+let speechSettingsResults: Record<string, any>[] = [];
 let wireUpdates: Record<string, any>[] = [];
 let acknowledgements: Record<string, unknown>[] = [];
 let finishFixture = () => {};
@@ -44,6 +45,9 @@ class FakeWebSocket extends EventEmitter {
         ...((scenario === 'perception' || scenario.startsWith('update')) ? { observation: { environmentId: 'ainekio', adapter: 'ainekio-gateway',
           sessionId: 'robot-session', timestamp: new Date().toISOString(), capabilities: { actions: [] },
           state: { activeMovementUpdates: { version: 1, available: true, gatewayInstance: 'gateway-fixture', robotId: 'body-fixture', epoch: 7, maxValidityMs: 1000 } } } } : {}) }), false));
+    } else if (message.type === 'speech.settings.result') {
+      speechSettingsResults.push(message);
+      if (speechSettingsResults.length === 4) queueMicrotask(finishFixture);
     } else if (message.type === 'environment.action.update') {
       wireUpdates.push(message);
       if (scenario === 'update-send') throw new Error('Fixture settings send failed');
@@ -297,6 +301,51 @@ test('ongoing updates preserve movement identity and lease while receipts finish
     }
   } finally {
     globalThis.fetch = originalFetch;
+    keys.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index]; });
+  }
+});
+
+test('speech destination requests use the authenticated Core API and preserve correlation', async () => {
+  scenario = 'speech-settings';
+  speechSettingsResults = [];
+  const keys = ['MH_ENVIRONMENT_ADAPTER_URL', 'MH_ENVIRONMENT_ADAPTER_TOKEN', 'MH_ENVIRONMENT_BRIDGE_TOKEN', 'MH_ENVIRONMENT_CORE_URL'];
+  const previous = keys.map(key => process.env[key]);
+  const originalFetch = globalThis.fetch;
+  process.env.MH_ENVIRONMENT_ADAPTER_URL = 'ws://fixture.invalid/environment';
+  process.env.MH_ENVIRONMENT_ADAPTER_TOKEN = 'fixture-adapter';
+  process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'fixture-core';
+  process.env.MH_ENVIRONMENT_CORE_URL = 'http://fixture.invalid';
+  const controller = new AbortController();
+  finishFixture = () => controller.abort();
+  const forwarded: any[] = [];
+  globalThis.fetch = async (url, options) => {
+    const pathname = new URL(String(url)).pathname;
+    if (pathname === '/api/environment-bridge/stream') return new Response(new ReadableStream<Uint8Array>({ start(stream) {
+      options?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+      queueMicrotask(() => {
+        for (const [index, target] of [undefined, 'robot', 'local', 'invalid'].entries()) {
+          fixtureSocket.emit('message', JSON.stringify({ type: 'speech.settings', requestId: `settings-${index}`, outputTarget: target }), false);
+        }
+      });
+    } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    if (pathname === '/api/environment-bridge/speech-settings') {
+      assert.equal(new Headers(options?.headers).get('Authorization'), 'Bearer fixture-core');
+      const body = JSON.parse(String(options?.body));
+      forwarded.push(body);
+      if (body.outputTarget === 'invalid') return Response.json({ error: 'Invalid destination' }, { status: 400 });
+      return Response.json({ outputTarget: body.outputTarget ?? 'local', username: 'fixture-owner', provider: 'kokoro' });
+    }
+    return Response.json({ success: true });
+  };
+  const timeout = setTimeout(() => controller.abort(new Error('Speech settings test timed out')), 5000);
+  try {
+    await runEnvironmentBridgeAgent(controller.signal);
+    assert.deepEqual(forwarded, [{}, { outputTarget: 'robot' }, { outputTarget: 'local' }, { outputTarget: 'invalid' }]);
+    assert.deepEqual(speechSettingsResults.map(result => result.requestId), ['settings-0', 'settings-1', 'settings-2', 'settings-3']);
+    assert.deepEqual(speechSettingsResults.slice(0, 3).map(result => result.outputTarget), ['local', 'robot', 'local']);
+    assert.match(speechSettingsResults[3].error, /Invalid destination/);
+  } finally {
+    controller.abort(); clearTimeout(timeout); globalThis.fetch = originalFetch;
     keys.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index]; });
   }
 });

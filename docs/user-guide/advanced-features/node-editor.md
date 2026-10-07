@@ -67,6 +67,45 @@ Keyboard equivalents are Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y, Ctrl/Cmd+C,
 
 The **Observation Session** setting accepts a session ID or offers currently known sessions when the Environment Bridge is available. Outputs are never disabled by settings: the workflow chooses what it consumes by connecting only the required ports. The complete **Observation**, **Bridge Summary**, and **Diagnostics Snapshot** objects preserve their respective canonical payloads, while convenience ports expose battery voltage, Wi-Fi signal, body state and readiness, storage and media health, wake-word state, gateway details, transcription state, and movement diagnostics. Missing optional readings remain null or empty rather than being fabricated. The frame collection is part of the current observation, not durable image history. Location and map authoring belong to **Environment Map Input** and do not pass through this node. After execution, the node shows a compact observation and body summary; the complete output remains available under **Last Run** in the inspector.
 
+#### Using Ainekio V1 and V2
+
+The same Environment workflow uses the selected adapter body's command catalog
+and descriptions. The selector receives its model, operating profile, current
+gait, and advertised live-update controls. V1 (`v1-8servo`) keeps its eight-servo
+commands; V2 (`v2-12servo`) supplies its twelve-servo motions, Crawl, directional
+Crab, and finite turns through the same semantic command path. Body Control owns
+joint mapping, calibration, gait execution, and robot settings.
+
+Select the bridge target by setting `AINEKIO_ROBOT_ID` in the **Ainekio gateway's**
+environment before starting that gateway. Without this setting, its adapter
+selects a body only when exactly one robot is connected. With both connected,
+set the desired robot ID and restart the gateway to change the bridge target.
+The Body Control dashboard dropdown selects dashboard commands; it does not
+change this adapter setting. MetaHuman's Observation Session selects a bridge
+session, not a robot within a gateway. Local/Remote Bridge selection changes the
+connection route independently of the robot model.
+
+The intended Q6A deployment puts continuous behavior execution and local
+reactions beside Body Control, while MetaHuman supplies higher-level intentions
+and tasks. P4 retains gait timing and servo execution. Currently, MetaHuman's
+active-task executor still advances program phases and sends perception-driven
+steering updates over the Bridge. Running Body Control on Q6A alone does not
+relocate that executor or establish a fully local behavior loop.
+
+V2 gait actions accept `speed`, or the pair `stride` and `rate`. Walk/Run speed
+is 0–200, with values above 100 selecting Run; Crawl/Crab speed is 0–100. Zero
+finishes the gait. Named ongoing actions use `continuous:true`; finite cycles
+use `continuous:false` and `units`. Speed and composed forward/turn changes can
+update the same admitted gait. Changing the `direction` of an already-running
+named gait is not supported by the current continuation path: it can retain the
+old direction. Explicitly stop the current gait before requesting that change.
+
+Generated joint trajectories still use Ainekio's eight-joint `motion_plan_v1`
+contract. The current V2 firmware does not advertise this feature, so its
+selector offers the advertised V2 semantic motions rather than a V1 joint
+trajectory. Twelve-joint freestyle generation requires a corresponding Ainekio
+adapter/firmware contract; changing MetaHuman's servo count cannot provide it.
+
 ### Verify Matched Sent Action
 
 Before a result-bearing graph starts, Core resolves the robot-reported action ID against Work Coordinator records. **Verify Matched Sent Action** confirms that the reported ID and that trusted record agree. A match exposes the sent command, current status and result, timing, and owning action cycle; a missing or mismatched record produces no action context. The node has no editable matching settings and does not perform the lookup, send a command, decide what the robot should do, update Robot Status, or call a model.

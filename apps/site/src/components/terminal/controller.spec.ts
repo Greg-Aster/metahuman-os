@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { TerminalController } from './controller.js'
 import { connectionManager } from '../../lib/client/connection-manager.js'
-import { connectionPool } from '../../lib/client/connection-pool.js'
+import { connectionPool, ConnectionPriority } from '../../lib/client/connection-pool.js'
 
 class Source extends EventTarget {
   static all: Source[] = []
@@ -98,4 +98,24 @@ test('input is ordered and a transport failure is surfaced without replay', asyn
     assert.deepEqual(writes, ['first'])
     assert.deepEqual(errors, ['input rejected'])
   } finally { controller.dispose() }
+})
+
+test('visible terminal streams during chat suspension while background streams remain deferred', async () => {
+  globalThis.fetch = async () => reply(state)
+  const background = connectionPool.request({ id: 'background-fixture', name: 'Background fixture',
+    url: '/fixture-events', priority: ConnectionPriority.LOW })
+  connectionPool.suspend()
+  const controller = new TerminalController(() => {}, () => {})
+  try {
+    await controller.refresh()
+    assert.equal(connectionPool.getStatus().active, 1)
+    assert.equal(Source.all.at(-1)?.url, '/api/terminal/events?id=one')
+    assert.equal(Source.all.at(-1)?.readyState, 1)
+    const terminalSource = Source.all.at(-1)!
+    connectionPool.resume()
+    connectionPool.suspend()
+    assert.equal(terminalSource.readyState, 1)
+    controller.dispose()
+    assert.equal(connectionPool.getStatus().active, 0)
+  } finally { controller.dispose(); background.close(); connectionPool.resume() }
 })

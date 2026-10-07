@@ -149,12 +149,35 @@ function projectSelectorEvidence(
   );
 }
 
-function projectSelectorState(value: unknown): unknown {
+export function projectSelectorState(value: unknown): unknown {
   if (!isRecord(value)) return projectSelectorEvidence(value, { remaining: SELECTOR_STATE_FIELD_LEAF_LIMIT });
+  // The gateway also contains other robots and the legacy joint contract. Keep
+  // the selected body's model and settings ahead of the generic state budget.
+  const body = isRecord(value.body) ? value.body : null;
+  const gateway = isRecord(value.gateway) ? value.gateway : null;
+  const robots = isRecord(gateway?.robots) ? gateway.robots : null;
+  const selected = typeof body?.robotId === 'string' ? robots?.[body.robotId] : null;
+  const robot = isRecord(selected) ? selected : null;
   return Object.fromEntries(
     Object.entries(value)
       .slice(0, SELECTOR_MAX_OBJECT_KEYS)
       .flatMap(([key, nested]) => {
+        if (key === 'gateway' && robots) {
+          return [[key, { selectedRobot: robot ? {
+            robotId: body!.robotId,
+            model: robot.model,
+            profile: robot.profile,
+            mode: robot.mode,
+            connectionState: robot.connection_state,
+            activeWalk: projectSelectorEvidence(robot.active_walk, { remaining: 16 }),
+            posture: robot.posture ?? null,
+            lastTerminal: projectSelectorEvidence(robot.last_terminal, { remaining: 8 }),
+          } : null }]];
+        }
+        if (key === 'activeMovementUpdates' && isRecord(nested)) {
+          return [[key, { version: nested.version, available: nested.available,
+            controls: projectSelectorEvidence(nested.controls, { remaining: 8 }) }]];
+        }
         const projected = projectSelectorEvidence(
           nested,
           { remaining: SELECTOR_STATE_FIELD_LEAF_LIMIT },
@@ -175,6 +198,7 @@ export function projectRobotStatusContext(value: unknown): unknown {
   const task = isRecord(value.task) ? value.task : null;
   return {
     updatedAt: value.updatedAt,
+    lastBodyAction: value.lastBodyAction ?? null,
     ...(value.latestVisualObservation ? { latestVisualObservation: value.latestVisualObservation } : {}),
     body: body
       ? projectSelectorEvidence({
@@ -248,6 +272,27 @@ export function projectRobotCommandDescriptions(
   ]));
 }
 
+/** History remains evidence, not additional system instructions. Preserve the
+ * canonical buffer's dates and source identities through model presentation. */
+export function projectEnvironmentHistory(value: unknown) {
+  const entries = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.messages) ? value.messages : [];
+  const conversation: Array<{ role: string; content: string; timestamp?: string | number }> = [];
+  const innerDialogue: Array<Record<string, unknown>> = [];
+  for (const entry of entries) {
+    if (!isRecord(entry) || typeof entry.content !== 'string' || !entry.content.trim()) continue;
+    const timestamp = typeof entry.timestamp === 'number' ? new Date(entry.timestamp).toISOString()
+      : typeof entry.timestamp === 'string' ? entry.timestamp : undefined;
+    const meta = isRecord(entry.meta) ? entry.meta : {};
+    if (meta.isInnerDialogue === true) {
+      innerDialogue.push({ type: meta.originalRole, timestamp, source: meta.dialogueSource,
+        content: entry.content.trim() });
+    } else if (entry.role === 'user' || entry.role === 'assistant') {
+      conversation.push({ role: entry.role, content: entry.content.trim(), ...(timestamp ? { timestamp } : {}) });
+    }
+  }
+  return { conversation, innerDialogue };
+}
+
 export interface EnvironmentSelectorEnvelopeInput {
   /** Frames selected alongside the attached images, in the same order. */
   visualFrames?: EnvironmentVisualFrame[];
@@ -255,8 +300,10 @@ export interface EnvironmentSelectorEnvelopeInput {
   execution?: unknown;
   instruction: string;
   observation?: EnvironmentObservation | null;
-  recentConversation?: Array<{ role: string; content: string }>;
-  memories?: string[];
+  recentConversation?: Array<{ role: string; content: string; timestamp?: string | number }>;
+  innerDialogue?: Array<Record<string, unknown>>;
+  memories?: Array<string | Record<string, unknown>>;
+  currentTime?: string;
   personaText?: string;
   robotStatus?: unknown;
   replyToContent?: string;
@@ -276,21 +323,26 @@ export function buildEnvironmentSelectorSystemPrompt(
   return input.systemPrompt.trim();
 }
 
-function selectorCapabilityRules(capabilities: EnvironmentCapabilities): string[] {
+function selectorCapabilityRules(capabilities: EnvironmentCapabilities, state: unknown): string[] {
   const actions = new Set(capabilities.actions);
   const commandDescriptions = projectRobotCommandDescriptions(capabilities);
+  const gateway = isRecord(state) && isRecord(state.gateway) ? state.gateway : null;
+  const robot = isRecord(gateway?.selectedRobot) ? gateway.selectedRobot : null;
   return [
     actions.has('robotCommand')
       ? Object.keys(commandDescriptions).length > 0
         ? actions.has('robotMotionPlan')
-          ? 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. Represent the complete requested task as program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail; use a generatedMotion step only when no description covers that current movement.'
-          : 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. Represent the complete requested task as program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail.'
+          ? 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. A chosen physical activity is represented by ordered program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail; use a generatedMotion step only when no description covers that current movement.'
+          : 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. A chosen physical activity is represented by ordered program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail.'
         : actions.has('robotMotionPlan')
           ? 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects; use a generatedMotion step when a named effect cannot be identified confidently.'
           : 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects.'
       : '',
     actions.has('robotCommand')
       ? 'For ongoing named motions described by the adapter, set continuous:true. For live walking and turning together, select continuous move with forward and turn controls.'
+      : '',
+    robot?.model === 'v2-12servo' && actions.has('move')
+      ? 'V2 locomotion: speed is 0..200 for Walk/Run (above 100 selects Run), or 0..100 for Crawl/Crab; speed 0 finishes the gait. Use speed OR both stride (1..100) and rate (0.25..3), never both control modes. Forward and turn are a pair of signed percentages (-100..100); positive turn is left. Use the advertised directional Crab commands for sideways motion. For finite cycles set continuous:false and units explicitly; continuous:true runs until finished or stopped. Live updates use only the advertised activeMovementUpdates controls.'
       : '',
     actions.has('robotMotionPlan')
       ? 'robotMotionPlan: request off-script body_local motion through a generatedMotion step; never author a motion plan directly.'
@@ -346,6 +398,7 @@ export function buildEnvironmentSelectorEnvelope(
   const location = projectSelectorEvidence(observation?.location, { remaining: 6 });
   const map = projectSelectorEvidence(observation?.map, { remaining: 6 });
   return JSON.stringify({
+    currentTime: input.currentTime ?? new Date().toISOString(),
     currentInstruction: input.instruction.slice(0, 4_000),
     inputSource: input.inputSource ?? 'user',
     selectedRoutes: input.routing ?? {},
@@ -382,7 +435,7 @@ export function buildEnvironmentSelectorEnvelope(
         ? observation.metadata.correlationId
         : undefined,
     } : null,
-    capabilityRules: observation ? selectorCapabilityRules(observation.capabilities) : [],
+    capabilityRules: observation ? selectorCapabilityRules(observation.capabilities, state) : [],
     activePersona: input.personaText?.trim().slice(0, 2_000) || null,
     robotStatus: projectRobotStatusContext(input.robotStatus),
     execution: input.execution ?? null,
@@ -393,8 +446,10 @@ export function buildEnvironmentSelectorEnvelope(
     recentConversation: (input.recentConversation ?? []).map(message => ({
       role: message.role === 'assistant' ? 'assistant' : 'user',
       content: message.content,
+      ...(message.timestamp !== undefined ? { timestamp: message.timestamp } : {}),
     })),
-    memories: (input.memories ?? []).slice(0, 3).map(memory => memory.slice(0, 500)),
+    innerDialogue: input.innerDialogue ?? [],
+    memories: (input.memories ?? []).slice(0, 3),
   });
 }
 
@@ -665,6 +720,8 @@ function selectorActionItemSchema(
       stride: SELECTOR_SCHEMA_ACTION_PROPERTIES.stride,
       rate: SELECTOR_SCHEMA_ACTION_PROPERTIES.rate,
       gait: SELECTOR_SCHEMA_ACTION_PROPERTIES.gait,
+      forward: SELECTOR_SCHEMA_ACTION_PROPERTIES.forward,
+      turn: SELECTOR_SCHEMA_ACTION_PROPERTIES.turn,
     },
   };
 

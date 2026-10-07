@@ -59,7 +59,7 @@ test('robot speech volume normalizes the source peak to the configured percentag
   assert.throws(() => normalizeRobotSpeechVolume(source, 101), /between 1 and 100/);
 });
 
-test('robot speech spool is bounded, permission-restricted, and claim-once', () => {
+test('robot speech spool is permission-restricted and claim-once', () => {
   const spool = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-speech-'));
   const previous = process.env.MH_ENVIRONMENT_SPEECH_SPOOL;
   process.env.MH_ENVIRONMENT_SPEECH_SPOOL = spool;

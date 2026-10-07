@@ -7,7 +7,7 @@
   import ApprovalPrompt from './ApprovalPrompt.svelte';
   // Operator proposals are rendered inline by OperatorProposalCard.
   import { canUseOperator, currentMode, isOwner } from '../stores/security-policy';
-  import { yoloModeStore } from '../stores/navigation';
+  import { yoloModeStore, statusRefreshTrigger } from '../stores/navigation';
   import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
   import { useTTS } from '../lib/client/composables/useTTS';
   import { useMicrophone } from '../lib/client/composables/useMicrophone';
@@ -42,7 +42,8 @@
   let bigBrotherEnabled = false;
   let bigBrotherDelegateAll = false;
   let bigBrotherProvider = 'claude-code';
-  let bigBrotherReady = false;
+  let savingBigBrother = false;
+  let unsubscribeBigBrother: (() => void) | undefined;
   let bigBrotherProviderLabel = 'Claude Code';
   let chatResponseHandle: ConnectionHandle | null = null;
   let chatResponseStream: EventSource | null = null;
@@ -276,8 +277,6 @@
       } else if (typeof p.reasoningEnabled === 'boolean') {
         reasoningDepth = p.reasoningEnabled ? 2 : 0;
       }
-      if (typeof p.bigBrotherEnabled === 'boolean') bigBrotherEnabled = p.bigBrotherEnabled;
-      if (typeof p.bigBrotherDelegateAll === 'boolean') bigBrotherDelegateAll = p.bigBrotherDelegateAll;
       console.log('[chat-prefs] Loaded:', { ttsEnabled, reasoningDepth });
       void syncSpeechDisabledPreference(!ttsEnabled);
     } catch (e) {
@@ -295,8 +294,6 @@
         speechDisabled: !ttsEnabled,
         reasoningDepth,
         reasoningEnabled: reasoningDepth > 0,
-        bigBrotherEnabled,
-        bigBrotherDelegateAll,
       });
       localStorage.setItem('chatPrefs', JSON.stringify(prefs));
     } catch {}
@@ -425,31 +422,7 @@
       ttsApi.prefetchVoiceResources();
     }
 
-    // Big Brother is an owner capability. Avoid a request known in advance to
-    // be forbidden for standard/guest accounts.
-    if (get(isOwner)) {
-      try {
-        const res = await apiFetch('/api/big-brother-config');
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success && data.config) {
-            bigBrotherEnabled = data.config.enabled ?? false;
-            bigBrotherDelegateAll = data.config.delegateAll ?? false;
-            bigBrotherProvider = data.config.provider || 'claude-code';
-            updateBigBrotherUiState();
-            saveChatPrefs(); // Save to local storage
-            console.log('[big-brother] Loaded configuration:', {
-              enabled: bigBrotherEnabled,
-              provider: data.config.provider,
-              delegateAll: bigBrotherDelegateAll
-            });
-
-          }
-        }
-      } catch (error) {
-        console.error('[big-brother] Failed to load config:', error);
-      }
-    }
+    unsubscribeBigBrother = statusRefreshTrigger.subscribe(() => { void loadBigBrotherConfig(); });
 
     // Check LLM backend health status
     backendApi.checkStatus();
@@ -706,6 +679,7 @@
     activityApi.clearActivity();
     thinkingTraceApi.cleanup();
     unsubscribeYolo();
+    unsubscribeBigBrother?.();
     releaseTriggerManager?.();
     if (transientStatusTimer) clearTimeout(transientStatusTimer);
 
@@ -1072,7 +1046,7 @@
 
       // Check 2: Backend readiness
       thinkingTraceApi.appendTrace(`[${timestamp()}] Checking backend...`, 5);
-      if (!backendApi.isReady()) {
+      if (!(bigBrotherEnabled && bigBrotherDelegateAll) && !backendApi.isReady()) {
         const backend = get(activeBackend);
         const msg = backend === 'vllm'
           ? 'Cannot send response: vLLM server is not running. Please start vLLM from Settings → Backend.'
@@ -1328,13 +1302,6 @@
     sendInProgress = true;
     await interruptAssistantSpeech('user-input');
 
-    // Claude Code and Codex are exposed through the visible system terminal.
-    // Mount the terminal manager before escalation so the live transcript and
-    // close-to-cancel control appear as soon as the server starts the process.
-    if (bigBrotherEnabled && (bigBrotherProvider === 'claude-code' || bigBrotherProvider === 'codex')) {
-      terminalVisible = true;
-    }
-
     // Health checks are ordinary fetches and need an available browser
     // connection. Free background SSE slots before consulting connectivity;
     // otherwise a saturated page can falsely route a healthy server to offline.
@@ -1350,8 +1317,30 @@
       return;
     }
 
+    // Claude Code and Codex are exposed through the visible system terminal.
+    // Mount the terminal manager before escalation so the live transcript and
+    // close-to-cancel control appear as soon as the server starts the process.
+    await loadBigBrotherConfig();
+    if (bigBrotherEnabled && bigBrotherDelegateAll && (bigBrotherProvider === 'claude-code' || bigBrotherProvider === 'codex')) {
+      try {
+        const response = await apiFetch('/api/terminal/control', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'start' }),
+        });
+        if (!response.ok) throw new Error((await response.json()).error || 'Could not start Big Brother terminal');
+        terminalVisible = true;
+        terminalMinimized = false;
+        statusRefreshTrigger.update(value => value + 1);
+      } catch (error) {
+        sendInProgress = false;
+        restorePassiveChatStreams();
+        messagesApi.pushMessage('system', `Big Brother: ${(error as Error).message}`);
+        return;
+      }
+    }
+
     // Check LLM backend status before sending (only when online)
-    if (!backendApi.isReady()) {
+    if (!(bigBrotherEnabled && bigBrotherDelegateAll) && !backendApi.isReady()) {
       sendInProgress = false; // Reset guard on early return
       restorePassiveChatStreams();
       const backend = get(activeBackend);
@@ -2141,62 +2130,40 @@
   }
 
 
-  async function toggleBigBrother(forceDelegateAll = false) {
-    const wasEnabled = bigBrotherEnabled;
-    const wasDelegateAll = bigBrotherDelegateAll;
-    
-    if (!bigBrotherEnabled) {
-      // First click: Enable Big Brother in escalation mode
-      bigBrotherEnabled = true;
-      bigBrotherDelegateAll = false;
-    } else if (!bigBrotherDelegateAll || forceDelegateAll) {
-      // Second click or right-click: Enable delegate all mode
-      bigBrotherEnabled = true;
-      bigBrotherDelegateAll = true;
-    } else {
-      // Third click: Turn off Big Brother completely
-      bigBrotherEnabled = false;
-      bigBrotherDelegateAll = false;
-    }
-    
-    saveChatPrefs();
-
+  async function loadBigBrotherConfig() {
+    if (!get(isOwner)) return;
     try {
-      // Update Big Brother configuration in operator.json (controls both CLI and operator integration)
-      const res = await apiFetch('/api/big-brother-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: bigBrotherEnabled,
-          provider: bigBrotherProvider,
-          delegateAll: bigBrotherDelegateAll,
-          escalateOnStuck: true,
-          escalateOnRepeatedFailures: true,
-          maxRetries: 1,
-          includeFullScratchpad: true,
-          autoApplySuggestions: false
-        })
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        console.error('[big-brother] Failed to update config:', data.error);
-        throw new Error(data.error || 'Failed to update Big Brother config');
-      }
-
-      console.log('[big-brother] Successfully updated Big Brother configuration:', { 
-        enabled: bigBrotherEnabled, 
-        delegateAll: bigBrotherDelegateAll 
-      });
+      const response = await apiFetch('/api/big-brother-config');
+      if (!response.ok) throw new Error('Failed to load Big Brother settings');
+      const { config } = await response.json();
+      bigBrotherEnabled = config.enabled ?? false;
+      bigBrotherDelegateAll = config.delegateAll ?? false;
+      bigBrotherProvider = config.provider || 'claude-code';
       updateBigBrotherUiState();
-
     } catch (error) {
-      console.error('[big-brother] Error updating config:', error);
-      // Revert on failure
-      bigBrotherEnabled = wasEnabled;
-      bigBrotherDelegateAll = wasDelegateAll;
+      console.error('[big-brother] Failed to load config:', error);
+    }
+  }
+
+  async function toggleBigBrother() {
+    savingBigBrother = true;
+    try {
+      const enabled = !bigBrotherEnabled;
+      const response = await apiFetch('/api/big-brother-config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, delegateAll: enabled }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to update Big Brother settings');
+      bigBrotherEnabled = data.config.enabled;
+      bigBrotherDelegateAll = data.config.delegateAll;
+      bigBrotherProvider = data.config.provider;
       updateBigBrotherUiState();
-      saveChatPrefs();
+      statusRefreshTrigger.update(value => value + 1);
+    } catch (error) {
+      messagesApi.pushMessage('system', `Big Brother: ${(error as Error).message}`);
+    } finally {
+      savingBigBrother = false;
     }
   }
 
@@ -2209,7 +2176,6 @@
       'codex': 'Codex',
     };
     bigBrotherProviderLabel = providerLabels[bigBrotherProvider] || bigBrotherProvider;
-    bigBrotherReady = bigBrotherEnabled;
   }
 
   async function cycleActiveOperatorMode() {
@@ -2388,29 +2354,15 @@
 
     <!-- Big Brother Mode Toggle -->
     <button
-      class="big-brother-toggle {bigBrotherEnabled ? 'active' : ''} {bigBrotherDelegateAll ? 'delegate-all' : ''} {bigBrotherReady ? 'ready' : ''}"
-      title={!bigBrotherEnabled
-        ? 'Big Brother off - Click for escalation mode, right-click for full delegation'
-        : bigBrotherDelegateAll
-          ? bigBrotherReady
-            ? `Big Brother FULL DELEGATION - All tasks go to ${bigBrotherProviderLabel} ⚡`
-            : `Big Brother delegation mode - ${bigBrotherProviderLabel} pending...`
-          : bigBrotherReady
-            ? `Big Brother escalation mode - Escalates via ${bigBrotherProviderLabel} ⚠️`
-            : `Big Brother escalation mode - ${bigBrotherProviderLabel} pending...`}
-      on:click={() => toggleBigBrother(false)}
-      on:contextmenu|preventDefault={() => toggleBigBrother(true)}
+      class="big-brother-toggle {bigBrotherEnabled ? 'active' : ''} {bigBrotherDelegateAll ? 'delegate-all' : ''}"
+      title={bigBrotherEnabled ? `Big Brother on — ${bigBrotherProviderLabel}. Click to return to the local model.` : 'Big Brother off — using the local model. Click to enable.'}
+      aria-label="Big Brother"
+      aria-pressed={bigBrotherEnabled}
+      disabled={savingBigBrother}
+      on:click={toggleBigBrother}
     >
       <span class="big-brother-icon">🤖</span>
-      {#if bigBrotherEnabled}
-        {#if bigBrotherDelegateAll}
-          <span class="big-brother-badge delegate-all">⚡</span>
-        {:else if bigBrotherReady}
-          <span class="big-brother-badge ready">⚠️</span>
-        {:else}
-          <span class="big-brother-badge">BB</span>
-        {/if}
-      {/if}
+      {#if bigBrotherEnabled}<span class="big-brother-badge delegate-all">On</span>{/if}
     </button>
 
     <!-- Active Operator Toggle -->

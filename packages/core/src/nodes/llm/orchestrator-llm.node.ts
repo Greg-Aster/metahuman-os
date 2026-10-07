@@ -19,6 +19,7 @@
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
+import { projectEnvironmentHistory } from '../environment/helpers.js';
 import { callLLM } from '../../model-router.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 
@@ -93,15 +94,31 @@ const ENVIRONMENT_INTENT_FIELDS = [
 export type EnvironmentIntentRouting = Record<typeof ENVIRONMENT_INTENT_FIELDS[number], boolean> & {
   executionDisposition?: 'new' | 'steer' | 'cancel';
   targetExecutionId?: string;
+  memoryQuery?: string;
+  memoryTypes?: string[];
 };
 
 export const ENVIRONMENT_INTENT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: [...ENVIRONMENT_INTENT_FIELDS],
-  properties: { ...Object.fromEntries(ENVIRONMENT_INTENT_FIELDS.map(field => [field, { type: 'boolean' }])) as Record<typeof ENVIRONMENT_INTENT_FIELDS[number], { type: 'boolean' }>,
+  properties: { memoryQuery: { type: 'string' }, memoryTypes: { type: 'array', items: { type: 'string' } }, ...Object.fromEntries(ENVIRONMENT_INTENT_FIELDS.map(field => [field, { type: 'boolean' }])) as Record<typeof ENVIRONMENT_INTENT_FIELDS[number], { type: 'boolean' }>,
     executionDisposition: { type: 'string', enum: ['new', 'steer', 'cancel'] }, targetExecutionId: { type: 'string' } },
 } as const;
+
+/** Only advertised executions are valid routing targets. With none, omit the
+ * optional transfer fields so an ordinary message cannot target a missing job. */
+export function environmentIntentSchema(activeExecutions: Array<{ executionId: string }> = []) {
+  const { executionDisposition, targetExecutionId, ...routes } = ENVIRONMENT_INTENT_JSON_SCHEMA.properties;
+  return {
+    ...ENVIRONMENT_INTENT_JSON_SCHEMA,
+    required: [...ENVIRONMENT_INTENT_FIELDS, ...(activeExecutions.length ? ['executionDisposition', 'targetExecutionId'] : [])],
+    properties: activeExecutions.length ? {
+      ...routes, executionDisposition,
+      targetExecutionId: { ...targetExecutionId, enum: ['', ...activeExecutions.map(item => item.executionId)] },
+    } : routes,
+  };
+}
 
 export function parseEnvironmentIntentRouting(value: unknown): EnvironmentIntentRouting {
   if (typeof value !== 'string') {
@@ -119,7 +136,7 @@ export function parseEnvironmentIntentRouting(value: unknown): EnvironmentIntent
   const record = parsed as Record<string, unknown>;
   const unexpected = Object.keys(record).filter(field => (
     !ENVIRONMENT_INTENT_FIELDS.includes(field as typeof ENVIRONMENT_INTENT_FIELDS[number])
-    && field !== 'executionDisposition' && field !== 'targetExecutionId'
+    && !['executionDisposition', 'targetExecutionId', 'memoryQuery', 'memoryTypes'].includes(field)
   ));
   if (unexpected.length > 0) {
     throw new Error(`Environment intent output contains unsupported field(s): ${unexpected.join(', ')}`);
@@ -131,7 +148,10 @@ export function parseEnvironmentIntentRouting(value: unknown): EnvironmentIntent
   }
   if (record.executionDisposition !== undefined && !['new', 'steer', 'cancel'].includes(String(record.executionDisposition))) throw new Error('Invalid execution disposition');
   if (record.targetExecutionId !== undefined && typeof record.targetExecutionId !== 'string') throw new Error('Invalid target execution');
-  return { ...Object.fromEntries(
+  if (record.memoryQuery !== undefined && typeof record.memoryQuery !== 'string') throw new Error('Invalid memory query');
+  if (record.memoryTypes !== undefined && (!Array.isArray(record.memoryTypes) || record.memoryTypes.some(type => typeof type !== 'string'))) throw new Error('Invalid memory types');
+  return { ...(record.memoryQuery !== undefined ? { memoryQuery: record.memoryQuery as string } : {}),
+    ...(record.memoryTypes !== undefined ? { memoryTypes: record.memoryTypes as string[] } : {}), ...Object.fromEntries(
     ENVIRONMENT_INTENT_FIELDS.map(field => [field, record[field] as boolean]),
   ), ...(record.executionDisposition ? { executionDisposition: record.executionDisposition, targetExecutionId: record.targetExecutionId } : {}) } as EnvironmentIntentRouting;
 }
@@ -285,7 +305,9 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
 
     // Buffer History owns the window. Preserve its selected dialogue, including
     // requirements at the end of a message and the retained latest user turn.
-    const recentMessages = Array.isArray(conversationHistory)
+    const recentMessages = environmentContract
+      ? JSON.stringify({ currentTime: context.currentTime ?? new Date().toISOString(), ...projectEnvironmentHistory(conversationHistory) })
+      : Array.isArray(conversationHistory)
       ? conversationHistory
         .filter((message: any) => (
           (message?.role === 'user' || message?.role === 'assistant')
@@ -346,8 +368,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
           repeatPenalty: 1.15,
           temperature: properties?.temperature ?? 0.2,
           format: environmentContract ? 'json' : undefined,
-          jsonSchema: environmentContract ? { ...ENVIRONMENT_INTENT_JSON_SCHEMA,
-            required: [...ENVIRONMENT_INTENT_FIELDS, ...(inputs.activeExecutions?.length ? ['executionDisposition', 'targetExecutionId'] : [])] } : undefined,
+          jsonSchema: environmentContract ? environmentIntentSchema(inputs.activeExecutions || []) : undefined,
         },
         onProgress: context.emitProgress,
       });

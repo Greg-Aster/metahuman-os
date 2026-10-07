@@ -1,13 +1,18 @@
-import headless from '@xterm/headless'
-import serialize from '@xterm/addon-serialize'
+import { createRequire } from 'node:module'
+
+// The service runs through both ESM and tsx's CommonJS entrypoint. Load the
+// packages' Node exports consistently in both launch paths.
+const require = createRequire(import.meta.url)
+const { Terminal } = require('@xterm/headless') as typeof import('@xterm/headless')
+const { SerializeAddon } = require('@xterm/addon-serialize') as typeof import('@xterm/addon-serialize')
 
 /** A bounded, parsed screen. Slow viewers reconnect to a snapshot, never an output log. */
 export class TerminalScreen {
-  private terminal: InstanceType<typeof headless.Terminal>
-  private serializer = new serialize.SerializeAddon()
+  private terminal: InstanceType<typeof Terminal>
+  private serializer = new SerializeAddon()
   private pending: Promise<void> = Promise.resolve()
   constructor(cols: number, rows: number) {
-    this.terminal = new headless.Terminal({ cols, rows, scrollback: 2000, allowProposedApi: true })
+    this.terminal = new Terminal({ cols, rows, scrollback: 2000, allowProposedApi: true })
     this.terminal.loadAddon(this.serializer)
   }
   write(data: string): Promise<void> {

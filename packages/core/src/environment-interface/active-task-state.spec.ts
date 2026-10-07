@@ -30,11 +30,12 @@ recordEnvironmentObservation(observation)
 
 function fixture(activeProgram = program) {
   const dispatches: any[] = []
+  const statusEffects: any[] = []
   let task: any = null
   const context = { username: 'fixture', activeProgram, activeTaskDecision: decision, activeTaskSessionId: observation.sessionId,
     graphExecution: { executionId: 'execution', occurrenceId: 'occurrence', task: () => task,
       recordTask: (value: unknown) => { task = value }, recordFrames: () => {},
-      dispatch: (value: unknown) => { dispatches.push(value); return { effectId: `effect-${dispatches.length}` } },
+      dispatch: (value: any) => { (value.kind === 'robot_status' ? statusEffects : dispatches).push(value); return { effectId: `effect-${dispatches.length}` } },
       waitForEvent: () => { throw new Error('WAIT') } } } as never
   const state: ActiveTaskState = { stepIndex: 0, evidence: [], updateRevision: 0, action: motion, motionId: 'motion', accepted: true }
   const advance = async (value: ActiveTaskState) => (await step.execute({ state: value }, context, {})).state as ActiveTaskState
@@ -42,7 +43,7 @@ function fixture(activeProgram = program) {
     const feedback: EnvironmentFeedback = { id: `${actionId}-${type}`, actionId, type, message: `Explicit ${type}`, timestamp: new Date().toISOString(), data }
     return (await wait.execute({ state: { ...value, pendingEvents: [{ kind: 'physical_result', actionId, payload: { feedback } }] } }, context, {})).state as ActiveTaskState
   }
-  return { state, advance, receive, context, dispatches, task: () => task }
+  return { state, advance, receive, context, dispatches, statusEffects, task: () => task }
 }
 
 test('steering has separate desired, pending and acknowledged controls', async () => {
@@ -226,4 +227,105 @@ test('failed asynchronous motion generation reaches the planner without dispatch
   assert.equal(f.task().decision.outcome, 'continue')
   assert.match(f.task().decision.reason, /Remote motion server unavailable/)
   assert.equal(f.dispatches.length, 1, 'Only the original remote generation job was admitted')
+})
+
+test('active action changes and physical receipts reach Robot Status without a semantic refresh', async () => {
+  const f = fixture();
+  const running = await f.advance(f.state);
+  assert.equal(f.statusEffects.at(-1).payload.sources.lastAction.actionId, 'motion');
+  assert.equal(f.statusEffects.at(-1).payload.sources.lastAction.status, 'active');
+  const effectCount = f.statusEffects.length;
+  await f.advance(running);
+  assert.equal(f.statusEffects.length, effectCount, 'Unchanged active ticks do not repeat the projection');
+  const completed = await f.receive(running, 'motion', 'completed');
+  await f.advance(completed);
+  const action = f.statusEffects.at(-1).payload.sources.lastAction;
+  assert.equal(action.actionId, 'motion');
+  assert.equal(action.type, 'move');
+  assert.equal(action.status, 'completed');
+  assert.equal(action.completedAt, f.task().feedback.observedAt);
+});
+
+const search: EnvironmentTaskProgram = { steps: [{ kind: 'behavior', motion, target: 'cup',
+  completionCriteria: 'cup visible', candidateLabels: ['cup'], identifyEveryFrames: 3, steering: null }] }
+const identified = { matchesTarget: true, completionSatisfied: true, outcome: 'positive' as const,
+  description: 'Cup visible', evidence: 'Correlated cup image' }
+
+test('Finish waits for the original gait terminal receipt, not its control ACK', async () => {
+  const f = fixture(search)
+  const finishing = await f.advance({ ...f.state, identification: identified })
+  const update = f.dispatches.find(item => item.payload.input.movementUpdate)
+  assert.equal(update.payload.input.movementUpdate.actionId, 'motion')
+  assert.equal(update.payload.input.movementUpdate.controls.speed, 0)
+  assert.equal(f.dispatches.some(item => item.payload.input.type === 'stop'), false)
+  const accepted = await f.receive(finishing, update.actionId, 'completed')
+  assert.equal(accepted.stepIndex, 0)
+  assert.equal(accepted.done, undefined)
+  const complete = await f.receive(accepted, 'motion', 'completed')
+  assert.equal(complete.stepIndex, 1)
+  assert.equal(complete.visualCompletionSatisfied, true)
+})
+
+for (const reason of ['failed', 'stale', 'finish-timeout'] as const) {
+  test(`${reason} requires bounded cancellation confirmation and retains unknown until a late terminal receipt`, async () => {
+    const f = fixture(search)
+    const state = { ...f.state, ...(reason === 'failed' ? { identificationError: 'Required remote inference failed' }
+      : reason === 'stale' ? { feedbackRequiredSince: Date.now() - 3000 }
+        : { finishRequestedAt: Date.now() - 6000, identification: identified }) }
+    const cancelling = await f.advance(state)
+    assert.ok(cancelling.cancellationRequestedAt)
+    assert.equal(cancelling.done, undefined)
+    assert.equal(cancelling.objectiveComplete, false)
+    const deadline = f.dispatches.find(item => item.payload.handler === 'environment.active-task-deadline')
+    assert.ok(Date.parse(deadline.payload.notBefore) <= Date.now() + 2000)
+    const unknown = await f.advance({ ...cancelling, cancellationRequestedAt: Date.now() - 3000 })
+    assert.equal(unknown.feedback?.type, 'outcome_unknown')
+    assert.equal(unknown.done, undefined)
+    const terminal = await f.receive(unknown, 'motion', 'cancelled')
+    const failed = await f.advance(terminal)
+    assert.equal(failed.done, true)
+    assert.equal(failed.objectiveComplete, false)
+  })
+}
+
+test('deadline events and late original results cannot change a replacement action', async () => {
+  const f = fixture()
+  const state = { ...f.state, motionId: 'replacement', deadlineEffectId: 'new-deadline', pendingEvents: [
+    { kind: 'work_result', payload: { effectId: 'old-deadline', result: { state: 'completed' } } },
+    { kind: 'physical_result', actionId: 'motion', payload: { feedback: { actionId: 'motion', type: 'cancelled' } } },
+  ] }
+  await assert.rejects(() => wait.execute({ state }, f.context, {}), /WAIT/)
+  assert.equal(f.dispatches.length, 0)
+})
+
+test('delayed image inference discards expired evidence while fresh local feedback keeps the gait usable', async () => {
+  const now = Date.now()
+  recordEnvironmentObservation({ ...observation, state: { ...observation.state,
+    body: { authenticated: true, cameraReady: true, robotId: 'p4' },
+    gateway: { robots: { p4: { epoch: 1, connection_state: 'online' } } },
+    perception: { version: 1, timeBasis: 'gateway_receipt', robotId: 'p4', epoch: 1, gatewayInstance: 'gateway',
+      frameCounter: 2, observedAt: new Date(now).toISOString(), expiresAt: new Date(now + 10000).toISOString(),
+      backend: 'fixture', model: 'fixture', summary: 'Fresh local feedback', objects: [], uncertainties: [] },
+  } })
+  try {
+    const f = fixture(search)
+    const state = { ...f.state, identificationEffectId: 'slow-image', lastIdentifiedFrame: 1,
+      identificationRequest: { effectId: 'slow-image', frameId: 'old-image', stepIndex: 0,
+        gatewayInstance: 'gateway', epoch: 1, expiresAt: new Date(now - 1).toISOString() },
+      pendingEvents: [{ kind: 'work_result', payload: { effectId: 'slow-image', result: { state: 'completed', result: identified } } }] }
+    const received = (await wait.execute({ state }, f.context, {})).state as ActiveTaskState
+    assert.equal(received.identificationError, undefined)
+    assert.equal(received.identification, undefined, 'Expired evidence cannot finish the objective')
+    assert.equal(received.lastIdentifiedFrame, undefined, 'A new image must be identified')
+    assert.equal(received.cancellationRequestedAt, undefined)
+    assert.equal(received.motionId, 'motion')
+    const active = await f.advance({ ...f.state, snapshotId: 'pending-capture' })
+    const previous = (await import('./store.js')).getLatestEnvironmentObservation(observation.sessionId)!
+    recordEnvironmentObservation({ ...previous, state: { ...previous.state, perception: {
+      ...(previous.state!.perception as object), frameCounter: 3, expiresAt: new Date(now + 20000).toISOString(),
+    } } })
+    const refreshed = await f.advance(active)
+    assert.equal(refreshed.deadlineEffectId, active.deadlineEffectId, 'Fresh frames reuse the existing earlier deadline')
+    assert.equal(f.dispatches.filter(item => item.payload.handler === 'environment.active-task-deadline').length, 1)
+  } finally { recordEnvironmentObservation(observation) }
 })

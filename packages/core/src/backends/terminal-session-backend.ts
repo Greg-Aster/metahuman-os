@@ -5,6 +5,7 @@ import type {
 } from '../escalation-backend.js'
 import {
   getBigBrotherSessionState,
+  startTerminalService,
   stopBigBrotherSession,
   executeInBigBrotherSession,
 } from '../terminal/client.js'
@@ -32,7 +33,9 @@ export function createTerminalSessionBackend(definition: TerminalBackendDefiniti
     },
 
     async start(): Promise<boolean> {
-      ready = await this.isAvailable()
+      if (!await this.isAvailable()) return false
+      await startTerminalService()
+      ready = true
       return ready
     },
 

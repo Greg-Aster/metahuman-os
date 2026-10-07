@@ -31,6 +31,28 @@ test('Persona Formatter distinguishes explicit inactive mode from malformed inpu
   );
 });
 
+test('Persona Formatter preserves editable identity prose and conversational character', async () => {
+  const persona = getDefaultPersonaCore();
+  persona.background = 'You are Rowan, a curious companion who enjoys shared discoveries.';
+  persona.personality.communicationStyle = {
+    tone: ['warm', 'wry'], humor: 'quietly mischievous', verbosity: 'brief', emphasis: 'shared curiosity',
+  };
+  persona.personality.narrativeStyle = 'Reflective and playful';
+  persona.writingStyle = { structure: 'Informal and unhurried' };
+  const output = await PersonaFormatterNode.execute({ persona }, {}, {});
+  assert.match(output.formatted, /You are Rowan, a curious companion/);
+  assert.match(output.formatted, /warm, wry/);
+  assert.match(output.formatted, /quietly mischievous/);
+  assert.match(output.formatted, /Reflective and playful/);
+  assert.match(output.formatted, /Informal and unhurried/);
+
+  const identityOnly = await PersonaFormatterNode.execute({ persona }, {}, {
+    includePersonality: false, includeValues: false, includeGoals: false,
+  });
+  assert.match(identityOnly.formatted, /You are Rowan/);
+  assert.doesNotMatch(identityOnly.formatted, /quietly mischievous|Reflective and playful|Informal and unhurried/);
+});
+
 test('Persona Formatter browser schema matches the executable handle contract', () => {
   const schema = getNodeSchema('persona_formatter');
   assert.deepEqual(schema?.inputs.map(input => input.name), PersonaFormatterNode.inputs.map(input => input.name));

@@ -562,15 +562,34 @@ function ensureVoiceConfig(
     try {
       fs.mkdirSync(path.dirname(voiceConfigPath), { recursive: true });
       // Atomic write: write to temp file, then rename (prevents empty file on crash)
-      const tempPath = `${voiceConfigPath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify(config, null, 2), 'utf8');
-      fs.renameSync(tempPath, voiceConfigPath);
+      persistVoiceConfig(voiceConfigPath, config);
     } catch (error) {
       console.warn('[voice-settings] Unable to persist voice config (continuing with defaults):', error);
     }
   }
 
   return config;
+}
+
+/** The same profile preference used by Voice Settings and TTS delivery. */
+export function readOrUpdateSpeechOutput(username: string, outputTarget?: 'local' | 'robot') {
+  const storage = storageClient.getProfileRoot(username);
+  if (!storage.success || !storage.profileRoot) throw new Error('Failed to resolve profile storage');
+  const voiceConfigPath = path.join(storage.profileRoot, 'etc', 'voice.json');
+  const config = ensureVoiceConfig(voiceConfigPath, systemPaths.voiceModels, systemPaths.root,
+    getAvailableVoices(systemPaths.voiceModels));
+  if (outputTarget !== undefined) {
+    config.tts.outputTarget = outputTarget;
+    persistVoiceConfig(voiceConfigPath, config);
+  }
+  return { username, outputTarget: config.tts.outputTarget, provider: config.tts.provider,
+    speechDisabled: config.tts.speechDisabled === true };
+}
+
+function persistVoiceConfig(voiceConfigPath: string, config: VoiceConfig): void {
+  const tempPath = `${voiceConfigPath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(config, null, 2), 'utf8');
+  fs.renameSync(tempPath, voiceConfigPath);
 }
 
 /**
@@ -938,9 +957,7 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
     }
 
     // Save configuration (atomic write to prevent empty file on crash)
-    const tempConfigPath = `${voiceConfigPath}.tmp`;
-    fs.writeFileSync(tempConfigPath, JSON.stringify(config, null, 2), 'utf8');
-    fs.renameSync(tempConfigPath, voiceConfigPath);
+    persistVoiceConfig(voiceConfigPath, config);
 
     // Handle provider switching and service orchestration
     try {

@@ -792,6 +792,19 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           return;
         }
         inboundMessages?.enqueue(async () => {
+          if (message.type === 'speech.settings') {
+            const requestId = message.requestId;
+            try {
+              const settings = await postJson(config, '/api/environment-bridge/speech-settings',
+                message.outputTarget === undefined ? {} : { outputTarget: message.outputTarget },
+                AbortSignal.any([localAbort.signal, AbortSignal.timeout(4000)]));
+              sendMessage({ ...settings, type: 'speech.settings.result', version: PROTOCOL_VERSION, requestId });
+            } catch (error) {
+              if (!localAbort.signal.aborted) sendMessage({ type: 'speech.settings.result',
+                version: PROTOCOL_VERSION, requestId, error: (error as Error).message });
+            }
+            return;
+          }
           if (message.type === 'bridge.ready') {
             const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
             if (!sessionId) throw new Error('Environment adapter omitted sessionId');

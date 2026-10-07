@@ -92,6 +92,7 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     enabled,
     provider,
     model,
+    reasoningEffort,
     delegateAll,
     escalateOnStuck,
     escalateOnRepeatedFailures,
@@ -117,15 +118,16 @@ export async function handleSetBigBrotherConfig(req: UnifiedRequest): Promise<Un
     // Update Big Brother mode settings (preserve model if not provided)
     const existingModel = config.bigBrotherMode?.model;
     config.bigBrotherMode = {
-      enabled: enabled ?? false,
+      enabled: enabled ?? config.bigBrotherMode?.enabled ?? false,
       provider: nextProvider,
-      model: model || existingModel || 'sonnet',
-      delegateAll: delegateAll ?? false,
-      escalateOnStuck: escalateOnStuck ?? true,
-      escalateOnRepeatedFailures: escalateOnRepeatedFailures ?? true,
-      maxRetries: maxRetries ?? 1,
-      includeFullScratchpad: includeFullScratchpad ?? true,
-      autoApplySuggestions: autoApplySuggestions ?? false,
+      model: model ?? (nextProvider === previousProvider ? existingModel : undefined) ?? (nextProvider === 'claude-code' ? 'sonnet' : ''),
+      reasoningEffort: reasoningEffort ?? config.bigBrotherMode?.reasoningEffort,
+      delegateAll: delegateAll ?? config.bigBrotherMode?.delegateAll ?? false,
+      escalateOnStuck: escalateOnStuck ?? config.bigBrotherMode?.escalateOnStuck ?? true,
+      escalateOnRepeatedFailures: escalateOnRepeatedFailures ?? config.bigBrotherMode?.escalateOnRepeatedFailures ?? true,
+      maxRetries: maxRetries ?? config.bigBrotherMode?.maxRetries ?? 1,
+      includeFullScratchpad: includeFullScratchpad ?? config.bigBrotherMode?.includeFullScratchpad ?? true,
+      autoApplySuggestions: autoApplySuggestions ?? config.bigBrotherMode?.autoApplySuggestions ?? false,
     };
 
     const nextEnabled = config.bigBrotherMode.enabled;

@@ -217,10 +217,21 @@ function ensureArg(args: string[], arg: string, value?: string): void {
   if (value !== undefined) args.push(value)
 }
 
+function setModelArg(args: string[], model: string): void {
+  for (let index = args.length - 1; index >= 0; index--) {
+    if (args[index] === '--model' || args[index] === '-m') args.splice(index, 2)
+    else if (args[index].startsWith('--model=') || args[index].startsWith('-m=')) args.splice(index, 1)
+  }
+  args.push('--model', model)
+}
+
 function ensureConfigOverride(args: string[], key: string, value: string): void {
   for (let index = 0; index < args.length - 1; index += 1) {
     if ((args[index] === '--config' || args[index] === '-c')
-      && args[index + 1]?.startsWith(`${key}=`)) return
+      && args[index + 1]?.startsWith(`${key}=`)) {
+      args[index + 1] = `${key}=${JSON.stringify(value)}`
+      return
+    }
   }
   args.push('--config', `${key}=${JSON.stringify(value)}`)
 }
@@ -263,9 +274,10 @@ export function buildBigBrotherCLIInvocation(
   if (backend.args && (!Array.isArray(backend.args) || backend.args.some(arg => typeof arg !== 'string'))) {
     throw new Error(`${providerLabel(provider)} arguments must be an array of strings`)
   }
-  const model = provider === 'claude-code' && options.username
-    ? loadFreshOperatorConfig(options.username).bigBrotherMode?.model
+  const bigBrother = options.username
+    ? loadFreshOperatorConfig(options.username).bigBrotherMode
     : undefined
+  const model = bigBrother?.provider === provider ? bigBrother.model : undefined
 
   const tempDir = fs.mkdtempSync(path.join(jobRoot, 'metahuman-big-brother-cli-'))
   const args = [...(backend.args || [])]
@@ -276,7 +288,7 @@ export function buildBigBrotherCLIInvocation(
     ensureArg(args, '--verbose')
     if (backend.dangerouslySkipPermissions) ensureArg(args, '--dangerously-skip-permissions')
 
-    if (model && !args.includes('--model')) ensureArg(args, '--model', model)
+    if (model) setModelArg(args, model)
 
     return {
       command: backend.command || 'claude',
@@ -289,7 +301,8 @@ export function buildBigBrotherCLIInvocation(
 
   if (args.length === 0 || (args[0] !== 'exec' && args[0] !== 'e')) args.unshift('exec')
   ensureArg(args, '--json')
-  ensureConfigOverride(args, 'model_reasoning_effort', backend.reasoningEffort || 'low')
+  if (model) setModelArg(args, model)
+  ensureConfigOverride(args, 'model_reasoning_effort', (bigBrother?.provider === provider ? bigBrother.reasoningEffort : undefined) || backend.reasoningEffort || 'low')
   const colorIndex = args.indexOf('--color')
   if (colorIndex >= 0 && colorIndex + 1 < args.length) args[colorIndex + 1] = 'never'
   else args.push('--color', 'never')

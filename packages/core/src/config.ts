@@ -243,8 +243,9 @@ export interface OperatorConfig {
   bigBrotherMode?: {
     enabled: boolean;
     provider: 'claude-code' | 'aider' | 'gemini-cli' | 'qwen-code' | 'codex';
-    model?: 'opus' | 'sonnet' | 'haiku' | string; // Claude model to use (default: sonnet for faster responses)
-    delegateAll?: boolean; // When true, delegate ALL tasks to Claude CLI instead of local skills
+    model?: string; // Model passed to the selected CLI provider
+    reasoningEffort?: string; // Codex reasoning effort; otherwise use tool-executor configuration
+    delegateAll?: boolean; // Route inference through the selected CLI provider
     escalateOnStuck: boolean;
     escalateOnRepeatedFailures: boolean;
     maxRetries: number;

@@ -51,6 +51,7 @@ export const executionContextNode = defineNode({
     { name: 'task', type: 'object', description: 'Checkpointed task, or null for an execution without a task' },
     { name: 'activeExecutions', type: 'array', description: 'Other unfinished executions available for user steering' },
     { name: 'needsGoalReview', type: 'boolean', description: 'An unfinished objective whose continuation is owned by Robot Goal Review rather than Agency' },
+    { name: 'awaitContext', type: 'boolean', description: 'The objective is awaiting new input, not another immediate review' },
     { name: 'hasActiveTask', type: 'boolean', description: 'Whether the saved LLM decision leaves an objective unfinished' },
   ],
   properties: { eventLimit: 16 },
@@ -62,6 +63,10 @@ export const executionContextNode = defineNode({
     const limit = Number(properties?.eventLimit)
     if (!Number.isInteger(limit) || limit < 0) throw new Error('Recent Events must be a non-negative integer')
     const hasActiveTask = Boolean(task && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete', 'failed'].includes(task.decision.outcome))
+    const awaitContext = hasActiveTask && !task?.desireId && (
+      ['wait', 'request_user'].includes(task!.decision.outcome)
+      || task!.decision.continuationPolicy === 'none' && task!.decision.requiredCompletionBasis === 'user_input'
+    )
     return {
       activeExecutions: context.graphExecution.activeExecutions(),
       context: { executionId: context.graphExecution.executionId, task,
@@ -70,7 +75,8 @@ export const executionContextNode = defineNode({
         events: executionEventContext(limit ? events.slice(-limit) : events) },
       task,
       hasActiveTask,
-      needsGoalReview: hasActiveTask && !task?.desireId,
+      awaitContext,
+      needsGoalReview: hasActiveTask && !task?.desireId && !awaitContext,
     }
   },
 })

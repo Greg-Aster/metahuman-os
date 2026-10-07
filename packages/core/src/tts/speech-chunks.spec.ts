@@ -6,11 +6,34 @@ test('short speech remains one chunk', () => {
   assert.deepEqual(splitSpeechText('Please stand up.'), ['Please stand up.']);
 });
 
-test('the opening greeting is not held for the rest of a short response', () => {
+test('a short greeting joins the following phrase', () => {
   const text = 'Hello! This is a test of the text to speech system.';
+  assert.deepEqual(splitSpeechText(text), [text]);
+});
+
+test('a short greeting joins only the next opening phrase of a long response', () => {
+  const text = 'Hello, Greg! I can see the doorway, and I am waiting for your next instruction. '
+    + 'The battery is ready for the next test.';
   const chunks = splitSpeechText(text);
-  assert.equal(chunks[0], 'Hello!');
+  assert.equal(chunks[0], 'Hello, Greg! I can see the doorway,');
+  assert.ok(chunks.length > 1);
   assert.equal(chunks.join(' '), text);
+});
+
+test('a standalone greeting is still spoken', () => {
+  assert.deepEqual(splitSpeechText('Hello!'), ['Hello!']);
+});
+
+test('joining a greeting respects paragraph boundaries', () => {
+  assert.deepEqual(splitSpeechText('Hi!\n\nWelcome back.'), ['Hi!', 'Welcome back.']);
+});
+
+test('joining a greeting respects a smaller custom chunk limit', () => {
+  const text = 'Hi! Welcome back.';
+  assert.deepEqual(
+    splitSpeechText(text, { preferredChars: 13, maxChars: 13, minTailChars: 4 }),
+    ['Hi!', 'Welcome back.'],
+  );
 });
 
 test('the opening clause is released before a longer conversational sentence', () => {

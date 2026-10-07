@@ -5,6 +5,7 @@ import {
   buildEnvironmentSelectorEnvelope,
   buildEnvironmentSelectorJsonSchema,
   buildEnvironmentSelectorSystemPrompt,
+  projectEnvironmentHistory,
 } from './helpers.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -15,7 +16,7 @@ function conversationMessages(
   value: unknown,
   includeRecent: boolean,
   currentInstruction: string,
-): Array<{ role: string; content: string }> {
+): Array<{ role: string; content: string; timestamp?: string | number }> {
   if (!includeRecent) return [];
   const candidates = Array.isArray(value)
     ? value
@@ -28,6 +29,7 @@ function conversationMessages(
     .map(message => ({
       role: typeof message.role === 'string' ? message.role : 'user',
       content: typeof message.content === 'string' ? message.content.trim() : '',
+      ...(message.timestamp !== undefined ? { timestamp: message.timestamp as string | number } : {}),
     }))
     .filter(message => ['user', 'assistant'].includes(message.role) && message.content);
 
@@ -38,7 +40,7 @@ function conversationMessages(
   return messages;
 }
 
-function relevantMemoryItems(value: unknown): string[] {
+function relevantMemoryItems(value: unknown): Array<string | Record<string, unknown>> {
   const candidates = Array.isArray(value)
     ? value
     : isRecord(value) && Array.isArray(value.memories)
@@ -46,12 +48,11 @@ function relevantMemoryItems(value: unknown): string[] {
       : [];
 
   return candidates
-    .map(memory => typeof memory === 'string'
-      ? memory.trim()
-      : isRecord(memory) && typeof memory.content === 'string'
-        ? memory.content.trim()
-        : '')
-    .filter(Boolean)
+    .flatMap(memory => typeof memory === 'string' && memory.trim()
+      ? [memory.trim() as string | Record<string, unknown>]
+      : isRecord(memory) && typeof memory.content === 'string' && memory.content.trim()
+        ? [{ id: memory.id, type: memory.type, timestamp: memory.timestamp, content: memory.content.trim() }]
+        : [])
     .slice(0, 3);
 }
 
@@ -156,8 +157,9 @@ export const environmentContextBuilderNode = defineNode({
           metadata: {},
         }
       : withoutUnselectedVision;
+    const suppliedHistory = projectEnvironmentHistory(inputs.conversationHistory);
     const history = conversationMessages(
-      inputs.conversationHistory,
+      suppliedHistory.conversation,
       includeRecentHistory,
       rawInstruction,
     );
@@ -181,6 +183,8 @@ export const environmentContextBuilderNode = defineNode({
       visualFrames: selectedFrames,
       observationHistory: environmentSelected && Array.isArray(inputs.observationHistory) ? inputs.observationHistory : [],
       recentConversation: history,
+      innerDialogue: includeRecentHistory ? suppliedHistory.innerDialogue : [],
+      currentTime: typeof context.currentTime === 'string' ? context.currentTime : undefined,
       memories: memoryItems,
       personaText,
       robotStatus: routingAnalysis.needsRobotStatus === true ? robotStatus : null,

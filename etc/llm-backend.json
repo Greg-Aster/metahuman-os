@@ -1,8 +1,21 @@
 {
-  "activeBackend": "ollama",
+  "activeBackend": "llama-cpp",
+  "llamaCpp": {
+    "endpoint": "http://127.0.0.1:8080",
+    "model": "qwen3.5:9b",
+    "contextWindow": 8192,
+    "maxTokens": 2048,
+    "temperature": 0.7,
+    "topP": 0.9,
+    "enableThinking": false,
+    "capabilities": [
+      "text",
+      "image"
+    ]
+  },
   "ollama": {
     "endpoint": "http://localhost:11434",
-    "autoStart": true,
+    "autoStart": false,
     "defaultModel": "qwen3.5:9b",
     "contextWindow": 8192,
     "maxTokens": 2048,
@@ -55,7 +68,7 @@
       "preloadAtStartup": false
     }
   },
-  "preferredLocalBackend": "ollama",
+  "preferredLocalBackend": "llama-cpp",
   "version": "1.0.0",
   "description": "LLM backend configuration - controls which local inference engine is used",
   "remote": {

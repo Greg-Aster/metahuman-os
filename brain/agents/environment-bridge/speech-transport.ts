@@ -18,7 +18,6 @@ export function encodeRobotSpeechMessage(params: {
   if (
     !Number.isFinite(params.durationMs)
     || params.durationMs <= 0
-    || params.durationMs > 15_000
   ) {
     throw new Error('Robot speech duration is outside the supported range');
   }

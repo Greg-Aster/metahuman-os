@@ -118,7 +118,7 @@ class ConnectionPoolManager {
       return new ConnectionHandle(request.id, this, true);
     }
 
-    if (this.suspended) {
+    if (this.suspended && request.priority !== ConnectionPriority.CRITICAL) {
       console.log(`[pool] Deferring ${request.name} while pool is suspended`);
       this.queuedRequests.set(request.id, request);
       this.notifyListeners();
@@ -257,6 +257,7 @@ class ConnectionPoolManager {
     console.log(`[pool] Suspending ${this.activeConnections.size} background connections`);
 
     for (const [id, connection] of [...this.activeConnections.entries()]) {
+      if (connection.priority === ConnectionPriority.CRITICAL) continue;
       connection.source.close();
       connectionManager.unregister(connection.managerId);
       connection.request.onClose?.();
@@ -312,13 +313,13 @@ class ConnectionPoolManager {
   }
 
   private processQueue(): void {
-    if (this.suspended) return;
     if (this.activeConnections.size >= this.maxConnections) {
       return;
     }
 
     const available = this.maxConnections - this.activeConnections.size;
     const sorted = Array.from(this.queuedRequests.values())
+      .filter(req => !this.suspended || req.priority === ConnectionPriority.CRITICAL)
       .filter(req => !req.viewDependency || req.viewDependency === this.activeView)
       .sort((a, b) => a.priority - b.priority);
 

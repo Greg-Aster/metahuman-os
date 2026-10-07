@@ -7,6 +7,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import type { PersonaCore } from '../../identity.js';
 import {
   getActivePersonaGoals,
+  getPersonaBackground,
   getPersonaTraitDescriptions,
   getPersonaValueDescriptions,
 } from '../../persona-summary.js';
@@ -44,9 +45,28 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
   const role = nonEmptyString(persona.identity?.role);
   const purpose = nonEmptyString(persona.identity?.purpose);
   sections.push(`## Identity\n- Name: ${name}${role ? `\n- Role: ${role}` : ''}${purpose ? `\n- Purpose: ${purpose}` : ''}`);
+  const background = getPersonaBackground(persona);
+  if (background) sections.push(`## Background\n${background}`);
 
   // Format personality
   if (includePersonality) {
+    const style = persona.personality?.communicationStyle;
+    const writing = persona.writingStyle as Record<string, unknown> | undefined;
+    const descriptions = Object.entries({
+      Tone: style?.tone?.join(', '),
+      Humor: style?.humor,
+      Formality: style?.formality,
+      Verbosity: style?.verbosity,
+      Emphasis: style?.emphasis,
+      Vocabulary: style?.vocabularyLevel,
+      Pronouns: style?.preferredPronouns,
+      Narrative: persona.personality?.narrativeStyle,
+      Writing: writing?.structure,
+    }).flatMap(([label, value]) => {
+      const text = nonEmptyString(value);
+      return text ? [`- ${label}: ${text}`] : [];
+    });
+    if (descriptions.length > 0) sections.push(`## Personality\n${descriptions.join('\n')}`);
     const traits = getPersonaTraitDescriptions(persona);
     if (traits.length > 0) sections.push(`## Personality Traits\n${traits.map(trait => `- ${trait}`).join('\n')}`);
   }

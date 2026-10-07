@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs/promises'
-import { buildBigBrotherCLIInvocation } from './cli.js'
-import { parseBigBrotherTerminalEvent } from './cli.js'
+import os from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mh-big-brother-cli-'))
+process.env.METAHUMAN_ROOT = root
+await fs.mkdir(path.join(root, 'etc'))
+await fs.writeFile(path.join(root, 'etc', 'tool-executor.json'), JSON.stringify({ backends: {
+  codex: { enabled: true, command: 'codex', args: ['exec', '--model=old-model', '-c', 'model_reasoning_effort="low"'], reasoningEffort: 'low' },
+} }))
+const { buildBigBrotherCLIInvocation, parseBigBrotherTerminalEvent } = await import('./cli.js')
+const { eventBus } = await import('../../infrastructure/event-bus/client.js')
+eventBus.disconnect()
+test.after(() => fs.rm(root, { recursive: true, force: true }))
 
 const claude = parseBigBrotherTerminalEvent('claude-code', JSON.stringify({
   type: 'assistant',
@@ -42,3 +53,21 @@ try {
 } finally {
   await fs.rm(codexInvocation.tempDir, { recursive: true, force: true })
 }
+
+test('Codex uses the selected profile model and reasoning ahead of stale CLI arguments', async () => {
+  const { saveUserConfig } = await import('../../config.js')
+  saveUserConfig('operator.json', { bigBrotherMode: {
+    provider: 'codex', model: 'gpt-6-luna', reasoningEffort: 'medium',
+  } }, 'fixture')
+  const invocation = buildBigBrotherCLIInvocation('codex', 'Hello', { username: 'fixture' })
+  try {
+    assert.equal(invocation.args[invocation.args.indexOf('--model') + 1], 'gpt-6-luna')
+    assert.equal(invocation.args.some(arg => arg.includes('old-model')), false)
+    assert.ok(invocation.args.includes('model_reasoning_effort="medium"'))
+    assert.equal(invocation.args.includes('model_reasoning_effort="low"'), false)
+  } finally { await fs.rm(invocation.tempDir, { recursive: true, force: true }) }
+  saveUserConfig('operator.json', { bigBrotherMode: { provider: 'claude-code', model: 'sonnet' } }, 'fixture')
+  const other = buildBigBrotherCLIInvocation('codex', 'Hello', { username: 'fixture' })
+  try { assert.equal(other.args.includes('sonnet'), false) }
+  finally { await fs.rm(other.tempDir, { recursive: true, force: true }) }
+})

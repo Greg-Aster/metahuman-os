@@ -13,6 +13,7 @@ import {
   buildEnvironmentSelectorJsonSchema,
   projectRobotStatusContext,
   projectRobotCommandDescriptions,
+  projectSelectorState,
 } from '../environment/helpers.js';
 import type { NodeSlot } from '../types.js';
 import { ROBOT_OPERATOR_DECISION_JSON_SCHEMA } from './decision-parser.node.js';
@@ -473,6 +474,19 @@ async function buildRobotOperatorContext(
       && Array.isArray(inputs.autonomyActivityHistory)
       ? inputs.autonomyActivityHistory.filter(isRecord)
       : [];
+    // Several finite activities can share one durable execution. Send its
+    // outcome once rather than copying the same task and receipt into each row.
+    const activityExecutions: Record<string, unknown> = {};
+    const compactActivityHistory = autonomyActivityHistory.map(activity => {
+      if (!isRecord(activity.result) || !Array.isArray(activity.result.executions)) return activity;
+      const { executions, ...result } = activity.result;
+      const executionIds = executions.filter(isRecord).map(execution => {
+        const id = String(execution.executionId);
+        activityExecutions[id] = execution;
+        return id;
+      });
+      return { ...activity, result: { ...result, executionIds } };
+    });
     const taskNarrative = recentContext.filter(entry => (
       isRecord(entry.context) && cleanText(entry.context.correlationId, 200) === cycleId
     ));
@@ -495,7 +509,7 @@ async function buildRobotOperatorContext(
         ? {
             observedAt: observation.timestamp,
             stateObservedAt: cleanText(inputs.sourceObservationAt, 100) || observation.timestamp,
-            state: observation.state ?? null,
+            state: outputContract === 'goal_review' ? projectSelectorState(observation.state) : observation.state ?? null,
             location: observation.location ?? null,
             map: observation.map ?? null,
             capabilities: {
@@ -549,7 +563,8 @@ async function buildRobotOperatorContext(
           ? {
               recentAutonomyActivity: {
                 provenance: 'work_coordinator_terminal_history',
-                entries: autonomyActivityHistory,
+                entries: compactActivityHistory,
+                executions: activityExecutions,
               },
             }
           : {}),

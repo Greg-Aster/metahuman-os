@@ -31,8 +31,9 @@ mock.module(new URL('../providers/bridge.ts', import.meta.url).href, { namedExpo
     return { provider, model: options.model, content: JSON.stringify(result) }
   } } })
 const voice = await import('../tts/robot-speech.js')
+let speechDisabled = true
 mock.module(new URL('../tts/robot-speech.ts', import.meta.url).href, { namedExports: { ...voice,
-  getSpeechOutputSettings: () => ({ speechDisabled: true, outputTarget: 'local' }) } })
+  getSpeechOutputSettings: () => ({ speechDisabled, outputTarget: 'local' }) } })
 const core = await import('./index.js')
 const { getQueueManager } = await import('../queue/unified-queue-manager.js')
 const { ExecutionEngine } = await import('../queue/execution-engine.js')
@@ -137,24 +138,43 @@ function fixture(sessionId: string) {
   const received: EnvironmentCommandWork[] = []
   core.recordEnvironmentObservation(observation); core.setEnvironmentBridgeEnabled(true)
   const unsubscribe = core.subscribeEnvironmentActions(sessionId, () => received.push(...core.dispatchEnvironmentActions(sessionId, 10)))
-  async function run(executionId?: string) {
+  let initialPerceptionRecorded = false
+  async function run(executionId?: string, turnContext: Record<string, unknown> = {}) {
     core.touchEnvironmentSession(sessionId)
+    if (!executionId && !initialPerceptionRecorded) {
+      await perception(0, .4)
+      initialPerceptionRecorded = true
+    }
     const work = manager.enqueue({ type: 'generic', handler: 'graph.resume', username, source: 'user', maxAttempts: 1, input: { requestId: randomUUID() } })
     assert.ok(manager.claim(work.id))
     const result = await withGraphWork(work, id => manager.attachExecution(work.id, id),
-      () => runDurableGraph({ graph, context, executionId }), async input => manager.enqueue(input))
+      () => runDurableGraph({ graph, context: { ...context, ...turnContext }, executionId }), async input => manager.enqueue(input))
+    // Drive the real Coordinator cleanup handler (the fixture does not start
+    // its automatic worker loop). No body receipts are synthesized here.
+    for (const cleanup of manager.getAllTasks().filter(task => task.handler === 'environment.cancel-owned-work'
+      && task.durable?.executionId === result.executionId && task.state === 'queued')) {
+      assert.ok(manager.claim(cleanup.id))
+      await (engine as unknown as { execute(task: typeof cleanup): Promise<void> }).execute(cleanup)
+    }
     manager.complete(work.id, result.status !== 'failed', { status: result.status })
     assert.notEqual(result.status, 'failed', result.error?.stack)
-    await new Promise(resolve => setImmediate(resolve)); return result
+    await new Promise(resolve => setImmediate(resolve))
+    if (result.status === 'waiting') {
+      const saved = openExecutionStore(username)
+      try {
+        if (saved.task(result.executionId!)?.decision.objectiveComplete) return run(result.executionId)
+      } finally { saved.close() }
+    }
+    return result
   }
-  function feedback(action: EnvironmentCommandWork, type: 'accepted' | 'completed' | 'cancelled') {
+  function feedback(action: EnvironmentCommandWork, type: 'accepted' | 'completed' | 'cancelled' | 'outcome_unknown') {
     core.recordEnvironmentActionResult({ id: randomUUID(), actionId: action.id, type, timestamp: new Date().toISOString(), message: type })
   }
   function complete(action: EnvironmentCommandWork) { feedback(action, 'accepted'); feedback(action, 'completed') }
-  async function perception(frameCounter: number, x: number) {
+  async function perception(frameCounter: number, x: number, ttlMs = 10000) {
     const now = Date.now()
     assert.equal(await core.recordEnvironmentPerception(sessionId, { version: 1, robotId: 'fixture-robot', epoch: 1,
-      gatewayInstance: 'fixture-gateway', frameCounter, timeBasis: 'gateway_receipt', observedAt: new Date(now).toISOString(), expiresAt: new Date(now + 10000).toISOString(),
+      gatewayInstance: 'fixture-gateway', frameCounter, timeBasis: 'gateway_receipt', observedAt: new Date(now).toISOString(), expiresAt: new Date(now + ttlMs).toISOString(),
       backend: 'fixture', model: 'fixture', summary: 'An object is visible.', objects: [{ label: 'cup', box: { x, y: .2, width: .2, height: .2 } }], uncertainties: [] }, async input => manager.enqueue(input)), true)
   }
   return { observation, received, run, feedback, complete, perception, unsubscribe }
@@ -190,6 +210,13 @@ test('turn then dance executes locally with no model decision between movements'
       const [dance] = f.received.splice(0); assert.equal(dance.command, 'dance'); f.complete(dance)
       assert.equal((await f.run(started.executionId)).status, 'completed')
       assert.equal(calls.length, before + 2, 'Only initial routing and complete-task selection may call a model')
+      const { loadRobotStatus } = await import('../robot-status.js')
+      const status = loadRobotStatus(username)!
+      assert.equal(status.lastAction?.actionId, dance.id)
+      assert.equal(status.lastAction?.command, 'dance')
+      assert.equal(status.lastAction?.status, 'completed')
+      assert.equal(status.lastBodyAction?.actionId, dance.id)
+      assert.equal(status.lastAction?.sessionId, f.observation.sessionId)
     } finally { f.unsubscribe() }
   })
 })
@@ -225,8 +252,13 @@ test('the running gait steers during delayed identification, then waves before w
       f.complete(right)
       resolveIdentification({ matchesTarget: true, completionSatisfied: true, outcome: 'positive', description: 'The requested object is identified.', evidence: 'Object visible in interest-image.' }); await processing
       await f.run(executionId)
-      const [stop] = f.received.splice(0); assert.equal(stop.type, 'stop')
-      f.complete(stop); f.feedback(motion, 'cancelled')
+      const [finish] = f.received.splice(0)
+      assert.equal(finish.movementUpdate?.actionId, motion.id)
+      assert.equal(finish.movementUpdate?.controls.speed, 0)
+      f.complete(finish)
+      assert.equal((await f.run(executionId)).status, 'waiting')
+      assert.equal(f.received.length, 0, 'Finish ACK cannot advance to the wave')
+      f.feedback(motion, 'completed')
       await f.run(executionId)
       const [wave] = f.received.splice(0); assert.equal(wave.command, 'wave')
       const saved = openExecutionStore(username); assert.equal(saved.task(executionId)?.decision.objectiveComplete, false); saved.close()
@@ -264,7 +296,7 @@ test('new instructions steer the same active movement and conversation preserves
       const changed = f.received.splice(0)
       const update = changed.find(action => action.movementUpdate)!
       assert.equal(update.movementUpdate!.actionId, motion.id)
-      assert.equal(update.movementUpdate!.controls.turn, -30)
+      assert.ok(Math.abs(update.movementUpdate!.controls.turn + 30) < 1e-8)
       assert.deepEqual(update.bodyLease, motion.bodyLease)
       assert.equal(changed.some(action => action.type === 'move' && !action.movementUpdate), false)
       assert.equal(changed.some(action => action.type === 'captureImage'), false, 'Steering the same search preserves its pending snapshot')
@@ -396,7 +428,7 @@ test('a stalled remote inference request remains cancellable without calling loc
   })
 })
 
-test('remote outage leaves live steering responsive and returns an explicit failure to the planner', async () => {
+test('remote outage requests owned cancellation and waits for its receipt before returning to the planner', async () => {
   await withUserContext({ username, userId: username, role: 'owner' }, async () => {
     const f = fixture('remote-outage-body')
     let failRemote!: () => void
@@ -423,6 +455,15 @@ test('remote outage leaves live steering responsive and returns an explicit fail
       assert.equal(manager.getTask(identification.id)?.state, 'leased', 'The controller must progress before remote inference settles')
       f.complete(steering)
       failRemote(); await processing
+      const beforeCleanup = calls.length
+      assert.equal((await f.run(id)).status, 'waiting')
+      const owned = manager.findTask(task => task.type === 'environment_command' && task.input.id === motion.id)!
+      assert.ok(owned.cancellationRequestedAt, 'The existing Coordinator cancellation must reach the bridge')
+      assert.equal(calls.length, beforeCleanup, 'The planner cannot run before the gait terminal receipt')
+      f.feedback(motion, 'outcome_unknown')
+      assert.equal((await f.run(id)).status, 'waiting')
+      assert.equal(calls.length, beforeCleanup)
+      f.feedback(motion, 'cancelled')
       replies.push({ response: '', outcome: 'wait', taskId: 'none', instruction: '', completionEvidence: '',
         requiredCompletionBasis: 'visual_observation', observationSummary: 'No successful perception result',
         reason: 'The remote backend is unavailable; the goal remains incomplete' })
@@ -432,5 +473,131 @@ test('remote outage leaves live steering responsive and returns an explicit fail
       assert.equal(final.task(id)?.decision.objectiveComplete, false); final.close()
       assert.equal(f.received.length, 0)
     } finally { failRemote?.(); f.unsubscribe() }
+  })
+})
+
+test('one photo clarification waits durably until new user input, without another model call', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const f = fixture('clarification-body'); const before = calls.length;
+    try {
+      replies.push({ ...route, needsResponse: true, needsVision: false, needsAction: false }, {
+        response: 'What would you like photographed?', program: null,
+        taskDecision: { ...decision, objective: 'Take a picture', outcome: 'wait',
+          continuationPolicy: 'none', requiredCompletionBasis: 'user_input', reason: 'Await the user’s chosen subject.' },
+      });
+      const started = await f.run();
+      assert.equal(started.status, 'waiting');
+      assert.equal(calls.length, before + 2);
+      assert.equal(f.received.length, 0);
+      assert.equal((await f.run(started.executionId)).status, 'waiting');
+      assert.equal(calls.length, before + 2, 'Resuming without input cannot repeat the clarification');
+      const store = openExecutionStore(username);
+      try { store.deliverEvent(started.executionId!, { eventId: randomUUID(), kind: 'user_steering',
+        payload: { userMessage: 'Just tell me whether the camera is available instead.', sessionId: f.observation.sessionId } }); }
+      finally { store.close(); }
+      replies.push({ ...route, needsResponse: true, needsVision: false, needsAction: false }, {
+        response: 'The camera is available.', program: null, taskDecision: { ...decision, objective: 'Report camera availability', outcome: 'complete',
+          continuationPolicy: 'none', requiredCompletionBasis: 'user_input', reason: 'Answered the revised question using camera readiness.' },
+      });
+      assert.equal((await f.run(started.executionId)).status, 'completed');
+      assert.equal(calls.length, before + 4);
+      assert.equal(f.received.length, 0);
+    } finally { f.unsubscribe(); }
+  });
+});
+
+test('a second user turn preserves the objective and history while replacing speech and response metadata', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const { beginTTSUserTurn, claimNextTTS } = await import('../tts/delivery-queue.js')
+    const { loadBufferForUser } = await import('../conversation-buffer.js')
+    const f = fixture('turn-metadata-body')
+    const firstTime = new Date(Date.now() - 60_000).toISOString()
+    const secondTime = new Date().toISOString()
+    const firstMessage = 'Please wave when I tell you to.'
+    const secondMessage = 'Wave now, please.'
+    const firstResponse = 'Ready when you are.'
+    const secondResponse = 'I will wave now.'
+    const initial = { ...decision, objective: 'Wave at the requested time', outcome: 'wait',
+      continuationPolicy: 'none', requiredCompletionBasis: 'user_input' }
+    speechDisabled = false
+    try {
+      const firstGeneration = beginTTSUserTurn(username)!.generation
+      replies.push({ ...route, needsResponse: true, needsConversationHistory: true, needsVision: false, needsAction: false },
+        { response: firstResponse, program: null, taskDecision: initial })
+      const started = await f.run(undefined, { userMessage: firstMessage, conversationInput: firstMessage,
+        memoryTimestamp: firstTime, ttsGeneration: firstGeneration, replyToContent: 'old-reply-context',
+        idempotencyKey: 'first-turn' })
+      assert.equal(started.status, 'waiting')
+      const store = openExecutionStore(username)
+      const objectiveId = store.task(started.executionId!)!.objectiveId
+      store.close()
+      const secondGeneration = beginTTSUserTurn(username)!.generation
+      replies.push({ ...route, needsResponse: true, needsVision: false, needsAction: true,
+        executionDisposition: 'steer', targetExecutionId: started.executionId })
+      const admission = await f.run(undefined, { userMessage: secondMessage, conversationInput: secondMessage,
+        memoryTimestamp: secondTime, ttsGeneration: secondGeneration, idempotencyKey: 'second-turn' })
+      assert.equal(admission.status, 'completed')
+      assert.equal(admission.nodes.get('execution-input-out')?.outputs?.sent, true)
+      const eventStore = openExecutionStore(username)
+      const event = eventStore.events(started.executionId!).find(event => event.kind === 'user_steering')!
+      eventStore.close()
+      assert.equal((event.payload as any).ttsGeneration, secondGeneration)
+      assert.equal((event.payload as any).memoryTimestamp, secondTime)
+      assert.equal((event.payload as any).conversationInput, secondMessage)
+      assert.equal((event.payload as any).replyToContent, null)
+      replies.push({ ...route, needsResponse: true, needsConversationHistory: true, needsVision: false },
+        { response: secondResponse, program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] },
+          taskDecision: { ...decision, objective: initial.objective } })
+      const resumed = await f.run(started.executionId)
+      assert.equal(resumed.status, 'waiting')
+      const envelope = JSON.parse(calls.at(-1).messages.at(-1).content)
+      assert.equal(envelope.currentInstruction, secondMessage)
+      assert.ok(envelope.recentConversation.some((message: any) => message.content === firstMessage))
+      assert.ok(envelope.recentConversation.some((message: any) => message.content === firstResponse))
+      assert.ok(!JSON.stringify(envelope).includes('old-reply-context'))
+      const messages = loadBufferForUser(username, 'conversation').messages
+      const response = messages.find(message => message.content === secondResponse)!
+      assert.equal(response.timestamp, Date.parse(secondTime))
+      assert.equal(messages.filter(message => message.content === secondMessage).length, 1)
+      const speech = claimNextTTS(username, 'fixture-consumer').item
+      assert.ok(speech, 'The real speech queue must accept the resumed response')
+      assert.equal(speech.text, secondResponse)
+      assert.equal(speech.generation, secondGeneration)
+      const saved = openExecutionStore(username)
+      assert.equal(saved.task(started.executionId!)!.objectiveId, objectiveId)
+      assert.equal(saved.task(started.executionId!)!.instruction, firstMessage)
+      saved.close()
+      const [action] = f.received.splice(0)
+      assert.equal(action.command, 'wave')
+      f.complete(action)
+      assert.equal((await f.run(started.executionId)).status, 'completed')
+    } finally { speechDisabled = true; f.unsubscribe() }
+  })
+})
+
+test('Coordinator deadline wakes a silent feedback stream and requests cancellation without inference completing', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const f = fixture('feedback-expiry-body')
+    try {
+      replies.push(route, { response: '', taskDecision: decision, program: { steps: [behavior] } })
+      const started = await f.run(); const id = started.executionId!
+      const [motion] = f.received.splice(0)
+      f.feedback(motion, 'accepted')
+      await f.perception(1, .4, 3000)
+      await f.run(id)
+      const deadline = manager.getAllTasks().find(task => task.handler === 'environment.active-task-deadline'
+        && task.durable?.executionId === id && task.state === 'queued')!
+      assert.ok(deadline)
+      assert.equal(manager.claim(deadline.id), null, 'The existing notBefore gate owns timing')
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(deadline.notBefore!) - Date.now() + 10)))
+      assert.ok(manager.claim(deadline.id))
+      await (engine as unknown as { execute(task: typeof deadline): Promise<void> }).execute(deadline)
+      const callsBefore = calls.length
+      assert.equal((await f.run(id)).status, 'waiting')
+      const owned = manager.findTask(task => task.type === 'environment_command' && task.input.id === motion.id)!
+      assert.ok(owned.cancellationRequestedAt, 'Feedback expiry must use the existing cancellation transport')
+      assert.equal(calls.length, callsBefore, 'Cleanup does not depend on another model call')
+      assert.equal(f.received.some(command => command.type === 'stop'), false, 'No unscoped Stop action is admitted')
+    } finally { f.unsubscribe() }
   })
 })

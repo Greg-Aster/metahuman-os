@@ -48,7 +48,7 @@ export class TerminalController {
     this.stream?.close()
     this.stream = connectionPool.request({
       id: this.streamId, name: 'Terminal', url: `/api/terminal/events${id ? `?id=${encodeURIComponent(id)}` : ''}`,
-      priority: ConnectionPriority.HIGH,
+      priority: ConnectionPriority.CRITICAL,
       onMessage: message => {
         if (generation !== this.generation || this.abort.signal.aborted) return
         try {

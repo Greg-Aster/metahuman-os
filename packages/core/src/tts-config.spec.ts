@@ -135,7 +135,7 @@ test('Kitten batch synthesis uses its profile voice without Piper or Kokoro conf
 test('Kitten streams ordered phrases through the existing generic stream handler', async () => {
   writeProfile('kitten-fixture', kittenVoiceConfig());
   const response = await handleTtsStream({ method: 'POST',
-    body: { text: 'Hello! I am ready to speak while later phrases are generated.', provider: 'kitten' },
+    body: { text: 'Hello! I am ready to speak. The next phrase is generated while the opening is playing.', provider: 'kitten' },
     user: { username: 'kitten-fixture', isAuthenticated: true, role: 'owner' },
   } as any);
   assert.equal(response.status, 200);
@@ -145,7 +145,7 @@ test('Kitten streams ordered phrases through the existing generic stream handler
   assert.match(events, /"chunk_index":0/);
   assert.match(events, /"chunk_index":1/);
   assert.match(events, /"event":"complete"/);
-  assert.equal(requests[0].text, 'Hello!');
+  assert.equal(requests[0].text, 'Hello! I am ready to speak.');
   assert(requests.every(request => request.voice === 'Jasper'));
 });
 
@@ -163,7 +163,7 @@ test('Kitten starts the following phrase before handing off the first audio', as
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith('/synthesize')) {
       const body = JSON.parse(String(init?.body));
-      if (body.text !== 'Hello!') {
+      if (body.text !== 'I am ready to speak now.') {
         requests.push(body);
         await blocked;
         return new Response(Buffer.from('second-phrase'));
@@ -172,7 +172,7 @@ test('Kitten starts the following phrase before handing off the first audio', as
     return fetch(url, init);
   };
   const response = await handleTtsStream({ method: 'POST',
-    body: { text: 'Hello! This next phrase must already be processing.', provider: 'kitten', voiceId: 'Bella', speed: 0.8 },
+    body: { text: 'I am ready to speak now. This next phrase must already be processing.', provider: 'kitten', voiceId: 'Bella', speed: 0.8 },
     user: { username: 'kitten-fixture', isAuthenticated: true, role: 'owner' },
   } as any);
   const iterator = response.stream![Symbol.asyncIterator]();

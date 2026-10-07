@@ -35,6 +35,8 @@ export async function getTerminalState(): Promise<TerminalState> {
   }
 }
 export async function startTerminalService(actor?: string): Promise<TerminalState> {
+  const state = await getTerminalState()
+  if (state.status === 'running') return state
   const { getAgentCatalogService } = await import('../agent-catalog.js')
   const entry = getAgentCatalogService().getAgent('terminal')
   if (!entry?.canRun) throw new TerminalError('Terminal service must be registered and enabled in Agent Catalog', 409)
@@ -78,6 +80,9 @@ export async function stopBigBrotherSession(): Promise<void> {
 
 export async function executeInBigBrotherSession(provider: TerminalProvider, prompt: string,
   options: EscalationOptions = {}): Promise<BigBrotherSessionResult> {
+  options.signal?.throwIfAborted()
+  if ((await getTerminalState()).status === 'stopped') await startTerminalService(options.username)
+  options.signal?.throwIfAborted()
   const abort = new AbortController()
   const signal = options.signal ? AbortSignal.any([options.signal, abort.signal]) : abort.signal
   const { onReasoningStep, onChunk, onWaitingForInput: _waiting, signal: _signal, ...serializable } = options

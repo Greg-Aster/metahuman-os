@@ -48,7 +48,11 @@ export interface ActiveTaskState {
   perceptionOutcome?: ActiveTaskIdentification['outcome'] | 'failed' | 'stale'
   visualCompletionSatisfied?: boolean
   objectiveComplete?: boolean
-  stopId?: string
+  finishRequestedAt?: number
+  cancellationRequestedAt?: number
+  feedbackRequiredSince?: number
+  deadlineEffectId?: string
+  deadlineAt?: number
   done?: boolean
   userInput?: Record<string, unknown>
   observation?: EnvironmentObservation

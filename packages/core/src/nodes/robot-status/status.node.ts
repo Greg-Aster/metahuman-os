@@ -20,6 +20,7 @@ function decisionContext(
         }
       : null,
     lastAction: status.lastAction,
+    lastBodyAction: status.lastBodyAction ?? null,
     task: status.task,
     situation: status.situation,
     ...(status.latestVisualObservation ? { latestVisualObservation: status.latestVisualObservation } : {}),

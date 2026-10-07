@@ -111,9 +111,14 @@ remain model-visible, and uncertainty must be reconciled before another update
 or replacement motion. A capture receipt establishes only the capture step:
 the correlated image goes through the existing model router/provider bridge in
 an asynchronous Coordinator job with explicit remote placement. Positive target
-and completion-criteria evidence advances the phase; negative, ambiguous, stale
-and failed perception leaves the objective unfinished for the existing LLM-led
-loop. Generated motion uses that same finite-job path and the existing movement
+and completion-criteria evidence requests Finish on the original gait. Only its
+correlated terminal receipt advances the phase. Failed/expired required feedback
+requests owned Coordinator cancellation before returning to the existing LLM-led
+loop; missing termination evidence stays explicitly unknown. The Coordinator's
+existing `notBefore` work owns deadline wakes, and `environment.cancel-owned-work`
+checks execution ownership before using its existing cancellation path. No node
+creates a private queue owner. Slow identification discards stale images while
+fresh local feedback remains usable; IMU integration is separate. Generated motion uses that same finite-job path and the existing movement
 generator. No heavy inference blocks the active task's event step. Existing
 durable executable-version checks reject incompatible old checkpoints instead
 of interpreting their pre-acknowledgement steering state as a fresh motion.

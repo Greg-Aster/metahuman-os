@@ -2,12 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { systemPaths } from '../paths.js';
+import { loadQueueState } from '../queue/queue-persister.js';
 
 const TARGET_SAMPLE_RATE = 16_000;
 const FRAME_BYTES = 640;
-const MAX_PCM_BYTES = 480_000;
-const MAX_WAV_BYTES = 2 * 1024 * 1024;
-const MAX_STAGED_ARTIFACTS = 4;
 const ARTIFACT_TTL_MS = 2 * 60_000;
 const ARTIFACT_ID = /^speech-[a-zA-Z0-9-]{1,96}$/;
 
@@ -33,31 +31,21 @@ function artifactPath(id: string): string {
 function cleanupSpool(now = Date.now()): void {
   const dir = spoolDir();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // A reply may wait behind arbitrarily long speech. Only orphaned audio
+  // expires; the existing coordinator ledger owns pending artifacts.
+  const pending = new Set((loadQueueState()?.items ?? [])
+    .filter(task => !['completed', 'failed', 'cancelled', 'expired'].includes(task.state))
+    .map(task => task.input?.speechArtifactId));
   const artifacts = fs.readdirSync(dir)
     .filter(name => /^speech-[a-zA-Z0-9-]{1,96}\.(?:pcm|claim-\d+)$/.test(name))
     .map(name => {
       const file = path.join(dir, name);
-      return { file, mtimeMs: fs.statSync(file).mtimeMs };
-    })
-    .sort((a, b) => a.mtimeMs - b.mtimeMs);
+      return { file, id: name.replace(/\.(?:pcm|claim-\d+)$/, ''), mtimeMs: fs.statSync(file).mtimeMs };
+    });
 
   for (const artifact of artifacts) {
-    if (now - artifact.mtimeMs > ARTIFACT_TTL_MS) {
+    if (!pending.has(artifact.id) && now - artifact.mtimeMs > ARTIFACT_TTL_MS) {
       try { fs.unlinkSync(artifact.file); } catch {}
-    }
-  }
-
-  const staged = fs.readdirSync(dir)
-    .filter(name => /^speech-[a-zA-Z0-9-]{1,96}\.pcm$/.test(name))
-    .map(name => {
-      const file = path.join(dir, name);
-      return { file, mtimeMs: fs.statSync(file).mtimeMs };
-    })
-    .sort((a, b) => a.mtimeMs - b.mtimeMs);
-  while (staged.length >= MAX_STAGED_ARTIFACTS) {
-    const oldest = staged.shift();
-    if (oldest) {
-      try { fs.unlinkSync(oldest.file); } catch {}
     }
   }
 }
@@ -71,8 +59,8 @@ function readPcmFrame(wav: Buffer, dataOffset: number, channels: number, frame: 
 }
 
 export function wavToRobotPcm(wav: Buffer): Buffer {
-  if (wav.length < 44 || wav.length > MAX_WAV_BYTES) {
-    throw new Error('Kokoro WAV chunk is outside the supported size');
+  if (wav.length < 44) {
+    throw new Error('Kokoro WAV chunk is truncated');
   }
   if (wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') {
     throw new Error('Kokoro returned an invalid WAV chunk');
@@ -176,9 +164,6 @@ export function combineRobotSpeechWavChunks(
   for (const chunk of chunks) {
     const pcm = wavToRobotPcm(chunk);
     pcmBytes += pcm.length;
-    if (pcmBytes > MAX_PCM_BYTES) {
-      throw new Error('Robot speech exceeds the 15 second playback limit');
-    }
     if (pcm.length) converted.push(pcm);
   }
   if (pcmBytes === 0) throw new Error('Kokoro produced no playable robot audio');
@@ -198,10 +183,9 @@ export function combineRobotSpeechWavChunks(
 export function stageRobotSpeech(audio: RobotSpeechAudio): RobotSpeechArtifact {
   if (
     audio.pcm.length === 0
-    || audio.pcm.length > MAX_PCM_BYTES
     || audio.pcm.length % FRAME_BYTES !== 0
   ) {
-    throw new Error('Robot speech PCM is not a bounded sequence of 640-byte frames');
+    throw new Error('Robot speech PCM must contain complete 640-byte frames');
   }
   cleanupSpool();
   const id = `speech-${Date.now()}-${randomBytes(6).toString('hex')}`;
@@ -213,7 +197,6 @@ export function stageRobotSpeech(audio: RobotSpeechAudio): RobotSpeechArtifact {
 }
 
 export function claimRobotSpeech(id: string): RobotSpeechArtifact | null {
-  cleanupSpool();
   const file = artifactPath(id);
   const claimed = `${file.slice(0, -4)}.claim-${process.pid}`;
   try {
@@ -224,7 +207,7 @@ export function claimRobotSpeech(id: string): RobotSpeechArtifact | null {
   }
   try {
     const pcm = fs.readFileSync(claimed);
-    if (pcm.length === 0 || pcm.length > MAX_PCM_BYTES || pcm.length % FRAME_BYTES !== 0) {
+    if (pcm.length === 0 || pcm.length % FRAME_BYTES !== 0) {
       throw new Error('Claimed robot speech artifact is invalid');
     }
     return { id, pcm, durationMs: Math.ceil(pcm.length / 32) };
@@ -239,6 +222,5 @@ export function discardRobotSpeech(id: string): void {
 
 export const robotSpeechAudioLimits = {
   frameBytes: FRAME_BYTES,
-  maxPcmBytes: MAX_PCM_BYTES,
   sampleRateHz: TARGET_SAMPLE_RATE,
 };

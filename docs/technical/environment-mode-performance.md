@@ -19,7 +19,8 @@ A behavior starts one continuous gait. Fresh recognition updates composed
 forward/turn settings on that original movement while finite image-identification
 work runs asynchronously through the configured model provider. Its target and
 phase criteria are free text; detector labels are hints. A confirmed match ends
-that behavior via the semantic stop, then the remaining gestures execute.
+that behavior with Finish (a speed-zero update to its original gait), then the
+remaining gestures execute after the original gait terminal receipt.
 Only completion of all phases records whole-task completion. Conversation has
 no physical program. Unfinished conversational objectives retain task-level
 Goal Review, without inserting model review between physical phases.
@@ -28,8 +29,42 @@ The Bridge keeps newest-frame recognition separate from physical receipts.
 Same-execution capture and settings jobs share the current body lease. P4 keeps
 its existing local gait/servo timing and interpolates steering without a phase
 restart. IMU acquisition, metric navigation, tracking, a deployed detector, and
-combined Q6A workloads are still prototype integration work. No new obstacle,
-lost-vision or model-error motion policy was added.
+combined Q6A workloads are still prototype integration work.
+
+2026-10-07 Stage 1 (source/software validation only): required feedback failure
+or expiry requests cancellation through the existing Coordinator/Bridge path.
+A behavior without usable local perception gets a 2-second startup grace; once
+running it uses the perception receipt expiry. Slow image inference alone does
+not cancel a gait while local feedback remains fresh: expired image results are
+discarded and recaptured, never used to claim the objective complete.
+Normal Finish gets 5 seconds for the original gait terminal receipt, then requests
+cancellation. Cancellation confirmation gets 2 seconds before the active task
+reports `outcome_unknown` and keeps waiting for correlated evidence. Coordinator
+`notBefore` jobs wake the existing execution; these are software response bounds,
+subject to worker/transport availability, not a P4 hard real-time watchdog.
+No acceptance/update ACK or successful cleanup job proves commanded termination.
+Even a correlated device terminal receipt is not measured physical rest.
+
+Gateway cancellation checks the saved gateway instance, robot epoch, body lease,
+and most recent body/speaker dispatch while holding the wire-send lock. Manual
+controls invalidate that fence. Late cleanup cannot Stop a newer owner. Disconnect
+and reconnect retain unknown outcomes without replaying motion. Normal Finish
+leaves concurrent speech running; fallback/emergency Stop retains its existing
+output-disable/audio-cancellation behavior. Capture cancellation waits for its
+own receipt and cannot use a global Stop to interrupt concurrent gait/speech.
+
+Deployment qualification remains required: identify actual gateway, MetaHuman and
+P4 builds; reconcile/drain old active checkpoints before deploying the pair; prove
+Finish/original-done, failure/expiry cancellation, speech continuity, manual
+replacement and reconnect on a supported body under supervised hardware testing.
+The stage did not deploy, restart, flash, calibrate or configure perception.
+Rollback uses the saved pre-edit files (including existing dirty changes) and
+Stage-1-only reverse patches, never a repository reset.
+
+Next proposed slice: dispatch instruction interpretation as finite Coordinator
+work and consume its correlated result in this same active execution, so feedback
+and cancellation continue while that inference is pending. No second controller
+or motion channel; IMU acquisition is a separate slice.
 
 The measurements and work log below are historical, preceding this cutover;
 their old `actions` / `movementRequest` contracts and graph chains do not describe

@@ -343,3 +343,57 @@ test('persisted physical cancellation reaches the Bridge stream and replays unti
     timestamp: new Date().toISOString(), type: 'completed', message: 'Fake adapter completed before cancellation' });
   assert.equal(manager.getTask(nextAction.workItemId!)!.state, 'completed', 'The actual terminal result remains authoritative');
 });
+
+
+test('interrupted speech cancels through the adapter before releasing ownership and survives recovery', async () => {
+  const { ExecutionCheckpointer } = await import('../../durable-execution/checkpointer.js');
+  const { executionWorkInput } = await import('../../durable-execution/coordinator-outbox.js');
+  for (const kind of ['speak', 'robotCommand']) {
+    const username = 'speech-recovery-owner';
+    const sessionId = randomUUID();
+    const store = openExecutionStore(username);
+    try {
+      const definition = { graphId: 'speech-recovery', graphHash: 'current', runtimeVersion: 'current', checkpointSchemaVersion: 1, nodeVersions: {} };
+      const execution = store.create(username, definition);
+      const lease = store.claim(execution.executionId, definition);
+      const effectId = randomUUID();
+      const input = { id: randomUUID(), sessionId, type: kind };
+      await new ExecutionCheckpointer(store, lease).put({ configurable: { thread_id: execution.executionId } }, {
+        v: 4, id: randomUUID(), ts: new Date().toISOString(), channel_versions: {}, versions_seen: {},
+        channel_values: { executionTransition: { transitionId: randomUUID(), dispatches: [{ effectId,
+          actionId: input.id, kind: 'coordinator_work', payload: { type: 'environment_command', handler: 'environment.command',
+            resource: `environment:${sessionId}`, username, input },
+        }] } },
+      }, { source: 'loop', step: 0, parents: {} });
+      store.settle(lease, 'waiting', 'robot_result'); store.release(lease);
+      const task = manager.enqueue(executionWorkInput(store, store.dispatch(effectId)));
+      store.acknowledgeAdmission(effectId, task.id);
+      assert.ok(manager.claim(task.id));
+      const next = manager.enqueue({ type: 'environment_command', handler: 'environment.command', username,
+        resource: `environment:${sessionId}`, input: { id: randomUUID(), sessionId, type: 'speak' } });
+      const feedback = { id: randomUUID(), actionId: input.id, timestamp: new Date().toISOString(),
+        type: 'outcome_unknown' as const, message: 'Adapter disconnected before acceptance',
+        data: { producer: 'environment-bridge', delivery: { stage: 'acceptance', outcome: 'unknown' } } };
+      bridge.recordEnvironmentActionResult(feedback);
+      bridge.recordEnvironmentActionResult(feedback);
+      assert.equal(manager.getTask(task.id)?.state, 'waiting');
+      assert.equal(Boolean(manager.getTask(task.id)?.cancellationRequestedAt), kind === 'speak');
+      assert.equal(manager.getNextExecutable(candidate => candidate.id === next.id), null,
+        'An uncertain delivery is not permission to release body ownership');
+      assert.equal(store.dispatch(effectId).status, 'outcome_unknown');
+      manager.importState(loadQueueState()!);
+      assert.equal(bridge.pendingEnvironmentCancellations(sessionId).length, kind === 'speak' ? 1 : 0);
+      if (kind === 'speak') {
+        bridge.recordEnvironmentActionResult({ id: randomUUID(), actionId: input.id, timestamp: new Date().toISOString(),
+          type: 'accepted', message: 'Late acceptance' });
+        assert.ok(manager.getTask(task.id)?.cancellationRequestedAt);
+      }
+      bridge.recordEnvironmentActionResult({ id: randomUUID(), actionId: input.id, timestamp: new Date().toISOString(),
+        type: 'cancelled', message: 'Adapter confirmed cancellation' });
+      assert.equal(manager.getTask(task.id)?.state, 'cancelled');
+      assert.equal(manager.getNextExecutable(candidate => candidate.id === next.id)?.id, next.id);
+      assert.equal(store.dispatch(effectId).status, 'completed');
+      manager.cancel(next.id);
+    } finally { store.close(); }
+  }
+});

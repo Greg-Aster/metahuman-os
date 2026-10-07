@@ -92,3 +92,34 @@ test('generic ongoing behavior keeps phase criteria separate from the entire obj
   await assert.rejects(parse({ response: '', program: { steps: [behavior] },
     taskDecision: { ...taskDecision, escalation: { target: 'general' } } }), /escalation/)
 })
+
+test('V2 named gait composition survives the provider schema and parser', async () => {
+  const schema = buildEnvironmentSelectorJsonSchema({ actions: ['robotCommand'], robotCommands: ['crawl', 'crab_right', 'run'] })
+  const encoded = JSON.stringify(schema)
+  assert.ok(encoded.includes('"forward":{"type":"number","minimum":-100,"maximum":100}'))
+  assert.ok(encoded.includes('"turn":{"type":"number","minimum":-100,"maximum":100}'))
+  for (const fields of [{ speed: 150, forward: 80, turn: -25 }, { stride: 85, rate: 1.5 }, { speed: 0 }]) {
+    const gait = { type: 'robotCommand', command: 'run', continuous: true, ...fields }
+    const result = await parse({ response: '', program: { steps: [{ kind: 'action', action: gait }] }, taskDecision },
+      { ...observation, capabilities: { actions: ['robotCommand'], robotCommands: ['run'] } })
+    assert.equal(result.valid, true)
+    for (const [key, value] of Object.entries(gait)) assert.equal(result.program.steps[0].action[key], value)
+  }
+})
+
+test('switching robot catalogs retains V1 gestures and exposes V2 commands without V1 joint generation', async () => {
+  for (const [commands, actions] of [
+    [['#1', '#2', 'walk_slow', 'crab'], ['robotCommand', 'robotMotionPlan']],
+    [['turn_left_15', 'turn_right_15', 'crawl', 'crab_right', 'crab_forward', 'crab_backward', 'crab_turn_left', 'crab_turn_right', 'upright'], ['robotCommand']],
+    [['#1', '#2', 'walk_slow', 'crab'], ['robotCommand', 'robotMotionPlan']],
+  ] as const) {
+    const current: EnvironmentObservation = { ...observation, capabilities: { actions: [...actions], robotCommands: [...commands] } }
+    const result = await parse({ response: '', program: { steps: commands.map(action) }, taskDecision }, current)
+    assert.equal(result.valid, true)
+    assert.deepEqual(result.program.steps.map((item: any) => item.action.command), commands)
+    const unavailable = await parse({ response: '', program: { steps: [action(commands.some(command => command === '#1') ? 'crawl' : '#1')] }, taskDecision }, current)
+    assert.equal(unavailable.actionAdmission.reason, 'robot_command_unavailable')
+    const schema = JSON.stringify(buildEnvironmentSelectorJsonSchema({ actions, robotCommands: commands }))
+    assert.equal(schema.includes('generatedMotion'), actions.length === 2)
+  }
+})

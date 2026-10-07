@@ -83,7 +83,7 @@
       "adapterUrl": "ws://127.0.0.1:18790/environment",
       "graph": "environment",
       "comment": "Environment Bridge Remote; starting switches the active connection.",
-      "cloudflareHostname": "",
+      "cloudflareHostname": "bridge.ainek.io",
       "accessEnvFile": ""
     }
   }

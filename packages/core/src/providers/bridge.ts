@@ -154,7 +154,6 @@ export async function callProvider(
   // BACKEND AVAILABILITY CHECK: Fail fast if no LLM backend is available
   // NO FALLBACKS - if the configured backend isn't working, STOP and notify user
   // =========================================================================
-  const backendStatus = await getBackendStatus();
   const operatorConfig = username ? loadFreshOperatorConfig(username) : null;
   const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
   const bigBrotherDelegateAll = operatorConfig?.bigBrotherMode?.delegateAll ?? false;
@@ -202,17 +201,27 @@ export async function callProvider(
     onProgress?.({ phase: 'loading', message: `${backendName}: Starting...` });
 
     // Format messages for the backend
-    const prompt = messages.map(m => {
+    let prompt = messages.map(m => {
       if (m.role === 'system') return `[System]: ${messageText(m)}`;
       if (m.role === 'user') return `[User]: ${messageText(m)}`;
       return `[Assistant]: ${messageText(m)}`;
     }).join('\n\n');
 
+    // CLI providers receive their response contract in the prompt. Their native
+    // strict-schema modes cannot represent all workflow schemas (optional fields
+    // and open objects); the calling workflow retains response validation.
+    if (options.jsonSchema || options.format === 'json') {
+      prompt += '\n\n[System]: Return only the final JSON value, without Markdown fences or surrounding commentary.';
+      if (options.jsonSchema) {
+        prompt += `\nThe final response must conform to this JSON Schema:\n${JSON.stringify(options.jsonSchema)}`;
+      }
+    }
+
     onProgress?.({ phase: 'running', message: `${backendName}: Processing...` });
 
     // Execute through the configured backend (provider-agnostic)
-      const result = await escalate(prompt, {
-        signal: options.signal,
+    const result = await escalate(prompt, {
+      signal: options.signal,
       username,
       preferredBackend,
       timeout: 300000,
@@ -226,41 +235,16 @@ export async function callProvider(
       throw new Error(errorMsg);
     }
 
-    // CRITICAL: Validate response is real, not stale garbage from dead PTY
-    const execTime = result.executionTime || 0;
-    const outputLen = result.output?.length || 0;
-
-    // Real LLM responses take at least 100ms
-    if (execTime < 100) {
-      const errorMsg = `Big Brother connection appears dead (response in ${execTime}ms). Restart Big Brother in Settings.`;
-      console.error(`[provider-bridge] ${errorMsg}`);
-      throw new Error(errorMsg);
-    }
-
-    // Check for terminal garbage (ANSI codes indicate cleanResponse failed)
-    // "Smooshing"/"Bypassing Permissions" are Claude Code startup messages indicating not ready
-    // Note: "for shortcuts" is normal TUI footer text that can appear in valid responses
-    if (result.output && /\x1b\[|Smooshing|Bypassing Permissions/.test(result.output)) {
-      const errorMsg = 'Big Brother returned terminal UI garbage (ANSI codes or startup messages). Restart Big Brother in Settings.';
-      console.error(`[provider-bridge] ${errorMsg}`);
-      throw new Error(errorMsg);
-    }
-
-    // Minimum meaningful response length
-    if (outputLen < 50) {
-      const errorMsg = `Big Brother returned empty/minimal response (${outputLen} chars). Check terminal status.`;
-      console.error(`[provider-bridge] ${errorMsg}`);
-      throw new Error(errorMsg);
-    }
-
     onProgress?.({ phase: 'completed', message: `${backendName}: Response received` });
 
     return {
       content: result.output,
-      model: preferredBackend || 'big-brother',
+      model: operatorConfig?.bigBrotherMode?.model || preferredBackend || 'big-brother',
       provider: 'big-brother',
     };
   }
+
+  const backendStatus = await getBackendStatus();
 
   // Big Brother not enabled - check local backend availability
   if (!backendStatus.running || backendStatus.health === 'offline') {

@@ -223,6 +223,25 @@ export class ExecutionEngine {
   }
 
   private registerDefaultHandlers(): void {
+    // Deadlines use the existing Coordinator's durable notBefore admission.
+    this.registerHandler('environment.active-task-deadline', async task => task.input);
+    this.registerHandler('environment.cancel-owned-work', async task => {
+      if (!task.durable) throw new Error('Active task cleanup requires a durable owner');
+      const owned = this.queueManager.findTask(candidate => candidate.username === task.username
+        && candidate.durable?.executionId === task.durable!.executionId
+        && (typeof task.input.deadlineEffectId === 'string'
+          ? candidate.handler === 'environment.active-task-deadline' && candidate.durable?.effectId === task.input.deadlineEffectId
+          : typeof task.input.actionId === 'string' && candidate.type === 'environment_command'
+            && candidate.input.id === task.input.actionId && candidate.input.sessionId === task.input.sessionId));
+      if (!owned) return { requested: false };
+      this.queueManager.cancel(owned.id, String(task.input.reason ?? 'Active task deadline superseded'));
+      if (owned.handler === 'environment.active-task-deadline') {
+        const { deliverDurableWorkReceipt } = await import('../durable-execution/work-results.js');
+        await deliverDurableWorkReceipt(owned, async input => this.queueManager.enqueue(input));
+      }
+      // A request receipt never claims that the body action has terminated.
+      return { requested: true };
+    });
     this.registerHandler('environment.generate-motion', (task, context) => withTaskUserContext(task, async () => {
       const { movementGeneratorNode } = await import('../nodes/environment/movement-generator.node.js');
       const result = await movementGeneratorNode.execute(task.input, { username: task.username, userId: task.username,

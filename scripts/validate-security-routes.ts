@@ -47,6 +47,7 @@ const AUTH_BOOTSTRAP_PATTERNS = [
   '/api/environment-bridge/action-result',
   '/api/environment-bridge/diagnostics/audio',
   '/api/environment-bridge/telemetry',
+  '/api/environment-bridge/speech-settings',
   '/api/internal/work-coordinator/enqueue',
 ];
 

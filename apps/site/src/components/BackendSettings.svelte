@@ -83,6 +83,8 @@
     enabled: boolean;
     provider: string;
     delegateAll?: boolean;
+    model?: string;
+    reasoningEffort?: string;
     escalateOnStuck: boolean;
     escalateOnRepeatedFailures: boolean;
     maxRetries: number;
@@ -226,7 +228,8 @@
 
   let bigBrotherConfig: BigBrotherConfig | null = null;
   let bigBrotherEnabled = false;
-  let bigBrotherDelegateAll = false;
+  let bigBrotherModel = '';
+  let bigBrotherReasoningEffort = '';
   let bigBrotherProvider: string = 'claude-code';
   let savingBigBrother = false;
 
@@ -811,7 +814,8 @@
         const data = await res.json();
         bigBrotherConfig = data.config;
         bigBrotherEnabled = data.config?.enabled ?? false;
-        bigBrotherDelegateAll = data.config?.delegateAll ?? false;
+        bigBrotherModel = data.config?.model || '';
+        bigBrotherReasoningEffort = data.config?.reasoningEffort || '';
         bigBrotherProvider = data.config?.provider || 'claude-code';
       }
     } catch (err) {
@@ -829,7 +833,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enabled: bigBrotherEnabled,
-          delegateAll: bigBrotherDelegateAll,
+          delegateAll: bigBrotherEnabled,
+          model: bigBrotherModel,
+          reasoningEffort: bigBrotherReasoningEffort,
           provider: bigBrotherProvider,
           escalateOnStuck: bigBrotherConfig?.escalateOnStuck ?? true,
           escalateOnRepeatedFailures: bigBrotherConfig?.escalateOnRepeatedFailures ?? true,
@@ -1725,9 +1731,9 @@
     </section>
 
     <section class="panel p-4 mb-6 bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800">
-      <h4 class="text-base font-semibold mb-2 text-blue-800 dark:text-blue-300">Escalation</h4>
+      <h4 class="text-base font-semibold mb-2 text-blue-800 dark:text-blue-300">Big Brother</h4>
       <p class="text-sm text-blue-700 dark:text-blue-400 mb-3">
-        Big Brother is a task escalation route. Claude Code and Codex run in one visible terminal session; closing that tab cancels the active process.
+        When enabled, Big Brother uses the selected CLI model. Turn it off to return to the configured local model. Claude Code and Codex display their work in the terminal.
       </p>
 
       <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer mb-3">
@@ -1735,13 +1741,8 @@
         <span>Enable Big Brother Mode</span>
       </label>
 
-      <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer mb-3">
-        <input type="checkbox" bind:checked={bigBrotherDelegateAll} on:change={saveBigBrotherConfig} disabled={savingBigBrother || !bigBrotherEnabled} class="w-4 h-4 accent-violet-600" />
-        <span>Delegate All Tasks</span>
-      </label>
-
-      <label for="big-brother-provider" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Escalation Provider</label>
-      <select id="big-brother-provider" bind:value={bigBrotherProvider} on:change={saveBigBrotherConfig} disabled={savingBigBrother} class="select-field w-full mb-3">
+      <label for="big-brother-provider" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Provider</label>
+      <select id="big-brother-provider" bind:value={bigBrotherProvider} on:change={() => { bigBrotherModel = ''; saveBigBrotherConfig(); }} disabled={savingBigBrother} class="select-field w-full mb-3">
         {#if !bigBrotherProviderOptions.some(option => option.value === bigBrotherProvider)}
           <option value={bigBrotherProvider} disabled>Unavailable provider — choose a replacement</option>
         {/if}
@@ -1749,6 +1750,20 @@
           <option value={opt.value}>{opt.label} - {opt.description}</option>
         {/each}
       </select>
+
+      {#if bigBrotherProvider === 'codex' || bigBrotherProvider === 'claude-code'}
+        <label for="big-brother-model" class="block text-sm font-medium mb-1">Model</label>
+        <input id="big-brother-model" class="input-field w-full mb-3" bind:value={bigBrotherModel} on:change={saveBigBrotherConfig} disabled={savingBigBrother} placeholder="CLI default" />
+      {/if}
+      {#if bigBrotherProvider === 'codex'}
+        <label for="big-brother-reasoning" class="block text-sm font-medium mb-1">Reasoning effort</label>
+        <select id="big-brother-reasoning" class="select-field w-full mb-3" bind:value={bigBrotherReasoningEffort} on:change={saveBigBrotherConfig} disabled={savingBigBrother}>
+          <option value="">CLI backend setting</option>
+          {#each ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as effort}
+            <option value={effort}>{effort}</option>
+          {/each}
+        </select>
+      {/if}
 
       <div class="bg-black/5 dark:bg-white/5 rounded-lg p-3 text-sm">
         <div class="flex justify-between py-1">

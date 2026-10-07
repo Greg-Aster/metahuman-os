@@ -233,6 +233,7 @@ import {
   handleEnvironmentBridgeDiagnostics,
   handleEnvironmentBridgeObservation,
   handleEnvironmentBridgeStatus,
+  handleEnvironmentBridgeSpeechSettings,
   handleEnvironmentBridgeStream,
   handleEnvironmentBridgeTelemetry,
 } from './handlers/environment-bridge.js';
@@ -607,6 +608,7 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/agents/run', handler: handleRunAgent, requiresAuth: true, guard: 'owner' },
 
   // Environment bridge
+  { method: 'POST', pattern: '/api/environment-bridge/speech-settings', handler: handleEnvironmentBridgeSpeechSettings, public: true, publicReason: 'service-token authenticated speech destination preferences for the active owner' },
   { method: 'GET', pattern: '/api/environment-bridge/status', handler: handleEnvironmentBridgeStatus, requiresAuth: true },
   { method: 'GET', pattern: '/api/environment-bridge/diagnostics', handler: handleEnvironmentBridgeDiagnostics, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/environment-bridge/diagnostics/media', handler: handleEnvironmentBridgeDiagnosticMedia, requiresAuth: true, guard: 'owner' },

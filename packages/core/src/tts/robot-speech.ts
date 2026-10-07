@@ -12,9 +12,6 @@ import {
 import { createKokoroTTSService } from '../tts.js';
 import type { EnvironmentAction } from '../environment-interface/types.js';
 
-const MAX_ROBOT_KOKORO_STREAM_BYTES = 3 * 1024 * 1024;
-const MAX_ROBOT_WAV_CHUNKS = 64;
-
 export interface SpeechOutputSettings {
   provider: string;
   outputTarget: 'local' | 'robot';
@@ -105,7 +102,6 @@ async function collectKokoroWavChunks(
   options: KokoroRobotSpeechOptions,
 ): Promise<Buffer[]> {
   const wavChunks: Buffer[] = [];
-  let receivedBytes = 0;
 
   for await (const chunk of service.synthesizeStream(text, {
     signal: options.signal,
@@ -114,13 +110,6 @@ async function collectKokoroWavChunks(
     langCode: options.langCode,
     requestId: options.requestId,
   })) {
-    if (wavChunks.length >= MAX_ROBOT_WAV_CHUNKS) {
-      throw new Error('Kokoro returned too many robot audio chunks');
-    }
-    receivedBytes += chunk.audio.length;
-    if (receivedBytes > MAX_ROBOT_KOKORO_STREAM_BYTES) {
-      throw new Error('Kokoro robot audio stream exceeds its size limit');
-    }
     wavChunks.push(chunk.audio);
   }
 

@@ -674,9 +674,8 @@ function normalizeAction(
       || !/^speech-[a-zA-Z0-9-]{1,96}$/.test(action.speechArtifactId)
       || !Number.isFinite(action.speechDurationMs)
       || action.speechDurationMs! <= 0
-      || action.speechDurationMs! > 15_000
     ) {
-      throw new Error('Environment speech must be a bounded tts-out renderer action');
+      throw new Error('Environment speech must be a tts-out renderer action');
     }
   }
   const motionPlan = action.type === 'robotMotionPlan'
@@ -947,6 +946,12 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
       manager.complete(task.id, false, { code: 'adapter_expired', message: feedback.message, retryable: false });
     } else if (feedback.type === 'outcome_unknown') {
       manager.wait(task.id, `outcome_unknown: ${feedback.message}`);
+      if (task.input.type === 'speak') {
+        // Speech interrupted in transit must not keep later replies blocked.
+        // The existing adapter handshake confirms cancellation before the
+        // Coordinator releases ownership; no audio is replayed or called done.
+        manager.cancel(task.id, 'Interrupted robot speech: reconcile by cancellation');
+      }
     } else if (feedback.type === 'failed' || feedback.type === 'rejected') {
       manager.complete(task.id, false, { code: `adapter_${feedback.type}`, message: feedback.message, retryable: false });
     }

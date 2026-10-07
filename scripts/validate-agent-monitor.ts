@@ -296,7 +296,7 @@ async function main() {
 
   checks.push(check(
     'Environment Bridge contains no environment-specific adapter implementation',
-    !fs.existsSync(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'adapters', 'megameal.ts'))
+    !fs.existsSync(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge-local', 'adapters', 'megameal.ts'))
       && sourceDoesNotContain(path.join(SOURCE_ROOT, 'brain', 'agents', 'environment-bridge', 'core.ts'), /ainekio|megameal/i),
   ));
   checks.push(check(

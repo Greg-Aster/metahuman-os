@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { readOrUpdateSpeechOutput } from './voice-settings.js';
 import {
   badRequestResponse,
   errorResponse,
@@ -172,6 +173,23 @@ export type EnvironmentObservationUserResolver = () => string | null;
 export function resolveEnvironmentObservationUser(): string | null {
   const activeUser = getCurrentlyActiveUser();
   return activeUser?.role === 'owner' ? activeUser.username : null;
+}
+
+/** Body Control edits only the active owner's existing speech destination. */
+export async function handleEnvironmentBridgeSpeechSettings(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authorizationFailure = bridgeAuthorizationFailure(req);
+  if (authorizationFailure) return authorizationFailure;
+  const username = resolveEnvironmentObservationUser();
+  if (!username) return errorResponse('Sign in to MetaHuman as the owner to choose speech output', 409);
+  const { outputTarget } = bodyRecord(req);
+  if (outputTarget !== undefined && outputTarget !== 'local' && outputTarget !== 'robot') {
+    return badRequestResponse('outputTarget must be local or robot');
+  }
+  try {
+    return successResponse(readOrUpdateSpeechOutput(username, outputTarget));
+  } catch (error) {
+    return errorResponse(`Unable to access speech settings: ${(error as Error).message}`, 500);
+  }
 }
 
 export async function handleEnvironmentBridgeObservation(

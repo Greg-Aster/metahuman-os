@@ -18,6 +18,9 @@ export interface RobotStatusAction {
   status: string
   message: string
   completedAt: string
+  observedAt?: string
+  sessionId?: string
+  robotId?: string
 }
 
 export interface RobotStatusMotion {
@@ -129,6 +132,7 @@ export interface RobotStatusSnapshot {
   }
   body: RobotStatusBody | null
   lastAction: RobotStatusAction | null
+  lastBodyAction?: RobotStatusAction | null
   task: RobotStatusTask | null
   agency: {
     activeDesires: RobotStatusDesireSummary[]
@@ -253,6 +257,9 @@ function normalizeAction(value: unknown): RobotStatusAction | null {
     status: cleanText(value.status, 80),
     message: cleanText(value.message, 500),
     completedAt: cleanText(value.completedAt, 80),
+    ...(value.observedAt ? { observedAt: cleanText(value.observedAt, 80) } : {}),
+    ...(value.sessionId ? { sessionId: cleanText(value.sessionId, 160) } : {}),
+    ...(value.robotId ? { robotId: cleanText(value.robotId, 160) } : {}),
   }
 }
 
@@ -440,6 +447,9 @@ export function buildRobotStatusProjection(
     })
   const latestVisualObservation = visualObservations[0]
   const retainLastAction = previous?.lastAction && previous.sourceUpdatedAt.robotHistory > sources.sourceUpdatedAt.robotHistory
+  const lastAction = retainLastAction ? previous.lastAction : normalizeAction(sources.lastAction)
+  const lastBodyAction = lastAction && ['robotCommand', 'move', 'stop', 'robotMotionPlan'].includes(lastAction.type)
+    ? lastAction : previous?.lastBodyAction ?? null
   const snapshot: RobotStatusSnapshot = {
     projection: sources.projection ?? previous?.projection,
     version: 1,
@@ -453,7 +463,8 @@ export function buildRobotStatusProjection(
     },
     body,
     ...(latestVisualObservation ? { latestVisualObservation } : {}),
-    lastAction: retainLastAction ? previous.lastAction : normalizeAction(sources.lastAction),
+    lastAction,
+    lastBodyAction,
     task,
     agency: { activeDesires: projectDesireAwareness(sources.activeDesires) },
     situation: parseRobotStatusSituation({ ...situation, currentGoal: currentGoal(task),

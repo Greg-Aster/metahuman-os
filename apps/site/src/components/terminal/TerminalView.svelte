@@ -5,6 +5,7 @@
   import '@xterm/xterm/css/xterm.css';
   import type { TerminalEvent, TerminalState } from '@metahuman/core/terminal/types';
   import { TerminalController } from './controller';
+  import { statusRefreshTrigger } from '../../stores/navigation';
 
   let state: TerminalState = { status: 'stopped', sessions: [] };
   let selected = '';
@@ -59,8 +60,8 @@
     controller = new TerminalController(receive, message => { screenVersion++; error = message; screenReady = false; });
     const input = terminal.onData(data => { if (screenReady && current?.kind === 'shell' && current.phase === 'running') controller.input(data); });
     const observer = new ResizeObserver(fitScreen); observer.observe(container);
-    void action(() => controller.refresh());
-    return () => { disposed = true; screenReady = false; observer.disconnect(); input.dispose(); controller.dispose(); terminal.dispose(); };
+    const unsubscribe = statusRefreshTrigger.subscribe(() => { void action(() => controller.refresh()); });
+    return () => { unsubscribe(); disposed = true; screenReady = false; observer.disconnect(); input.dispose(); controller.dispose(); terminal.dispose(); };
   });
 </script>
 

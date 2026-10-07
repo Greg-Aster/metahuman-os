@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { defineNode } from '../types.js'
+import { defineNode, type NodeExecutionContext } from '../types.js'
 import { getLatestEnvironmentObservation, getEnvironmentPerception, prepareEnvironmentCommand } from '../../environment-interface/store.js'
 import type { EnvironmentTaskProgram, ActiveTaskState, ActiveTaskContinuation } from '../../environment-interface/active-task.js'
 import type { EnvironmentAction, EnvironmentObservation, EnvironmentVisualFrame } from '../../environment-interface/types.js'
@@ -7,6 +7,26 @@ import type { EnvironmentTaskDecision } from './helpers.js'
 import { loadGraphForMode } from '../../graph-streaming.js'
 import { requireGraphNodeOutput } from '../../graph-runtime.js'
 import { environmentSendActionNode } from './send-action.node.js'
+import { projectRobotStatus } from '../robot-status/out.node.js'
+
+const FEEDBACK_START_GRACE_MS = 2_000
+const FINISH_TIMEOUT_MS = 5_000
+const CANCELLATION_CONFIRMATION_MS = 2_000
+const terminalTypes = ['completed', 'failed', 'rejected', 'expired', 'cancelled']
+
+// The graph records cancellation intent; only the existing Coordinator mutates
+// work ownership. This also works when a graph runs outside that owner process.
+function cancelOwnedWork(context: NodeExecutionContext, input: Record<string, unknown>) {
+  return context.graphExecution!.dispatch({ kind: 'coordinator_work', payload: {
+    type: 'generic', handler: 'environment.cancel-owned-work', resource: `environment-cleanup:${context.activeTaskSessionId}`,
+    source: 'environment', username: context.username, priority: 'critical', maxAttempts: 1,
+    input: { ...input, sessionId: context.activeTaskSessionId },
+  } })
+}
+function clearDeadline(state: ActiveTaskState, context: NodeExecutionContext) {
+  if (state.deadlineEffectId) cancelOwnedWork(context, { deadlineEffectId: state.deadlineEffectId })
+  delete state.deadlineEffectId; delete state.deadlineAt
+}
 
 function observationReference(observation: EnvironmentObservation): EnvironmentObservation {
   const reference = ({ dataUrl: _pixels, ...frame }: EnvironmentVisualFrame) => frame
@@ -56,6 +76,9 @@ export const environmentActiveTaskNode = defineNode({
         awaitingReplacement: true,
       }
     }
+    if (continuation?.state.deadlineEffectId && initial?.deadlineEffectId !== continuation.state.deadlineEffectId)
+      clearDeadline({ ...continuation.state }, { ...context,
+        activeTaskSessionId: inputs.sessionId ?? continuation.state.observation?.sessionId ?? context.sessionId })
     if (initial?.identificationRequest) initial.identificationRequest = { ...initial.identificationRequest, stepIndex: initial.stepIndex }
     if (initial) initial.retrySteering = true
     if (initial) initial.pendingEvents = [...(initial.pendingEvents ?? []),
@@ -92,11 +115,11 @@ export const environmentActiveTaskStepNode = defineNode({
     }
     const previous = execution.task()
     const record = (complete = false) => {
-      const feedback = state.failure ?? (state.completedActionId && state.feedback?.actionId === state.completedActionId
+      const feedback = (state.feedback?.type === 'outcome_unknown' ? state.feedback : state.failure) ?? (state.completedActionId && state.feedback?.actionId === state.completedActionId
         ? state.feedback : state.steeringResult ?? state.feedback)
       const reason = state.failure?.message ?? state.identificationError?.toString()
         ?? (complete ? state.evidence.at(-1) : state.steeringResult?.message ?? state.identification?.evidence)
-      return execution.recordTask({ ...previous,
+      const task = { ...previous,
       objectiveId: previous?.objectiveId ?? execution.occurrenceId, executionId: execution.executionId,
       objective: previous?.desireId ? previous.objective : decision.objective!,
       completionCriteria: previous?.desireId ? previous.completionCriteria : decision.completionCriteria!,
@@ -106,9 +129,22 @@ export const environmentActiveTaskStepNode = defineNode({
         observationSummary: state.perception?.summary ?? state.identification?.description ?? decision.observationSummary,
         completionEvidence: complete ? state.evidence.join('\n') : decision.completionEvidence },
       selectedAction: state.action ? { type: state.action.type!, command: state.action.command, direction: state.action.direction, target: state.action.target } : null,
-      actionId: state.stopId ?? state.motionId ?? state.completedActionId ?? '', actionStatus: state.failure?.type ?? (complete ? 'completed' : 'active'),
+      actionId: state.motionId ?? state.completedActionId ?? '', actionStatus: state.feedback?.type === 'outcome_unknown' ? 'outcome_unknown' : state.failure?.type ?? (complete ? 'completed' : 'active'),
       feedback: feedback ? { type: feedback.type, actionId: feedback.actionId ?? '', message: feedback.message, observedAt: feedback.timestamp } : null,
-      baselineFrame: previous?.baselineFrame ?? null, updatedAt: new Date().toISOString() })
+      baselineFrame: previous?.baselineFrame ?? null, updatedAt: new Date().toISOString() }
+      execution.recordTask(task)
+      // Project changes to the existing action record, including receipts that
+      // arrive before the complete program finishes. Gait ticks alone do not
+      // create another status effect.
+      const facts = (value: typeof task | typeof previous) => value && [value.actionId, value.selectedAction, value.actionStatus, value.feedback]
+      if (task.actionId && task.selectedAction && JSON.stringify(facts(task)) !== JSON.stringify(facts(previous))) {
+        const terminal = task.feedback?.actionId === task.actionId
+          && ['completed', 'failed', 'cancelled', 'rejected'].includes(task.feedback.type) ? task.feedback : null
+        projectRobotStatus({ observation: state.observation,
+          bridgeRecord: { requestedActions: [task.selectedAction], commands: [{ id: task.actionId }], status: terminal?.type ?? task.actionStatus },
+          ...(terminal ? { terminalFeedback: { ...terminal, timestamp: terminal.observedAt } } : {}),
+        }, context)
+      }
     }
     const send = async (action: Partial<EnvironmentAction>): Promise<string> => {
       const output = await environmentSendActionNode.execute({ action: { ...action, id: undefined, sessionId },
@@ -118,7 +154,49 @@ export const environmentActiveTaskStepNode = defineNode({
       return (output.commands as Array<{ id: string }>)[0].id
     }
     if (state.done) { record(state.objectiveComplete === true); return { state } }
-    if (state.failure || state.identificationError) { state.done = true; state.objectiveComplete = false; record(); return { state } }
+    const scheduleDeadline = (at: number) => {
+      // Keep an earlier wake when fresh frames extend validity; do not create
+      // timer/cancellation work for every perception frame.
+      if (state.deadlineEffectId && state.deadlineAt !== undefined && state.deadlineAt <= at) return
+      clearDeadline(state, context)
+      state.deadlineAt = at
+      state.deadlineEffectId = execution.dispatch({ kind: 'coordinator_work', payload: {
+        type: 'generic', handler: 'environment.active-task-deadline', resource: `environment-feedback:${sessionId}`,
+        source: 'environment', username: context.username, maxAttempts: 1, notBefore: new Date(at).toISOString(),
+        input: { actionId: state.motionId },
+      } }).effectId
+    }
+    let feedbackExpires: number | undefined
+    const phase = program.steps[state.stepIndex]
+    if (phase?.kind === 'behavior' && !state.finishRequestedAt && !state.failure && !state.identificationError) {
+      state.feedbackRequiredSince ??= Date.now()
+      const expires = state.perception ? Date.parse(state.perception.expiresAt) : state.feedbackRequiredSince + FEEDBACK_START_GRACE_MS
+      if (expires <= Date.now()) state.identificationError = 'Required live feedback expired or is unavailable'
+      else feedbackExpires = expires
+    }
+    if (state.finishRequestedAt && Date.now() >= state.finishRequestedAt + FINISH_TIMEOUT_MS)
+      state.identificationError ??= 'Finish did not receive the original motion terminal receipt within 5 seconds'
+    if (state.failure || state.identificationError) {
+      state.objectiveComplete = false
+      const confirmed = state.feedback && state.feedback.actionId === state.motionId && terminalTypes.includes(state.feedback.type)
+      if (!state.motionId || !state.action?.continuous || confirmed) {
+        clearDeadline(state, context); state.done = true
+      } else {
+        if (!state.cancellationRequestedAt) {
+          cancelOwnedWork(context, { actionId: state.motionId,
+            reason: String(state.identificationError ?? state.failure?.message ?? 'Required feedback failed') })
+          state.cancellationRequestedAt = Date.now()
+        }
+        const expires = state.cancellationRequestedAt + CANCELLATION_CONFIRMATION_MS
+        if (Date.now() < expires) scheduleDeadline(expires)
+        else {
+          clearDeadline(state, context)
+          state.feedback = { id: `termination-unknown:${state.motionId}`, actionId: state.motionId, type: 'outcome_unknown',
+            timestamp: new Date().toISOString(), message: 'Cancellation requested; original command termination is unconfirmed' }
+        }
+      }
+      record(); return { state }
+    }
     if (state.awaitingReplacement) {
       if (state.pendingControls) { record(); return { state } }
       delete state.awaitingReplacement; delete state.motionId; delete state.accepted
@@ -206,9 +284,14 @@ export const environmentActiveTaskStepNode = defineNode({
       record(); return { state }
     }
     if (state.identification?.matchesTarget && state.identification.completionSatisfied) {
-      if (!state.stopId) { state.action = { type: 'stop' }; state.stopId = await send(state.action) }
+      state.finishRequestedAt ??= Date.now()
+      scheduleDeadline(state.finishRequestedAt + FINISH_TIMEOUT_MS)
+      // Finish is a speed-zero update of the original gait. Its ACK is not
+      // completion; the wait node requires that gait's own terminal receipt.
+      updateMovement({ ...step.motion, stride: undefined, rate: undefined, speed: 0 }, null)
       record(); return { state }
     }
+    if (feedbackExpires !== undefined) scheduleDeadline(feedbackExpires)
     identify(step.target, step.completionCriteria)
     if (!state.motionId) { delete state.feedback; state.action = step.motion; state.motionId = await send(step.motion); state.accepted = false }
     updateMovement(step.motion, step.steering)
@@ -238,9 +321,10 @@ export const environmentActiveTaskWaitNode = defineNode({
     const execution = context.graphExecution!
     const program = context.activeProgram as EnvironmentTaskProgram
     const advance = (evidence: string) => {
-      state.completedActionId = state.stopId ?? state.motionId
+      clearDeadline(state, context)
+      state.completedActionId = state.motionId
       state.evidence = [...state.evidence, evidence]; state.stepIndex += 1
-      for (const field of ['motionId', 'action', 'accepted', 'snapshotId', 'identificationEffectId', 'identificationRequest', 'generationEffectId', 'image', 'identification', 'lastIdentifiedFrame', 'stopId', 'pendingControls', 'desiredControls', 'acknowledgedControls', 'retrySteering', 'captureRequestedAt', 'captureCompleted'] as const) delete state[field]
+      for (const field of ['motionId', 'action', 'accepted', 'snapshotId', 'identificationEffectId', 'identificationRequest', 'generationEffectId', 'image', 'identification', 'lastIdentifiedFrame', 'finishRequestedAt', 'cancellationRequestedAt', 'feedbackRequiredSince', 'pendingControls', 'desiredControls', 'acknowledgedControls', 'retrySteering', 'captureRequestedAt', 'captureCompleted'] as const) delete state[field]
       state.updateRevision = 0
       return { state, continue: true }
     }
@@ -255,9 +339,14 @@ export const environmentActiveTaskWaitNode = defineNode({
     while (true) {
       const event = state.pendingEvents?.shift() ?? execution.waitForEvent(`active_task:${context.activeTaskSessionId}`)
       const payload = event.payload as Record<string, any>
+      if (event.kind === 'work_result' && payload.effectId === state.deadlineEffectId) {
+        delete state.deadlineEffectId; delete state.deadlineAt
+        return { state, continue: true }
+      }
       if (event.kind === 'user_steering') {
         state.userInput = { ...payload, activeTaskContinuation: { program, decision: context.activeTaskDecision,
           state: { ...state, userInput: undefined } } }
+        if (state.finishRequestedAt || state.cancellationRequestedAt) continue
         if (program.steps[state.stepIndex].kind === 'behavior' || state.action?.continuous || !state.motionId) return { state, continue: false }
         continue
       }
@@ -272,7 +361,14 @@ export const environmentActiveTaskWaitNode = defineNode({
         delete state.identificationRequest
         if (!request || request.stepIndex !== state.stepIndex || request.gatewayInstance !== current?.gatewayInstance
           || request.epoch !== current?.epoch || request.expiresAt && Date.parse(request.expiresAt) <= Date.now()) {
-          state.perceptionOutcome = 'stale'; state.identificationError = 'Image evidence belongs to an expired frame or ended body session'
+          state.perceptionOutcome = 'stale'
+          const live = getEnvironmentPerception(context.activeTaskSessionId as string)
+          // Slow inference is not feedback loss. Discard expired image evidence
+          // and recapture while current local feedback remains usable.
+          if (program.steps[state.stepIndex].kind !== 'behavior' || !live
+            || request?.gatewayInstance !== current?.gatewayInstance || request?.epoch !== current?.epoch)
+            state.identificationError = 'Image evidence belongs to an expired frame or ended body session'
+          else delete state.lastIdentifiedFrame
           delete state.identification
         } else if (payload.result.state === 'completed') {
           state.identification = payload.result.result; state.perceptionOutcome = state.identification?.outcome
@@ -304,6 +400,14 @@ export const environmentActiveTaskWaitNode = defineNode({
       if (event.kind !== 'physical_result') continue
       const feedback = payload.feedback as import('../../environment-interface/types.js').EnvironmentFeedback
       if (feedback.actionId !== event.actionId) continue
+      if ([state.motionId, state.snapshotId].includes(event.actionId)) {
+        const action = event.actionId === state.snapshotId ? { type: 'captureImage' }
+          : state.action
+        if (action) projectRobotStatus({ observation: state.observation,
+          bridgeRecord: { requestedActions: [action], commands: [{ id: event.actionId }], status: feedback.type },
+          ...(['completed', 'failed', 'rejected', 'expired', 'cancelled'].includes(feedback.type) ? { terminalFeedback: feedback } : {}),
+        }, context)
+      }
       if (state.pendingControls && event.actionId === state.pendingControls.commandId) {
         const pending = state.pendingControls
         const reply = feedback.data?.movementUpdate as Record<string, unknown> | undefined
@@ -319,7 +423,12 @@ export const environmentActiveTaskWaitNode = defineNode({
       if (event.actionId === state.motionId) {
         state.feedback = feedback
         if (feedback.type === 'accepted' || feedback.type === 'status') { state.accepted = true; return { state, continue: true } }
-        if (program.steps[state.stepIndex].kind === 'behavior' && !state.stopId
+        if (program.steps[state.stepIndex].kind === 'behavior' && state.finishRequestedAt
+          && !state.identificationError && !state.failure && feedback.type === 'completed') {
+          state.visualCompletionSatisfied = state.identification?.completionSatisfied === true
+          return advance(state.identification!.evidence)
+        }
+        if (program.steps[state.stepIndex].kind === 'behavior'
           && ['completed', 'failed', 'rejected', 'expired', 'cancelled', 'outcome_unknown'].includes(feedback.type)) {
           state.failure = feedback; return { state, continue: true }
         }
@@ -338,11 +447,7 @@ export const environmentActiveTaskWaitNode = defineNode({
           }
         }
       }
-      if (event.actionId === state.stopId && feedback.type === 'completed') {
-        state.visualCompletionSatisfied = state.identification?.completionSatisfied === true
-        state.feedback = feedback; return advance(state.identification!.evidence)
-      }
-      if ((event.actionId === state.snapshotId || event.actionId === state.stopId)
+      if (event.actionId === state.snapshotId
         && ['failed', 'rejected', 'expired', 'cancelled', 'outcome_unknown'].includes(feedback.type)) {
         state.feedback = feedback; state.failure = feedback; return { state, continue: true }
       }

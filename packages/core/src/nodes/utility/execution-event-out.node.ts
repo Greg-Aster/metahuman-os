@@ -19,8 +19,25 @@ export const executionEventOutNode = defineNode({
     }
     context.graphExecution.dispatch({ kind: 'execution_event', payload: {
       executionId: selected.executionId, kind: selected.kind,
-      context: { userMessage: inputs.message, ...(inputs.entry ? { userMessageEntry: inputs.entry } : {}),
-        ...(context.environmentObservation ? { environmentObservation: context.environmentObservation, environmentObservationCurrent: context.environmentObservationCurrent } : {}) },
+      // A continuation inherits execution context. Carry this turn's metadata
+      // explicitly, including empty optional fields, so the older turn cannot
+      // supply its speech generation, reply target, or response timestamp.
+      context: {
+        userMessage: inputs.message,
+        conversationInput: inputs.message,
+        userMessageEntry: inputs.entry ?? null,
+        sessionId: context.sessionId ?? null,
+        memoryTimestamp: context.memoryTimestamp ?? inputs.entry?.timestamp ?? null,
+        ttsGeneration: context.ttsGeneration ?? null,
+        idempotencyKey: context.idempotencyKey ?? null,
+        replyToQuestionId: context.replyToQuestionId ?? null,
+        replyToContent: context.replyToContent ?? null,
+        replyToDesireId: context.replyToDesireId ?? null,
+        replyToDesireTitle: context.replyToDesireTitle ?? null,
+        desireContext: context.desireContext ?? null,
+        environmentObservation: context.environmentObservation ?? null,
+        environmentObservationCurrent: context.environmentObservationCurrent === true,
+      },
     } })
     return { sent: true }
   },

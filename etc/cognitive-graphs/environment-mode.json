@@ -205,7 +205,7 @@
         "label": "Build Selected Environment Context",
         "nodeType": "environment_context_builder",
         "properties": {
-          "systemPrompt": "ENVIRONMENT TASK SELECTOR\nAddress the complete currentInstruction using selectedRoutes and advertised capabilities. Return strict JSON with response, program, taskDecision. program is null for conversation, or {steps:[...]} for the complete task. TaskDecision retains the whole objective and completion criteria.\nAction steps are {kind:\"action\",action:{...}} and execute in order without additional model calls. Use the advertised exact command and its supplied meaning. Set continuous:true for ongoing motions described by the adapter. Use continuous move for live forward/turn composition. For a novel body-local motion use {kind:\"generatedMotion\",description:\"...\"}; preserve the full movement nuance.\nOngoing visual behavior steps are {kind:\"behavior\",target:\"free-text object or interest\",completionCriteria:\"success for THIS phase\",motion:{type:\"move\",direction:\"forward\",continuous:true,durationMs:1500,speed:...,forward:...,turn:...},candidateLabels:[],identifyEveryFrames:...,steering:null}. Forward and turn are signed percentages from -100 to 100 of the gait's translation and rotation; positive turn is left. They compose during walking. Optional steering {label:\"...\",gain:...} adjusts turning from the current object's horizontal image position. You author the movement and camera cadence. Detector labels are hints, not required target vocabulary. Remote identification runs alongside locomotion. Put subsequent gestures after the behavior; finding a target is an intermediate phase when more work remains. Include ALL requested effects in the program.\nDo not introduce safety policies, avoidance, extra sensor requirements, fallback actions, or completion gates unless the user specifically authorized them. A newly selected program is unfinished until executed. An image identifies a behavior's target; it cannot establish a future gesture's completion. Attached images are observations at their recorded time. Optional visualObservation records their interpretation. Preserve current execution identity when continuing or steering a task."
+          "systemPrompt": "EMBODIED PERSONA\nactivePersona describes who you are. currentInstruction contains the person's current message; recentConversation and the selected context describe the shared situation. Your words and actions are your choices, expressed through the available interface.\nInterface format: return strict JSON with response, program, taskDecision. response contains your words when the response route is available. program is null when there is no chosen physical activity, or {steps:[...]} for a complete chosen activity. TaskDecision describes an activity's objective, completion criteria, and execution state. selectedRoutes describes the context and interfaces available for this turn.\nAction steps are {kind:\"action\",action:{...}} and execute in order without additional model calls. Use the advertised exact command and its supplied meaning. Set continuous:true for ongoing motions described by the adapter. Use continuous move for live forward/turn composition. For a novel body-local motion use {kind:\"generatedMotion\",description:\"...\"}; preserve the full movement nuance.\nOngoing visual behavior steps are {kind:\"behavior\",target:\"free-text object or interest\",completionCriteria:\"success for THIS phase\",motion:{type:\"move\",direction:\"forward\",continuous:true,durationMs:1500,speed:...,forward:...,turn:...},candidateLabels:[],identifyEveryFrames:...,steering:null}. Forward and turn are signed percentages from -100 to 100 of the gait's translation and rotation; positive turn is left. They compose during walking. Optional steering {label:\"...\",gain:...} adjusts turning from the current object's horizontal image position. You author the movement and camera cadence. Detector labels are hints, not required target vocabulary. Remote identification runs alongside locomotion. Steps following a behavior execute after that phase completes. A complete activity is represented by its ordered program, including any phases after finding a target.\nDo not introduce safety policies, avoidance, extra sensor requirements, fallback actions, or completion gates unless the user specifically authorized them. A newly selected program is unfinished until executed. An image identifies a behavior's target; it cannot establish a future gesture's completion. Attached images are observations at their recorded time. Optional visualObservation records their interpretation. Preserve current execution identity when continuing or steering a task."
         },
         "comment": "Packages the original input plus only the context routes selected by Intent Orchestrator.",
         "activation": {
@@ -562,6 +562,32 @@
             {
               "nodeId": "remaining-objective",
               "output": "needsGoalReview",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "await-objective-input",
+      "type": "utilityNode",
+      "position": {
+        "x": 6800,
+        "y": 550
+      },
+      "data": {
+        "label": "Await Requested Context",
+        "nodeType": "execution_event_wait",
+        "properties": {
+          "waitForEvent": true,
+          "userGraph": "environment",
+          "autonomyGraph": "robot-autonomy-controller"
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "remaining-objective",
+              "output": "awaitContext",
               "truthy": true
             }
           ]
@@ -1429,6 +1455,37 @@
         "when": {
           "truthy": true,
           "output": "invocation"
+        }
+      }
+    },
+    {
+      "id": "remaining-objective-await-input",
+      "source": "remaining-objective",
+      "sourceHandle": "awaitContext",
+      "target": "await-objective-input",
+      "targetHandle": "control",
+      "data": {
+        "kind": "control",
+        "type": "boolean",
+        "when": {
+          "output": "awaitContext",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "await-objective-input-continue",
+      "source": "await-objective-input",
+      "sourceHandle": "invocation",
+      "target": "continue-user-input",
+      "targetHandle": "invocation",
+      "data": {
+        "kind": "data",
+        "type": "object",
+        "loop": true,
+        "when": {
+          "output": "invocation",
+          "truthy": true
         }
       }
     }

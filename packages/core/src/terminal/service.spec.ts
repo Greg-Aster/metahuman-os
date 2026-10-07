@@ -193,3 +193,18 @@ test('Agent Monitor launcher starts the same service and stop removes its regist
   const { isAgentRunning } = await import('../agent-monitor-registry.js')
   assert.equal(isAgentRunning('terminal'), false)
 })
+
+test('Big Brother starts the canonical service on demand and works again after a service stop', async () => {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.equal((await client.getTerminalState()).status, 'stopped');
+    const result = await client.executeInBigBrotherSession('claude-code', 'complete');
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.output, 'fixture response');
+    assert.equal((await client.getTerminalState()).status, 'running');
+    await client.stopTerminalService();
+  }
+  const abort = new AbortController();
+  abort.abort();
+  await assert.rejects(client.executeInBigBrotherSession('claude-code', 'complete', { signal: abort.signal }), /aborted/);
+  assert.equal((await client.getTerminalState()).status, 'stopped');
+});

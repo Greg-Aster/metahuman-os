@@ -127,15 +127,20 @@ export function splitSpeechText(
 
   if (paragraphs.length === 0) return [];
 
-  // Release one short opening phrase before grouping the remaining speech.
-  // In particular, tail merging must never reunite this phrase with the rest
-  // of the response and make the listener wait for its entire synthesis.
+  // Release an opening phrase before grouping the remaining speech. Join very
+  // short openings to the next phrase so a greeting does not finish playing
+  // before the next chunk can be synthesized. Keep later tail merging separate.
   const openingChars = Math.min(48, policy.preferredChars);
-  const opening = sentenceUnits(paragraphs[0]!, {
+  const openingUnits = sentenceUnits(paragraphs[0]!, {
     ...policy,
     preferredChars: openingChars,
     maxChars: openingChars,
-  })[0]!;
+  });
+  let opening = openingUnits[0]!;
+  const nextPhrase = openingUnits[1];
+  if (opening.length < 20 && nextPhrase && opening.length + 1 + nextPhrase.length <= policy.maxChars) {
+    opening = `${opening} ${nextPhrase}`;
+  }
   const remainder = paragraphs[0]!.slice(opening.length).trim();
   return [
     opening,

@@ -928,3 +928,19 @@ test('Robot task programs use the sole active executor and retain task-level cog
     reason: 'Another viewpoint may reveal the target.',
   })
 })
+
+test('speech and camera projections preserve the last body action as historical evidence', async () => {
+  const { buildRobotStatusProjection } = await import('./robot-status.js')
+  const bodyAction = { actionId: 'stand-result', type: 'robotCommand', command: 'stand', description: 'stand',
+    status: 'completed', message: 'done', completedAt: '2026-10-07T21:00:00Z',
+    sessionId: 'robot-1', robotId: 'selected-body', observedAt: '2026-10-07T21:00:00Z' }
+  const first = buildRobotStatusProjection(null, null, situation, { ...sources, lastAction: bodyAction })
+  const speech = buildRobotStatusProjection(first, null, situation, { ...sources,
+    lastAction: { ...bodyAction, actionId: 'speech-result', type: 'speak', command: '', completedAt: '2026-10-07T21:01:00Z' } })
+  assert.equal(speech.lastAction?.type, 'speak')
+  assert.deepEqual(speech.lastBodyAction, bodyAction)
+  const envelope = JSON.parse(buildEnvironmentSelectorEnvelope({ instruction: 'Please stand up', robotStatus: speech }))
+  assert.equal(envelope.robotStatus.lastBodyAction.robotId, 'selected-body')
+  assert.equal(envelope.robotStatus.lastBodyAction.completedAt, '2026-10-07T21:00:00Z')
+  assert.equal(envelope.robotStatus.body.motion.posture, undefined, 'A completed command is not fabricated present posture')
+})

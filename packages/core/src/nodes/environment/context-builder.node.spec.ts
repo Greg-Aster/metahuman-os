@@ -4,9 +4,51 @@ import test from 'node:test'
 import type { EnvironmentObservation } from '../../environment-interface/index.js'
 import { environmentContextBuilderNode } from './context-builder.node.js'
 import { environmentImageInputNode } from './image-input.node.js'
-import { buildEnvironmentSelectorJsonSchema } from './helpers.js'
+import { buildEnvironmentSelectorEnvelope, buildEnvironmentSelectorJsonSchema } from './helpers.js'
 
 const TEST_JPEG = 'data:image/jpeg;base64,/9j/2gAA/9k='
+
+test('selector follows the adapter-selected V1 or V2 body without losing model or live gait controls', () => {
+  const robots = {
+    v1: { connected: true, connection_state: 'online', epoch: 1, next_sequence: 20,
+      profile: 'home', mode: 'normal', transport: 'wifi', features: ['motion_plan_v1'], model: 'v1-8servo' },
+    v2: { connected: true, connection_state: 'online', epoch: 3, next_sequence: 42,
+      profile: 'tether', mode: 'normal', transport: 'wifi', features: ['body_capabilities_v1'], model: 'v2-12servo',
+      active_walk: { t: 'intent', name: 'walk', dir: 'fwd', steps: 0, gait: 'walk', speed: 150 } },
+  }
+  for (const robotId of ['v1', 'v2', 'v1'] as const) {
+    const v2 = robotId === 'v2'
+    const current = observation()
+    current.capabilities = { actions: ['robotCommand', 'move', ...(v2 ? [] : ['robotMotionPlan' as const])],
+      robotCommands: v2 ? ['crawl', 'crab_right', 'turn_left_15'] : ['#1', '#2', 'crab'],
+      robotCommandDescriptions: v2 ? { crab_right: 'ongoing wide-stance sideways right' }
+        : { crab: 'perform an alternating crab-like leg motion, then return to stand' } }
+    current.state = { body: { authenticated: true, robotId }, gateway: {
+      connected: true, transport: 'protocol-v1', uptime: 100, instance: 'fixture',
+      joint_contract: { version: 1, joints: ['R1', 'R2', 'L1', 'L2', 'R4', 'R3', 'L3', 'L4'] }, robots },
+      activeMovementUpdates: { version: 1, available: v2, gatewayInstance: 'fixture', maxValidityMs: 2000,
+        controls: v2 ? ['speed', 'stride', 'rate', 'forward', 'turn'] : [], robotId, epoch: 3, maxInFlight: 1 } }
+    const envelope = JSON.parse(buildEnvironmentSelectorEnvelope({ instruction: 'Use this robot.', observation: current }))
+    assert.equal(envelope.currentEnvironment.state.gateway.selectedRobot.model, robots[robotId].model)
+    assert.equal(envelope.currentEnvironment.state.gateway.selectedRobot.profile, robots[robotId].profile)
+    assert.equal('joint_contract' in envelope.currentEnvironment.state.gateway, false)
+    assert.equal('robots' in envelope.currentEnvironment.state.gateway, false)
+    assert.deepEqual(envelope.currentEnvironment.state.activeMovementUpdates.controls,
+      v2 ? ['speed', 'stride', 'rate', 'forward', 'turn'] : [])
+    assert.equal(envelope.capabilityRules.some((rule: string) => rule.startsWith('V2 locomotion:')), v2)
+    assert.equal(envelope.currentEnvironment.capabilities.actions.includes('robotMotionPlan'), !v2)
+    assert.deepEqual(envelope.currentEnvironment.capabilities.robotCommandCatalog, current.capabilities.robotCommandDescriptions)
+    if (v2) assert.equal(envelope.currentEnvironment.state.gateway.selectedRobot.activeWalk.speed, 150)
+  }
+})
+
+test('an unselected gateway does not lend another robot its model', () => {
+  const current = observation()
+  current.state = { body: { authenticated: false, robotId: null },
+    gateway: { robots: { other: { model: 'v2-12servo' } } } }
+  const envelope = JSON.parse(buildEnvironmentSelectorEnvelope({ instruction: 'Which body?', observation: current }))
+  assert.equal(envelope.currentEnvironment.state.gateway.selectedRobot, null)
+})
 
 function observation(): EnvironmentObservation {
   return {
@@ -291,3 +333,34 @@ test('Environment Image Input distinguishes a saved view from evidence for a spe
       'A matching cycle cannot turn a different action image into proof of this result')
   }
 })
+
+test('dated inner dreams and retrieved memories survive Environment context without becoming user speech', async () => {
+  const result = await environmentContextBuilderNode.execute({
+    instruction: 'What did you dream about last night?', userInstruction: 'What did you dream about last night?',
+    routingAnalysis: { needsConversationHistory: true, needsMemory: true },
+    conversationHistory: [
+      { role: 'system', content: '[Inner thought - dream]: A blue creature floated above the keys.', timestamp: '2026-09-29T22:11:55Z',
+        meta: { isInnerDialogue: true, originalRole: 'dream', dialogueSource: 'dreamer' } },
+      { role: 'user', content: 'Hello.', timestamp: '2026-10-07T21:40:00Z' },
+      { role: 'assistant', content: 'Hello.' },
+    ],
+    memories: [{ id: 'dream-record', type: 'dream', timestamp: '2026-09-29T22:11:55Z', content: 'The floor rippled.' }],
+  }, { currentTime: '2026-10-07T21:43:00Z' }, { systemPrompt: 'Fixture' });
+  const envelope = JSON.parse(result.message);
+  assert.equal(envelope.innerDialogue[0].type, 'dream');
+  assert.equal(envelope.innerDialogue[0].timestamp, '2026-09-29T22:11:55Z');
+  assert.match(envelope.innerDialogue[0].content, /blue creature/);
+  assert.equal(envelope.currentTime, '2026-10-07T21:43:00Z');
+  assert.equal(envelope.memories[0].id, 'dream-record');
+  assert.equal(envelope.memories[0].timestamp, '2026-09-29T22:11:55Z');
+  assert.deepEqual(envelope.recentConversation.map((m: any) => m.role), ['user', 'assistant']);
+  assert.equal(envelope.recentConversation[0].timestamp, '2026-10-07T21:40:00Z');
+});
+
+test('idle selected body has unknown posture unless posture evidence is supplied', () => {
+  const current = observation();
+  current.state = { body: { robotId: 'body' }, gateway: { robots: { body: { active_walk: null } } } };
+  const envelope = JSON.parse(buildEnvironmentSelectorEnvelope({ observation: current, instruction: 'Please stand up' }));
+  assert.equal(envelope.currentEnvironment.state.gateway.selectedRobot.posture, null);
+  assert.equal(envelope.currentEnvironment.state.gateway.selectedRobot.activeWalk, null);
+});
