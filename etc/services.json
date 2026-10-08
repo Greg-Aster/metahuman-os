@@ -84,7 +84,7 @@
       "graph": "environment",
       "comment": "Environment Bridge Remote; starting switches the active connection.",
       "cloudflareHostname": "bridge.ainek.io",
-      "accessEnvFile": ""
+      "accessEnvFile": "/home/greggles/.cloudflared/ainekio-environment-access.env"
     }
   }
 }

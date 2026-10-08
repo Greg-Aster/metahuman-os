@@ -21,6 +21,7 @@ export function normalizeRequestedMemoryTypes(value: unknown): string[] | undefi
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
+  if (context.environmentInterpretation?.memory) return context.environmentInterpretation.memory;
   // Extract inputs
   const orchestratorHints = inputs.orchestratorHints ?? inputs[0] ?? {};
 

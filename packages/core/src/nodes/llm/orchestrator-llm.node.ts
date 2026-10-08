@@ -92,8 +92,8 @@ const ENVIRONMENT_INTENT_FIELDS = [
 ] as const;
 
 export type EnvironmentIntentRouting = Record<typeof ENVIRONMENT_INTENT_FIELDS[number], boolean> & {
-  executionDisposition?: 'new' | 'steer' | 'cancel';
-  targetExecutionId?: string;
+  needsExecutionContext?: boolean;
+  needsPersona?: boolean;
   memoryQuery?: string;
   memoryTypes?: string[];
 };
@@ -102,25 +102,16 @@ export const ENVIRONMENT_INTENT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: [...ENVIRONMENT_INTENT_FIELDS],
-  properties: { memoryQuery: { type: 'string' }, memoryTypes: { type: 'array', items: { type: 'string' } }, ...Object.fromEntries(ENVIRONMENT_INTENT_FIELDS.map(field => [field, { type: 'boolean' }])) as Record<typeof ENVIRONMENT_INTENT_FIELDS[number], { type: 'boolean' }>,
-    executionDisposition: { type: 'string', enum: ['new', 'steer', 'cancel'] }, targetExecutionId: { type: 'string' } },
+  properties: { memoryQuery: { type: 'string' }, memoryTypes: { type: 'array', items: { type: 'string' } }, ...Object.fromEntries(ENVIRONMENT_INTENT_FIELDS.map(field => [field, { type: 'boolean' }])) as Record<typeof ENVIRONMENT_INTENT_FIELDS[number], { type: 'boolean' }> },
 } as const;
 
-/** Only advertised executions are valid routing targets. With none, omit the
- * optional transfer fields so an ordinary message cannot target a missing job. */
-export function environmentIntentSchema(activeExecutions: Array<{ executionId: string }> = []) {
-  const { executionDisposition, targetExecutionId, ...routes } = ENVIRONMENT_INTENT_JSON_SCHEMA.properties;
-  return {
-    ...ENVIRONMENT_INTENT_JSON_SCHEMA,
-    required: [...ENVIRONMENT_INTENT_FIELDS, ...(activeExecutions.length ? ['executionDisposition', 'targetExecutionId'] : [])],
-    properties: activeExecutions.length ? {
-      ...routes, executionDisposition,
-      targetExecutionId: { ...targetExecutionId, enum: ['', ...activeExecutions.map(item => item.executionId)] },
-    } : routes,
-  };
-}
+export const ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA = {
+  ...ENVIRONMENT_INTENT_JSON_SCHEMA,
+  required: [...ENVIRONMENT_INTENT_FIELDS, 'needsExecutionContext', 'needsPersona'],
+  properties: { ...ENVIRONMENT_INTENT_JSON_SCHEMA.properties, needsExecutionContext: { type: 'boolean' }, needsPersona: { type: 'boolean' } },
+} as const;
 
-export function parseEnvironmentIntentRouting(value: unknown): EnvironmentIntentRouting {
+export function parseEnvironmentIntentRouting(value: unknown, requestOnly = true): EnvironmentIntentRouting {
   if (typeof value !== 'string') {
     throw new Error('Environment intent output must be strict JSON text');
   }
@@ -134,26 +125,25 @@ export function parseEnvironmentIntentRouting(value: unknown): EnvironmentIntent
     throw new Error('Environment intent output must be one JSON object');
   }
   const record = parsed as Record<string, unknown>;
+  const fields: readonly string[] = requestOnly ? ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA.required : ENVIRONMENT_INTENT_FIELDS;
   const unexpected = Object.keys(record).filter(field => (
-    !ENVIRONMENT_INTENT_FIELDS.includes(field as typeof ENVIRONMENT_INTENT_FIELDS[number])
-    && !['executionDisposition', 'targetExecutionId', 'memoryQuery', 'memoryTypes'].includes(field)
+    !fields.includes(field)
+    && !['memoryQuery', 'memoryTypes'].includes(field)
   ));
   if (unexpected.length > 0) {
     throw new Error(`Environment intent output contains unsupported field(s): ${unexpected.join(', ')}`);
   }
-  for (const field of ENVIRONMENT_INTENT_FIELDS) {
+  for (const field of fields) {
     if (typeof record[field] !== 'boolean') {
       throw new Error(`Environment intent output requires boolean ${field}`);
     }
   }
-  if (record.executionDisposition !== undefined && !['new', 'steer', 'cancel'].includes(String(record.executionDisposition))) throw new Error('Invalid execution disposition');
-  if (record.targetExecutionId !== undefined && typeof record.targetExecutionId !== 'string') throw new Error('Invalid target execution');
   if (record.memoryQuery !== undefined && typeof record.memoryQuery !== 'string') throw new Error('Invalid memory query');
   if (record.memoryTypes !== undefined && (!Array.isArray(record.memoryTypes) || record.memoryTypes.some(type => typeof type !== 'string'))) throw new Error('Invalid memory types');
   return { ...(record.memoryQuery !== undefined ? { memoryQuery: record.memoryQuery as string } : {}),
     ...(record.memoryTypes !== undefined ? { memoryTypes: record.memoryTypes as string[] } : {}), ...Object.fromEntries(
-    ENVIRONMENT_INTENT_FIELDS.map(field => [field, record[field] as boolean]),
-  ), ...(record.executionDisposition ? { executionDisposition: record.executionDisposition, targetExecutionId: record.targetExecutionId } : {}) } as EnvironmentIntentRouting;
+    fields.map(field => [field, record[field] as boolean]),
+  ) } as EnvironmentIntentRouting;
 }
 
 function withAnalysis<T extends Record<string, any>>(result: T): T & { analysis: T } {
@@ -180,7 +170,6 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   category: 'chat',
   inputs: [
     { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
-    { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions, their optional objectives, original inputs and waiting state, available for steering or cancellation' },
     { name: 'execution', type: 'object', optional: true, description: 'Current execution facts for routing an internal intention' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
     { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
@@ -188,9 +177,9 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   ],
   outputs: [
     { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
-    { name: 'executionSelection', type: 'object', optional: true, description: 'Existing execution selected for steering or cancellation' },
-    { name: 'continueHere', type: 'boolean', description: 'Whether this workflow handles the request rather than forwarding it to its existing execution' },
     { name: 'needsResponse', type: 'boolean', description: 'Whether this turn needs a conversational response' },
+    { name: 'needsExecutionContext', type: 'boolean', description: 'Whether downstream reasoning needs execution context' },
+    { name: 'needsPersona', type: 'boolean', description: 'Whether downstream reasoning needs persona context' },
     { name: 'needsConversationHistory', type: 'boolean', description: 'Whether downstream reasoning needs recent dialogue context' },
     { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },
     { name: 'memoryTier', type: 'string', description: 'Memory tier to search' },
@@ -226,6 +215,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
       options: [
         { value: 'general', label: 'General' },
         { value: 'environment', label: 'Environment' },
+        { value: 'environment-request', label: 'Environment Request Only' },
       ],
     },
     systemPrompt: {
@@ -261,15 +251,17 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   },
 
   execute: async (inputs, context, properties) => {
+    if (context.environmentInterpretation?.route) return context.environmentInterpretation.route;
     // Named inputs from graph edges with array fallbacks
+    const requestOnly = properties?.outputContract === 'environment-request';
+    const environmentContract = requestOnly || properties?.outputContract === 'environment';
     const inputData = inputs.message || inputs[0];
-    const conversationHistory = inputs.conversationHistory || inputs[1] || context.conversationHistory || [];
+    const conversationHistory = requestOnly ? [] : inputs.conversationHistory || inputs[1] || context.conversationHistory || [];
     const systemSettings = inputs.systemSettings || inputs[2] || {};
-    const feedbackContext = inputs.feedbackContext || inputs[3] || null;
+    const feedbackContext = requestOnly ? null : inputs.feedbackContext || inputs[3] || null;
     const userMessage = typeof inputData === 'string'
       ? inputData
       : (inputData?.message || context.userMessage || '');
-    const environmentContract = properties?.outputContract === 'environment';
 
     // Analyze conversation context
     const conversationLength = Array.isArray(conversationHistory) ? conversationHistory.length : 0;
@@ -305,7 +297,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
 
     // Buffer History owns the window. Preserve its selected dialogue, including
     // requirements at the end of a message and the retained latest user turn.
-    const recentMessages = environmentContract
+    const recentMessages = requestOnly ? '' : environmentContract
       ? JSON.stringify({ currentTime: context.currentTime ?? new Date().toISOString(), ...projectEnvironmentHistory(conversationHistory) })
       : Array.isArray(conversationHistory)
       ? conversationHistory
@@ -337,12 +329,10 @@ Adjust your routing based on this feedback. If memory search already failed, con
 
       const promptValues = {
         userMessage,
-        executionSection: inputs.execution ? `Current execution: ${JSON.stringify(inputs.execution)}` : '',
+        executionSection: !requestOnly && inputs.execution ? `Current execution: ${JSON.stringify(inputs.execution)}` : '',
         feedbackSection,
         recentMessages,
         recentConversationSection: recentMessages ? `Recent conversation:\n${recentMessages}` : '',
-        activeExecutionSection: Array.isArray(inputs.activeExecutions) && inputs.activeExecutions.length
-          ? `Existing executions: ${JSON.stringify(inputs.activeExecutions)}\nChoose executionDisposition new for a separate request or conversation, steer to update an execution's instruction or objective where canSteer is true, or cancel to end it. For steer/cancel, targetExecutionId must identify that execution. Route the unchanged input; do not rewrite its objective.` : '',
       };
       const systemPrompt = renderPromptTemplate(
         properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
@@ -368,24 +358,15 @@ Adjust your routing based on this feedback. If memory search already failed, con
           repeatPenalty: 1.15,
           temperature: properties?.temperature ?? 0.2,
           format: environmentContract ? 'json' : undefined,
-          jsonSchema: environmentContract ? environmentIntentSchema(inputs.activeExecutions || []) : undefined,
+          jsonSchema: requestOnly ? ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA : environmentContract ? ENVIRONMENT_INTENT_JSON_SCHEMA : undefined,
         },
         onProgress: context.emitProgress,
       });
 
       if (environmentContract) {
-        const routing = parseEnvironmentIntentRouting(response.content);
-        const active = Array.isArray(inputs.activeExecutions) ? inputs.activeExecutions : [];
-        if (active.length && !routing.executionDisposition) throw new Error('Intent must select how this input relates to existing executions');
-        const transferred = routing.executionDisposition === 'steer';
-        const target = routing.executionDisposition === 'steer' || routing.executionDisposition === 'cancel';
-        const selectedExecution = target ? active.find(item => item.executionId === routing.targetExecutionId) : undefined;
-        if (target && !selectedExecution) throw new Error('Intent selected an unknown execution');
-        if (transferred && !selectedExecution?.canSteer) throw new Error(selectedExecution?.resumeError || 'Selected execution has no input route');
+        const routing = parseEnvironmentIntentRouting(response.content, requestOnly);
         return {
           ...routing,
-          continueHere: !transferred,
-          ...(target ? { executionSelection: { executionId: routing.targetExecutionId, kind: transferred ? 'user_steering' : 'user_cancelled' } } : {}),
           analysis: routing,
           raw: response.content,
           thinking: response.thinking,

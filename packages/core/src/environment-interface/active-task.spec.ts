@@ -122,9 +122,9 @@ const behavior = { kind: 'behavior', target: 'the distinctive object described b
   candidateLabels: ['cup'], identifyEveryFrames: 3, steering: { label: 'cup', gain: 100 } }
 const program = { steps: [behavior, { kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] }
 const route = { needsResponse: false, needsConversationHistory: false, needsMemory: false, needsRobotStatus: false,
-  needsEnvironment: true, needsVision: true, needsAction: true, executionDisposition: 'new', targetExecutionId: '' }
+  needsEnvironment: true, needsVision: true, needsAction: true, needsExecutionContext: false, needsPersona: false }
 
-function fixture(sessionId: string) {
+function fixture(sessionId: string, automaticInterpretation = true) {
   const timestamp = new Date().toISOString()
   const observation: EnvironmentObservation = { adapter: 'ainekio-gateway', environmentId: 'fixture-room', sessionId, timestamp,
     capabilities: { actions: ['move', 'stop', 'captureImage', 'robotCommand'], robotCommands: ['wave', 'dance', 'turn_right_180', 'run'], visual: true, movement: true },
@@ -145,7 +145,7 @@ function fixture(sessionId: string) {
       await perception(0, .4)
       initialPerceptionRecorded = true
     }
-    const work = manager.enqueue({ type: 'generic', handler: 'graph.resume', username, source: 'user', maxAttempts: 1, input: { requestId: randomUUID() } })
+    const work = manager.enqueue({ type: 'generic', handler: 'graph.resume', resource: executionId ? `execution:${executionId}` : 'local-llm', username, source: 'user', maxAttempts: 1, input: { requestId: randomUUID() } })
     assert.ok(manager.claim(work.id))
     const result = await withGraphWork(work, id => manager.attachExecution(work.id, id),
       () => runDurableGraph({ graph, context: { ...context, ...turnContext }, executionId }), async input => manager.enqueue(input))
@@ -157,6 +157,13 @@ function fixture(sessionId: string) {
       await (engine as unknown as { execute(task: typeof cleanup): Promise<void> }).execute(cleanup)
     }
     manager.complete(work.id, result.status !== 'failed', { status: result.status })
+    const interpretation = manager.getAllTasks().find(task => task.handler === 'environment.interpret'
+      && task.durable?.executionId === result.executionId && task.state === 'queued')
+    if (interpretation && automaticInterpretation && replies.length) {
+      assert.ok(manager.claim(interpretation.id))
+      await (engine as unknown as { execute(task: typeof interpretation): Promise<void> }).execute(interpretation)
+      return run(result.executionId)
+    }
     assert.notEqual(result.status, 'failed', result.error?.stack)
     await new Promise(resolve => setImmediate(resolve))
     if (result.status === 'waiting') {
@@ -237,11 +244,14 @@ test('the running gait steers during delayed identification, then waves before w
       const identification = manager.getAllTasks().find(task => task.handler === 'environment.identify' && task.durable?.executionId === executionId)!
       assert.equal(identification.input.completionCriteria, behavior.completionCriteria)
       let resolveIdentification!: (value: unknown) => void
-      replies.push(() => new Promise(resolve => { resolveIdentification = resolve }))
+      let markRequestStarted!: () => void
+      const requestStarted = new Promise<void>(resolve => { markRequestStarted = resolve })
+      replies.push(() => new Promise(resolve => { resolveIdentification = resolve; markRequestStarted() }))
       assert.ok(manager.claim(identification.id))
       const processing = (engine as unknown as { execute(task: typeof identification): Promise<void> }).execute(identification)
-      for (let i = 0; !resolveIdentification && i < 100; i++) await new Promise(resolve => setImmediate(resolve))
-      assert.ok(resolveIdentification)
+      await Promise.race([requestStarted, processing.then(() => {
+        throw new Error('Identification work ended before the simulated HTTP request arrived')
+      })])
       await f.perception(1, .1); await f.run(executionId)
       const [left] = f.received.splice(0); assert.equal(left.movementUpdate?.controls.turn, 50); assert.deepEqual(left.bodyLease, motion.bodyLease)
       f.complete(left); await f.run(executionId)
@@ -532,8 +542,8 @@ test('a second user turn preserves the objective and history while replacing spe
       const objectiveId = store.task(started.executionId!)!.objectiveId
       store.close()
       const secondGeneration = beginTTSUserTurn(username)!.generation
-      replies.push({ ...route, needsResponse: true, needsVision: false, needsAction: true,
-        executionDisposition: 'steer', targetExecutionId: started.executionId })
+      replies.push({ ...route, needsResponse: true, needsVision: false, needsAction: true, needsExecutionContext: true },
+        { response: '', program: null, taskDecision: null, executionDisposition: 'steer', targetExecutionId: started.executionId })
       const admission = await f.run(undefined, { userMessage: secondMessage, conversationInput: secondMessage,
         memoryTimestamp: secondTime, ttsGeneration: secondGeneration, idempotencyKey: 'second-turn' })
       assert.equal(admission.status, 'completed')
@@ -660,7 +670,8 @@ for (const termination of ['finish', 'cancel'] as const) {
         }, () => {
           const content = calls.at(-1).messages.at(-1).content
           const envelope = JSON.parse(typeof content === 'string' ? content : content.find((part: any) => part.type === 'text').text)
-          assert.equal(envelope.currentInstruction, 'Now tell me, then look for the doorway.')
+          assert.deepEqual(JSON.parse(envelope.currentInstruction).pendingTurns.map((turn: any) => turn.userMessage),
+            ['What have you found?', 'Explain before the next search.', 'Now tell me, then look for the doorway.'])
           assert.equal(f.received.length, 0)
           // Conversation resumes the remaining settled program; a revised
           // program after cancellation must receive a fresh action identity.
@@ -675,6 +686,9 @@ for (const termination of ['finish', 'cancel'] as const) {
         const newMotion = next.find(action => action.type === 'move' && !action.movementUpdate)!
         assert.ok(newMotion, 'The selected next behavior receives a new command')
         assert.notEqual(newMotion.id, motion.id, 'Never adopt the terminated gait identity')
+        assert.deepEqual(newMotion.metadata?.interpretationBody,
+          [f.observation.sessionId, 'fixture-gateway', 'fixture-robot', 1, null],
+          'The actual graph-to-command path carries the proposal ownership fence')
         assert.equal(newMotion.speed, nextBehavior.motion.speed)
         assert.equal(newMotion.turn, nextBehavior.motion.turn)
         assert.equal(next.some(action => action.movementUpdate?.actionId === motion.id), false)
@@ -688,3 +702,138 @@ for (const termination of ['finish', 'cancel'] as const) {
     })
   })
 }
+
+function instruction(executionId: string, sessionId: string, userMessage: string, generation = 1) {
+  const store = openExecutionStore(username)
+  try { store.deliverEvent(executionId, { eventId: randomUUID(), kind: 'user_steering', payload: {
+    userMessage, conversationInput: userMessage, sessionId, ttsGeneration: generation,
+    memoryTimestamp: new Date().toISOString(), replyToQuestionId: `question-${generation}`,
+  } }) } finally { store.close() }
+}
+function queuedInterpretation(executionId: string) {
+  const job = manager.getAllTasks().find(task => task.handler === 'environment.interpret'
+    && task.durable?.executionId === executionId && task.state === 'queued')
+  assert.ok(job, 'Interpretation is finite Coordinator work belonging to the active execution')
+  return job
+}
+async function executeWork(job: ReturnType<typeof queuedInterpretation>) {
+  assert.ok(manager.claim(job.id))
+  await (engine as unknown as { execute(task: typeof job): Promise<void> }).execute(job)
+}
+async function startFeedbackTask(f: ReturnType<typeof fixture>) {
+  replies.push(route, { response: '', program, taskDecision: decision })
+  const started = await f.run()
+  const [motion] = f.received.splice(0)
+  f.feedback(motion, 'accepted'); await f.run(started.executionId)
+  for (const update of f.received.splice(0)) f.complete(update)
+  await f.run(started.executionId)
+  return { id: started.executionId!, motion }
+}
+
+test('delayed interpretation keeps steering live, combines superseded turns, and applies once to the same gait with newest speech attribution', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const { beginTTSUserTurn, claimNextTTS } = await import('../tts/delivery-queue.js')
+    const { loadBufferForUser } = await import('../conversation-buffer.js')
+    const f = fixture('slow-instruction-body', false)
+    let release!: () => void
+    let entered!: () => void
+    const reachedModel = new Promise<void>(resolve => { entered = resolve })
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    let worker: Promise<void> | undefined
+    speechDisabled = false
+    try {
+      const { id, motion } = await startFeedbackTask(f)
+      const firstGeneration = beginTTSUserTurn(username)!.generation
+      instruction(id, f.observation.sessionId, 'What do you see?', firstGeneration)
+      await f.run(id)
+      const old = queuedInterpretation(id)
+      replies.push(async () => { entered(); await blocked; return route })
+      worker = executeWork(old)
+      await reachedModel
+      await f.perception(1, .1)
+      assert.ok(manager.getAllTasks().some(task => task.handler === 'graph.resume'
+        && task.input.executionId === id && task.resource === `execution:${id}`),
+      'The real event outbox resumes feedback independently of the occupied LLM lane')
+      await f.run(id)
+      const steering = f.received.splice(0).find(command => command.movementUpdate)!
+      assert.equal(steering.movementUpdate!.actionId, motion.id)
+      assert.equal(steering.movementUpdate!.controls.turn, 50)
+      f.complete(steering); await f.run(id)
+      const secondGeneration = beginTTSUserTurn(username)!.generation
+      instruction(id, f.observation.sessionId, 'Keep searching, and answer my question.', secondGeneration)
+      await f.run(id)
+      assert.ok(manager.getTask(old.id)?.cancellationRequestedAt, 'Superseded inference uses Coordinator cancellation')
+      const latest = queuedInterpretation(id)
+      assert.equal(latest.input.identity.executionId, id)
+      assert.equal(latest.input.identity.sessionId, f.observation.sessionId)
+      assert.ok(latest.input.identity.revision > old.input.identity.revision)
+      assert.deepEqual(latest.input.turns.map((turn: any) => turn.userMessage), ['What do you see?', 'Keep searching, and answer my question.'])
+      // The simulated provider ignores abort; its late result must still be discarded.
+      release(); await worker
+      replies.push({ ...route, needsResponse: true, needsConversationHistory: true, needsVision: false },
+        { response: 'I see an object and am still searching.', program: null, taskDecision: null })
+      await executeWork(latest)
+      await f.run(id)
+      const envelope = JSON.parse(calls.at(-1).messages.at(-1).content)
+      assert.deepEqual(JSON.parse(envelope.currentInstruction).pendingTurns.map((turn: any) => turn.replyToQuestionId),
+        [`question-${firstGeneration}`, `question-${secondGeneration}`])
+      assert.ok(envelope.recentConversation.some((turn: any) => turn.content === decision.objective))
+      assert.equal(f.received.some(command => command.type === 'move' && !command.movementUpdate), false)
+      const messages = loadBufferForUser(username, 'conversation').messages
+      assert.equal(messages.filter(turn => turn.content === 'What do you see?').length, 1)
+      assert.equal(messages.filter(turn => turn.content === 'Keep searching, and answer my question.').length, 1)
+      assert.equal(messages.filter(turn => turn.content === 'I see an object and am still searching.').length, 1)
+      const speech = claimNextTTS(username, 'slow-interpretation-fixture').item!
+      assert.equal(speech.generation, secondGeneration)
+      assert.equal(speech.text, 'I see an object and am still searching.')
+      const store = openExecutionStore(username)
+      try {
+        store.deliverEvent(id, { eventId: randomUUID(), kind: 'work_result', payload: {
+          effectId: old.durable!.effectId, result: { state: 'completed', result: { ...old.input.identity,
+            route, response: JSON.stringify({ response: 'Obsolete reply', program, taskDecision: decision }) } },
+        } })
+      } finally { store.close() }
+      await f.run(id)
+      assert.equal(loadBufferForUser(username, 'conversation').messages.some(turn => turn.content === 'Obsolete reply'), false)
+      const saved = openExecutionStore(username)
+      try { assert.equal(saved.task(id)!.actionId, motion.id); saved.cancel(id, { eventId: randomUUID(), kind: 'user_cancelled', payload: {} }) }
+      finally { saved.close() }
+    } finally { release?.(); await worker; speechDisabled = true; f.unsubscribe() }
+  })
+})
+
+test('required feedback expiry cancels motion while instruction inference is still blocked', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const f = fixture('instruction-expiry-body', false)
+    let release!: () => void, entered!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    const reachedModel = new Promise<void>(resolve => { entered = resolve })
+    let worker: Promise<void> | undefined
+    try {
+      const { id, motion } = await startFeedbackTask(f)
+      instruction(id, f.observation.sessionId, 'Explain the search.')
+      await f.run(id)
+      replies.push(async () => { entered(); await blocked; return route })
+      worker = executeWork(queuedInterpretation(id)); await reachedModel
+      await f.perception(2, .4, 3000)
+      await f.run(id)
+      const deadline = manager.getAllTasks().find(task => task.handler === 'environment.active-task-deadline'
+        && task.durable?.executionId === id && task.state === 'queued')!
+      assert.ok(deadline)
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(deadline.notBefore!) - Date.now() + 10)))
+      await executeWork(deadline)
+      await f.run(id)
+      const owned = manager.findTask(task => task.type === 'environment_command' && task.input.id === motion.id)!
+      assert.ok(owned.cancellationRequestedAt)
+      f.feedback(motion, 'outcome_unknown'); await f.run(id)
+      const store = openExecutionStore(username)
+      try { assert.equal(store.task(id)!.actionStatus, 'outcome_unknown') } finally { store.close() }
+      // Execution cancellation remains independent of model completion.
+      const cancel = openExecutionStore(username)
+      try { cancel.cancel(id, { eventId: randomUUID(), kind: 'user_cancelled', payload: {} }) } finally { cancel.close() }
+      replies.push({ response: 'Late cancelled execution reply', program: null, taskDecision: null })
+      release(); await worker
+      assert.equal(f.received.some(command => command.type === 'move' && !command.movementUpdate), false)
+    } finally { release?.(); await worker; f.unsubscribe() }
+  })
+})

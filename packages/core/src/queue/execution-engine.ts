@@ -225,17 +225,25 @@ export class ExecutionEngine {
   private registerDefaultHandlers(): void {
     // Deadlines use the existing Coordinator's durable notBefore admission.
     this.registerHandler('environment.active-task-deadline', async task => task.input);
+    this.registerHandler('environment.interpret', (task, context) => withTaskUserContext(task, async () => {
+      if (!task.durable || task.durable.executionId !== task.input.identity?.executionId)
+        throw new Error('Instruction interpretation requires its durable execution owner');
+      const { interpretInstructions } = await import('../environment-interface/interpretation.js');
+      return interpretInstructions(task.input as Parameters<typeof interpretInstructions>[0], task.username!, context.signal);
+    }));
     this.registerHandler('environment.cancel-owned-work', async task => {
       if (!task.durable) throw new Error('Active task cleanup requires a durable owner');
       const owned = this.queueManager.findTask(candidate => candidate.username === task.username
         && candidate.durable?.executionId === task.durable!.executionId
-        && (typeof task.input.deadlineEffectId === 'string'
+        && (typeof task.input.interpretationEffectId === 'string'
+          ? candidate.handler === 'environment.interpret' && candidate.durable?.effectId === task.input.interpretationEffectId
+          : typeof task.input.deadlineEffectId === 'string'
           ? candidate.handler === 'environment.active-task-deadline' && candidate.durable?.effectId === task.input.deadlineEffectId
           : typeof task.input.actionId === 'string' && candidate.type === 'environment_command'
             && candidate.input.id === task.input.actionId && candidate.input.sessionId === task.input.sessionId));
       if (!owned) return { requested: false };
       this.queueManager.cancel(owned.id, String(task.input.reason ?? 'Active task deadline superseded'));
-      if (owned.handler === 'environment.active-task-deadline') {
+      if (['environment.active-task-deadline', 'environment.interpret'].includes(owned.handler ?? '')) {
         const { deliverDurableWorkReceipt } = await import('../durable-execution/work-results.js');
         await deliverDurableWorkReceipt(owned, async input => this.queueManager.enqueue(input));
       }

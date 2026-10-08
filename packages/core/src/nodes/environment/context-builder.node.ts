@@ -6,6 +6,7 @@ import {
   buildEnvironmentSelectorJsonSchema,
   buildEnvironmentSelectorSystemPrompt,
   projectEnvironmentHistory,
+  type EnvironmentExecutionTarget,
 } from './helpers.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -61,6 +62,7 @@ export const environmentContextBuilderNode = defineNode({
   name: 'Environment Context Builder',
   category: 'environment',
   inputs: [
+    { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions available for steering or cancellation' },
     { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
     { name: 'execution', type: 'object', optional: true, description: 'Checkpointed objective and execution events' },
     { name: 'observation', type: 'object', optional: true, description: 'Environment observation selected for this turn' },
@@ -142,6 +144,9 @@ export const environmentContextBuilderNode = defineNode({
     const selectedImages = useImages ? images : [];
     const selectedFrames = useImages && Array.isArray(inputs.frames)
       ? inputs.frames as EnvironmentVisualFrame[] : [];
+    const execution = routingAnalysis.needsExecutionContext === true ? inputs.execution : null;
+    const activeExecutions = routingAnalysis.needsExecutionContext === true && Array.isArray(inputs.activeExecutions)
+      ? inputs.activeExecutions as EnvironmentExecutionTarget[] : [];
     const currentVision = useImages && inputs.observationCurrent === true;
     const actionRouteSelected = routingAnalysis.needsAction === true
       || (routingAnalysis.needsVision === true && !currentVision);
@@ -177,7 +182,8 @@ export const environmentContextBuilderNode = defineNode({
         }, ...selectedImages]
       : content;
     const message = buildEnvironmentSelectorEnvelope({
-      execution: inputs.execution ?? null,
+      execution: execution ?? null,
+      activeExecutions,
       instruction: rawInstruction,
       observation: promptObservation,
       visualFrames: selectedFrames,
@@ -195,6 +201,7 @@ export const environmentContextBuilderNode = defineNode({
       currentVisionAvailable: currentVision,
     });
     const jsonSchema = buildEnvironmentSelectorJsonSchema({
+      activeExecutions,
       actions: promptObservation?.capabilities.actions ?? [],
       robotCommands: promptObservation?.capabilities.robotCommands ?? [],
       actionRouteSelected,

@@ -131,6 +131,7 @@ export const environmentActionParserNode = defineNode({
   name: 'Environment Action Parser',
   category: 'environment',
   inputs: [
+    { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions available for steering or cancellation' },
     { name: 'frames', type: 'array', optional: true, description: 'Exact images supplied by the context builder to this model call' },
     { name: 'response', type: 'any', description: 'Structured complete-task selection' },
     { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
@@ -139,6 +140,8 @@ export const environmentActionParserNode = defineNode({
     { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
   ],
   outputs: [
+    { name: 'executionSelection', type: 'object', optional: true, description: 'Existing execution selected for steering or cancellation' },
+    { name: 'continueHere', type: 'boolean', description: 'Whether this invocation handles the request instead of forwarding it' },
     { name: 'program', type: 'object', description: 'Complete task program for the canonical active executor' },
     { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of the task decision' },
     { name: 'taskDecision', type: 'object', description: 'Validated task decision authored by the Environment LLM' },
@@ -161,11 +164,23 @@ export const environmentActionParserNode = defineNode({
     const validation = validateEnvironmentSelectorOutput(
       inputs.response,
       sessionId,
+      Array.isArray(inputs.activeExecutions) ? inputs.activeExecutions : [],
     );
     if (!validation.value) throw new NodeInputValidationError('response',
       `Environment Action Selector output is invalid: ${validation.errors.join('; ')}`,
     );
+    const selection = validation.value;
+    const transferred = selection.executionDisposition === 'steer';
+    const executionSelection = transferred || selection.executionDisposition === 'cancel'
+      ? { executionId: selection.targetExecutionId, kind: transferred ? 'user_steering' : 'user_cancelled' }
+      : undefined;
     const continuation = context.activeTaskContinuation as import('../../environment-interface/active-task.js').ActiveTaskContinuation | undefined;
+    const ownedContinuation = context.environmentInterpretation?.executionId === context.graphExecution?.executionId
+      && context.environmentInterpretation ? continuation : undefined;
+    if (transferred) return {
+      executionSelection, continueHere: Boolean(ownedContinuation), program: ownedContinuation?.program ?? null, taskDecision: ownedContinuation?.decision ?? null,
+      visualObservation: null, actionAdmission: null, valid: Boolean(ownedContinuation), hasResponse: false, response: '', error: '',
+    };
     const validated = !validation.value.program && continuation && !validation.value.taskDecision?.objectiveComplete
       ? { ...validation.value, program: continuation.program, taskDecision: validation.value.taskDecision ?? continuation.decision }
       : validation.value;
@@ -250,6 +265,8 @@ export const environmentActionParserNode = defineNode({
       : null;
     const taskDecision = parsed.taskDecision;
     return {
+      executionSelection,
+      continueHere: true,
       program: valid ? parsed.program : null,
       taskDecision,
       visualObservation,

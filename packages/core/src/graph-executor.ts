@@ -669,6 +669,7 @@ export async function executeGraph(
   eventHandler?: ExecutionEventHandler,
   signal?: AbortSignal,
   durable?: DurableGraphOptions,
+  readExecution?: GraphNodeExecution,
 ): Promise<GraphExecutionState> {
   validateSvelteFlowGraph(graph);
   if (durable) {
@@ -861,7 +862,7 @@ export async function executeGraph(
         ...(durable ? schedule.contextSnapshot : contextData),
         ...Object.fromEntries(Object.entries(contextData).filter(([, value]) => typeof value === 'function')),
         abortSignal: signal,
-        graphExecution: nodeExecution,
+        graphExecution: nodeExecution ?? readExecution,
         _graphExecutorIteration: iterCount,
         modelOutputFeedback: modelFeedback[nodeId],
         emitEvent: eventHandler

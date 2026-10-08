@@ -7,8 +7,11 @@ import type { EnvironmentTaskDecision } from './helpers.js'
 import { loadGraphForMode } from '../../graph-streaming.js'
 import { requireGraphNodeOutput } from '../../graph-runtime.js'
 import { environmentSendActionNode } from './send-action.node.js'
+import { interpretationBody } from '../../environment-interface/interpretation.js'
+import { graphContextSnapshot } from '../../durable-execution/graph-contract.js'
 import { projectRobotStatus } from '../robot-status/out.node.js'
 
+const INTERPRETATION_OWNER_CHANGED = 'Body ownership or session changed while interpreting; pending instructions were not applied'
 const FEEDBACK_START_GRACE_MS = 2_000
 const FINISH_TIMEOUT_MS = 5_000
 const CANCELLATION_CONFIRMATION_MS = 2_000
@@ -89,6 +92,11 @@ export const environmentActiveTaskNode = defineNode({
       clearDeadline({ ...continuation.state }, { ...context,
         activeTaskSessionId: inputs.sessionId ?? continuation.state.observation?.sessionId ?? context.sessionId })
     if (initial?.identificationRequest) initial.identificationRequest = { ...initial.identificationRequest, stepIndex: initial.stepIndex }
+    if (context.environmentInterpretation) {
+      initial ??= { stepIndex: 0, evidence: [], updateRevision: 0 }
+      initial.instructionRevision = continuation?.state.instructionRevision
+      initial.interpretationFence = context.environmentInterpretation.body
+    }
     if (initial) initial.retrySteering = true
     if (initial) initial.pendingEvents = [...(initial.pendingEvents ?? []),
       ...((context.executionEvents as ActiveTaskState['pendingEvents']) ?? []).filter(event => event.kind !== 'user_steering')]
@@ -96,7 +104,7 @@ export const environmentActiveTaskNode = defineNode({
     const child = await context.graphExecution!.callGraph(loaded.graph, { ...context, graphExecution: undefined,
       environmentObservation: undefined, activeProgram: inputs.program,
       activeTaskDecision: inputs.taskDecision ?? continuation?.decision, activeTaskSessionId: inputs.sessionId ?? continuation?.state.observation?.sessionId ?? context.sessionId,
-      activeTaskInitialState: initial, activeTaskContinuation: undefined })
+      activeTaskInitialState: initial, activeTaskContinuation: undefined, environmentInterpretation: undefined, pendingInstructionTurns: undefined })
     const result = requireGraphNodeOutput(child, 'environment_active_task_wait').state as ActiveTaskState
     return { finished: result.done === true, completed: result.objectiveComplete === true, result, userInput: result.userInput,
       taskDecision: context.graphExecution!.task()?.decision, observation: result.observation }
@@ -126,7 +134,7 @@ export const environmentActiveTaskStepNode = defineNode({
     const record = (complete = false) => {
       const feedback = (state.feedback?.type === 'outcome_unknown' ? state.feedback : state.failure) ?? (state.completedActionId && state.feedback?.actionId === state.completedActionId
         ? state.feedback : state.steeringResult ?? state.feedback)
-      const reason = state.failure?.message ?? state.identificationError?.toString()
+      const reason = state.interpretationError ?? state.failure?.message ?? state.identificationError?.toString()
         ?? (complete ? state.evidence.at(-1) : state.steeringResult?.message ?? state.identification?.evidence)
       const task = { ...previous,
       objectiveId: previous?.objectiveId ?? execution.occurrenceId, executionId: execution.executionId,
@@ -156,11 +164,43 @@ export const environmentActiveTaskStepNode = defineNode({
       }
     }
     const send = async (action: Partial<EnvironmentAction>): Promise<string> => {
-      const output = await environmentSendActionNode.execute({ action: { ...action, id: undefined, sessionId },
+      const guarded = state.interpretationFence && !['captureImage', 'sendText'].includes(action.type!)
+      const output = await environmentSendActionNode.execute({ action: { ...action, id: undefined, sessionId,
+        metadata: { ...action.metadata, ...(guarded ? { interpretationBody: JSON.parse(state.interpretationFence!) } : {}) } },
         sessionId, instruction: decision.objective }, context,
         { allowedActions: [action.type!], maxDurationMs: Number.MAX_SAFE_INTEGER, defaultDurationMs: 0 })
+      if (guarded && output.count) delete state.interpretationFence
       if (!output.count) throw new Error(String(output.message || 'Task action was not admitted'))
       return (output.commands as Array<{ id: string }>)[0].id
+    }
+    if (state.userInput) {
+      const current = state.interpretation
+      const body = interpretationBody(observation ?? undefined)
+      const ownCancellation = [state.motionId, state.completedActionId].includes(state.feedback?.actionId)
+        && JSON.stringify(state.feedback?.data?.cancellationBody) === body
+      if (ownCancellation && state.interpretationError === INTERPRETATION_OWNER_CHANGED) delete state.interpretationError
+      if (current && (current.revision !== state.instructionRevision || current.motionId !== state.motionId
+        || current.stepIndex !== state.stepIndex || current.body !== body)) {
+        cancelOwnedWork(context, { interpretationEffectId: current.effectId, reason: 'Instruction interpretation superseded' })
+        if (current.body !== body && current.revision === state.instructionRevision && !ownCancellation)
+          state.interpretationError = INTERPRETATION_OWNER_CHANGED
+        delete state.interpretation; delete state.interpretationResult
+      }
+      if (state.userInput.sessionId && state.userInput.sessionId !== sessionId) state.interpretationError = INTERPRETATION_OWNER_CHANGED
+      if (!state.interpretation && !state.interpretationError) {
+        const identity = { executionId: execution.executionId, sessionId, revision: state.instructionRevision!,
+          motionId: state.motionId, stepIndex: state.stepIndex, body }
+        const turns = ((state.userInput.executionEvents as Array<{ kind: string; payload: Record<string, unknown> }>) ?? [])
+          .filter(event => event.kind === 'user_steering').map(event => event.payload)
+        const effect = execution.dispatch({ kind: 'coordinator_work', payload: {
+          type: 'generic', handler: 'environment.interpret', resource: 'local-llm', source: 'environment',
+          username: context.username, maxAttempts: 1,
+          input: { identity, turns, context: graphContextSnapshot({ ...context, ...state.userInput,
+            graphExecution: undefined, environmentObservation: observation, environmentObservationCurrent: false,
+            activeTaskContinuation: { program, decision: execution.task()?.decision ?? decision, state: { ...state, userInput: undefined } } }) },
+        } })
+        state.interpretation = { ...identity, effectId: effect.effectId }
+      }
     }
     if (state.done) { record(state.objectiveComplete === true); return { state } }
     const scheduleDeadline = (at: number) => {
@@ -208,6 +248,7 @@ export const environmentActiveTaskStepNode = defineNode({
       }
       record(); return { state }
     }
+    if (state.userInput && !state.motionId) { record(); return { state } }
     if (state.awaitingReplacement) {
       if (state.pendingControls) { record(); return { state } }
       delete state.awaitingReplacement; delete state.motionId; delete state.accepted
@@ -331,8 +372,16 @@ export const environmentActiveTaskWaitNode = defineNode({
     const execution = context.graphExecution!
     const program = context.activeProgram as EnvironmentTaskProgram
     const bufferInput = (event: NonNullable<ActiveTaskState['pendingEvents']>[number]) => {
-      state.userInput = { ...(event.payload as Record<string, unknown>), executionEvents: [
-        ...((state.userInput?.executionEvents as unknown[]) ?? []), event,
+      state.instructionRevision = (state.instructionRevision ?? 0) + 1
+      delete state.interpretationError
+      const turn = event.payload as Record<string, any>
+      const payload = { ...turn, userMessageEntry: turn.userMessageEntry ?? {
+        role: 'user', content: turn.userMessage, timestamp: turn.memoryTimestamp ?? Date.now(),
+        meta: { idempotencyKey: `${execution.executionId}:instruction:${(event as { eventId?: string }).eventId ?? `${execution.occurrenceId}:${state.instructionRevision}`}`,
+          sessionId: turn.sessionId, replyToQuestionId: turn.replyToQuestionId, replyToContent: turn.replyToContent },
+      } }
+      state.userInput = { ...payload, executionEvents: [
+        ...((state.userInput?.executionEvents as unknown[]) ?? []), { ...event, payload },
       ] }
     }
     const routeInput = () => {
@@ -346,14 +395,28 @@ export const environmentActiveTaskWaitNode = defineNode({
         if (event.kind !== 'user_steering') return true
         bufferInput(event); return false
       })
-      if (!state.userInput) return false
+      if (!state.userInput || !state.interpretationResult) return false
+      if (state.pendingEvents?.length || execution.pendingEvents().length) return false
+      const result = state.interpretationResult
+      if (result.revision !== state.instructionRevision || result.executionId !== execution.executionId
+        || result.sessionId !== context.activeTaskSessionId || result.motionId !== state.motionId
+        || result.stepIndex !== state.stepIndex || result.body !== interpretationBody(getLatestEnvironmentObservation(result.sessionId) ?? undefined)
+        || state.finishRequestedAt || state.cancellationRequestedAt || state.feedback?.type === 'outcome_unknown') return false
+      state.userInput.environmentInterpretation = result
+      state.userInput.pendingInstructionTurns = ((state.userInput.executionEvents as Array<{ kind: string; payload: unknown }>) ?? [])
+        .filter(event => event.kind === 'user_steering').map(event => event.payload)
       // Build this only at the handoff, after phase advancement or termination
       // reconciliation. An arrival-time snapshot could resurrect the old gait.
       state.userInput.activeTaskContinuation = { program, decision: execution.task()?.decision ?? context.activeTaskDecision,
-        state: { ...state, userInput: undefined } }
+        state: { ...state, userInput: undefined, interpretation: undefined, interpretationResult: undefined, interpretationError: undefined } }
       return true
     }
-    if (state.done) { routeInput(); return { state, continue: false } }
+    const enteringRevision = state.instructionRevision
+    if (routeInput()) return { state, continue: false }
+    if (state.instructionRevision !== enteringRevision) return { state, continue: true }
+    if (state.userInput && state.interpretation && (state.interpretation.motionId !== state.motionId
+      || state.interpretation.stepIndex !== state.stepIndex)) return { state, continue: true }
+    if (state.done && !state.userInput) return { state, continue: false }
     const advance = (evidence: string) => {
       settleAction(state, context)
       state.evidence = [...state.evidence, evidence]; state.stepIndex += 1
@@ -368,6 +431,9 @@ export const environmentActiveTaskWaitNode = defineNode({
       return { state, continue: true }
     }
     while (true) {
+      const revision = state.instructionRevision
+      if (routeInput()) return { state, continue: false }
+      if (state.instructionRevision !== revision) return { state, continue: true }
       const event = state.pendingEvents?.shift() ?? execution.waitForEvent(`active_task:${context.activeTaskSessionId}`)
       const payload = event.payload as Record<string, any>
       if (event.kind === 'work_result' && payload.effectId === state.deadlineEffectId) {
@@ -376,11 +442,18 @@ export const environmentActiveTaskWaitNode = defineNode({
       }
       if (event.kind === 'user_steering') {
         bufferInput(event)
-        if (state.finishRequestedAt || state.cancellationRequestedAt) continue
-        if (program.steps[state.stepIndex].kind === 'behavior' || state.action?.continuous || !state.motionId) {
-          routeInput(); return { state, continue: false }
-        }
-        continue
+        routeInput() // Drain the currently queued turns into one ordered request.
+        return { state, continue: true }
+      }
+      if (event.kind === 'work_result' && payload.effectId === state.interpretation?.effectId) {
+        const result = payload.result
+        if (result.state === 'completed') {
+          const identity = state.interpretation!
+          const fields = ['executionId', 'sessionId', 'revision', 'motionId', 'stepIndex', 'body'] as const
+          if (fields.every(field => result.result?.[field] === identity[field])) state.interpretationResult = result.result
+          else state.interpretationError = 'Instruction interpretation returned a mismatched execution, session or revision'
+        } else state.interpretationError = result.error?.message ?? 'Instruction interpretation failed; pending instructions were not applied'
+        return { state, continue: !routeInput() }
       }
       if (event.kind === 'perception_received') { state.retrySteering = true; return { state, continue: true } }
       if (event.kind === 'action_accepted' && event.actionId === state.motionId) {

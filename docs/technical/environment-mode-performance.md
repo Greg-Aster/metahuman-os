@@ -6,6 +6,57 @@ This document is the maintained paper trail for Environment Mode response-time w
 
 ## Current Status
 
+2026-10-07 request-first routing (source changes; deployment and physical behavior
+remain separate): the first LLM call receives only the incoming request and fixed
+route instructions. Conversation History no longer feeds the orchestrator and
+runs only when `needsConversationHistory` is selected. The Environment branch
+also no longer reads history implicitly from execution context. The new
+`needsExecutionContext` route activates the existing Current Execution node;
+its data reaches the Context Builder and Action Parser after routing. The
+informed selector owns execution disposition/target selection, using the existing
+handoff node and Coordinator. `needsPersona` independently activates the existing
+Active Persona and Compact Persona Context nodes; unselected persona data is
+neither loaded nor supplied to the selector. Autonomous workflows retain their
+existing persona handling. No new runtime node or execution owner was added.
+An editor-only Graph Note explains the stages, route fields, source ownership,
+and examples without entering model context.
+
+A non-actuating local Qwen3.5 9B / llama.cpp probe of eight requests used
+199–205 prompt tokens and 70–97 completion tokens per intent call, taking
+1.2–1.6 seconds per sequential request. It used the checked-in request-only
+prompt and provider schema without conversation, task or robot data. These are
+routing-call measurements, not total workflow latency or physical proof.
+The model omitted conversation history for “How are you?” and the dream
+question, chose memory retrieval for the dream and cat-name questions, and
+selected vision for “Do a pushup”. Those semantic routing discrepancies remain
+separate from the verified data-flow repair; no keyword overrides were added.
+
+The owner-approved execution-disposition wording is installed in the existing
+Context Builder prompt. An initial probe still described steering but emitted
+`new`: the output schema placed response/program/taskDecision before execution
+disposition, so a non-null task decision excluded the steering branch before
+the model reached that choice. The local llama.cpp JSON-schema converter
+preserves property order. The schema now puts executionDisposition and
+targetExecutionId first, without changing allowed choices or prompt wording.
+A regression assertion preserves that order for every active-execution branch.
+
+With the approved prompt and reordered schema, a synthetic local probe of
+“Continue that task more slowly” selected `steer`, the supplied active execution,
+and empty response/null program/null taskDecision. It used 750 input tokens and
+47 output tokens. “Stop what you are doing” also selected `steer` instead of
+`cancel`, with the same token counts. The former repairs the observed steering
+mismatch; the latter remains a model-choice discrepancy, not verified
+cancellation. These two probes validate schema acceptance and model selections,
+not an execution handoff or physical result. No robot commands were dispatched.
+
+Focused routing/scheduler tests cover skipped source reads, selected context,
+request-payload invariance, preserved autonomy input, and replay-safe steering
+and cancellation through the existing handoff owner. The context-builder suite
+has a pre-existing assertion expecting the retired actions/movementRequest
+schema (four alternatives) instead of the current program schema (two); this
+repair leaves that unrelated baseline failure visible.
+
+
 2026-09-30: the active task program is the sole physical execution path in both
 Environment Mode and the autonomy executor. The selector returns `response`,
 `program`, `taskDecision` and optional `visualObservation`. A program contains
@@ -51,10 +102,11 @@ Finish advances the phase index, then yields before admitting the next phase;
 a failed/cancelled phase yields with its settled failure. The continuation is
 rebuilt from that settled state with the old command identity and pending controls
 cleared. Unknown outcomes keep waiting and cannot authorize a replacement.
-Several buffered instructions retain their ordered event evidence; the existing
-input drain routes the latest turn and preserves the settled continuation even
-when newer input follows the terminal receipt. Conversation cannot resurrect a
-terminated phase; an explicitly selected new behavior gets a new command identity.
+Several buffered instructions retain their ordered event evidence. Stage 2 interprets
+all unanswered turns together, retaining exact text, timestamps and reply metadata;
+the combined response belongs to the newest turn and its TTS generation.
+Conversation cannot resurrect a terminated phase; an explicitly selected new
+behavior gets a new command identity.
 
 Gateway cancellation checks the saved gateway instance, robot epoch, body lease,
 and most recent body/speaker dispatch while holding the wire-send lock. Manual
@@ -72,12 +124,43 @@ The stage did not deploy, restart, flash, calibrate or configure perception.
 Rollback uses the saved pre-edit files (including existing dirty changes) and
 Stage-1-only reverse patches, never a repository reset.
 
-Next proposed slice: dispatch instruction interpretation as finite Coordinator
-work and consume its correlated result in this same active execution, so feedback
-and cancellation continue while that inference is pending. No second controller
-or motion channel; IMU acquisition is a separate slice. Older speech-cleanup edge
-cases remain separate follow-up work: this motion-boundary correction does not
-redesign speech cancellation or claim those cases are covered.
+2026-10-07 Stage 2 (source/software validation only): the existing active-task
+owner dispatches `environment.interpret` as finite cancellable Coordinator work.
+The job evaluates the read/inference ancestors of the configured Environment
+selector using the existing graph scheduler and unchanged prompts. It holds no
+active-execution lease and cannot dispatch commands, speak, or change task state.
+The existing execution continues on its `execution:<id>` resource while inference
+uses `local-llm`; feedback deadlines do not depend on LLM completion.
+
+Requests and results carry execution ID, session ID, instruction revision, phase,
+motion identity and gateway/body dispatch fence. Superseding input cancels the
+specific old job and keeps every unanswered turn. Correlated results are applied
+once through the existing Environment parser/conversation/speech owners, with
+fresh capability validation and a continuation built from the current state.
+The inference outputs and retrieved memory are reused during application.
+Termination invalidates the earlier motion snapshot and requires a fresh proposal
+before another phase starts. Unknown motion outcomes continue reconciliation.
+The application handoff fixes response attribution; input admitted after that
+boundary remains queued for the active owner rather than relabeling the response.
+
+Manual takeover, gateway replacement or epoch changes invalidate pending proposals;
+unanswered turns remain checkpointed with an explicit interpretation error. A new
+user instruction can authorize a fresh request. The gateway checks a proposal's
+body fence inside the existing send lock before its first new body command. Owned
+cancellation carries its recorded Stop dispatch fence in feedback, allowing the
+owner to distinguish its own cleanup from manual takeover. This fence proves
+ownership of that dispatch, never physical stopping; original terminal receipts
+are still required. Recovered finite jobs reuse their durable effect identity,
+and duplicate or obsolete work receipts cannot apply a second action.
+
+Software tests use simulated model, perception and wire inputs. Deployment must
+qualify the paired Core/gateway changes, installed graph, Coordinator resource
+lanes, cancellation/reconnect receipts, fresh perception and actual device builds.
+Drain/reconcile older active checkpoints before upgrading: this is not a promise
+of live migration across a changed graph definition. Rollback removes only the
+Stage-2 patch after reconciling active work; no calibration or firmware rollback is
+part of this slice. IMU acquisition and older speech-cleanup edge cases remain
+separate follow-up work.
 
 The measurements and work log below are historical, preceding this cutover;
 their old `actions` / `movementRequest` contracts and graph chains do not describe
@@ -94,8 +177,10 @@ the current executor. Current source ownership is defined in
 
 ## Performance Contract
 
-Intent Orchestrator chooses context and execution disposition. The configured
-Environment Action Selector authors a complete program, preserving requested
+Intent Orchestrator reads only the incoming request and chooses context routes.
+Selected source nodes feed the existing Environment Context Builder. The configured
+Environment Action Selector chooses execution disposition after selected execution
+context arrives, and authors a complete program, preserving requested
 motion detail and the robot's advertised commands. The active executor advances
 physical phases without another model call per receipt. Generated-motion phases
 use the existing generator; ongoing behavior uses perception and asynchronous

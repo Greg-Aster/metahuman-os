@@ -54,6 +54,11 @@ export interface ActiveTaskState {
   deadlineEffectId?: string
   deadlineAt?: number
   done?: boolean
+  interpretationFence?: string
+  instructionRevision?: number
+  interpretation?: import('./interpretation.js').InstructionInterpretation & { effectId: string }
+  interpretationResult?: import('./interpretation.js').InstructionInterpretation
+  interpretationError?: string
   userInput?: Record<string, unknown>
   observation?: EnvironmentObservation
   feedback?: EnvironmentFeedback

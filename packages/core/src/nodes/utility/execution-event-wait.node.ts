@@ -31,7 +31,7 @@ export const executionEventWaitNode = defineNode({
       let kind = supplied ? 'user_steering' : ''
       let payload = supplied ?? {}
       const events = [...(supplied?.executionEvents ?? inputs.evidence?.executionEvents ?? [])]
-      while (context.graphExecution.pendingEvents().length) {
+      while (!supplied?.environmentInterpretation && context.graphExecution.pendingEvents().length) {
         const event = context.graphExecution.waitForEvent('pending_input')
         events.push(event)
         if (event.kind !== 'user_steering' && event.kind !== 'autonomy_trigger') continue

@@ -581,3 +581,25 @@ test('missing execution storage reports unresolved work without recreating it or
     assert.equal(manager.getTask(missing.id)?.state, 'completed', 'The finite result remains available for recovery')
   } finally { store.close() }
 })
+
+test('instruction interpretation recovery reuses its finite work identity and publishes one result event', async () => {
+  const parent = await fixture('interpretation-recovery', 'environment.interpret')
+  const store = openExecutionStore(parent.username)
+  const manager = new UnifiedQueueManager()
+  try {
+    const input = executionWorkInput(store, store.dispatch(parent.effectId))
+    assert.equal(input.durable?.recovery, 'resume')
+    const first = manager.enqueue(input)
+    store.acknowledgeAdmission(parent.effectId, first.id)
+    const recovered = manager.enqueue(executionWorkInput(store, store.dispatch(parent.effectId)))
+    assert.equal(recovered.id, first.id)
+    assert.ok(manager.claim(first.id))
+    manager.complete(first.id, true, { executionId: parent.executionId, sessionId: 'session', revision: 3, response: '{}' })
+    await deliverDurableWorkReceipt(manager.getTask(first.id)!, async task => manager.enqueue(task))
+    await deliverDurableWorkReceipt(manager.getTask(first.id)!, async task => manager.enqueue(task))
+    const receipts = store.events(parent.executionId).filter(event => event.kind === 'work_result')
+    assert.equal(receipts.length, 1)
+    assert.equal((receipts[0].payload as any).effectId, parent.effectId)
+    assert.equal((receipts[0].payload as any).result.result.revision, 3)
+  } finally { store.close() }
+})

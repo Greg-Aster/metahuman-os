@@ -1194,6 +1194,7 @@ export const nodeSchemas: NodeSchema[] = [
     "name": "Environment Context Builder",
     "category": "environment",
     "inputs": [
+    { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions available for steering or cancellation' },
     { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
       {
         "name": "execution",
@@ -1364,6 +1365,7 @@ export const nodeSchemas: NodeSchema[] = [
   defineSchema({
     id: 'environment_action_parser', name: 'Environment Task Parser', category: 'environment',
   inputs: [
+    { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions available for steering or cancellation' },
     { name: 'frames', type: 'array', optional: true, description: 'Exact images supplied by the context builder to this model call' },
     { name: 'response', type: 'any', description: 'LLM response text, object, or action array' },
     { name: 'observation', type: 'object', optional: true, description: 'Observation containing adapter-advertised robot commands' },
@@ -1372,6 +1374,8 @@ export const nodeSchemas: NodeSchema[] = [
     { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
   ],
   outputs: [
+    { name: 'executionSelection', type: 'object', optional: true, description: 'Existing execution selected for steering or cancellation' },
+    { name: 'continueHere', type: 'boolean', description: 'Whether this invocation handles the request instead of forwarding it' },
     { name: 'program', type: 'object', description: 'Complete task program for the canonical active executor' },
     { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of the task decision' },
     { name: 'taskDecision', type: 'object', description: 'Validated task decision authored by the Environment LLM' },
@@ -2645,16 +2649,16 @@ export const nodeSchemas: NodeSchema[] = [
     category: 'chat',
     inputs: [
       { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
+      { name: 'execution', type: 'object', optional: true, description: 'Current execution facts for routing an internal intention' },
       { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
-      { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions, their optional objectives, original inputs and waiting state, available for steering or cancellation' },
       { name: 'systemSettings', type: 'object', optional: true, description: 'System settings for permission context' },
       { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
     ],
     outputs: [
       { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
-      { name: 'executionSelection', type: 'object', description: 'Existing execution selected for steering or cancellation' },
-      { name: 'continueHere', type: 'boolean', description: 'Whether this invocation interprets the input instead of handing it to an existing execution' },
       { name: 'needsResponse', type: 'boolean', description: 'Whether this turn needs a conversational response' },
+      { name: 'needsExecutionContext', type: 'boolean', description: 'Whether downstream reasoning needs execution context' },
+      { name: 'needsPersona', type: 'boolean', description: 'Whether downstream reasoning needs persona context' },
       { name: 'needsConversationHistory', type: 'boolean', description: 'Whether downstream reasoning needs recent dialogue context' },
       { name: 'needsMemory', type: 'boolean', description: 'Whether memory search is needed' },
       { name: 'memoryTier', type: 'string', description: 'Memory tier to search' },
@@ -2688,6 +2692,7 @@ export const nodeSchemas: NodeSchema[] = [
         options: [
           { value: 'general', label: 'General' },
           { value: 'environment', label: 'Environment' },
+        { value: 'environment-request', label: 'Environment Request Only' },
         ],
       },
       systemPrompt: { type: 'text_multiline', default: '', label: 'System Prompt', rows: 16 },

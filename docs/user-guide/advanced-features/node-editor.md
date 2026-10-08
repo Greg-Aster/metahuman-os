@@ -61,6 +61,23 @@ Choose **Graph** to edit the workflow name, purpose, and loop limit and to see t
 
 Keyboard equivalents are Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y, Ctrl/Cmd+C, Ctrl/Cmd+V, Ctrl/Cmd+D, Ctrl/Cmd+G, and Ctrl/Cmd+Shift+G. Shortcuts do not intercept typing in inputs, textareas, selects, or editable text.
 
+### Environment Mode data flow
+
+The Environment Mode canvas includes **How Environment Mode Works**, an
+editor-only Graph Note with the workflow stages, route switches, examples and
+ownership boundaries. Its contents are never included in model prompts.
+
+**Choose Required Routes** reads only the incoming request. Conversation History,
+Relevant Long-Term Memory, Robot Status, Bridge data, images, Current Execution,
+and Active Persona → Compact Persona Context run on their selected branches.
+The LLM selects persona independently through `needsPersona`.
+**Build Selected Environment Context** combines those results with the original
+input for the second LLM call. That call selects speech, the complete robot program and, when execution
+context was requested, an existing execution to steer or cancel. The existing
+handoff node preserves the original message; Execute Robot Task remains the
+physical program owner. Inspect **Last Run** to distinguish selected sources,
+skipped branches, model choices and actual execution receipts.
+
 ### Environment Bridge Input
 
 **Environment Bridge Input** is the complete read-only Ainekio bridge source. It selects the triggering Ainekio session, a configured session, or the latest connected session and exposes all available observation, body-status, gateway, session, and bridge-diagnostic data. It has no prompt, does not capture a new observation, and does not send robot or environment actions.

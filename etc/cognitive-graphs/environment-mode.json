@@ -35,8 +35,8 @@
       "id": "conversation-history",
       "type": "contextNode",
       "position": {
-        "x": 80,
-        "y": 805
+        "x": 1920,
+        "y": 1150
       },
       "width": 240,
       "data": {
@@ -45,6 +45,15 @@
         "properties": {
           "mode": "conversation",
           "limit": 20
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsConversationHistory",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -60,13 +69,13 @@
         "label": "Choose Required Routes",
         "nodeType": "orchestrator_llm",
         "properties": {
-          "outputContract": "environment",
-          "systemPrompt": "You are the Environment Intent Orchestrator. Decide which independent routes are relevant to the current user message.\nYou do not answer the user, rewrite or summarize the message, choose robot commands, or plan movement.\n\nEach route exposes one capability or source to the next decision:\n- needsResponse exposes user-visible natural-language expression. Without it, this workflow produces no chat message. It can coexist with every other route.\n- needsConversationHistory exposes earlier dialogue.\n- needsMemory exposes stored long-term experience.\n- needsRobotStatus exposes the robot's condition, readiness, last action, and task snapshot with its execution state.\n- needsEnvironment exposes bridge state, advertised capabilities, and saved visual observation history without requesting an action.\n- needsVision exposes current visual evidence.\n- needsAction exposes physical, sensing, and environment action selection and its advertised capabilities.\n\nRoutes are independent. When the current message may continue, revise, complete, or interrupt earlier activity, expose the conversation and Robot Status needed to interpret that relationship. Infer which information and capabilities are relevant from the message and recent dialogue. Return the requested JSON routing fields and, when other executions are supplied, the execution disposition.",
-          "userPromptTemplate": "{{executionSection}}\n{{activeExecutionSection}}\n{{recentConversationSection}}\nCurrent user message: {{userMessage}}",
+          "outputContract": "environment-request",
+          "systemPrompt": "You are the Environment Intent Orchestrator. Read the current incoming request and select the workflow routes needed to handle it. Your input contains no retrieved conversation, memories, robot observations, or execution history.\n\nSelect independently: needsResponse for user-visible expression; needsPersona for identity, personality, values, and goals relevant to expression or autonomous behavior selection; needsConversationHistory for earlier dialogue; needsMemory for stored experience or facts; needsRobotStatus for robot condition and task status; needsEnvironment for environment observations and capabilities; needsVision for visual evidence; needsAction for physical, sensing, or environment action selection; needsExecutionContext for interpreting or changing an ongoing execution.\n\nSelect context sources according to the information needed to interpret and fulfill the incoming request. Source availability does not imply relevance. Unselected sources will not be retrieved; their contents are unknown to this call. When the request refers to earlier dialogue or activity, select the sources needed to resolve that reference. Return the route fields as JSON, with memoryQuery and memoryTypes when relevant. Specific responses, robot commands, and execution targets are selected downstream after the requested context is available.",
+          "userPromptTemplate": "Current user message: {{userMessage}}",
           "temperature": 0.1,
           "maxTokens": 768
         },
-        "comment": "One LLM call classifies intent into independent route switches. It does not rewrite the input, answer, or select an action."
+        "comment": "One request-only LLM call selects context and capability routes. Sources load after this decision."
       }
     },
     {
@@ -148,7 +157,16 @@
       "data": {
         "label": "Active Persona",
         "nodeType": "persona_loader",
-        "properties": {}
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsPersona",
+              "truthy": true
+            }
+          ]
+        }
       }
     },
     {
@@ -166,6 +184,15 @@
           "includeValues": true,
           "includeGoals": true,
           "includePersonality": true
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsPersona",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -205,18 +232,9 @@
         "label": "Build Selected Environment Context",
         "nodeType": "environment_context_builder",
         "properties": {
-          "systemPrompt": "EMBODIED PERSONA\nactivePersona describes who you are. currentInstruction contains the person's current message; recentConversation and the selected context describe the shared situation. Your words and actions are your choices, expressed through the available interface.\nInterface format: return strict JSON with response, program, taskDecision. response contains your words when the response route is available. program is null when there is no chosen physical activity, or {steps:[...]} for a complete chosen activity. TaskDecision describes an activity's objective, completion criteria, and execution state. selectedRoutes describes the context and interfaces available for this turn.\nAction steps are {kind:\"action\",action:{...}} and execute in order without additional model calls. Use the advertised exact command and its supplied meaning. Set continuous:true for ongoing motions described by the adapter. Use continuous move for live forward/turn composition. For a novel body-local motion use {kind:\"generatedMotion\",description:\"...\"}; preserve the full movement nuance.\nOngoing visual behavior steps are {kind:\"behavior\",target:\"free-text object or interest\",completionCriteria:\"success for THIS phase\",motion:{type:\"move\",direction:\"forward\",continuous:true,durationMs:1500,speed:...,forward:...,turn:...},candidateLabels:[],identifyEveryFrames:...,steering:null}. Forward and turn are signed percentages from -100 to 100 of the gait's translation and rotation; positive turn is left. They compose during walking. Optional steering {label:\"...\",gain:...} adjusts turning from the current object's horizontal image position. You author the movement and camera cadence. Detector labels are hints, not required target vocabulary. Remote identification runs alongside locomotion. Steps following a behavior execute after that phase completes. A complete activity is represented by its ordered program, including any phases after finding a target.\nDo not introduce safety policies, avoidance, extra sensor requirements, fallback actions, or completion gates unless the user specifically authorized them. A newly selected program is unfinished until executed. An image identifies a behavior's target; it cannot establish a future gesture's completion. Attached images are observations at their recorded time. Optional visualObservation records their interpretation. Preserve current execution identity when continuing or steering a task."
+          "systemPrompt": "EMBODIED PERSONA\nactivePersona describes who you are. currentInstruction contains the person's current message; recentConversation and the selected context describe the shared situation. Your words and actions are your choices, expressed through the available interface.\n\nPersona describes identity and expression, not a record of events. Supplied context provides evidence with its recorded source and time. Missing evidence represents unknown information.\n\nresponse produces speech. program requests execution. taskDecision describes the objective and its execution state. Speech does not dispatch a program. Requests, intentions, capability descriptions, and execution results represent different information; task state and factual claims should reflect the evidence actually supplied.\n\nInterface format: return strict JSON with program, taskDecision, response. response contains your words when the response route is available. program is null when there is no chosen physical activity, or {steps:[...]} for a complete chosen activity. TaskDecision describes an activity's objective, completion criteria, and execution state. selectedRoutes describes the context and interfaces available for this turn.\nAction steps are {kind:\"action\",action:{...}} and execute in order without additional model calls. Use the advertised exact command and its supplied meaning. Set continuous:true for ongoing motions described by the adapter. Use continuous move for live forward/turn composition. For a novel body-local motion use {kind:\"generatedMotion\",description:\"...\"}; preserve the full movement nuance.\nOngoing visual behavior steps are {kind:\"behavior\",target:\"free-text object or interest\",completionCriteria:\"success for THIS phase\",motion:{type:\"move\",direction:\"forward\",continuous:true,durationMs:1500,speed:...,forward:...,turn:...},candidateLabels:[],identifyEveryFrames:...,steering:null}. Forward and turn are signed percentages from -100 to 100 of the gait's translation and rotation; positive turn is left. They compose during walking. Optional steering {label:\"...\",gain:...} adjusts turning from the current object's horizontal image position. You author the movement and camera cadence. Detector labels are hints, not required target vocabulary. Remote identification runs alongside locomotion. Steps following a behavior execute after that phase completes. A complete activity is represented by its ordered program, including any phases after finding a target.\nDo not introduce safety policies, avoidance, extra sensor requirements, fallback actions, or completion gates unless the user specifically authorized them. An image identifies a behavior's target; it cannot establish a future gesture's completion. Attached images are observations at their recorded time. Optional visualObservation records their interpretation. Preserve current execution identity when continuing or steering a task.\n\nWhen execution context is supplied, executionDisposition is new, steer, or cancel. For steer or cancel, targetExecutionId identifies one of the supplied active executions. A steer forwards the unchanged incoming request to that execution; return null program and taskDecision and an empty response for this handoff. A cancel requests cancellation of the selected execution through its existing owner. A new disposition handles the request in this invocation. When no other executions are supplied, omit executionDisposition and targetExecutionId."
         },
-        "comment": "Packages the original input plus only the context routes selected by Intent Orchestrator.",
-        "activation": {
-          "when": [
-            {
-              "nodeId": "intent-orchestrator",
-              "output": "continueHere",
-              "truthy": true
-            }
-          ]
-        }
+        "comment": "Packages the original input plus only the context routes selected by Intent Orchestrator."
       }
     },
     {
@@ -228,7 +246,7 @@
       },
       "width": 220,
       "data": {
-        "label": "Choose Response and/or One Action",
+        "label": "Choose Response, Task and Execution",
         "nodeType": "model_router",
         "properties": {
           "role": "environmentActionSelector",
@@ -330,6 +348,13 @@
           "mode": "required-inputs",
           "requiredInputs": [
             "response"
+          ],
+          "when": [
+            {
+              "nodeId": "6",
+              "output": "continueHere",
+              "truthy": true
+            }
           ]
         }
       }
@@ -338,14 +363,23 @@
       "id": "execution",
       "type": "contextNode",
       "position": {
-        "x": 80,
-        "y": 80
+        "x": 1920,
+        "y": 1500
       },
       "data": {
         "label": "Current Execution",
         "nodeType": "execution_context",
         "properties": {
           "eventLimit": 16
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsExecutionContext",
+              "truthy": true
+            }
+          ]
         }
       }
     },
@@ -363,7 +397,7 @@
         "activation": {
           "when": [
             {
-              "nodeId": "intent-orchestrator",
+              "nodeId": "6",
               "output": "executionSelection",
               "truthy": true
             }
@@ -593,20 +627,29 @@
           ]
         }
       }
+    },
+    {
+      "id": "workflow-guide",
+      "type": "utilityNode",
+      "position": {
+        "x": -1150,
+        "y": 80
+      },
+      "width": 1050,
+      "height": 2000,
+      "data": {
+        "label": "How Environment Mode Works",
+        "nodeType": "graph_note",
+        "properties": {
+          "title": "How Environment Mode Works",
+          "content": "ENVIRONMENT MODE \u2014 REQUEST-FIRST DATA FLOW\n\n1. RECEIVE AND SAVE\nUser Input carries the unchanged incoming request. Admit User Input records its identity in the Conversation Buffer; Save User Input persists it before cognition. Saving this turn does not require loading earlier conversation into the LLM.\n\n2. CHOOSE REQUIRED ROUTES (FIRST LLM CALL)\nIntent Orchestrator receives only the incoming request plus its fixed route instructions. It selects sources and capabilities; it receives no conversation history, persona, robot observations or execution history. It does not choose a command or execution target.\n\n3. LOAD ONLY SELECTED SOURCES\nneedsPersona \u2192 Active Persona loads the selected persona configuration; Compact Persona Context formats it for the selector. Both nodes are skipped when this route is not selected. This choice is independent of response and action routes.\nneedsConversationHistory \u2192 Conversation History reads the rolling conversation buffer. Its Entry Limit controls the retained window; enabled inner dialogue retains its source and time.\nneedsMemory \u2192 Relevant Long-Term Memory searches stored experience using the model-selected query and optional memory types.\nneedsRobotStatus \u2192 Robot Status reads the robot condition, previous action and task projection.\nneedsEnvironment OR needsVision OR needsAction \u2192 Load Selected Environment Bridge Data reads the selected bridge observation and advertised command meanings. Reading this node sends no physical command. Observation History supplies saved image-linked interpretations from that environment.\nneedsVision \u2192 Use Current-Run Camera Evidence selects available dated images. Saved evidence is not relabelled as a fresh capture.\nneedsExecutionContext \u2192 Current Execution reads checkpointed objective/events and other unfinished executions. Durable execution is the task authority; conversation and Robot Status are supporting evidence.\nneedsResponse permits user-visible expression. needsAction exposes physical/sensing action selection. These routes are independent of history and recall.\nUnselected source branches are skipped by the scheduler. Selected sources converge on the Context Builder.\n\n4. BUILD SELECTED ENVIRONMENT CONTEXT\nThis existing node combines the original request, selected results, source/time information, and the compact active persona when selected. It creates the messages and capability-specific JSON schema for the next call. It does not search, decide intent, or execute movement.\n\n5. CHOOSE RESPONSE AND TASK (SECOND LLM CALL)\nThe Environment Action Selector chooses speech and/or a complete ordered program from the supplied command meanings. Action Parser validates the existing output/capability contract. Specific commands are model decisions, not keyword matching.\nWhen other executions were selected as context, this call also decides new/steer/cancel and the target. A steering handoff returns no local program or speech; Send Input to Existing Execution forwards the original request once. Cancellation uses the existing execution owner.\n\n6. PRESENT AND EXECUTE\nConversation Buffer \u2192 Memory Capture \u2192 TTS and Stream Writer preserve and present selected speech.\nExecute Robot Task advances the ordered program through the existing active-task workflow and correlated physical receipts. Its ongoing phases do not require a fresh decision LLM call for every movement.\nSave Visual Observation retains image-linked interpretations. Robot Status Out projects decisions and outcomes; it does not own task continuation.\nInput Events and Continue User Input preserve ongoing request continuity. Remaining Objective, Goal Review and Await Input use the saved execution state to continue or wait.\n\nEXAMPLES FOR UNDERSTANDING THE ROUTES\n\u201cPlease wave\u201d / \u201cDo a pushup\u201d: action capabilities, without conversation or memory retrieval.\n\u201cHello\u201d: response without earlier conversation.\n\u201cHow are you?\u201d: conversation, with robot status when relevant.\n\u201cWhat did you dream about yesterday?\u201d: conversation and relevant stored experience when needed.\n\u201cWhat is my cat\u2019s name?\u201d: conversation and/or memory recall.\n\u201cDo that again\u201d / \u201cStop what you\u2019re doing\u201d: context needed to resolve earlier dialogue or ongoing execution.\nThese examples explain intent; they are not hardcoded dispatch rules.\n\nEDITING AND DIAGNOSIS\nInspect each node\u2019s activation conditions and Last Run outputs to see selected/skipped branches. Keep optional sources after intent and connected only to their consumers. Do not reconnect history to the first LLM call. Check provider input/output token usage separately for the two calls. A selected command, acknowledgement, or spoken claim does not by itself prove physical completion.\n\nThis Graph Note is editor-only: its text never enters a model prompt and has no runtime connections.",
+          "style": "info",
+          "frame": false
+        }
+      }
     }
   ],
   "edges": [
-    {
-      "id": "execution-to-intent-context",
-      "source": "execution",
-      "target": "intent-orchestrator",
-      "sourceHandle": "context",
-      "targetHandle": "execution",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
     {
       "id": "e-user-intent",
       "source": "input-memory-capture",
@@ -616,17 +659,6 @@
       "type": "default",
       "data": {
         "type": "string"
-      }
-    },
-    {
-      "id": "e-history-intent",
-      "source": "conversation-history",
-      "target": "intent-orchestrator",
-      "sourceHandle": "history",
-      "targetHandle": "conversationHistory",
-      "type": "default",
-      "data": {
-        "type": "array"
       }
     },
     {
@@ -1118,19 +1150,8 @@
       }
     },
     {
-      "id": "execution-execution-activeExecutions-intent-orchestrator-activeExecutions",
-      "source": "execution",
-      "target": "intent-orchestrator",
-      "sourceHandle": "activeExecutions",
-      "targetHandle": "activeExecutions",
-      "type": "default",
-      "data": {
-        "type": "array"
-      }
-    },
-    {
-      "id": "execution-intent-orchestrator-executionSelection-execution-input-out-selection",
-      "source": "intent-orchestrator",
+      "id": "selector-execution-input-out-selection",
+      "source": "6",
       "target": "execution-input-out",
       "sourceHandle": "executionSelection",
       "targetHandle": "selection",
@@ -1485,6 +1506,60 @@
         "loop": true,
         "when": {
           "output": "invocation",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "execution-activeExecutions-3",
+      "source": "execution",
+      "sourceHandle": "activeExecutions",
+      "target": "3",
+      "targetHandle": "activeExecutions",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "execution-activeExecutions-6",
+      "source": "execution",
+      "sourceHandle": "activeExecutions",
+      "target": "6",
+      "targetHandle": "activeExecutions",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "intent-conversation-history-control",
+      "source": "intent-orchestrator",
+      "sourceHandle": "needsConversationHistory",
+      "target": "conversation-history",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsConversationHistory",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "intent-execution-control",
+      "source": "intent-orchestrator",
+      "sourceHandle": "needsExecutionContext",
+      "target": "execution",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control",
+        "when": {
+          "output": "needsExecutionContext",
           "truthy": true
         }
       }

@@ -107,6 +107,13 @@ const execute: NodeExecutor = async (inputs, context) => {
     };
   }
 
+  const pending = context.pendingInstructionTurns as Array<Record<string, any>> | undefined;
+  if (pending?.length && (inputs.userMessage || inputs.entry?.role === 'user')) {
+    const results = [];
+    for (const turn of pending) results.push(await execute({ userMessage: turn.userMessage, entry: turn.userMessageEntry },
+      { ...context, ...turn, pendingInstructionTurns: undefined }, {}));
+    return { ...results.at(-1), entries: results.flatMap(result => result.entries), passthrough };
+  }
   const explicitEntry = inputs.entry;
   const entries: ConversationMessage[] = [];
   if (explicitEntry && typeof explicitEntry === 'object') {

@@ -298,6 +298,7 @@ export interface EnvironmentSelectorEnvelopeInput {
   visualFrames?: EnvironmentVisualFrame[];
   observationHistory?: import('../../visual-observation.js').VisualObservationRecord[];
   execution?: unknown;
+  activeExecutions?: EnvironmentExecutionTarget[];
   instruction: string;
   observation?: EnvironmentObservation | null;
   recentConversation?: Array<{ role: string; content: string; timestamp?: string | number }>;
@@ -439,6 +440,7 @@ export function buildEnvironmentSelectorEnvelope(
     activePersona: input.personaText?.trim().slice(0, 2_000) || null,
     robotStatus: projectRobotStatusContext(input.robotStatus),
     execution: input.execution ?? null,
+    ...(input.activeExecutions?.length ? { activeExecutions: input.activeExecutions } : {}),
     ...(input.observationHistory?.length ? { observationHistory: input.observationHistory } : {}),
     ...(input.replyToContent?.trim()
       ? { replyToContext: input.replyToContent.trim().slice(0, 500) }
@@ -637,6 +639,8 @@ function parseTaskDecision(
 }
 
 export interface EnvironmentModelOutput {
+  executionDisposition?: 'new' | 'steer' | 'cancel';
+  targetExecutionId?: string;
   visualObservation?: unknown;
   response: string;
   program: EnvironmentTaskProgram | null;
@@ -731,10 +735,17 @@ function selectorActionItemSchema(
 }
 
 export interface EnvironmentSelectorJsonSchemaInput {
+  activeExecutions?: EnvironmentExecutionTarget[];
   actions?: readonly string[];
   robotCommands?: readonly string[];
   actionRouteSelected?: boolean;
   requireAction?: boolean;
+}
+
+export interface EnvironmentExecutionTarget {
+  executionId: string;
+  canSteer?: boolean;
+  resumeError?: string;
 }
 
 /**
@@ -788,8 +799,16 @@ export function buildEnvironmentSelectorJsonSchema(
     ...SELECTOR_SCHEMA_STRING,
     description: 'Optional natural speech. It may accompany a selected consequence but never substitutes for a required physical or sensing action.',
   };
+  const activeExecutions = input.activeExecutions ?? [];
+  const executionProperties = activeExecutions.length ? {
+    executionDisposition: { type: 'string', enum: ['new', 'cancel'] },
+    targetExecutionId: { type: 'string', enum: ['', ...activeExecutions.map(item => item.executionId)] },
+  } : {};
+  // llama.cpp preserves property order in its grammar. Choose the execution
+  // target, program and task state before composing the spoken response.
   const branch = (program: unknown, decision: unknown) => ({ type: 'object', additionalProperties: false,
-    required: ['response', 'program', 'taskDecision'], properties: { response, program, taskDecision: decision } });
+    required: [...Object.keys(executionProperties), 'program', 'taskDecision', 'response'],
+    properties: { ...executionProperties, program, taskDecision: decision, response } });
   const alternatives: Record<string, unknown>[] = [];
   if (!input.requireAction || (!directActionTypes.length && !movementSupported)) {
     alternatives.push(branch({ type: 'null' }, taskSchema({ outcome: { type: 'string', enum: nonActionOutcomes } })));
@@ -815,6 +834,15 @@ export function buildEnvironmentSelectorJsonSchema(
   if (steps.length) alternatives.push(branch({ type: 'object', additionalProperties: false,
     required: ['steps'], properties: { steps: { type: 'array', minItems: 1, items: { anyOf: steps } } } },
     taskSchema({ outcome: { type: 'string', enum: ENVIRONMENT_TASK_OUTCOMES.filter(value => value !== 'complete') } }, false)));
+  if (activeExecutions.some(item => item.canSteer)) alternatives.push({
+    type: 'object', additionalProperties: false,
+    required: ['executionDisposition', 'targetExecutionId', 'program', 'taskDecision', 'response'],
+    properties: {
+      executionDisposition: { const: 'steer' },
+      targetExecutionId: { type: 'string', enum: activeExecutions.filter(item => item.canSteer).map(item => item.executionId) },
+      program: { type: 'null' }, taskDecision: { type: 'null' }, response: { const: '' },
+    },
+  });
   return { anyOf: alternatives };
 }
 
@@ -874,6 +902,7 @@ const SELECTOR_ACTION_FIELDS = new Set([
 export function validateEnvironmentSelectorOutput(
   text: unknown,
   sessionId?: string,
+  activeExecutions: EnvironmentExecutionTarget[] = [],
 ): EnvironmentSelectorValidationResult {
   if (typeof text !== 'string') {
     return {
@@ -903,7 +932,20 @@ export function validateEnvironmentSelectorOutput(
 
   const errors: string[] = [];
   for (const field of SELECTOR_OUTPUT_FIELDS) if (!(field in raw)) errors.push(`${field} is required`);
-  for (const field of Object.keys(raw)) if (!SELECTOR_OUTPUT_FIELDS.has(field) && field !== 'visualObservation') errors.push(`${field} is not an Environment model-output field`);
+  for (const field of Object.keys(raw)) if (!SELECTOR_OUTPUT_FIELDS.has(field) && field !== 'visualObservation'
+    && !(activeExecutions.length && ['executionDisposition', 'targetExecutionId'].includes(field))) errors.push(`${field} is not an Environment model-output field`);
+  if (activeExecutions.length) {
+    if (!['new', 'steer', 'cancel'].includes(String(raw.executionDisposition))) errors.push('Selector must select how this input relates to existing executions');
+    if (typeof raw.targetExecutionId !== 'string') errors.push('Invalid target execution');
+    if (raw.executionDisposition === 'steer' || raw.executionDisposition === 'cancel') {
+      const selected = activeExecutions.find(item => item.executionId === raw.targetExecutionId);
+      if (!selected) errors.push('Selector selected an unknown execution');
+      else if (raw.executionDisposition === 'steer' && !selected.canSteer) errors.push(selected.resumeError || 'Selected execution has no input route');
+    }
+    if (raw.executionDisposition === 'steer' && (raw.program !== null || raw.taskDecision !== null || raw.response !== '')) {
+      errors.push('A steering handoff requires null program and taskDecision and an empty response');
+    }
+  }
   if (typeof raw.response !== 'string') errors.push('response must be a string');
   const task = parseTaskDecision(raw.taskDecision);
   if (task.error) errors.push(task.error);
@@ -948,9 +990,11 @@ export function validateEnvironmentSelectorOutput(
     if (task.decision?.objectiveComplete) errors.push('a newly selected program cannot establish completion before its results');
   }
   const response = typeof raw.response === 'string' ? raw.response.trim() : '';
-  if (!response && !program && !task.decision && !isRecord(raw.visualObservation)) errors.push('selector output requires response, program, taskDecision, or visualObservation');
+  const handoff = activeExecutions.length > 0 && (raw.executionDisposition === 'steer' || raw.executionDisposition === 'cancel');
+  if (!response && !program && !task.decision && !isRecord(raw.visualObservation) && !handoff) errors.push('selector output requires response, program, taskDecision, or visualObservation');
   if (!program && task.decision?.outcome === 'act') errors.push('taskDecision outcome=act requires a program');
   if (errors.length) return { jsonValid: true, valid: false, errors };
   return { jsonValid: true, valid: true, errors, value: { response, program, taskDecision: task.decision,
+    ...(activeExecutions.length ? { executionDisposition: raw.executionDisposition as EnvironmentModelOutput['executionDisposition'], targetExecutionId: raw.targetExecutionId as string } : {}),
     ...(raw.visualObservation !== undefined ? { visualObservation: raw.visualObservation } : {}) } };
 }

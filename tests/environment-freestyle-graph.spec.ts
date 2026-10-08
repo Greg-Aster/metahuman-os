@@ -67,16 +67,18 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.ok(statusOut);
   assert.equal(graph.nodes.filter(node => node.data.nodeType === 'model_router').length, 1);
   assert.equal(environmentLlm.data.properties?.role, 'environmentActionSelector');
-  assert.equal(orchestrator.data.properties?.outputContract, 'environment');
+  assert.equal(orchestrator.data.properties?.outputContract, 'environment-request');
   assert.equal(orchestrator.data.properties?.maxTokens, 768);
   const intentPrompt = String(orchestrator.data.properties?.systemPrompt);
-  assert.match(intentPrompt, /needsResponse exposes user-visible natural-language expression/i);
-  assert.match(intentPrompt, /needsRobotStatus exposes .*task snapshot with its execution state/i);
-  assert.match(intentPrompt, /Routes are independent/i);
-  assert.match(intentPrompt, /Infer which information and capabilities are relevant/i);
+  assert.match(intentPrompt, /needsResponse for user-visible expression/i);
+  assert.match(intentPrompt, /needsRobotStatus for robot condition and task status/i);
+  assert.match(intentPrompt, /Select independently/i);
+  assert.match(intentPrompt, /Read the current incoming request/i);
   assert.deepEqual(parseEnvironmentIntentRouting(JSON.stringify({
     needsResponse: true,
     needsConversationHistory: false,
+    needsExecutionContext: false,
+    needsPersona: false,
     needsMemory: false,
     needsRobotStatus: true,
     needsEnvironment: true,
@@ -85,6 +87,8 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   })), {
     needsResponse: true,
     needsConversationHistory: false,
+    needsExecutionContext: false,
+    needsPersona: false,
     needsMemory: false,
     needsRobotStatus: true,
     needsEnvironment: true,
@@ -112,7 +116,10 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.equal(hasEdge(savedInput.id, 'passthrough', orchestrator.id, 'message'), true);
   const inputHandoff = graph.nodes.find(node => node.data.nodeType === 'execution_event_out')!;
   assert.equal(hasEdge(inputBuffer.id, 'entry', inputHandoff.id, 'entry'), true);
-  assert.equal(hasEdge(history.id, 'history', orchestrator.id, 'conversationHistory'), true);
+  assert.equal(hasEdge(history.id, 'history', orchestrator.id, 'conversationHistory'), false);
+  assert.deepEqual(graph.edges.filter(edge => edge.target === orchestrator.id).map(edge => edge.targetHandle), ['message']);
+  assert.deepEqual(history.data.activation?.when, [{ nodeId: orchestrator.id, output: 'needsConversationHistory', truthy: true }]);
+  assert.equal(hasEdge(actionParser.id, 'executionSelection', inputHandoff.id, 'selection'), true);
   assert.equal(hasEdge(orchestrator.id, 'analysis', contextBuilder.id, 'routingAnalysis'), true);
   assert.equal(hasEdge(orchestrator.id, 'analysis', memoryRouter.id, 'orchestratorHints'), true);
   assert.equal(hasEdge(bridgeInput.id, 'isTriggeringObservation', imageInput.id, 'observationCurrent'), true);

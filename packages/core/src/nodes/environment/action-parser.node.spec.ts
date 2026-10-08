@@ -123,3 +123,44 @@ test('switching robot catalogs retains V1 gestures and exposes V2 commands witho
     assert.equal(schema.includes('generatedMotion'), actions.length === 2)
   }
 })
+
+test('execution targets belong to the informed selector schema, only when supplied', () => {
+  const idle = buildEnvironmentSelectorJsonSchema() as any
+  assert.equal(JSON.stringify(idle).includes('executionDisposition'), false)
+  for (const branch of idle.anyOf) {
+    assert.deepEqual(Object.keys(branch.properties), ['program', 'taskDecision', 'response'],
+      'Grammar-constrained decoding must select the program and task state before speech')
+  }
+  const active = buildEnvironmentSelectorJsonSchema({ activeExecutions: [{ executionId: 'active-job', canSteer: true }] }) as any
+  for (const branch of active.anyOf) {
+    assert.deepEqual(Object.keys(branch.properties), ['executionDisposition', 'targetExecutionId', 'program', 'taskDecision', 'response'],
+      'Grammar-constrained decoding must choose the execution branch and task before speech');
+    assert.ok(branch.required.includes('executionDisposition'))
+    assert.ok(branch.required.includes('targetExecutionId'))
+    assert.ok(branch.properties.targetExecutionId.enum.includes('active-job'))
+  }
+  const steer = active.anyOf.find((branch: any) => branch.properties.executionDisposition.const === 'steer')
+  assert.deepEqual(steer.properties.program, { type: 'null' })
+  assert.deepEqual(steer.properties.response, { const: '' })
+  const unavailable = buildEnvironmentSelectorJsonSchema({ activeExecutions: [{ executionId: 'old-job', canSteer: false }] }) as any
+  assert.equal(unavailable.anyOf.some((branch: any) => branch.properties.executionDisposition.const === 'steer'), false)
+})
+
+test('selector handoff preserves target validation and never restores a local continuation program', async () => {
+  const activeExecutions = [{ executionId: 'active-job', canSteer: true }]
+  const response = { response: '', program: null, taskDecision: null, executionDisposition: 'steer', targetExecutionId: 'active-job' }
+  const context = { activeTaskContinuation: { program: { steps: [action('wave')] }, decision: taskDecision } }
+  const result = await environmentActionParserNode.execute({ response: JSON.stringify(response), activeExecutions }, context, {})
+  assert.equal(result.program, null)
+  assert.equal(result.taskDecision, null)
+  assert.equal(result.continueHere, false)
+  assert.deepEqual(result.executionSelection, { executionId: 'active-job', kind: 'user_steering' })
+  assert.equal(validateEnvironmentSelectorOutput(JSON.stringify(response)).valid, false, 'No task context means no advertised transfer target')
+  assert.match(validateEnvironmentSelectorOutput(JSON.stringify({ ...response, targetExecutionId: 'unknown' }), undefined, activeExecutions).errors.join(), /unknown execution/)
+  assert.match(validateEnvironmentSelectorOutput(JSON.stringify(response), undefined, [{ executionId: 'active-job', canSteer: false, resumeError: 'Incompatible saved execution' }]).errors.join(), /Incompatible saved execution/)
+  assert.equal(validateEnvironmentSelectorOutput(JSON.stringify({ ...response, program: { steps: [action('wave')] }, taskDecision }), undefined, activeExecutions).valid, false)
+  assert.equal(validateEnvironmentSelectorOutput(JSON.stringify({ response: 'Hello', program: null, taskDecision: null }), undefined, activeExecutions).valid, false)
+  const separate = await environmentActionParserNode.execute({ response: JSON.stringify({ ...response, response: 'Hello', executionDisposition: 'new', targetExecutionId: '' }), activeExecutions }, {}, {})
+  assert.equal(separate.executionSelection, undefined)
+  assert.equal(separate.continueHere, true)
+})

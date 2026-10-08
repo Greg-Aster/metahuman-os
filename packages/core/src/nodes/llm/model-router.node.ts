@@ -87,6 +87,10 @@ export const ModelRouterNode: NodeDefinition = defineNode({
   description: 'Calls the profile-resolved model using connected messages. Downstream nodes own validation and effects; rejected output returns as saved feedback to this model without repeating earlier actions.',
 
   execute: async (inputs, context, properties) => {
+    if (context.environmentInterpretation?.response) {
+      if (context.modelOutputFeedback) throw new Error('Interpretation proposal is no longer valid: ' + context.modelOutputFeedback.error);
+      return { response: context.environmentInterpretation.response, precomputed: true };
+    }
     const precomputedResponse = typeof inputs.precomputedResponse === 'string'
       ? inputs.precomputedResponse.trim()
       : '';

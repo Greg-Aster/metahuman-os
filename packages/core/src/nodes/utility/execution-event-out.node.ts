@@ -12,6 +12,12 @@ export const executionEventOutNode = defineNode({
   properties: {},
   async execute(inputs, context) {
     if (!context.graphExecution) throw new Error('Execution input handoff requires durable execution')
+    const turns = context.pendingInstructionTurns as Array<Record<string, any>> | undefined
+    if (turns?.length) {
+      for (const turn of turns) await executionEventOutNode.execute({ ...inputs, message: turn.userMessage, entry: turn.userMessageEntry },
+        { ...context, ...turn, pendingInstructionTurns: undefined }, {})
+      return { sent: true }
+    }
     const selected = inputs.selection
     if (!selected?.executionId || !['user_steering', 'user_cancelled'].includes(selected.kind)) throw new Error('Invalid execution input selection')
     if (inputs.entry && (inputs.entry.role !== 'user' || inputs.entry.content !== inputs.message)) {
