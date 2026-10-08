@@ -58,6 +58,16 @@ fs.writeFileSync(path.join(profile.persona, 'core.json'), JSON.stringify({ ident
   personality: { traits: [] }, values: [], goals: [], preferences: {}, communication: {} }))
 fs.mkdirSync(path.join(root, 'etc'), { recursive: true })
 fs.cpSync(path.join(repo, 'etc/cognitive-graphs'), path.join(root, 'etc/cognitive-graphs'), { recursive: true })
+// Published graphs can pin installation-specific models. Every model call in
+// this isolated fixture must resolve to its scripted provider, including jobs.
+for (const file of fs.readdirSync(path.join(root, 'etc/cognitive-graphs')).filter(file => file.endsWith('.json'))) {
+  const location = path.join(root, 'etc/cognitive-graphs', file)
+  const saved = JSON.parse(fs.readFileSync(location, 'utf8'))
+  for (const node of saved.nodes ?? []) {
+    if (node.data?.properties?.modelId) node.data.properties.modelId = 'fixture'
+  }
+  fs.writeFileSync(location, JSON.stringify(saved))
+}
 fs.copyFileSync(path.join(repo, 'etc/agents.json'), path.join(root, 'etc/agents.json'))
 fs.copyFileSync(path.join(repo, 'etc/services.json'), path.join(root, 'etc/services.json'))
 fs.writeFileSync(path.join(root, 'etc/llm-backend.json'), JSON.stringify({ activeBackend: 'ollama',
