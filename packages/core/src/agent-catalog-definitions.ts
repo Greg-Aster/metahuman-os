@@ -191,7 +191,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
     id: 'environment-bridge-remote',
     servicePath: 'agents/environment-bridge/remote.ts',
     displayName: 'Environment Bridge Remote',
-    description: 'Connects to remote Body Control through Cloudflare Access. Starting this agent switches from the local connection.',
+    description: 'Connects to Body Control on a configured machine through SSH or Cloudflare Access. Starting this agent switches from the local connection.',
     lifecycle: 'service',
     executionContext: 'system',
     usesLLM: false,

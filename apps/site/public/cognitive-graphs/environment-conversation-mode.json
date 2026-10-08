@@ -1,0 +1,157 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 0
+  },
+  "cognitiveMode": "environment",
+  "name": "Environment Conversation Mode",
+  "description": "Conversation delivery by the existing buffer, memory and speech owners after finite Coordinator inference.",
+  "nodes": [
+    {
+      "id": "response",
+      "type": "environmentNode",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "Generated Conversation",
+        "nodeType": "environment_conversation_result",
+        "properties": {}
+      }
+    },
+    {
+      "id": "conversation-buffer",
+      "type": "outputNode",
+      "position": {
+        "x": 5220,
+        "y": 80
+      },
+      "width": 250,
+      "data": {
+        "label": "Save User and Optional Response",
+        "nodeType": "conversation_buffer",
+        "properties": {}
+      }
+    },
+    {
+      "id": "memory-capture",
+      "type": "outputNode",
+      "position": {
+        "x": 5680,
+        "y": 80
+      },
+      "width": 250,
+      "data": {
+        "label": "Conversation Memory Saver",
+        "nodeType": "memory_capture",
+        "properties": {}
+      }
+    },
+    {
+      "id": "tts-out",
+      "type": "outputNode",
+      "position": {
+        "x": 6140,
+        "y": 878
+      },
+      "width": 240,
+      "data": {
+        "label": "Speak Optional Response",
+        "nodeType": "tts",
+        "properties": {
+          "source": "environment-mode",
+          "defaultMode": "conversation"
+        }
+      }
+    },
+    {
+      "id": "12",
+      "type": "outputNode",
+      "position": {
+        "x": 6140,
+        "y": 1200
+      },
+      "width": 180,
+      "data": {
+        "label": "Return Optional Response",
+        "nodeType": "stream_writer",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-response-conversation-buffer",
+      "source": "response",
+      "target": "conversation-buffer",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "when": {
+          "output": "response",
+          "notEquals": ""
+        }
+      }
+    },
+    {
+      "id": "e-conversation-memory",
+      "source": "conversation-buffer",
+      "target": "memory-capture",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-conversation-tts",
+      "source": "memory-capture",
+      "target": "tts-out",
+      "sourceHandle": "passthrough",
+      "targetHandle": "conversation",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "when": {
+          "output": "passthrough",
+          "notEquals": ""
+        }
+      }
+    },
+    {
+      "id": "e-conversation-stream",
+      "source": "memory-capture",
+      "target": "12",
+      "sourceHandle": "passthrough",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "when": {
+          "output": "passthrough",
+          "notEquals": ""
+        }
+      }
+    },
+    {
+      "id": "capture-response-forward",
+      "source": "conversation-buffer",
+      "target": "memory-capture",
+      "sourceHandle": "response",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    }
+  ]
+}

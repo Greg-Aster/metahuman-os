@@ -35,7 +35,7 @@ function hasEdge(source: string, sourceHandle: string, target: string, targetHan
 
 test('Environment Mode sends all physical phases to one active executor', () => {
   const active = graph.nodes.filter(node => node.data.nodeType === 'environment_active_task');
-  const parser = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')!;
+  const parser = graph.nodes.find(node => node.data.nodeType === 'environment_task_planner')!;
   assert.equal(active.length, 1);
   assert.equal(hasEdge(parser.id, 'program', active[0]!.id, 'program'), true);
   assert.equal(hasEdge(parser.id, 'taskDecision', active[0]!.id, 'taskDecision'), true);
@@ -50,7 +50,7 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   const orchestrator = graph.nodes.find(node => node.data.nodeType === 'orchestrator_llm')!;
   const memoryRouter = graph.nodes.find(node => node.data.nodeType === 'memory_router')!;
   const contextBuilder = graph.nodes.find(node => node.data.nodeType === 'environment_context_builder')!;
-  const actionParser = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')!;
+  const actionParser = graph.nodes.find(node => node.data.nodeType === 'environment_task_planner')!;
   const userInput = graph.nodes.find(node => node.data.nodeType === 'user_input')!;
   const bridgeInput = graph.nodes.find(node => node.data.nodeType === 'environment_bridge_input')!;
   const history = graph.nodes.find(node => node.data.nodeType === 'conversation_history')!;
@@ -65,7 +65,7 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.ok(orchestrator);
   assert.ok(statusInput);
   assert.ok(statusOut);
-  assert.equal(graph.nodes.filter(node => node.data.nodeType === 'model_router').length, 2);
+  assert.equal(graph.nodes.filter(node => node.data.nodeType === 'model_router').length, 1);
   assert.equal(environmentLlm.data.properties?.role, 'environmentActionSelector');
   assert.equal(environmentLlm.data.properties?.modelId, 'ollama.qwen3.5:0.8b');
   const conversation = graph.nodes.find(node => node.id === 'conversation-model')!;
@@ -73,10 +73,16 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.equal(conversation.data.properties?.modelId, '');
   assert.equal(conversation.data.properties?.format, 'text');
   assert.equal(ModelRouterNode.outputs.find(output => output.name === 'response')?.type, 'string');
-  assert.equal(actionParser.data.properties?.includeResponse, false);
+  assert.equal(actionParser.data.properties?.role, 'persona');
+  assert.equal(actionParser.data.properties?.format, 'json');
   assert.equal(hasEdge(contextBuilder.id, 'precomputedResponse', environmentLlm.id, 'precomputedResponse'), true);
   assert.equal(hasEdge('conversation-context', 'messages', conversation.id, 'messages'), true);
-  assert.equal(hasEdge(conversation.id, 'response', 'conversation-buffer', 'response'), true);
+  assert.equal(conversation.data.nodeType, 'environment_conversation');
+  const delivery = JSON.parse(fs.readFileSync(new URL('../etc/cognitive-graphs/environment-conversation-mode.json', import.meta.url), 'utf8'));
+  assert.ok(delivery.edges.some((edge: any) => edge.source === 'response' && edge.target === 'conversation-buffer'));
+  assert.equal(graph.edges.some(edge => edge.source === conversation.id && edge.target === statusOut.id), false);
+  assert.equal(hasEdge(contextBuilder.id, 'planningMessages', actionParser.id, 'planningMessages'), true);
+  assert.equal(hasEdge(contextBuilder.id, 'planningSchema', actionParser.id, 'planningSchema'), true);
   assert.equal(hasEdge(actionParser.id, 'response', 'conversation-buffer', 'response'), false);
   assert.equal(orchestrator.data.properties?.outputContract, 'environment-request');
   assert.equal(orchestrator.data.properties?.maxTokens, 768);

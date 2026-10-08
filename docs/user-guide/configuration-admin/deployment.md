@@ -96,7 +96,7 @@ is a separate route; an HTTP tunnel to `/environment` is rejected by the gateway
 
 Install `cloudflared` on the desktop using the
 [official download instructions](https://developers.cloudflare.com/tunnel/downloads/).
-In **Agent Monitor**, select **Environment Bridge Remote** and configure:
+In **Agent Monitor → Body connection**, select **Remote via Cloudflare** and configure:
 
 - **Adapter URL**: `ws://127.0.0.1:18790/environment`.
 - **Cloudflare Hostname**: the Q6A Access hostname, such as `bridge.ainek.io`.
@@ -111,19 +111,41 @@ MH_ENVIRONMENT_ADAPTER_TOKEN=<same secret as AINEKIO_ENVIRONMENT_ADAPTER_TOKEN o
 MH_ENVIRONMENT_BRIDGE_TOKEN=<desktop internal Bridge service token>
 ```
 
-Click **Start** for Remote. It owns the existing `bin/connect-environment` TCP
+Click **Save and connect**. Remote owns the existing `bin/connect-environment` TCP
 launcher and stops that forwarder when stopped. Do not run a separate desktop
 forwarding service alongside it. The Q6A gateway and connector remain running.
 
-To use local Body Control without Cloudflare, configure **Environment Bridge
-Local → Adapter URL** (default `ws://127.0.0.1:8790/environment`) and start Local.
-Body Control must run on that computer, or an authenticated LAN TCP forward must
-provide the loopback endpoint. Ainekio's `/environment` remains loopback-only.
-Starting either agent stops the other; both use the same bridge state, actions,
-feedback and observations. The selected agent is remembered for system startup.
-The old shared `MH_ENVIRONMENT_ADAPTER_URL` override does not select both agents;
-edit their separate Adapter URL fields. Local/remote LLM selection remains in
-Backend settings independently of the Body Control connection.
+Open **Agent Monitor → Body connection** (or `/monitor#body-connection`) to
+choose the machine running Body Control. Ainekio's Body Control Settings can
+save a link to this page on your stationary desktop, reachable through its
+existing remote access address. Sign in to MetaHuman as the owner; Body Control
+does not receive MetaHuman credentials.
+
+- **This computer** means the MetaHuman host, which can differ from the browser's
+  device. The default adapter URL is `ws://127.0.0.1:8790/environment`.
+- **LAN / Wi-Fi via SSH** accepts any `user@hostname`, `user@IP` or SSH host alias.
+  Establish host trust and noninteractive SSH authentication as the OS account
+  running MetaHuman first. SSH config can specify the port and key. Set the remote
+  gateway port (default `8790`) and loopback forwarding URL (normally
+  `ws://127.0.0.1:18790/environment`). Dashboard port `8791` is separate.
+- **Remote via Cloudflare** uses your existing Access TCP hostname and optional
+  private service-token file. It can target any configured gateway host.
+
+**Save and connect** saves the settings and invokes the existing bridge
+start/restart path. Body Control must already run on the chosen host. Remote owns
+its SSH or Cloudflare tunnel; Local and Remote remain mutually exclusive. Old
+configurations without `transport` continue using Cloudflare. SSH and Cloudflare
+settings are retained separately and share the loopback forwarding URL.
+
+The gateway adapter remains loopback-only. Wired LAN and Wi-Fi both use SSH;
+select the Wi-Fi network in the operating system. Switching interrupts the
+connection and does not migrate the running task. Existing session and receipt
+reconciliation remains responsible for uncertain commands. Check readiness in
+Agent Monitor: a started process alone does not establish a working body link.
+The selected agent is remembered for startup. The obsolete shared
+`MH_ENVIRONMENT_ADAPTER_URL` does not override these separate settings. Matching
+adapter credentials must be configured on the selected host; model/provider
+selection remains independent in Backend settings.
 
 The forwarding launcher can still be used manually for diagnostics:
 `./bin/connect-environment HOSTNAME [LOCAL_PORT]`, while Remote is stopped.

@@ -17,7 +17,8 @@ import {
   validateDevelopmentRecords,
   type ActionSelectorTrainingRecord,
 } from './generate-training-data.js'
-import { ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES } from './development-cases.js'
+import { DEVELOPMENT_CASES } from './generate-training-data.js'
+import type { Specialist } from './development-cases.js'
 
 const CONFIG_PATH = resolve(ACTION_SELECTOR_DIRECTORY, 'training-qwen3.5-0.8b.json')
 const TRAINER_PATH = resolve(REPOSITORY_ROOT, 'docker/runpod-trainer/train_unsloth.py')
@@ -26,6 +27,7 @@ const OUTPUT_ROOT = resolve(REPOSITORY_ROOT, 'out/environment-action-selector/tr
 
 interface TrainingOptions {
   outputPath: string
+  specialist: Specialist
   folds: number[]
   finalFromPath?: string
   selectionReportPath?: string
@@ -44,6 +46,7 @@ interface TrainingConfig {
 
 interface DevelopmentSelectionReport {
   owner?: string
+  specialist?: Specialist
   split?: string
   checkpointPolicy?: 'best-loss' | 'epoch-2' | 'final-epoch'
   priorHeldOutUsed?: boolean
@@ -69,7 +72,8 @@ interface FoldProvenance {
 
 function parseOptions(arguments_: string[]): TrainingOptions {
   const options: TrainingOptions = {
-    outputPath: resolve(OUTPUT_ROOT, 'qwen3.5-0.8b-cv-001'),
+    outputPath: '',
+    specialist: 'intent',
     folds: [...Array(DEVELOPMENT_FOLD_COUNT).keys()],
     dryRun: false,
   }
@@ -78,7 +82,10 @@ function parseOptions(arguments_: string[]): TrainingOptions {
     const argument = arguments_[index]
     const value = arguments_[index + 1]
     if (argument === '--') continue
-    if (argument === '--dry-run') {
+    if (argument === '--specialist' && (value === 'intent' || value === 'task')) {
+      options.specialist = value
+      index += 1
+    } else if (argument === '--dry-run') {
       options.dryRun = true
     } else if (argument === '--output' && value) {
       options.outputPath = resolve(value)
@@ -101,6 +108,7 @@ function parseOptions(arguments_: string[]): TrainingOptions {
       throw new Error(`Unknown or incomplete argument: ${argument}`)
     }
   }
+  options.outputPath ||= resolve(OUTPUT_ROOT, `${options.specialist}-cv-001`)
   if (Boolean(options.finalFromPath) !== Boolean(options.selectionReportPath)) {
     throw new Error('--final-from and --selection-report are required together')
   }
@@ -168,6 +176,7 @@ async function trainFinalAdapter(
   const report = await readJson<DevelopmentSelectionReport>(reportPath)
   if (
     report.owner !== 'environment-action-selector'
+    || report.specialist !== options.specialist
     || report.split !== 'development-cross-validation'
     || report.priorHeldOutUsed !== false
     || typeof report.aggregate?.exactRouting?.rate !== 'number'
@@ -205,7 +214,7 @@ async function trainFinalAdapter(
     throw new Error('Archived development records are incomplete or duplicated')
   }
   const sourceIds = new Set(archivedRecords.map(record => record.metadata.sourceCaseId))
-  const selectedCases = ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES.filter(sourceCase => sourceIds.has(sourceCase.id))
+  const selectedCases = DEVELOPMENT_CASES.filter(sourceCase => sourceCase.specialist === options.specialist && sourceIds.has(sourceCase.id))
   if (selectedCases.length !== sourceIds.size) throw new Error('Archived development run references unknown source cases')
   const records = await buildDevelopmentRecords(selectedCases)
   const archivedInCanonicalOrder = records.map(record => archivedById.get(record.metadata.recordId))
@@ -239,6 +248,7 @@ async function trainFinalAdapter(
       version: 1,
       owner: 'environment-action-selector',
       mode: 'final-development-training',
+      specialist: options.specialist,
       baseModel: config.base_model,
       trainingRecords: records.length,
       trainingSourceCases: selectedCases.length,
@@ -270,7 +280,10 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
     throw new Error(`Training output must remain under ${OUTPUT_ROOT}`)
   }
   await Promise.all([access(PYTHON_PATH), access(TRAINER_PATH), access(CONFIG_PATH)])
-  const config = await readJson<TrainingConfig>(CONFIG_PATH)
+  const config = { ...await readJson<TrainingConfig>(CONFIG_PATH), specialist: options.specialist,
+    max_seq_length: options.specialist === 'task' ? 4096 : 1536,
+    generation_max_new_tokens: options.specialist === 'task' ? 768 : 384,
+  } as TrainingConfig
   if (
     config.owner !== 'environment-action-selector'
     || config.base_model !== 'unsloth/Qwen3.5-0.8B'
@@ -285,18 +298,18 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
   }
 
   const expectedRecords = await buildDevelopmentRecords()
-  const checkedInRecords = (await readFile(DEVELOPMENT_RECORDS_PATH, 'utf8'))
+  const allRecords = (await readFile(DEVELOPMENT_RECORDS_PATH, 'utf8'))
     .trim()
     .split('\n')
     .map(line => JSON.parse(line)) as ActionSelectorTrainingRecord[]
   const { lock: priorLock, receipt: priorReceipt } = await loadPriorEvaluationEvidence()
-  const errors = validateDevelopmentRecords(checkedInRecords, undefined, priorLock.caseIds)
+  const errors = validateDevelopmentRecords(allRecords, undefined, priorLock.caseIds)
   if (errors.length > 0) throw new Error(`Development records are invalid:\n- ${errors.join('\n- ')}`)
-  if (sha256(checkedInRecords) !== sha256(expectedRecords)) {
+  if (sha256(allRecords) !== sha256(expectedRecords)) {
     throw new Error('Development records drifted from the reviewed source cases or Core prompt builder')
   }
   const manifest = await readJson<Record<string, unknown>>(DEVELOPMENT_MANIFEST_PATH)
-  const expectedManifest = await buildDevelopmentManifest(checkedInRecords)
+  const expectedManifest = await buildDevelopmentManifest(allRecords)
   if (sha256(manifest) !== sha256(expectedManifest)) {
     throw new Error('Development manifest drifted; regenerate before training')
   }
@@ -308,9 +321,10 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
     throw new Error('Retired one-shot evaluation provenance is invalid')
   }
 
+  const checkedInRecords = allRecords.filter(record => record.metadata.specialist === options.specialist)
   console.log(`Validated ${checkedInRecords.length} development-only action-selector records`)
   console.log(`Retired held-out content not loaded; one-shot digest ${priorLock.digest}`)
-  console.log(`Folds: ${options.folds.join(', ')}${options.folds.length > 1 ? ' (two trainers at a time)' : ''}`)
+  console.log(`Folds: ${options.folds.join(', ')}${options.folds.length > 1 ? ' (sequential GPU jobs)' : ''}`)
 
   const jobs = options.folds.map(fold => async () => {
     const foldRoot = resolve(options.outputPath, `fold-${fold}`)
@@ -327,13 +341,14 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
     const provenance = {
       version: 1,
       owner: 'environment-action-selector',
+      specialist: options.specialist,
       baseModel: config.base_model,
       fold,
       trainingRecordCount: training.length,
       validationRecordCount: validation.length,
       trainingSourceCaseCount: trainingSourceIds.size,
       validationSourceCaseCount: validationSourceIds.size,
-      developmentDatasetDigest: manifest.datasetDigest,
+      developmentDatasetDigest: sha256(checkedInRecords),
       priorHeldOutDigest: priorLock.digest,
       priorHeldOutUsed: false,
     }
@@ -343,13 +358,12 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
     await Promise.all([
       writeFile(trainingPath, `${training.map(record => JSON.stringify(record)).join('\n')}\n`),
       writeFile(validationPath, `${validation.map(record => JSON.stringify(record)).join('\n')}\n`),
+      writeFile(resolve(foldRoot, 'training-config.json'), `${JSON.stringify(config, null, 2)}\n`),
       writeFile(resolve(foldRoot, 'run-provenance.json'), `${JSON.stringify(provenance, null, 2)}\n`),
     ])
-    await runTrainer(`fold ${fold}`, trainingPath, validationPath, CONFIG_PATH, adapterPath)
+    await runTrainer(`fold ${fold}`, trainingPath, validationPath, resolve(foldRoot, 'training-config.json'), adapterPath)
   })
-  for (let index = 0; index < jobs.length; index += 2) {
-    await Promise.all(jobs.slice(index, index + 2).map(job => job()))
-  }
+  for (const job of jobs) await job()
   if (!options.dryRun) console.log(`All requested folds completed under ${options.outputPath}`)
 }
 

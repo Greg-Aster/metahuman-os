@@ -29,7 +29,7 @@ export function interpretationBody(observation?: EnvironmentObservation): string
 
 /** Reuse the configured read/inference graph, excluding all effect owners. */
 export function interpretationGraph(graph: SvelteFlowGraph): SvelteFlowGraph {
-  const selector = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')
+  const selector = graph.nodes.find(node => ['environment_action_parser', 'environment_task_planner'].includes(node.data.nodeType))
   if (!selector) throw new Error('Environment interpretation requires its configured selector')
   const bypass = new Set(graph.nodes.filter(node => ['conversation_buffer', 'memory_capture'].includes(node.data.nodeType)).map(node => node.id))
   const edges = graph.edges.filter(edge => !bypass.has(edge.target)).map(edge => {
@@ -85,7 +85,9 @@ export async function interpretInstructions(input: {
     signal.throwIfAborted()
     if (state.status !== 'completed') throw state.error ?? new Error('Instruction interpretation did not complete')
     return { ...input.identity, route: requireGraphNodeOutput(state, 'orchestrator_llm'),
-      response: requireGraphNodeOutput(state, 'model_router').response,
+      response: graph.nodes.some(node => node.data.nodeType === 'environment_task_planner')
+        ? requireGraphNodeOutput(state, 'environment_task_planner').rawResponse
+        : requireGraphNodeOutput(state, 'model_router').response,
       memory: state.nodes.get(graph.nodes.find(node => node.data.nodeType === 'memory_router')?.id ?? '')?.outputs }
   } finally { store.close() }
 }

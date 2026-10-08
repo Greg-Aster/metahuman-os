@@ -4426,6 +4426,35 @@ What grounded insights or patterns emerge?`,
   }),
 ];
 
+// Specialist orchestration reuses the editor contracts of its surviving owners.
+const modelRouterSchema = getNodeSchema('model_router')!;
+const taskParserSchema = getNodeSchema('environment_action_parser')!;
+nodeSchemas.push(
+  defineSchema({ ...modelRouterSchema, id: 'environment_conversation', name: 'Generate Environment Conversation', category: 'environment',
+    outputs: [{ name: 'effectId', type: 'string', description: 'Durable conversation work identity' }],
+    description: 'Queues conversation inference on the Coordinator and delivers it through the conversation workflow.' }),
+  defineSchema({ id: 'environment_conversation_result', name: 'Conversation Work Result', category: 'environment', inputs: [],
+    outputs: [{ name: 'response', type: 'string', description: 'Generated conversation text from this finite work item' }],
+    description: 'Supplies the completed inference to the existing buffer, memory and speech owners.' }),
+  defineSchema({ ...taskParserSchema, id: 'environment_task_planner', name: 'Resolve Task Plan',
+    execution: { timeoutOwner: 'children' },
+    inputs: [...taskParserSchema.inputs,
+      { name: 'planningMessages', type: 'array', description: 'The same selected context with the original task contract' },
+      { name: 'planningSchema', type: 'object', description: 'Existing task schema without recursive delegation' }],
+    outputs: [...taskParserSchema.outputs, { name: 'rawResponse', type: 'string', description: 'Exact final task output for continuation reuse, separate from conversational response' }],
+    properties: { ...modelRouterSchema.properties, role: 'persona', format: 'json', temperature: 0.1 },
+    propertySchemas: modelRouterSchema.propertySchemas,
+    description: 'Resolves optional planning through Model Router, then returns the existing task parser output.' }),
+);
+const environmentContextSchema = getNodeSchema('environment_context_builder')!;
+environmentContextSchema.properties = { ...environmentContextSchema.properties, planningDelegation: false };
+environmentContextSchema.propertySchemas = { ...environmentContextSchema.propertySchemas,
+  planningDelegation: { type: 'boolean', default: false, label: 'Allow Planning Delegation', description: 'Expose the approved optional larger-model planning output for task-only decisions.' } };
+environmentContextSchema.outputs.push(
+  { name: 'planningMessages', type: 'array', description: 'Original task messages for optional larger-model planning' },
+  { name: 'planningSchema', type: 'object', description: 'Original task schema without delegation' },
+);
+
 // Helper function to get schema by ID
 export function getNodeSchema(id: string): NodeSchema | undefined {
   return nodeSchemas.find((schema) => schema.id === id);

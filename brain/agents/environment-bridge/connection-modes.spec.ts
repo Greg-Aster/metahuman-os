@@ -28,10 +28,11 @@ process.env.MH_ENVIRONMENT_ADAPTER_URL = 'ws://old-shared.invalid/environment';
 process.env.MH_ENVIRONMENT_ADAPTER_TOKEN = 'fixture-adapter';
 process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'fixture-core';
 const { readConfig } = await import('./core.js');
-const { runCloudflareForwarder } = await import('./cloudflare.js');
+const { runRemoteForwarder } = await import('./forwarder.js');
 
 async function forwarder(): Promise<{ pid: number; args: string[]; id: string; secret: string }> {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
     if (fs.existsSync(path.join(fixture, 'forwarder.json'))) return JSON.parse(fs.readFileSync(path.join(fixture, 'forwarder.json'), 'utf8'));
     await new Promise(resolve => setTimeout(resolve, 20));
   }
@@ -46,7 +47,7 @@ test('separate adapter settings ignore the obsolete shared endpoint override', (
 test('Remote owns the forwarder, supplies private machine auth, and stops it on agent stop', async () => {
   const controller = new AbortController();
   let pid = 0;
-  await runCloudflareForwarder(readConfig('environment-bridge-remote').adapterUrl, controller, async () => {
+  await runRemoteForwarder(readConfig('environment-bridge-remote').adapterUrl, controller, async () => {
     const current = await forwarder();
     pid = current.pid;
     assert.deepEqual(current.args, ['fixture.invalid', '18790']);
@@ -60,11 +61,52 @@ test('Remote owns the forwarder, supplies private machine auth, and stops it on 
 test('Remote reports forwarder failure rather than claiming a working agent', async () => {
   fs.unlinkSync(path.join(fixture, 'forwarder.json'));
   const controller = new AbortController();
-  await assert.rejects(runCloudflareForwarder(readConfig('environment-bridge-remote').adapterUrl, controller, async () => {
+  await assert.rejects(runRemoteForwarder(readConfig('environment-bridge-remote').adapterUrl, controller, async () => {
     const current = await forwarder();
     process.kill(current.pid, 'SIGTERM');
     await new Promise<void>(resolve => controller.signal.addEventListener('abort', () => resolve(), { once: true }));
-  }), /Cloudflare forwarder exited/);
+  }), /cloudflare forwarder exited/);
+});
+
+test('LAN/Wi-Fi SSH uses the configured machine and loopback gateway; owns cleanup', async () => {
+  const configPath = path.join(fixture, 'etc/services.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.services['environment-bridge-remote'].transport = 'ssh';
+  config.services['environment-bridge-remote'].sshTarget = 'operator@another-computer.invalid';
+  config.services['environment-bridge-remote'].sshGatewayPort = 9876;
+  // A Cloudflare credential file must not be read for an SSH route.
+  config.services['environment-bridge-remote'].accessEnvFile = '/missing/cloudflare.env';
+  fs.writeFileSync(configPath, JSON.stringify(config));
+  fs.copyFileSync(path.join(fixture, 'bin/connect-environment'), path.join(fixture, 'bin/ssh'));
+  fs.chmodSync(path.join(fixture, 'bin/ssh'), 0o700);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${path.join(fixture, 'bin')}:${originalPath}`;
+  fs.unlinkSync(path.join(fixture, 'forwarder.json'));
+  const controller = new AbortController();
+  let pid = 0;
+  try {
+    await runRemoteForwarder(readConfig('environment-bridge-remote').adapterUrl, controller, async () => {
+      const current = await forwarder();
+      pid = current.pid;
+      assert.deepEqual(current.args, ['-N', '-T', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
+        '-L', '127.0.0.1:18790:127.0.0.1:9876', '--', 'operator@another-computer.invalid']);
+      assert.equal(current.id, undefined);
+      assert.equal(current.secret, undefined);
+      controller.abort();
+    });
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  } finally { process.env.PATH = originalPath; }
+});
+
+test('missing SSH destination reports configuration error without starting bridge', async () => {
+  const configPath = path.join(fixture, 'etc/services.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.services['environment-bridge-remote'].sshTarget = '';
+  fs.writeFileSync(configPath, JSON.stringify(config));
+  let started = false;
+  await assert.rejects(runRemoteForwarder(readConfig('environment-bridge-remote').adapterUrl,
+    new AbortController(), async () => { started = true; }), /Configure.*SSH destination/);
+  assert.equal(started, false);
 });
 
 test.after(() => { fs.rmSync(fixture, { recursive: true, force: true }); });

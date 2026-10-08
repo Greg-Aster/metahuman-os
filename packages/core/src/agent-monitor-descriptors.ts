@@ -52,6 +52,9 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'interval',
   'inactivityThreshold',
   'adapterUrl',
+  'transport',
+  'sshTarget',
+  'sshGatewayPort',
   'cloudflareHostname',
   'accessEnvFile',
   'graph',
@@ -298,6 +301,17 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
 
   if (id === 'environment-bridge-remote') {
     variables.push(
+      { key: 'transport', label: 'Connection route', type: 'select',
+        value: typeof effective.transport === 'string' ? effective.transport : 'cloudflare',
+        options: ['ssh', 'cloudflare'], applyMode: 'restart', writable: true,
+        description: 'SSH for a configured machine on LAN/Wi-Fi; Cloudflare for an existing Access tunnel.' },
+      { key: 'sshTarget', label: 'SSH destination', type: 'text',
+        value: typeof effective.sshTarget === 'string' ? effective.sshTarget : '',
+        applyMode: 'restart', writable: true,
+        description: 'user@hostname, user@IP, or a configured SSH host alias. Requires established host trust and noninteractive SSH authentication on the MetaHuman host.' },
+      { key: 'sshGatewayPort', label: 'Gateway port on remote machine', type: 'port',
+        value: typeof effective.sshGatewayPort === 'number' ? effective.sshGatewayPort : 8790,
+        applyMode: 'restart', writable: true, description: 'The remote gateway adapter port, not its dashboard port.' },
       { key: 'cloudflareHostname', label: 'Cloudflare Hostname', type: 'text',
         value: typeof effective.cloudflareHostname === 'string' ? effective.cloudflareHostname : '',
         applyMode: 'restart', writable: true, description: 'Access TCP hostname for remote Body Control.' },

@@ -422,7 +422,7 @@ function skipNode(
  * Execute a node based on its type
  * This integrates with the actual cognitive system
  */
-async function executeNodeByType(
+export async function executeNodeByType(
   node: SvelteFlowNode,
   inputs: Record<string, any>,
   context: Record<string, any>

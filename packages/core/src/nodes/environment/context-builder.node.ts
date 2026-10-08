@@ -1,4 +1,5 @@
 import { defineNode } from '../types.js';
+import { PLANNING_DELEGATION_DESCRIPTION } from './planning-contract.js';
 import { withVisualObservationSchema } from '../../visual-observation.js';
 import type { EnvironmentObservation, EnvironmentVisualFrame } from '../../environment-interface/index.js';
 import {
@@ -85,6 +86,8 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
     { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
     { name: 'messages', type: 'array', description: 'Compact action-selector message array' },
+    { name: 'planningMessages', type: 'array', description: 'Original task messages for optional larger-model planning' },
+    { name: 'planningSchema', type: 'object', description: 'Original task schema without delegation' },
     { name: 'jsonSchema', type: 'object', description: 'Provider schema constrained to currently advertised capabilities' },
     { name: 'context', type: 'object', description: 'Structured environment context package' },
     { name: 'currentInstruction', type: 'string', description: 'Current unchanged user instruction' },
@@ -96,9 +99,11 @@ export const environmentContextBuilderNode = defineNode({
   ],
   properties: {
     purpose: 'combined',
+    planningDelegation: false,
     systemPrompt: '',
   },
   propertySchemas: {
+    planningDelegation: { type: 'boolean', default: false, label: 'Allow Planning Delegation', description: 'Expose the approved optional larger-model planning output for task-only decisions.' },
     purpose: { type: 'select', default: 'combined', label: 'Context Purpose',
       description: 'Task builds task-only JSON; conversation reuses evidence and the parsed selection. Combined preserves the contract of existing saved graphs.',
       options: [{ value: 'combined', label: 'Combined Selection' }, { value: 'task', label: 'Task Decision' }, { value: 'conversation', label: 'Conversation' }] },
@@ -123,10 +128,6 @@ export const environmentContextBuilderNode = defineNode({
       const commandDescriptions = Object.fromEntries(commands
         .filter((command: string) => typeof catalog[command] === 'string')
         .map((command: string) => [command, catalog[command]]));
-      if (environment) {
-        const { capabilities: _capabilities, ...observedEnvironment } = environment;
-        evidence.currentEnvironment = observedEnvironment;
-      }
       const message = JSON.stringify({ ...evidence, selectedTask: { ...selectedTask, commandDescriptions } });
       const images = Array.isArray(inputs.images) ? inputs.images : [];
       return { message, messages: [
@@ -248,14 +249,25 @@ export const environmentContextBuilderNode = defineNode({
       actionRouteSelected,
     });
 
+    const planningSchema = withVisualObservationSchema(jsonSchema, selectedFrames);
+    const planningMessages = [
+      { role: 'system', content: selectorContext },
+      { role: 'user', content: renderedContent(message) },
+    ];
+    const delegation = properties?.purpose === 'task' && properties.planningDelegation === true;
+    const delegatedSchema = delegation ? { ...planningSchema, anyOf: [...planningSchema.anyOf, {
+      type: 'object', description: PLANNING_DELEGATION_DESCRIPTION,
+      properties: { delegatePlanning: { const: true } }, required: ['delegatePlanning'], additionalProperties: false,
+    }] } : planningSchema;
     return {
+      planningMessages, planningSchema,
       selectedContext: JSON.parse(message),
       precomputedResponse: context.environmentInterpretation?.response,
       message,
-      jsonSchema: withVisualObservationSchema(jsonSchema, selectedFrames),
+      jsonSchema: delegatedSchema,
       frames: selectedFrames,
       messages: [
-        { role: 'system', content: selectorContext },
+        { role: 'system', content: delegation ? `${selectorContext}\n\n${PLANNING_DELEGATION_DESCRIPTION}` : selectorContext },
         {
           role: 'user',
           content: renderedContent(message),

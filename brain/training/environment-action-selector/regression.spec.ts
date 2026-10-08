@@ -9,7 +9,7 @@ import {
 } from '@metahuman/core'
 import { environmentActionParserNode } from '@metahuman/core/nodes'
 
-import { ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES } from './development-cases.js'
+import { DEVELOPMENT_CASES } from './generate-training-data.js'
 
 const regressionId = 'boredom-spiky-friend-head-tilt'
 const instruction = 'A fresh autonomous camera image shows a small fuzzy teal spiky friend. Decide whether one curious head tilt should be treated as expression or as an attempt to gain a new view.'
@@ -56,7 +56,7 @@ const expected: EnvironmentModelOutput = {
 
 test('the spiky-friend head-tilt regression exercises the generic information-gain contract only', async () => {
   assert.equal(
-    ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES.some(value => value.id === regressionId),
+    DEVELOPMENT_CASES.some(value => value.id === regressionId),
     false,
     'the exact regression must remain outside development training data',
   )

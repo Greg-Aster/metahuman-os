@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate one Qwen3.5-0.8B action-selector adapter on its development fold."""
+"""Evaluate a specialist checkpoint or base using the same native template as training."""
 
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adapter", required=True)
     parser.add_argument("--config", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--fold", type=int, required=True)
+    parser.add_argument("--fold", type=int, default=-1)
+    parser.add_argument("--split", choices=["development", "evaluation"], default="development")
+    parser.add_argument("--base", action="store_true")
     return parser.parse_args()
 
 
@@ -37,15 +39,14 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def prompt(record: dict[str, Any]) -> str:
-    return (
-        f"<|im_start|>system\n{record['system']}<|im_end|>\n"
-        f"<|im_start|>user\n{record['user']}<|im_end|>\n"
-        "<|im_start|>assistant\n"
-    )
+def prompt(record: dict[str, Any], tokenizer: Any) -> str:
+    return tokenizer.apply_chat_template([
+        {"role": "system", "content": record["system"]},
+        {"role": "user", "content": record["user"]},
+    ], tokenize=False, add_generation_prompt=True, enable_thinking=False)
 
 
-def validate_records(records: list[dict[str, Any]], fold: int) -> None:
+def validate_records(records: list[dict[str, Any]], fold: int, split: str, specialist: str) -> None:
     if not records:
         raise ValueError("development validation data is empty")
     seen: set[str] = set()
@@ -56,16 +57,15 @@ def validate_records(records: list[dict[str, Any]], fold: int) -> None:
             raise ValueError(f"invalid or duplicate record id: {record_id}")
         seen.add(record_id)
         if (
-            metadata.get("sourceSplit") != "development"
+            metadata.get("sourceSplit") != split
+            or metadata.get("specialist") != specialist
             or metadata.get("systemOwned") is not True
-            or metadata.get("developmentFold") != fold
+            or (split == "development" and metadata.get("developmentFold") != fold)
         ):
             raise ValueError(f"{record_id}: evaluator accepts only its system-owned development fold")
         expected = json.loads(record.get("output", ""))
-        if not isinstance(expected, dict) or sorted(expected.keys()) != [
-            "actions", "movementRequest", "response", "taskDecision"
-        ]:
-            raise ValueError(f"{record_id}: complete typed action-selector output is required")
+        if not isinstance(expected, dict):
+            raise ValueError(f"{record_id}: expected structured specialist output")
 
 
 def main() -> None:
@@ -76,18 +76,19 @@ def main() -> None:
     output_path = Path(args.output).resolve()
     config = read_json(config_path)
     records = read_jsonl(data_path)
-    validate_records(records, args.fold)
+    validate_records(records, args.fold, args.split, config.get("specialist"))
 
     if config.get("owner") != "environment-action-selector":
         raise ValueError("config owner must be environment-action-selector")
     if config.get("base_model") != "unsloth/Qwen3.5-0.8B":
         raise ValueError("evaluator is locked to the selected Qwen3.5-0.8B base")
-    if not adapter_path.is_dir() or not (adapter_path / "adapter_config.json").is_file():
+    if not args.base and (not adapter_path.is_dir() or not (adapter_path / "adapter_config.json").is_file()):
         raise ValueError(f"adapter checkpoint is incomplete: {adapter_path}")
 
     dtype = torch.bfloat16 if config.get("dtype") == "bfloat16" else torch.float16
     model, tokenizer = FastModel.from_pretrained(
-        model_name=str(adapter_path),
+        model_name=config["base_model"] if args.base else str(adapter_path),
+        text_only=True,
         max_seq_length=int(config.get("max_seq_length", 1536)),
         load_in_4bit=False,
         load_in_16bit=True,
@@ -95,15 +96,19 @@ def main() -> None:
         dtype=dtype,
         attn_implementation="sdpa",
     )
+    # The text-only loader drops the parent multimodal architecture name.
+    # Unsloth generation reads this metadata; describe the actual loaded class.
+    underlying = model.get_base_model() if hasattr(model, "get_base_model") else model
+    model.config.architectures = [type(underlying).__name__]
     FastModel.for_inference(model)
     if hasattr(model, "config"):
         model.config.use_cache = True
     tokenizer.padding_side = "left"
 
-    batch_size = int(config.get("per_device_eval_batch_size", 8))
+    batch_size = int(config.get("generation_batch_size", 4))
     max_new_tokens = int(config.get("generation_max_new_tokens", 384))
     max_sequence_length = int(config.get("max_seq_length", 1536))
-    prompts = [prompt(record) for record in records]
+    prompts = [prompt(record, tokenizer) for record in records]
     prompt_token_ids = tokenizer(prompts, add_special_tokens=False, truncation=False)["input_ids"]
     prompt_width = max(len(token_ids) for token_ids in prompt_token_ids)
     if prompt_width + max_new_tokens > max_sequence_length:
@@ -113,14 +118,14 @@ def main() -> None:
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    model_name = f"unsloth/Qwen3.5-0.8B:action-selector:fold-{args.fold}:{adapter_path.name}"
+    model_name = config["base_model"] if args.base else str(adapter_path)
     with output_path.open("w", encoding="utf-8") as handle:
         for offset in range(0, len(records), batch_size):
             batch = records[offset:offset + batch_size]
             encoded = tokenizer(
                 prompts[offset:offset + batch_size],
-                padding="max_length",
-                max_length=prompt_width,
+                padding=True,
+                add_special_tokens=False,
                 truncation=False,
                 return_tensors="pt",
             )
@@ -148,7 +153,13 @@ def main() -> None:
                 metadata = record["metadata"]
                 handle.write(json.dumps({
                     "model": model_name,
+                    "provider": "transformers",
                     "fold": args.fold,
+                    "sourceSplit": args.split,
+                    "specialist": config["specialist"],
+                    "device": str(model.device),
+                    "batchSize": len(batch),
+                    "user": record["user"],
                     "recordId": metadata["recordId"],
                     "sourceCaseId": metadata["sourceCaseId"],
                     "suite": metadata["suite"],

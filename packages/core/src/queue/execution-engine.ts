@@ -225,6 +225,10 @@ export class ExecutionEngine {
   private registerDefaultHandlers(): void {
     // Deadlines use the existing Coordinator's durable notBefore admission.
     this.registerHandler('environment.active-task-deadline', async task => task.input);
+    this.registerHandler('environment.conversation', (task, context) => withTaskUserContext(task, async () => {
+      const { runEnvironmentConversationWork } = await import('../environment-interface/conversation.js');
+      return runEnvironmentConversationWork(task.input as unknown as Parameters<typeof runEnvironmentConversationWork>[0], task.username!, context.signal);
+    }));
     this.registerHandler('environment.interpret', (task, context) => withTaskUserContext(task, async () => {
       if (!task.durable || task.durable.executionId !== task.input.identity?.executionId)
         throw new Error('Instruction interpretation requires its durable execution owner');

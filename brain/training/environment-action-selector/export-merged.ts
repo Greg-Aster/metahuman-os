@@ -12,6 +12,7 @@ const EXPORTER_PATH = resolve(REPOSITORY_ROOT, 'brain/training/environment-actio
 
 interface FinalProvenance {
   owner?: string
+  specialist?: 'intent' | 'task'
   mode?: string
   baseModel?: string
   priorHeldOutUsed?: boolean
@@ -61,6 +62,7 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
   const finalPath = resolve(root, 'final')
   const adapterPath = resolve(finalPath, 'adapter')
   const outputPath = resolve(finalPath, 'merged-gguf')
+  const trainingConfig = JSON.parse(await readFile(resolve(finalPath, 'training-config.json'), 'utf8'))
   const provenance = JSON.parse(await readFile(resolve(finalPath, 'run-provenance.json'), 'utf8')) as FinalProvenance
   if (
     provenance.owner !== 'environment-action-selector'
@@ -81,6 +83,9 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
     && name.toLowerCase().includes('q4_k_m')
     && !name.toLowerCase().includes('mmproj'))
   if (deployable.length !== 1) throw new Error(`Expected one deployable Q4_K_M GGUF, found ${deployable.length}`)
+  const loraDirectory = resolve(outputPath, 'adapter-gguf')
+  const loraFiles = (await readdir(loraDirectory)).filter(name => name.endsWith('.gguf'))
+  if (loraFiles.length !== 1) throw new Error('Expected one GGUF LoRA export')
   const artifact = deployable[0]!
   const artifactPath = resolve(outputPath, artifact)
   const artifactStat = await stat(artifactPath)
@@ -89,7 +94,8 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
       version: 1,
       owner: 'environment-action-selector',
       purpose: 'merged-quantized-runtime-artifact',
-      model: 'environment-action-selector-0.8b:v2',
+      specialist: provenance.specialist,
+      model: `environment-${provenance.specialist}-0.8b`,
       baseModel: provenance.baseModel,
       selectionEvidence: provenance.selectionEvidence,
       quantization: 'Q4_K_M',
@@ -97,15 +103,21 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
       artifactBytes: artifactStat.size,
       artifactSha256: await fileDigest(artifactPath),
       mtpIncluded: false,
+      projector: 'mmproj-base.BF16.gguf',
+      projectorSha256: await fileDigest(resolve(outputPath, 'mmproj-base.BF16.gguf')),
+      visualTraining: false,
+      loraArtifact: `adapter-gguf/${loraFiles[0]}`,
+      loraSha256: await fileDigest(resolve(loraDirectory, loraFiles[0]!)),
       exportedAt: new Date().toISOString(),
     }, null, 2)}\n`),
     writeFile(resolve(outputPath, 'Modelfile'), [
       `FROM ./${artifact}`,
+      'FROM ./mmproj-base.BF16.gguf',
       'TEMPLATE {{ .Prompt }}',
       'RENDERER qwen3.5',
       'PARSER qwen3.5',
-      'PARAMETER num_ctx 2048',
-      'PARAMETER num_predict 384',
+      `PARAMETER num_ctx ${trainingConfig.max_seq_length}`,
+      `PARAMETER num_predict ${trainingConfig.generation_max_new_tokens}`,
       'PARAMETER temperature 0',
       '',
     ].join('\n')),

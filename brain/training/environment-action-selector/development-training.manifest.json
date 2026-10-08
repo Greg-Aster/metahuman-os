@@ -1,20 +1,23 @@
 {
-  "version": 1,
+  "version": 2,
   "owner": "environment-action-selector",
-  "contract": "@metahuman/core Environment model output",
-  "sourceCaseCount": 124,
-  "recordCount": 1488,
-  "recordsPerSourceCase": 12,
+  "sourceCaseCount": 96,
+  "recordCount": 768,
   "foldCount": 4,
-  "foldRecords": {
-    "0": 372,
-    "1": 372,
-    "2": 372,
-    "3": 372
+  "specialists": {
+    "intent": {
+      "records": 192,
+      "evaluationRecords": 40
+    },
+    "task": {
+      "records": 576,
+      "evaluationRecords": 132
+    }
   },
-  "datasetDigest": "79d348e3049c889b60452d2fba5878ec2ab1d5338b0cb8bff7d26c86e4e93398",
-  "developmentSourceDigest": "062a51023e44c3d934c2d40ac7303eb1e295ab9e3be0b11255cbd5920e76ce46",
-  "activePromptDigest": "198ef086f9846478e0e5a1c863290bde63fdb48a535f43012a2c2568e7b62681",
+  "datasetDigest": "a55ea96d0da3ad52678ae8e30d73136d1c7df2fd7e4b1868fe092fa55cf6c16e",
+  "evaluationDigest": "4fec9aae6f19a9456084234eae50e830cbd59ee7048282fcfe994827aaa3942b",
+  "developmentSourceDigest": "e1a5e089fd964d740eabb406c06e30199f83af60729b4c87d4f8782a38669ffe",
+  "graphPropertiesDigest": "086d7785c674daab8c72119e8c67eabf39dbbbd3dc6348adda6d78f469cc1a95",
   "priorLockedDigest": "6735070303a1bf95e64aca7bca35c4007fc29e614ce3bcd42c49b0b88a7194f6",
   "priorLockedCaseCount": 16,
   "priorOneShotCompletedAt": "2026-08-05T19:30:14.258Z",

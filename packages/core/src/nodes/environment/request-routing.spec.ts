@@ -13,8 +13,16 @@ const calls: any[] = []
 let routing: Record<string, boolean> = {}
 let choice: any = { program: null, taskDecision: null }
 let speech = 'Hello.'
+let delegatedPlan: any
+let speechError: Error | undefined
+let beforeSpeech: (() => void) | undefined
 mock.module('../../model-router.js', { namedExports: { ...router,
   callLLM: async (options: any) => {
+    if (options.role === 'persona' && options.options?.format === 'json') {
+      calls.push(structuredClone({ role: options.role, modelId: options.modelId, messages: options.messages, options: options.options }))
+      return { content: JSON.stringify(delegatedPlan) }
+    }
+    if (options.role === 'persona') { beforeSpeech?.(); if (speechError) throw speechError }
     calls.push(structuredClone({ role: options.role, modelId: options.modelId, messages: options.messages, options: options.options }))
     return { content: options.role === 'persona' ? speech : JSON.stringify(options.role === 'orchestrator' ? routing : choice) }
   },
@@ -28,6 +36,9 @@ const { eventBus } = await import('../../infrastructure/event-bus/client.js')
 eventBus.disconnect()
 after(() => { eventBus.disconnect(); mock.restoreAll() })
 const fullGraph = JSON.parse(fs.readFileSync(new URL('../../../../../etc/cognitive-graphs/environment-mode.json', import.meta.url), 'utf8')) as SvelteFlowGraph
+fs.mkdirSync(path.join(isolatedRoot, 'etc/cognitive-graphs'), { recursive: true })
+fs.copyFileSync(new URL('../../../../../etc/cognitive-graphs/environment-conversation-mode.json', import.meta.url),
+  path.join(isolatedRoot, 'etc/cognitive-graphs/environment-conversation-mode.json'))
 const intentProperties = fullGraph.nodes.find(node => node.id === 'intent-orchestrator')!.data.properties!
 const routes = (selected: string[] = []) => Object.fromEntries([
   'needsResponse', 'needsConversationHistory', 'needsExecutionContext', 'needsPersona', 'needsMemory',
@@ -44,14 +55,18 @@ const activeExecutions = [{ executionId: 'ongoing-1', canSteer: true, objective:
 const observation = { sessionId: 'robot-1', environmentId: 'fixture', timestamp: '2026-10-07T12:00:00Z',
   capabilities: { actions: ['robotCommand'], robotCommands: ['wave'], robotCommandDescriptions: { wave: 'Wave one front leg.' } }, state: {} }
 
-async function run(request: string, selected: string[], response = { response: 'Hello.', program: null, taskDecision: null } as any) {
+async function run(request: string, selected: string[], response = { response: 'Hello.', program: null, taskDecision: null } as any, options: { delegatedPlan?: any; failSpeech?: boolean; beforeSpeech?: (reads: string[]) => void } = {}) {
   calls.length = 0
   routing = routes(selected)
   const { response: conversation, ...taskChoice } = response
+  delegatedPlan = options.delegatedPlan
   choice = taskChoice
   speech = conversation ?? 'Hello.'
-  const expectedCalls = selected.includes('needsResponse') && response.executionDisposition !== 'steer' ? 3 : 2
+  const parentCalls = taskChoice.delegatePlanning ? 3 : 2
+  const expectedCalls = parentCalls + (selected.includes('needsResponse') && response.executionDisposition !== 'steer' ? 1 : 0)
   const reads: string[] = []
+  beforeSpeech = () => options.beforeSpeech?.(reads)
+  speechError = options.failSpeech ? new Error('Simulated speech generation failure') : undefined
   const store = new ExecutionStore(':memory:')
   const definition = executionDefinition(graph)
   const execution = store.create('routing-fixture', definition)
@@ -70,23 +85,47 @@ async function run(request: string, selected: string[], response = { response: '
     persona_loader: async () => { reads.push('persona'); return { persona: {}, formatted: 'fixture-persona' } },
     robot_status_out: async () => { reads.push('status-out'); return { persisted: true } },
     environment_active_task: async () => { reads.push('physical-dispatch'); return { finished: false } },
-    tts: async () => ({}), stream_writer: async () => ({}),
+    tts: async (_inputs: any, context: any) => { reads.push(`speech:${context.ttsGeneration}:${context.memoryTimestamp}`); return {} }, stream_writer: async () => ({}),
   }
   const originals = new Map(Object.keys(replacements).map(key => [key, nodeExecutors.get(key)!]))
   for (const [key, execute] of Object.entries(replacements)) nodeExecutors.set(key, execute)
   try {
-    const result = await executeGraph(graph, { userMessage: request, cognitiveMode: 'environment',
+    const result = await executeGraph(graph, { userMessage: request, cognitiveMode: 'environment', memoryTimestamp: 123, ttsGeneration: 7,
       conversationHistory: [{ role: 'user', content: 'implicit-history-must-not-leak' }],
     }, undefined, undefined, { store, lease })
     assert.equal(result.status, 'completed', result.error?.stack)
-    assert.equal(calls.length, expectedCalls)
-    const dispatches = store.pendingDispatches().map(item => ({ kind: item.kind, payload: item.payload as Record<string, any> }))
-    if (dispatches.length) {
-      await executeGraph(graph, { userMessage: request, cognitiveMode: 'environment' }, undefined, undefined, { store, lease, resume: true })
-      assert.equal(store.pendingDispatches().length, 1, 'Replaying saved outputs must not duplicate the handoff')
-      assert.equal(calls.length, expectedCalls, 'A completed checkpoint must not repeat model calls')
+    const { getGraphOutput } = await import('../../graph-executor.js')
+    assert.equal(getGraphOutput(result)?.response || '', '', 'Planning JSON must never become the chat response')
+    assert.equal(calls.length, parentCalls, 'The parent never waits for conversation inference')
+    const effects = store.pendingDispatches()
+    const responseWork = effects.find(item => (item.payload as any)?.handler === 'environment.conversation')
+    let delivery: any, deliveryError: Error | undefined
+    if (responseWork) {
+      const { ModelRouterNode } = await import('../llm/model-router.node.js')
+      const input = (responseWork.payload as any).input
+      assert.equal(input.graphContext.memoryTimestamp, 123)
+      assert.equal(input.graphContext.ttsGeneration, 7)
+      try {
+        const generated = await ModelRouterNode.execute(input.messages, input.graphContext, input.properties)
+        const namespace = `work:${responseWork.effectId}:graph:0`
+        const childOptions = { store, lease, invocationId: namespace, checkpointNamespace: namespace, externalChild: true }
+        delivery = await executeGraph(input.graph, { ...input.graphContext, environmentConversationResponse: generated.response },
+          undefined, undefined, childOptions)
+        assert.equal(delivery.status, 'completed', delivery.error?.stack)
+        const presented = reads.filter(value => value.startsWith('speech:')).length
+        await executeGraph(input.graph, input.graphContext, undefined, undefined, { ...childOptions, resume: true })
+        assert.equal(reads.filter(value => value.startsWith('speech:')).length, presented, 'Delivery replay cannot repeat speech')
+      } catch (error) { if (!options.failSpeech) throw error; deliveryError = error as Error }
     }
-    return { result, reads, dispatches, envelope: JSON.parse(calls[1].messages[1].content) }
+    assert.equal(calls.length, options.failSpeech ? parentCalls : expectedCalls)
+    const count = store.pendingDispatches().length
+    const physicalCount = reads.filter(value => value === 'physical-dispatch').length
+    await executeGraph(graph, { userMessage: request, cognitiveMode: 'environment' }, undefined, undefined, { store, lease, resume: true })
+    assert.equal(store.pendingDispatches().length, count, 'Parent replay cannot duplicate work')
+    assert.equal(reads.filter(value => value === 'physical-dispatch').length, physicalCount, 'Parent replay cannot repeat an action')
+    assert.equal(calls.length, options.failSpeech ? parentCalls : expectedCalls, 'Parent replay cannot repeat inference')
+    const dispatches = effects.filter(item => item.kind === 'execution_event').map(item => ({ kind: item.kind, payload: item.payload as Record<string, any> }))
+    return { result, delivery, deliveryError, reads, dispatches, envelope: JSON.parse(calls[1].messages[1].content) }
   } finally {
     for (const [key, execute] of originals) nodeExecutors.set(key, execute)
     store.close()
@@ -110,7 +149,7 @@ test('request-only intent payload is unchanged by explicit or implicit history a
 
 test('ordinary greeting skips optional source reads and the editor note', async () => {
   const { result, reads, envelope } = await run('Hello', ['needsResponse'])
-  assert.deepEqual(reads, ['bridge', 'observations', 'status-out'])
+  assert.deepEqual(reads.filter(value => !value.startsWith('speech:')), ['bridge', 'observations', 'status-out'])
   for (const id of ['conversation-history', 'execution', 'memory-router', 'robot-status', '11', 'workflow-guide', 'persona-loader']) {
     assert.equal(result.nodes.get(id)?.status, 'skipped', id)
   }
@@ -184,7 +223,7 @@ test('steering transfers the unchanged request once without local speech, status
   assert.equal(dispatches[0].payload.executionId, 'ongoing-1')
   assert.equal(dispatches[0].payload.context.userMessage, 'Do that again')
   assert.equal(dispatches[0].payload.context.userMessageEntry.id, 'current-turn')
-  for (const id of ['conversation-buffer', 'tts-out', 'active-task', 'robot-status-out']) assert.equal(result.nodes.get(id)?.status, 'skipped', id)
+  for (const id of ['conversation-model', 'active-task', 'robot-status-out']) assert.equal(result.nodes.get(id)?.status, 'skipped', id)
   assert.equal(reads.includes('physical-dispatch'), false)
 })
 
@@ -224,7 +263,7 @@ test('context-selected follow-up can choose an action after an early no-action g
 
 
 test('task and conversation are separate model calls sharing selected evidence without repeated reads', async () => {
-  const { result, reads } = await run('Repeat the movement and explain it',
+  const { delivery, reads } = await run('Repeat the movement and explain it',
     ['needsResponse', 'needsPersona', 'needsConversationHistory', 'needsMemory'], {
       response: 'The movement is selected.',
       program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] },
@@ -246,12 +285,12 @@ test('task and conversation are separate model calls sharing selected evidence w
     assert.deepEqual(conversation[field], task[field], field)
   }
   assert.equal('capabilityRules' in conversation, false)
-  assert.equal('capabilities' in conversation.currentEnvironment, false)
+  assert.deepEqual(conversation.currentEnvironment.capabilities, task.currentEnvironment.capabilities)
   assert.equal(conversation.selectedTask.program.steps[0].action.command, 'wave')
   assert.deepEqual(conversation.selectedTask.commandDescriptions, { wave: 'Wave one front leg.' })
   assert.equal(conversation.selectedTask.actionAdmission.admitted, true)
   assert.equal(conversation.selectedTask.taskDecision.objectiveComplete, false)
-  assert.equal(result.nodes.get('conversation-buffer')?.outputs?.response, 'The movement is selected.')
+  assert.equal(delivery.nodes.get('conversation-buffer')?.outputs?.response, 'The movement is selected.')
   for (const source of ['persona', 'history', 'memory']) assert.equal(reads.filter(item => item === source).length, 1)
 })
 
@@ -263,7 +302,7 @@ test('no-response and steering routes skip conversation inference and presentati
   ] as Array<[string[], any]>) {
     const { result } = await run('Current request', selected, choice)
     assert.equal(calls.length, 2)
-    for (const id of ['conversation-context', 'conversation-model', 'conversation-buffer', 'tts-out', '12']) {
+    for (const id of ['conversation-context', 'conversation-model']) {
       assert.equal(result.nodes.get(id)?.status, 'skipped', id)
     }
   }
@@ -315,4 +354,57 @@ test('existing saved combined graphs retain their output contract while Environm
   const task = await environmentContextBuilderNode.execute({ instruction: 'Current request', routingAnalysis: routes(['needsResponse']) }, {},
     fullGraph.nodes.find(node => node.id === '3')!.data.properties!)
   for (const branch of task.jsonSchema.anyOf) assert.equal(branch.required.includes('response'), false)
+})
+
+
+test('a capability question retains the catalog even when no program is selected', async () => {
+  await run('What movements can you perform?', ['needsResponse', 'needsEnvironment'])
+  const envelope = JSON.parse(calls[2].messages[1].content)
+  assert.equal(envelope.selectedTask.program, null)
+  assert.deepEqual(envelope.currentEnvironment.capabilities.robotCommandCatalog, { wave: 'Wave one front leg.' })
+})
+
+test('selected motion starts before delayed speech and survives a failed conversation call', async () => {
+  const selection = { response: 'I can wave.', program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] },
+    taskDecision: { outcome: 'act', objective: 'Wave', reason: 'Requested gesture', completionCriteria: 'Wave completes',
+      continuationPolicy: 'none', requiredCompletionBasis: 'action_result' } }
+  for (const failSpeech of [false, true]) {
+    const result = await run('Wave for me', ['needsAction', 'needsResponse'], selection, {
+      failSpeech, beforeSpeech: reads => assert.equal(reads.filter(value => value === 'physical-dispatch').length, 1,
+        'Slow inference starts only after the parent has been free to dispatch the selected program'),
+    })
+    assert.equal(result.reads.filter(value => value === 'physical-dispatch').length, 1)
+    assert.equal(result.result.status, 'completed')
+    if (failSpeech) assert.match(result.deliveryError!.message, /Simulated speech generation failure/)
+    else assert.equal(result.reads.filter(value => value === 'speech:7:123').length, 1)
+  }
+})
+
+
+test('the small model can delegate the unchanged context and the larger result uses the same executor', async () => {
+  const program = { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] }
+  const plan = { program, taskDecision: { outcome: 'act', objective: 'Wave', reason: 'Requested gesture',
+    completionCriteria: 'Wave completes', continuationPolicy: 'none', requiredCompletionBasis: 'action_result' } }
+  const result = await run('Wave for me', ['needsAction'], { delegatePlanning: true }, { delegatedPlan: plan })
+  assert.deepEqual(calls.map(value => value.modelId), ['ollama.qwen3.5:0.8b', 'ollama.qwen3.5:0.8b', undefined])
+  assert.deepEqual(calls[2].messages[1], calls[1].messages[1])
+  assert.match(calls[1].messages[0].content, /delegatePlanning/)
+  assert.equal(calls[2].messages[0].content.includes('delegatePlanning'), false)
+  assert.ok(calls[1].options.jsonSchema.anyOf.some((branch: any) => branch.properties.delegatePlanning))
+  assert.equal(calls[2].options.jsonSchema.anyOf.some((branch: any) => branch.properties.delegatePlanning), false)
+  assert.equal(result.result.nodes.get('6')!.outputs!.program.steps[0].action.command, 'wave')
+  assert.equal(result.result.nodes.get('6')!.outputs!.program.steps[0].action.sessionId, 'robot-1')
+  assert.equal(result.reads.filter(value => value === 'physical-dispatch').length, 1)
+  assert.equal(result.result.nodes.get('6')!.outputs!.rawResponse, JSON.stringify(plan))
+})
+
+test('delegation also preserves the larger model no-action choice and reports invalid or recursive results', async () => {
+  const result = await run('Consider the request', [], { delegatePlanning: true }, { delegatedPlan: { program: null, taskDecision: null } })
+  assert.equal(result.reads.includes('physical-dispatch'), false)
+  const { environmentTaskPlannerNode } = await import('./task-planner.node.js')
+  const properties = fullGraph.nodes.find(node => node.id === '6')!.data.properties!
+  for (const output of [{ delegatePlanning: true }, { program: { steps: [] }, taskDecision: null }]) {
+    delegatedPlan = output
+    await assert.rejects(environmentTaskPlannerNode.execute({ response: '{"delegatePlanning":true}', planningMessages: [{ role: 'user', content: 'Original' }], planningSchema: {} }, {}, properties), /Delegated planning failed/)
+  }
 })

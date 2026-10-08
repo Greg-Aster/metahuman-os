@@ -22,7 +22,7 @@ interface Options {
 
 function parseOptions(arguments_: string[]): Options {
   const options: Options = {
-    root: resolve(OUTPUT_ROOT, 'qwen3.5-0.8b-cv-001'),
+    root: resolve(OUTPUT_ROOT, 'intent-cv-001'),
     folds: [...Array(DEVELOPMENT_FOLD_COUNT).keys()],
     dryRun: false,
     checkpointPolicy: 'best-loss',
@@ -82,7 +82,7 @@ async function runFold(root: string, fold: number, checkpointPolicy: Options['ch
     EVALUATOR_PATH,
     '--data', validation,
     '--adapter', adapter,
-    '--config', CONFIG_PATH,
+    '--config', resolve(foldRoot, 'training-config.json'),
     '--output', output,
     '--fold', String(fold),
   ], { cwd: REPOSITORY_ROOT, env: process.env, stdio: 'inherit' })
@@ -96,9 +96,9 @@ async function runFold(root: string, fold: number, checkpointPolicy: Options['ch
 export async function main(arguments_: string[] = process.argv.slice(2)): Promise<void> {
   const options = parseOptions(arguments_)
   await Promise.all([access(PYTHON_PATH), access(EVALUATOR_PATH), access(CONFIG_PATH)])
-  console.log(`Evaluation folds: ${options.folds.join(', ')}${options.folds.length > 1 ? ' (parallel)' : ''}; checkpoint policy: ${options.checkpointPolicy}`)
+  console.log(`Evaluation folds: ${options.folds.join(', ')}${options.folds.length > 1 ? ' (sequential GPU jobs)' : ''}; checkpoint policy: ${options.checkpointPolicy}`)
   if (options.dryRun) return
-  await Promise.all(options.folds.map(fold => runFold(options.root, fold, options.checkpointPolicy)))
+  for (const fold of options.folds) await runFold(options.root, fold, options.checkpointPolicy)
   console.log('Development-fold evaluation complete')
 }
 

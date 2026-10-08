@@ -4,6 +4,7 @@
   import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
   import { get } from 'svelte/store';
   import { isOwner } from '../stores/security-policy';
+  import BodyConnectionSelector from './BodyConnectionSelector.svelte';
   import EnvironmentBridgeDiagnostics from './EnvironmentBridgeDiagnostics.svelte';
   import type { EnvironmentBridgeDiagnosticsSnapshot } from '../lib/client/environment-bridge-diagnostics-types';
 
@@ -114,6 +115,7 @@
   let controllingAgent = '';
   let refreshing = false;
   let savingField = '';
+  let connectingBody = false;
   let fieldDrafts: Record<string, string | number | boolean | string[] | null> = {};
   let bulkAction: 'stop' | 'restart' | null = null;
   let feedback: { type: 'success' | 'error' | 'info'; text: string } | null = null;
@@ -323,6 +325,31 @@
     }
   }
 
+  async function connectBody(agent: string, settings: Record<string, string | number>) {
+    connectingBody = true;
+    try {
+      for (const [key, value] of Object.entries(settings)) {
+        const res = await apiFetch('/api/monitor/agent-variable', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent, key, value }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) throw new Error(data.error || `Could not save ${key}`);
+      }
+      selectedAgentName = agent;
+      if (runningAgents.some(item => item.name === agent)) {
+        await controlAgent('restart', agent);
+      } else {
+        await runAgent(agent);
+      }
+    } catch (err) {
+      showFeedback('error', `Connection settings were not fully saved; no connection switch requested. ${err instanceof Error ? err.message : err}`);
+      await refreshSnapshot().catch(() => {});
+    } finally {
+      connectingBody = false;
+    }
+  }
+
   async function saveVariable(panel: AgentDataPanel, variable: AgentVariable) {
     if (!variable.writable) return;
     const key = fieldKey(panel.agentId, variable.key);
@@ -502,6 +529,13 @@
     </div>
 
     <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+      <BodyConnectionSelector
+        agents={startableAgents}
+        activeAgentId={runningAgents.find(agent => agent.name === 'environment-bridge-local' || agent.name === 'environment-bridge-remote')?.name || ''}
+        busy={connectingBody || Boolean(startingAgent) || Boolean(controllingAgent) || Boolean(savingField)}
+        onConnect={connectBody}
+      />
+
       <section class="space-y-2">
         <div class="flex items-center justify-between">
           <h3 class="m-0 text-[0.68rem] font-semibold uppercase text-gray-500 dark:text-gray-400">Active Services & Agents</h3>
@@ -695,6 +729,12 @@
                             on:change={(event) => setDraftValue(selectedAgent.agentId, variable, event.currentTarget.checked)}
                             class="mt-1 h-4 w-4 accent-gray-900 dark:accent-gray-100"
                           />
+                        {:else if variable.type === 'select'}
+                          <select value={String(draftValue(selectedAgent.agentId, variable))}
+                            on:change={(event) => setDraftValue(selectedAgent.agentId, variable, event.currentTarget.value)}
+                            class="mt-1 w-full rounded border bg-transparent p-2 text-xs">
+                            {#each variable.options ?? [] as option}<option value={option}>{option}</option>{/each}
+                          </select>
                         {:else}
                           <input
                             type={variable.type === 'number' || variable.type === 'port' ? 'number' : variable.type === 'url' ? 'url' : 'text'}

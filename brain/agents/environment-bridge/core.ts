@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { runCloudflareForwarder } from './cloudflare.js';
+import { runRemoteForwarder } from './forwarder.js';
 import path from 'node:path';
 import WebSocket, { type RawData } from 'ws';
 import {
@@ -1076,7 +1076,7 @@ export async function run(agentId: 'environment-bridge-local' | 'environment-bri
   try {
     const config = readConfig(agentId);
     if (agentId === 'environment-bridge-remote') {
-      await runCloudflareForwarder(config.adapterUrl, controller, () => runEnvironmentBridgeAgent(controller.signal, config));
+      await runRemoteForwarder(config.adapterUrl, controller, () => runEnvironmentBridgeAgent(controller.signal, config));
     } else {
       await runEnvironmentBridgeAgent(controller.signal, config);
     }

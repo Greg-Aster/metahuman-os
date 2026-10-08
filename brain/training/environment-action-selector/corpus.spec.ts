@@ -1,105 +1,66 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-
-import { validateEnvironmentSelectorOutput } from '@metahuman/core'
 import { environmentActionParserNode } from '@metahuman/core/nodes'
+import { loadPriorEvaluationEvidence, sha256 } from './corpus.js'
+import { ROUTE_FIELDS } from './development-cases.js'
+import { DEVELOPMENT_CASES, EVALUATION_CASES, buildDevelopmentRecords, validateDevelopmentRecords } from './generate-training-data.js'
 
-import { loadPriorEvaluationEvidence } from './corpus.js'
-import { ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES } from './development-cases.js'
-import {
-  RECORDS_PER_SOURCE_CASE,
-  buildDevelopmentRecords,
-  validateDevelopmentRecords,
-} from './generate-training-data.js'
-
-function authorizesPhysicalWork(output: string): boolean {
-  const validation = validateEnvironmentSelectorOutput(output)
-  return Boolean(
-    validation.value?.program?.steps.some(step => step.kind === 'generatedMotion' || step.kind === 'behavior' || step.kind === 'action' && ['robotCommand', 'visualApproach'].includes(step.action.type!)),
-  )
-}
-
-test('all sanitized source outputs satisfy the shared strict Core contract', async () => {
-  const { lock, receipt } = await loadPriorEvaluationEvidence()
-  assert.equal(receipt.status, 'completed')
-  assert.equal(receipt.heldOutDigest, lock.digest)
-  assert.equal(new Set(ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES.map(value => value.id)).size, ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES.length)
-  assert.equal(ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES.some(value => lock.caseIds.includes(value.id)), false)
-
-  for (const sourceCase of ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES) {
-    const output = JSON.stringify(sourceCase.expected)
-    const validation = validateEnvironmentSelectorOutput(output, sourceCase.observation.sessionId)
-    assert.equal(validation.valid, true, `${sourceCase.id}: ${validation.errors.join('; ')}`)
-    const parsed = await environmentActionParserNode.execute({
-      response: output,
-      observation: sourceCase.observation,
-      sessionId: sourceCase.observation.sessionId,
-    }, {} as never, {} as never)
-    const expectedWork = Boolean(sourceCase.expected.program)
-    assert.equal(Boolean(parsed.valid), expectedWork, `${sourceCase.id}: capability admission changed`)
-  }
-})
-
-test('generator uses the runtime formatter and excludes profile, persona, and prior locked data', async () => {
+const recordsPromise = buildDevelopmentRecords()
+test('both specialists use valid runtime outputs; advertised commands pass capability admission', async () => {
   const { lock } = await loadPriorEvaluationEvidence()
-  const records = await buildDevelopmentRecords()
-  assert.equal(records.length, ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES.length * RECORDS_PER_SOURCE_CASE)
-  assert.deepEqual(validateDevelopmentRecords(records, ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES, lock.caseIds), [])
-  assert.equal(records.some(record => lock.caseIds.includes(record.metadata.sourceCaseId)), false)
-  assert.equal(records.some(record => /profiles\/|persona\/|greggles|Ainekio/i.test(`${record.system}\n${record.user}`)), false)
-  assert.equal(records.every(record => {
-    const parsed = JSON.parse(record.output) as Record<string, unknown>
-    return JSON.stringify(Object.keys(parsed).sort()) === JSON.stringify([
-      'program',
-      'response',
-      'taskDecision',
-    ])
-  }), true)
-})
-
-test('corpus balances positive work with negative authority and covers required routes', () => {
-  const cases = ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES
-  const positive = cases.filter(value => authorizesPhysicalWork(JSON.stringify(value.expected)))
-  const negative = cases.filter(value => !authorizesPhysicalWork(JSON.stringify(value.expected)))
-  assert.ok(positive.length >= 18)
-  assert.ok(negative.length >= 24)
-  assert.ok(cases.some(value => value.expected.program?.steps.some(step => step.kind === 'action' && step.action.type === 'robotCommand')))
-  assert.ok(cases.some(value => value.expected.program?.steps.some(step => step.kind === 'generatedMotion')))
-  assert.ok(cases.some(value => value.expected.program?.steps.some(step => step.kind === 'action' && step.action.type === 'captureImage')))
-  assert.ok(cases.some(value => value.suite === 'negation'))
-  assert.ok(cases.some(value => value.suite === 'quoted'))
-  assert.ok(cases.some(value => value.suite === 'hypothetical'))
-  assert.ok(cases.some(value => value.suite === 'future'))
-  assert.ok(cases.some(value => value.suite === 'stale-history'))
-  assert.ok(cases.some(value => value.suite === 'state-and-capability-query'))
-  assert.ok(cases.some(value => value.suite === 'target-relative'))
-})
-
-test('critical action boundaries have independent source cases on every fold', () => {
-  const cases = ENVIRONMENT_ACTION_SELECTOR_DEVELOPMENT_CASES
-  const criticalSuites = [
-    'persisted-failure',
-    'persisted-visual-complete',
-    'persisted-visual-incomplete',
-    'fresh-vision',
-    'vision-acquisition',
-    'vision-unavailable',
-    'authority-boundary-negative',
-    'authority-boundary-positive',
-    'target-relative',
-    'target-relative-unavailable',
-    'multi-step-advertised-action',
-  ]
-  for (const suite of criticalSuites) {
-    assert.deepEqual(
-      [...new Set(cases.filter(value => value.suite === suite).map(value => value.fold))].sort(),
-      [0, 1, 2, 3],
-      `${suite} is not represented on every fold`,
-    )
+  const records = await recordsPromise
+  assert.deepEqual(validateDevelopmentRecords(records, DEVELOPMENT_CASES, lock.caseIds), [])
+  for (const record of records.filter(item => item.metadata.specialist === 'task')) {
+    const envelope = JSON.parse(record.user)
+    const source = DEVELOPMENT_CASES.find(item => item.id === record.metadata.sourceCaseId)!
+    const output = JSON.parse(record.output)
+    if (!output.program) continue
+    const catalog = envelope.currentEnvironment.capabilities.robotCommandCatalog
+    const parsed = await environmentActionParserNode.execute({ response: record.output,
+      observation: { capabilities: { actions: envelope.currentEnvironment.capabilities.actions,
+        robotCommands: Object.keys(catalog ?? {}), robotCommandDescriptions: catalog } },
+      activeExecutions: source.inputs?.activeExecutions ?? [],
+    }, {} as never, { includeResponse: false } as never)
+    assert.equal(parsed.valid, true, `${record.metadata.recordId}: ${JSON.stringify(parsed.validationErrors)}`)
   }
-  for (let heldBackFold = 0; heldBackFold < 4; heldBackFold += 1) {
-    const trainingSide = cases.filter(value => value.fold !== heldBackFold)
-    assert.ok(trainingSide.filter(value => authorizesPhysicalWork(JSON.stringify(value.expected))).length >= 24)
-    assert.ok(trainingSide.filter(value => !authorizesPhysicalWork(JSON.stringify(value.expected))).length >= 30)
+})
+test('intent sees only the incoming message and task receives the selected runtime envelope', async () => {
+  const records = await recordsPromise
+  for (const record of records) {
+    assert.doesNotMatch(`${record.system}\n${record.user}`, /profiles\/|persona\/|greggles|Ainekio/)
+    if (record.metadata.specialist === 'intent') {
+      assert.ok(record.user.startsWith('Current user message: '))
+      assert.ok(!record.user.includes('currentEnvironment'))
+      assert.ok(ROUTE_FIELDS.every(key => typeof JSON.parse(record.output)[key] === 'boolean'))
+    } else {
+      assert.ok(!('response' in JSON.parse(record.output)))
+      assert.equal(JSON.parse(record.user).inputSource, 'user')
+    }
+  }
+})
+test('evaluation and cross-validation keep all variants of each source on one side', async () => {
+  const records = await recordsPromise
+  const evaluation = await buildDevelopmentRecords(EVALUATION_CASES)
+  assert.deepEqual(validateDevelopmentRecords(evaluation, EVALUATION_CASES), [])
+  const trainingIds = new Set(records.map(record => record.metadata.sourceCaseId))
+  assert.ok(evaluation.every(record => !trainingIds.has(record.metadata.sourceCaseId)))
+  const trainingMessages = new Set(records.map(record => sha256([record.system, record.user])))
+  assert.ok(evaluation.every(record => !trainingMessages.has(sha256([record.system, record.user]))))
+  for (const specialist of ['intent', 'task']) for (let fold = 0; fold < 4; fold++) {
+    const training = records.filter(record => record.metadata.specialist === specialist && record.metadata.developmentFold !== fold)
+    const validation = records.filter(record => record.metadata.specialist === specialist && record.metadata.developmentFold === fold)
+    assert.ok(training.length > validation.length && validation.length > 0)
+    assert.ok(validation.every(record => !training.some(other => other.metadata.sourceCaseId === record.metadata.sourceCaseId)))
+  }
+})
+test('opaque catalogs preserve meanings and every ordered program step', async () => {
+  const records = (await recordsPromise).filter(record => record.metadata.contextVariation === 'opaque-identifiers')
+  assert.ok(records.length)
+  for (const record of records) {
+    const catalog = JSON.parse(record.user).currentEnvironment.capabilities.robotCommandCatalog ?? {}
+    for (const step of JSON.parse(record.output).program?.steps ?? []) if (step.action?.type === 'robotCommand') {
+      assert.match(step.action.command, /^k\d+$/)
+      assert.equal(typeof catalog[step.action.command], 'string')
+    }
   }
 })

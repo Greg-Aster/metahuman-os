@@ -216,7 +216,8 @@
         "nodeType": "environment_context_builder",
         "properties": {
           "purpose": "task",
-          "systemPrompt": "ENVIRONMENT TASK DECISION\ncurrentInstruction contains the person's current message; the selected context describes the shared situation. Select execution and task behavior through the available interface. A separate conversation model produces user-visible speech.\n\nactivePersona describes identity, personality, values, and goals, not a record of events. Supplied context provides evidence with its recorded source and time. Missing evidence represents unknown information.\n\nprogram requests execution. taskDecision describes the objective and its execution state. Requests, intentions, capability descriptions, and execution results represent different information; task state should reflect the evidence actually supplied.\n\nInterface format: return strict JSON with taskDecision and program. Either may be null when this pass selects no corresponding objective change or activity. selectedRoutes describes the context and interfaces available for this turn.\ntaskDecision has required fields objective, completionCriteria, outcome, reason, continuationPolicy, and requiredCompletionBasis. outcome describes objective progress and allows complete, continue, observe, act, report, curiosity, background, request_user, or wait. act means a program is selected for execution; complete means the objective's completion criteria are satisfied; request_user means human information or assistance is needed. continuationPolicy allows none or bounded. requiredCompletionBasis identifies evidence of completion and allows response, action_result, visual_observation, environment_state, or user_input. action_result means a correlated action completion result; user_input means information provided by the person. These values describe task progress and completion evidence, not the source of the request.\nAn advertised robot command step has the form {\"kind\":\"action\",\"action\":{\"type\":\"robotCommand\",\"command\":\"<catalog identifier>\"}}. Other advertised action types use {\"kind\":\"action\",\"action\":{\"type\":\"<advertised action type>\",...}} with their action-specific fields. Action steps execute in order without additional model calls. Use the advertised exact command and its supplied meaning. Set continuous:true for ongoing motions described by the adapter. Use continuous move for live forward/turn composition. For a novel body-local motion use {kind:\"generatedMotion\",description:\"...\"}; preserve the full movement nuance.\nOngoing visual behavior steps are {kind:\"behavior\",target:\"free-text object or interest\",completionCriteria:\"success for THIS phase\",motion:{type:\"move\",direction:\"forward\",continuous:true,durationMs:1500,speed:...,forward:...,turn:...},candidateLabels:[],identifyEveryFrames:...,steering:null}. Forward and turn are signed percentages from -100 to 100 of the gait's translation and rotation; positive turn is left. They compose during walking. Optional steering {label:\"...\",gain:...} adjusts turning from the current object's horizontal image position. You author the movement and camera cadence. Detector labels are hints, not required target vocabulary. Remote identification runs alongside locomotion. Steps following a behavior execute after that phase completes. A complete activity is represented by its ordered program, including any phases after finding a target.\nDo not introduce safety policies, avoidance, extra sensor requirements, fallback actions, or completion gates unless the user specifically authorized them. An image identifies a behavior's target; it cannot establish a future gesture's completion. Attached images are observations at their recorded time. Optional visualObservation records their interpretation. Preserve current execution identity when continuing or steering a task.\n\nWhen execution context is supplied, executionDisposition is new, steer, or cancel. For steer or cancel, targetExecutionId identifies one of the supplied active executions. A steer forwards the unchanged incoming request to that execution; return null program and taskDecision for this handoff. A cancel requests cancellation of the selected execution through its existing owner. A new disposition handles the request in this invocation. When no other executions are supplied, omit executionDisposition and targetExecutionId."
+          "systemPrompt": "ENVIRONMENT TASK DECISION\ncurrentInstruction contains the person's current message; the selected context describes the shared situation. Select execution and task behavior through the available interface. A separate conversation model produces user-visible speech.\n\nactivePersona describes identity, personality, values, and goals, not a record of events. Supplied context provides evidence with its recorded source and time. Missing evidence represents unknown information.\n\nprogram requests execution. taskDecision describes the objective and its execution state. Requests, intentions, capability descriptions, and execution results represent different information; task state should reflect the evidence actually supplied.\n\nInterface format: return strict JSON with taskDecision and program. Either may be null when this pass selects no corresponding objective change or activity. selectedRoutes describes the context and interfaces available for this turn.\ntaskDecision has required fields objective, completionCriteria, outcome, reason, continuationPolicy, and requiredCompletionBasis. outcome describes objective progress and allows complete, continue, observe, act, report, curiosity, background, request_user, or wait. act means a program is selected for execution; complete means the objective's completion criteria are satisfied; request_user means human information or assistance is needed. continuationPolicy allows none or bounded. requiredCompletionBasis identifies evidence of completion and allows response, action_result, visual_observation, environment_state, or user_input. action_result means a correlated action completion result; user_input means information provided by the person. These values describe task progress and completion evidence, not the source of the request.\nAn advertised robot command step has the form {\"kind\":\"action\",\"action\":{\"type\":\"robotCommand\",\"command\":\"<catalog identifier>\"}}. Other advertised action types use {\"kind\":\"action\",\"action\":{\"type\":\"<advertised action type>\",...}} with their action-specific fields. Action steps execute in order without additional model calls. Use the advertised exact command and its supplied meaning. Set continuous:true for ongoing motions described by the adapter. Use continuous move for live forward/turn composition. For a novel body-local motion use {kind:\"generatedMotion\",description:\"...\"}; preserve the full movement nuance.\nOngoing visual behavior steps are {kind:\"behavior\",target:\"free-text object or interest\",completionCriteria:\"success for THIS phase\",motion:{type:\"move\",direction:\"forward\",continuous:true,durationMs:1500,speed:...,forward:...,turn:...},candidateLabels:[],identifyEveryFrames:...,steering:null}. Forward and turn are signed percentages from -100 to 100 of the gait's translation and rotation; positive turn is left. They compose during walking. Optional steering {label:\"...\",gain:...} adjusts turning from the current object's horizontal image position. You author the movement and camera cadence. Detector labels are hints, not required target vocabulary. Remote identification runs alongside locomotion. Steps following a behavior execute after that phase completes. A complete activity is represented by its ordered program, including any phases after finding a target.\nDo not introduce safety policies, avoidance, extra sensor requirements, fallback actions, or completion gates unless the user specifically authorized them. An image identifies a behavior's target; it cannot establish a future gesture's completion. Attached images are observations at their recorded time. Optional visualObservation records their interpretation. Preserve current execution identity when continuing or steering a task.\n\nWhen execution context is supplied, executionDisposition is new, steer, or cancel. For steer or cancel, targetExecutionId identifies one of the supplied active executions. A steer forwards the unchanged incoming request to that execution; return null program and taskDecision for this handoff. A cancel requests cancellation of the selected execution through its existing owner. A new disposition handles the request in this invocation. When no other executions are supplied, omit executionDisposition and targetExecutionId.",
+          "planningDelegation": true
         },
         "comment": "Combines the original request and selected evidence once. Builds the task-only contract and shares its evidence package with conversation."
       }
@@ -252,10 +253,15 @@
       },
       "width": 240,
       "data": {
-        "label": "Validate Task Decision",
-        "nodeType": "environment_action_parser",
+        "label": "Resolve and Validate Task Plan",
+        "nodeType": "environment_task_planner",
         "properties": {
-          "includeResponse": false
+          "role": "persona",
+          "modelId": "",
+          "format": "json",
+          "maxTokens": 2048,
+          "temperature": 0.1,
+          "repeatPenalty": 1.15
         }
       }
     },
@@ -306,7 +312,7 @@
       "width": 330,
       "data": {
         "label": "Conversation",
-        "nodeType": "model_router",
+        "nodeType": "environment_conversation",
         "properties": {
           "modelId": "",
           "role": "persona",
@@ -316,65 +322,6 @@
           "format": "text"
         },
         "comment": "Produces speech only when Intent Orchestrator selects a response. Uses the configured main model unless Model / LoRA is explicitly selected."
-      }
-    },
-    {
-      "id": "conversation-buffer",
-      "type": "outputNode",
-      "position": {
-        "x": 5220,
-        "y": 80
-      },
-      "width": 250,
-      "data": {
-        "label": "Save User and Optional Response",
-        "nodeType": "conversation_buffer",
-        "properties": {}
-      }
-    },
-    {
-      "id": "memory-capture",
-      "type": "outputNode",
-      "position": {
-        "x": 5680,
-        "y": 80
-      },
-      "width": 250,
-      "data": {
-        "label": "Conversation Memory Saver",
-        "nodeType": "memory_capture",
-        "properties": {}
-      }
-    },
-    {
-      "id": "tts-out",
-      "type": "outputNode",
-      "position": {
-        "x": 6140,
-        "y": 878
-      },
-      "width": 240,
-      "data": {
-        "label": "Speak Optional Response",
-        "nodeType": "tts",
-        "properties": {
-          "source": "environment-mode",
-          "defaultMode": "conversation"
-        }
-      }
-    },
-    {
-      "id": "12",
-      "type": "outputNode",
-      "position": {
-        "x": 6140,
-        "y": 1200
-      },
-      "width": 180,
-      "data": {
-        "label": "Return Optional Response",
-        "nodeType": "stream_writer",
-        "properties": {}
       }
     },
     {
@@ -660,7 +607,7 @@
         "nodeType": "graph_note",
         "properties": {
           "title": "How Environment Mode Works",
-          "content": "ENVIRONMENT MODE — INTENT, TASK DECISION, CONVERSATION\n\n1. RECEIVE AND SAVE\nUser Input carries the original incoming request and offers independent Save to Conversation Buffer and Save to Long-Term Memory switches. Existing storage owners preserve speaker, time and identity. Saving the current turn does not retrieve earlier dialogue.\n\n2. INTENT ORCHESTRATOR — FIRST LLM CALL\nReceives only the incoming request and its editable routing instructions. Selects needsResponse, needsPersona, needsConversationHistory, needsMemory, needsRobotStatus, needsEnvironment, needsVision, needsAction and needsExecutionContext independently. It also supplies a memory search query/types when needed. It does not choose concrete commands or execution targets. Currently uses the untrained Qwen3.5 0.8B base model.\n\n3. SELECTED SOURCES\nActive Persona loads and formats its selected identity/personality/value/goal sections only when needsPersona is selected. Conversation History reads the buffer only when needsConversationHistory is selected. Relevant Long-Term Memory searches only when needsMemory is selected. Robot Status supplies its saved projection only when needsRobotStatus is selected. Current Execution reads the durable objective, events and other unfinished executions only when needsExecutionContext is selected.\nThe Environment Bridge always exposes its advertised interface. needsEnvironment, needsVision or needsAction selects additional environment evidence. Use Current-Run Camera Evidence supplies dated images when needsVision is selected. Observation History supplies saved image-linked interpretations. Reading these sources sends no physical command.\n\n4. BUILD TASK DECISION CONTEXT\nCombines the original request and selected sources once, preserving source/time information. Builds capability-specific task JSON schema. Selected evidence is also exported for conversation, without loading sources again. Persona remains capped at 2,000 characters. No LLM call occurs in this builder.\n\n5. TASK DECISION — SECOND LLM CALL\nCurrently uses the untrained Qwen3.5 0.8B base model. Returns taskDecision and program, optional visual interpretation, and new/steer/cancel with a target when execution context is present. It does not compose conversational speech. A program contains complete ordered action, generated-motion or ongoing-behavior steps. Null task/program values represent no selected objective change/activity. Validate Task Decision retains structural and capability validation. A steering handoff forwards the unchanged input through the durable owner and produces no local speech or program. Cancellation uses the existing execution owner.\n\n6. CONVERSATION — OPTIONAL THIRD LLM CALL\nBuild Conversation Context runs only when needsResponse is selected and this pass has a local parsed selection. It reuses the evidence package, selected program, task decision and admission result. It excludes task-selection rules and the full command catalog, retaining descriptions of selected commands. It does not search or load history/persona again.\nConversation uses the configured Persona role and preferred backend, currently the main 9B model, unless its Model / LoRA selector is changed. It produces plain text only. Its output connects to the existing Conversation Buffer, Memory Capture, TTS and Stream Writer. Speech does not produce commands or modify task decisions. A selected program is not physical completion evidence.\n\n7. EXECUTION AND CONTINUATION\nRobot Status Out records the task decision and projects status. Execute Complete Task is the existing sole owner of physical phases, using correlated receipts. There is no decision LLM call per ordinary movement. Novel motion generation, periodic visual identification, and unfinished-objective review remain conditional extra model calls through their existing owners.\nInput forwarded to an ongoing task is interpreted using the intent/task portion of this graph. The saved task output is connected only to Task Decision's precomputed input; it cannot replace conversation output. The resumed pass can produce conversation through the separate conversation branch. Remaining Objective, Goal Review and Await Requested Context continue from durable state.\n\nMODEL SELECTION AND DIAGNOSIS\nIntent Orchestrator, Task Decision and Conversation each expose Model / LoRA. An empty selection follows the configured role and preferred backend; an explicit model or served adapter overrides that node only. Selection does not train a model or start another server. The 0.8B base model is not yet trained for these tasks and can make semantic mistakes.\nInspect activation conditions and Last Run outputs to see skipped branches and selected evidence. A normal pass has two calls without conversation or three with conversation. Corrections, task reinterpretation, generated motion, identification and goal review can add calls. Measure each stage's tokens, duration and model independently.\n\nThis Graph Note is editor-only and never enters an LLM prompt.",
+          "content": "ENVIRONMENT MODE \u2014 INTENT, TASK DECISION, CONVERSATION\n\n1. RECEIVE AND SAVE\nUser Input carries the original incoming request and offers independent Save to Conversation Buffer and Save to Long-Term Memory switches. Existing storage owners preserve speaker, time and identity. Saving the current turn does not retrieve earlier dialogue.\n\n2. INTENT ORCHESTRATOR \u2014 FIRST LLM CALL\nReceives only the incoming request and its editable routing instructions. Selects needsResponse, needsPersona, needsConversationHistory, needsMemory, needsRobotStatus, needsEnvironment, needsVision, needsAction and needsExecutionContext independently. It also supplies a memory search query/types when needed. It does not choose concrete commands or execution targets. Currently uses the untrained Qwen3.5 0.8B base model.\n\n3. SELECTED SOURCES\nActive Persona loads and formats its selected identity/personality/value/goal sections only when needsPersona is selected. Conversation History reads the buffer only when needsConversationHistory is selected. Relevant Long-Term Memory searches only when needsMemory is selected. Robot Status supplies its saved projection only when needsRobotStatus is selected. Current Execution reads the durable objective, events and other unfinished executions only when needsExecutionContext is selected.\nThe Environment Bridge always exposes its advertised interface. needsEnvironment, needsVision or needsAction selects additional environment evidence. Use Current-Run Camera Evidence supplies dated images when needsVision is selected. Observation History supplies saved image-linked interpretations. Reading these sources sends no physical command.\n\n4. BUILD TASK DECISION CONTEXT\nCombines the original request and selected sources once, preserving source/time information. Builds capability-specific task JSON schema. Selected evidence is also exported for conversation, without loading sources again. Persona remains capped at 2,000 characters. No LLM call occurs in this builder.\n\n5. TASK DECISION \u2014 SECOND LLM CALL\nCurrently uses the untrained Qwen3.5 0.8B base model. Returns taskDecision and program, optional visual interpretation, and new/steer/cancel with a target when execution context is present. It does not compose conversational speech. A program contains complete ordered action, generated-motion or ongoing-behavior steps. Null task/program values represent no selected objective change/activity. Validate Task Decision retains structural and capability validation. A steering handoff forwards the unchanged input through the durable owner and produces no local speech or program. Cancellation uses the existing execution owner.\n\n6. CONVERSATION \u2014 OPTIONAL THIRD LLM CALL\nBuild Conversation Context runs only when needsResponse is selected and this pass has a local parsed selection. It reuses the evidence package, selected program, task decision and admission result. It excludes task-selection rules and the full command catalog, retaining descriptions of selected commands. It does not search or load history/persona again.\nConversation uses the configured Persona role and preferred backend, currently the main 9B model, unless its Model / LoRA selector is changed. It produces plain text only. Its output connects to the existing Conversation Buffer, Memory Capture, TTS and Stream Writer. Speech does not produce commands or modify task decisions. A selected program is not physical completion evidence.\n\n7. EXECUTION AND CONTINUATION\nRobot Status Out records the task decision and projects status. Execute Complete Task is the existing sole owner of physical phases, using correlated receipts. There is no decision LLM call per ordinary movement. Novel motion generation, periodic visual identification, and unfinished-objective review remain conditional extra model calls through their existing owners.\nInput forwarded to an ongoing task is interpreted using the intent/task portion of this graph. The saved task output is connected only to Task Decision's precomputed input; it cannot replace conversation output. The resumed pass can produce conversation through the separate conversation branch. Remaining Objective, Goal Review and Await Requested Context continue from durable state.\n\nMODEL SELECTION AND DIAGNOSIS\nIntent Orchestrator, Task Decision and Conversation each expose Model / LoRA. An empty selection follows the configured role and preferred backend; an explicit model or served adapter overrides that node only. Selection does not train a model or start another server. The 0.8B base model is not yet trained for these tasks and can make semantic mistakes.\nInspect activation conditions and Last Run outputs to see skipped branches and selected evidence. A normal pass has two calls without conversation or three with conversation. Corrections, task reinterpretation, generated motion, identification and goal review can add calls. Measure each stage's tokens, duration and model independently.\n\nThis Graph Note is editor-only and never enters an LLM prompt.",
           "style": "info",
           "frame": false
         }
@@ -954,62 +901,6 @@
       }
     },
     {
-      "id": "e-response-conversation-buffer",
-      "source": "conversation-model",
-      "target": "conversation-buffer",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "when": {
-          "output": "response",
-          "notEquals": ""
-        }
-      }
-    },
-    {
-      "id": "e-conversation-memory",
-      "source": "conversation-buffer",
-      "target": "memory-capture",
-      "sourceHandle": "entries",
-      "targetHandle": "entries",
-      "type": "default",
-      "data": {
-        "type": "array"
-      }
-    },
-    {
-      "id": "e-conversation-tts",
-      "source": "memory-capture",
-      "target": "tts-out",
-      "sourceHandle": "passthrough",
-      "targetHandle": "conversation",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "when": {
-          "output": "passthrough",
-          "notEquals": ""
-        }
-      }
-    },
-    {
-      "id": "e-conversation-stream",
-      "source": "memory-capture",
-      "target": "12",
-      "sourceHandle": "passthrough",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string",
-        "when": {
-          "output": "passthrough",
-          "notEquals": ""
-        }
-      }
-    },
-    {
       "id": "e-observation-status-out",
       "source": "2",
       "target": "robot-status-out",
@@ -1062,17 +953,6 @@
       "type": "default",
       "data": {
         "type": "object"
-      }
-    },
-    {
-      "id": "e-response-status-out",
-      "source": "conversation-model",
-      "target": "robot-status-out",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string"
       }
     },
     {
@@ -1166,17 +1046,6 @@
           "truthy": true,
           "output": "persisted"
         }
-      }
-    },
-    {
-      "id": "capture-response-forward",
-      "source": "conversation-buffer",
-      "target": "memory-capture",
-      "sourceHandle": "response",
-      "targetHandle": "passthrough",
-      "type": "default",
-      "data": {
-        "type": "string"
       }
     },
     {
@@ -1543,6 +1412,28 @@
       "type": "default",
       "data": {
         "type": "array"
+      }
+    },
+    {
+      "id": "task-context-planningMessages-planner",
+      "source": "3",
+      "target": "6",
+      "sourceHandle": "planningMessages",
+      "targetHandle": "planningMessages",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "task-context-planningSchema-planner",
+      "source": "3",
+      "target": "6",
+      "sourceHandle": "planningSchema",
+      "targetHandle": "planningSchema",
+      "type": "default",
+      "data": {
+        "type": "object"
       }
     }
   ],

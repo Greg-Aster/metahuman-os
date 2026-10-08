@@ -11,6 +11,7 @@ process.env.METAHUMAN_ROOT = fixture;
 fs.mkdirSync(path.join(fixture, 'etc'), { recursive: true });
 fs.symlinkSync(path.join(sourceRoot, 'node_modules'), path.join(fixture, 'node_modules'), 'dir');
 const ids = ['environment-bridge-local', 'environment-bridge-remote'];
+fs.writeFileSync(path.join(fixture, 'etc/agents.json'), JSON.stringify({ agents: {} }));
 fs.writeFileSync(path.join(fixture, 'etc/services.json'), JSON.stringify({ services: Object.fromEntries(ids.map(id => [id, {
   id, enabled: true, type: 'manual', startOnSystemBoot: id.endsWith('local'), agentPath: `environment-bridge/${id.split('-').at(-1)}.ts`,
 }])) }));
@@ -29,6 +30,25 @@ const { getRunningAgents, stopAgent, waitForProcessExit } = await import('./agen
 const { setAuditEnabled } = await import('./audit.js');
 const { eventBus } = await import('./infrastructure/event-bus/client.js');
 setAuditEnabled(false);
+
+test('connection settings use the existing service owner and retain both remote routes', async () => {
+  const { setAgentVariable } = await import('./agent-monitor.js');
+  setAgentVariable(ids[1], 'cloudflareHostname', 'bridge.example.invalid');
+  setAgentVariable(ids[1], 'sshTarget', 'operator@workshop-host');
+  setAgentVariable(ids[1], 'sshGatewayPort', 9876);
+  setAgentVariable(ids[1], 'transport', 'ssh');
+  setAgentVariable(ids[1], 'adapterUrl', 'ws://127.0.0.1:18790/environment');
+  let config = JSON.parse(fs.readFileSync(path.join(fixture, 'etc/services.json'), 'utf8'));
+  assert.equal(config.services[ids[1]].transport, 'ssh');
+  assert.equal(config.services[ids[1]].sshTarget, 'operator@workshop-host');
+  assert.equal(config.services[ids[1]].sshGatewayPort, 9876);
+  assert.equal(config.services[ids[1]].cloudflareHostname, 'bridge.example.invalid');
+  setAgentVariable(ids[1], 'transport', 'cloudflare');
+  config = JSON.parse(fs.readFileSync(path.join(fixture, 'etc/services.json'), 'utf8'));
+  assert.equal(config.services[ids[1]].sshTarget, 'operator@workshop-host');
+  assert.equal(config.services[ids[1]].transport, 'cloudflare');
+  assert.equal(getRunningAgents().length, 0, 'saving alone must not start a connection');
+});
 
 test('starting either Bridge switches the existing owner and persists only that startup choice', async () => {
   let previousPid: number | undefined;

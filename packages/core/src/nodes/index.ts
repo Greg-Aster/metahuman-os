@@ -15,7 +15,9 @@ import { extractSchema, isNodeDefinition } from './types.js';
 
 // Re-export types
 export * from './types.js';
+export { isPlanningDelegation } from './environment/planning-contract.js';
 export { environmentActionParserNode } from './environment/action-parser.node.js';
+export { parseEnvironmentIntentRouting, ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA } from './llm/orchestrator-llm.node.js';
 export {
   parseDesireCandidates,
   parseReinforcementResponse,

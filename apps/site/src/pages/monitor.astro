@@ -1,6 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 import AgentMonitor from '../components/AgentMonitor.svelte';
+import AuthGate from '../components/AuthGate.svelte';
 ---
 
 <Base title="Agent Monitor - MetaHuman OS">
@@ -13,7 +14,9 @@ import AgentMonitor from '../components/AgentMonitor.svelte';
     </div>
 
     <div class="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
-      <AgentMonitor client:load />
+      <AuthGate client:only="svelte">
+        <AgentMonitor client:only="svelte" />
+      </AuthGate>
     </div>
   </div>
 </Base>
