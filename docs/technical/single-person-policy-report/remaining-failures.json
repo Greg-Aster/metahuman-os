@@ -1,0 +1,48 @@
+[
+  {
+    "run": "ownership",
+    "failedTests": [
+      "not ok 1 - the running gait steers during delayed identification, then waves before whole-task completion",
+      "not ok 2 - remote outage requests owned cancellation and waits for its receipt before returning to the planner",
+      "not ok 3 - Coordinator deadline wakes a silent feedback stream and requests cancellation without inference completing",
+      "not ok 4 - instructions buffered during finish cross the real graph handoff before another ongoing phase",
+      "not ok 5 - instructions buffered during cancel cross the real graph handoff before another ongoing phase",
+      "not ok 6 - delayed interpretation keeps steering live, combines superseded turns, and applies once to the same gait with newest speech attribution",
+      "not ok 7 - required feedback expiry cancels motion while instruction inference is still blocked",
+      "not ok 8 - paired interpreted wave -> none -> stop preserves program ownership through recovered checkpoints",
+      "not ok 9 - paired interpreted wave -> manual -> stop preserves program ownership through recovered checkpoints",
+      "not ok 10 - paired interpreted wave -> manual-reconnect -> stop preserves program ownership through recovered checkpoints",
+      "not ok 11 - paired interpreted wave -> none -> move preserves program ownership through recovered checkpoints",
+      "not ok 12 - paired interpreted wave -> manual -> move preserves program ownership through recovered checkpoints",
+      "not ok 13 - paired interpreted wave -> manual-reconnect -> move preserves program ownership through recovered checkpoints",
+      "not ok 14 - paired spoken Stop routed as cancel reaches cancellation without claiming the original gait stopped",
+      "not ok 15 - paired spoken Stop routed as steer reaches cancellation without claiming the original gait stopped",
+      "not ok 16 - paired manual takeover invalidates a still-pending provider and its late Stop proposal"
+    ],
+    "failure": "Environment Mode node 4: Every model call needs an explicit fixture response",
+    "logSha256": "7e950fdb63732248399adaaff45e8de673676cd2b4bf53a6a3889b3fb00769c8"
+  },
+  {
+    "run": "ownership-baseline",
+    "failedTests": [
+      "not ok 1 - the running gait steers during delayed identification, then waves before whole-task completion",
+      "not ok 2 - remote outage requests owned cancellation and waits for its receipt before returning to the planner",
+      "not ok 3 - Coordinator deadline wakes a silent feedback stream and requests cancellation without inference completing",
+      "not ok 4 - instructions buffered during finish cross the real graph handoff before another ongoing phase",
+      "not ok 5 - instructions buffered during cancel cross the real graph handoff before another ongoing phase",
+      "not ok 6 - delayed interpretation keeps steering live, combines superseded turns, and applies once to the same gait with newest speech attribution",
+      "not ok 7 - required feedback expiry cancels motion while instruction inference is still blocked",
+      "not ok 8 - paired interpreted wave -> none -> stop preserves program ownership through recovered checkpoints",
+      "not ok 9 - paired interpreted wave -> manual -> stop preserves program ownership through recovered checkpoints",
+      "not ok 10 - paired interpreted wave -> manual-reconnect -> stop preserves program ownership through recovered checkpoints",
+      "not ok 11 - paired interpreted wave -> none -> move preserves program ownership through recovered checkpoints",
+      "not ok 12 - paired interpreted wave -> manual -> move preserves program ownership through recovered checkpoints",
+      "not ok 13 - paired interpreted wave -> manual-reconnect -> move preserves program ownership through recovered checkpoints",
+      "not ok 14 - paired spoken Stop routed as cancel reaches cancellation without claiming the original gait stopped",
+      "not ok 15 - paired spoken Stop routed as steer reaches cancellation without claiming the original gait stopped",
+      "not ok 16 - paired manual takeover invalidates a still-pending provider and its late Stop proposal"
+    ],
+    "failure": "Environment Mode node 4: Every model call needs an explicit fixture response",
+    "logSha256": "db83321ca067f82a558a540b69afe880a8e43163d338dfa0eb8710391536fad3"
+  }
+]

@@ -10,6 +10,7 @@ import { fixture, route, decision, replies, core, manager, username, withUserCon
   openExecutionStore, queuedInterpretation, executeWork, instruction } from './active-task.spec.js'
 
 const naturalVideo = Boolean(process.env.AINEKIO_RECORDED_VIDEO)
+const singlePersonDemo = process.env.AINEKIO_SINGLE_PERSON_DEMO === '1'
 const endings = naturalVideo ? ['expiry-confirmed'] as const : ['expiry-confirmed', 'expiry-unknown', 'explicit-cancel'] as const
 for (const ending of endings) test(`recorded YOLO frames: ${ending}`, { timeout: 90000 }, async () => {
   assert.ok(process.env.AINEKIO_SOFTWARE_TEST_GATEWAY)
@@ -89,7 +90,22 @@ for (const ending of endings) test(`recorded YOLO frames: ${ending}`, { timeout:
         candidateLabels: ['person'], identifyEveryFrames: 100, steering: { label: 'person', gain: 100 } }
       replies.push({ ...route, needsVision: false, needsResponse: true }, { program: { steps: [behavior] }, taskDecision: { ...decision,
         objective: 'Continuously follow the image position of the visible person.', completionCriteria: 'Continue until cancelled; detector presence does not complete the objective.' } })
-      id = (await f.run()).executionId!
+      id = (await f.run(undefined, { activeTaskSinglePersonDemo: singlePersonDemo })).executionId!
+      evidence.singlePersonDemo = singlePersonDemo
+      if (naturalVideo && singlePersonDemo) {
+        assert.ok(evidence.frames[0].objects.filter((object: any) => object.label === 'person').length > 1)
+        assert.equal(f.received.length, 0, 'Initial ambiguity cannot admit motion or capture')
+        const snapshot = await request('state')
+        assert.equal(snapshot.wire.length, 0)
+        const saved = openExecutionStore(username)
+        try {
+          assert.equal(saved.task(id)!.decision.objectiveComplete, false)
+          assert.match(saved.task(id)!.decision.reason!, /unambiguous candidate/)
+        } finally { saved.close() }
+        evidence.ambiguityVerified = true
+        evidence.bodyWire = snapshot.wire
+        return
+      }
       const motion = f.received.shift()!
       assert.equal(motion.continuous, true)
       const admission = await request('action', { action: motion })
@@ -144,8 +160,16 @@ for (const ending of endings) test(`recorded YOLO frames: ${ending}`, { timeout:
         for (const [counter, position] of [[2, 'center'], [3, 'right'], [4, 'left'], [5, 'right'], [6, 'lost']] as const)
           await applyFrame({ counter, position })
         assert.deepEqual(evidence.frames.at(-1).objects, [], 'Target loss is a real detector result')
-        assert.equal(evidence.commands.at(-1).action.movementUpdate.controls.turn, 0, 'Fresh target loss returns to the selected base controls')
-        evidence.targetLossResponseMs = evidence.commands.at(-1).frameToCommandMs
+        if (singlePersonDemo) {
+          const owned = manager.findTask(task => task.input?.id === motion.id)!
+          assert.ok(owned.cancellationRequestedAt, 'First fresh absent observation requests owned cancellation')
+          assert.notEqual(evidence.commands.at(-1).frameCounter, evidence.frames.at(-1).counter,
+            'Fresh absence must not dispatch a zero-turn forward update')
+          evidence.targetLossResponseMs = Date.now() - Date.parse(evidence.frames.at(-1).observedAt)
+        } else {
+          assert.equal(evidence.commands.at(-1).action.movementUpdate.controls.turn, 0, 'Fresh target loss returns to the selected base controls')
+          evidence.targetLossResponseMs = evidence.commands.at(-1).frameToCommandMs
+        }
         const turns = evidence.commands.map((item: any) => item.action.movementUpdate.controls.turn)
         assert.ok(turns.some((value: number) => value > 0) && turns.some((value: number) => value < 0))
       }
@@ -170,7 +194,7 @@ for (const ending of endings) test(`recorded YOLO frames: ${ending}`, { timeout:
       }
       assert.ok(manager.findTask(task => task.input?.id === motion.id)?.cancellationRequestedAt,
         'Loss of required recognition still requests owned termination while interpretation is blocked')
-      evidence.deadlineRequestedCancellation = ending !== 'explicit-cancel'
+      evidence.deadlineRequestedCancellation = !singlePersonDemo && ending !== 'explicit-cancel'
       evidence.cancelRequestedAt ??= Date.now()
       evidence.expiryToCancellationMs = evidence.cancelRequestedAt - Date.parse(evidence.frames.at(-1).expiresAt)
       evidence.pendingAtCancellation = { interpretation: manager.getTask(interpretation.id)?.state, conversation: manager.getTask(speechJob.id)?.state }

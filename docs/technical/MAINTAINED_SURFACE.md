@@ -119,7 +119,13 @@ existing `notBefore` work owns deadline wakes, and `environment.cancel-owned-wor
 checks execution ownership before using its existing cancellation path. No node
 creates a private queue owner. Slow identification discards stale images while
 fresh local feedback remains usable; IMU integration is separate. Generated motion uses that same finite-job path and the existing movement
-generator. No heavy inference blocks the active task's event step. Existing
+generator. No heavy inference blocks the active task's event step. The opt-in single-person demonstration policy uses the same checkpoint,
+Coordinator cancellation and deadline owners. Fresh zero/multiple-person evidence
+starts a three-second observation-only window; its expiry cannot settle unknown
+commands. Three distinct fresh frames spanning one second offer only a candidate
+person. Explicit operator selection and correlated prior termination are required
+for a new action identity; counts never prove identity continuity. Generic behavior
+semantics remain unchanged. Existing
 durable executable-version checks reject incompatible old checkpoints instead
 of interpreting their pre-acknowledgement steering state as a fresh motion.
 

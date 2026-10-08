@@ -1,0 +1,1841 @@
+[
+  {
+    "ending": "expiry-confirmed",
+    "singlePersonDemo": true,
+    "recognition": {
+      "classes": {
+        "0": "person"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e",
+      "sourceSha256": "c02019c4979c191eb739ddd944445ef408dad5679acab6fd520ef9d434bfbc63",
+      "video": null,
+      "versions": {
+        "python": "3.12.3",
+        "torch": "2.11.0+cu130",
+        "ultralytics": "8.4.36",
+        "opencv": "4.13.0"
+      },
+      "device": "cpu",
+      "threads": 4,
+      "physicalDestination": false
+    },
+    "frames": [
+      {
+        "videoFrame": 0,
+        "counter": 1,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9325729012489319,
+            "box": {
+              "x": 0.053325582295656204,
+              "y": 0.1499427855014801,
+              "width": 0.1874058060348034,
+              "height": 0.7079672515392303
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:08:59.490945+00:00",
+        "expiresAt": "2026-10-08T21:09:00.490945+00:00",
+        "receivedAt": 1791493739876,
+        "observationAgeMs": 386,
+        "processing": {
+          "receivedFrames": 1,
+          "processedFrames": 1,
+          "freshResults": 1,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.17674999253358692,
+          "inferenceMs": 378.8241860020207,
+          "observationAgeMs": 379.0373209922109,
+          "processedFps": 2.6385763407581058,
+          "freshFps": 2.6385763407581058
+        }
+      },
+      {
+        "counter": 2,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9337318539619446,
+            "box": {
+              "x": 0.4052133560180664,
+              "y": 0.1497596800327301,
+              "width": 0.18807584047317505,
+              "height": 0.7073276340961456
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:00.753025+00:00",
+        "expiresAt": "2026-10-08T21:09:01.753025+00:00",
+        "receivedAt": 1791493741008,
+        "observationAgeMs": 255,
+        "processing": {
+          "receivedFrames": 2,
+          "processedFrames": 2,
+          "freshResults": 2,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.11074900976382196,
+          "inferenceMs": 248.7337319907965,
+          "observationAgeMs": 248.89147900103126,
+          "processedFps": 1.3236896444959378,
+          "freshFps": 1.3236896444959378
+        }
+      },
+      {
+        "counter": 3,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9341922998428345,
+            "box": {
+              "x": 0.7571344375610352,
+              "y": 0.14984969794750214,
+              "width": 0.18796098232269287,
+              "height": 0.7068978697061539
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:01.324036+00:00",
+        "expiresAt": "2026-10-08T21:09:02.324036+00:00",
+        "receivedAt": 1791493741589,
+        "observationAgeMs": 265,
+        "processing": {
+          "receivedFrames": 3,
+          "processedFrames": 3,
+          "freshResults": 3,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.10333099635317922,
+          "inferenceMs": 258.1674690009095,
+          "observationAgeMs": 258.32141398859676,
+          "processedFps": 1.434466923005663,
+          "freshFps": 1.434466923005663
+        }
+      },
+      {
+        "counter": 4,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9325729012489319,
+            "box": {
+              "x": 0.053325582295656204,
+              "y": 0.1499427855014801,
+              "width": 0.1874058060348034,
+              "height": 0.7079672515392303
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:01.903832+00:00",
+        "expiresAt": "2026-10-08T21:09:02.903832+00:00",
+        "receivedAt": 1791493742160,
+        "observationAgeMs": 257,
+        "processing": {
+          "receivedFrames": 4,
+          "processedFrames": 4,
+          "freshResults": 4,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.11645701306406409,
+          "inferenceMs": 248.34648398973513,
+          "observationAgeMs": 248.5161619988503,
+          "processedFps": 1.502991373297909,
+          "freshFps": 1.502991373297909
+        }
+      },
+      {
+        "counter": 5,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9341922998428345,
+            "box": {
+              "x": 0.7571344375610352,
+              "y": 0.14984969794750214,
+              "width": 0.18796098232269287,
+              "height": 0.7068978697061539
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:02.475942+00:00",
+        "expiresAt": "2026-10-08T21:09:03.475942+00:00",
+        "receivedAt": 1791493742733,
+        "observationAgeMs": 258,
+        "processing": {
+          "receivedFrames": 5,
+          "processedFrames": 5,
+          "freshResults": 5,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.08915099897421896,
+          "inferenceMs": 250.12676900951192,
+          "observationAgeMs": 250.283462999505,
+          "processedFps": 1.5454816057141736,
+          "freshFps": 1.5454816057141736
+        }
+      },
+      {
+        "counter": 6,
+        "objects": [],
+        "observedAt": "2026-10-08T21:09:03.066772+00:00",
+        "expiresAt": "2026-10-08T21:09:04.066772+00:00",
+        "receivedAt": 1791493743338,
+        "observationAgeMs": 272,
+        "processing": {
+          "receivedFrames": 6,
+          "processedFrames": 6,
+          "freshResults": 6,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.15629299741704017,
+          "inferenceMs": 260.7024669996463,
+          "observationAgeMs": 260.9598639974138,
+          "processedFps": 1.563826943408363,
+          "freshFps": 1.563826943408363
+        }
+      }
+    ],
+    "commands": [
+      {
+        "at": 1791493740384,
+        "frameCounter": 1,
+        "action": {
+          "id": "166822c3-5eb3-498e-84e9-932ce6957789",
+          "workItemId": "task-1791493740334-14e69eb2",
+          "bodyLease": {
+            "bodyId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+            "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:00.334Z",
+          "type": "move",
+          "sessionId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+          "movementUpdate": {
+            "actionId": "bdf313f7-e1c2-4be9-ad4b-d2f21db0dec9",
+            "revision": 1,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": 35.29715146869421
+            }
+          },
+          "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "effectId": "13d7724f-02a8-429c-93da-8f6affeb0d3f:9e85c1100157b196ddad6950b038bb9a3be8662ebe64265765c0fcaabb54151f:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:00.337Z",
+          "correlationId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:00.334Z",
+            "leaseGrantedAt": "2026-10-08T21:09:00.337Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 3
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": 35.29715146869421,
+          "epoch": 7,
+          "deadline_ms": 21886,
+          "seq": 2
+        },
+        "frameToCommandMs": 894
+      },
+      {
+        "at": 1791493741167,
+        "frameCounter": 2,
+        "action": {
+          "id": "2e49cfb1-6368-4585-aa10-e05c0db94833",
+          "workItemId": "task-1791493741112-f548b421",
+          "bodyLease": {
+            "bodyId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+            "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:01.112Z",
+          "type": "move",
+          "sessionId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+          "movementUpdate": {
+            "actionId": "bdf313f7-e1c2-4be9-ad4b-d2f21db0dec9",
+            "revision": 2,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": 0.07487237453460693
+            }
+          },
+          "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "effectId": "13d7724f-02a8-429c-93da-8f6affeb0d3f:a2e4a438c926b06a323a52ec56286443170a13b2cca8844b1a5fd30a33ee1151:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:01.121Z",
+          "correlationId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:01.112Z",
+            "leaseGrantedAt": "2026-10-08T21:09:01.121Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 9
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": 0.07487237453460693,
+          "epoch": 7,
+          "deadline_ms": 22670,
+          "seq": 3
+        },
+        "frameToCommandMs": 414
+      },
+      {
+        "at": 1791493741754,
+        "frameCounter": 3,
+        "action": {
+          "id": "18d7c0b6-193c-44d4-86eb-5ed33c811485",
+          "workItemId": "task-1791493741700-0d2d2810",
+          "bodyLease": {
+            "bodyId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+            "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:01.700Z",
+          "type": "move",
+          "sessionId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+          "movementUpdate": {
+            "actionId": "bdf313f7-e1c2-4be9-ad4b-d2f21db0dec9",
+            "revision": 3,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": -35.11149287223816
+            }
+          },
+          "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "effectId": "13d7724f-02a8-429c-93da-8f6affeb0d3f:38f60fe480fe130b005bd10e9c76cfc7ab09929a38fb8bc5af0b6fd6aec3b879:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:01.704Z",
+          "correlationId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:01.700Z",
+            "leaseGrantedAt": "2026-10-08T21:09:01.704Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 4
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": -35.11149287223816,
+          "epoch": 7,
+          "deadline_ms": 23255,
+          "seq": 4
+        },
+        "frameToCommandMs": 430
+      },
+      {
+        "at": 1791493742325,
+        "frameCounter": 4,
+        "action": {
+          "id": "1fcc7c5e-00df-4169-8349-76c7c033491d",
+          "workItemId": "task-1791493742272-d73c491d",
+          "bodyLease": {
+            "bodyId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+            "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:02.272Z",
+          "type": "move",
+          "sessionId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+          "movementUpdate": {
+            "actionId": "bdf313f7-e1c2-4be9-ad4b-d2f21db0dec9",
+            "revision": 4,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": 35.29715146869421
+            }
+          },
+          "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "effectId": "13d7724f-02a8-429c-93da-8f6affeb0d3f:71f21d6a0dd865a24bf497fa6c1fb6948a0085baf00fec472c8acde6daf72aa5:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:02.277Z",
+          "correlationId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:02.272Z",
+            "leaseGrantedAt": "2026-10-08T21:09:02.277Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 5
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": 35.29715146869421,
+          "epoch": 7,
+          "deadline_ms": 23823,
+          "seq": 5
+        },
+        "frameToCommandMs": 422
+      },
+      {
+        "at": 1791493742892,
+        "frameCounter": 5,
+        "action": {
+          "id": "a03cf707-295c-42ca-b91e-4b668a7b3ae1",
+          "workItemId": "task-1791493742835-4c9ed02a",
+          "bodyLease": {
+            "bodyId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+            "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:02.835Z",
+          "type": "move",
+          "sessionId": "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+          "movementUpdate": {
+            "actionId": "bdf313f7-e1c2-4be9-ad4b-d2f21db0dec9",
+            "revision": 5,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": -35.11149287223816
+            }
+          },
+          "executionId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "effectId": "13d7724f-02a8-429c-93da-8f6affeb0d3f:8c3a1b47b7530c9c530a5264306777872839694442562e996c1633eecbeb3f82:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:02.844Z",
+          "correlationId": "13d7724f-02a8-429c-93da-8f6affeb0d3f",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:02.835Z",
+            "leaseGrantedAt": "2026-10-08T21:09:02.844Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 9
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": -35.11149287223816,
+          "epoch": 7,
+          "deadline_ms": 24394,
+          "seq": 6
+        },
+        "frameToCommandMs": 417
+      }
+    ],
+    "bodyWire": [
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "speed": 40,
+        "forward": 60,
+        "turn": 0,
+        "epoch": 7,
+        "deadline_ms": 21732,
+        "seq": 1
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": 35.29715146869421,
+        "epoch": 7,
+        "deadline_ms": 21886,
+        "seq": 2
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": 0.07487237453460693,
+        "epoch": 7,
+        "deadline_ms": 22670,
+        "seq": 3
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": -35.11149287223816,
+        "epoch": 7,
+        "deadline_ms": 23255,
+        "seq": 4
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": 35.29715146869421,
+        "epoch": 7,
+        "deadline_ms": 23823,
+        "seq": 5
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": -35.11149287223816,
+        "epoch": 7,
+        "deadline_ms": 24394,
+        "seq": 6
+      },
+      {
+        "t": "stop",
+        "epoch": 7,
+        "seq": 7
+      }
+    ],
+    "termination": {
+      "actionId": "bdf313f7-e1c2-4be9-ad4b-d2f21db0dec9",
+      "data": {
+        "cancellationBody": [
+          "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+          "d80e17ee7ab3465ebcce885ccb4bfb37",
+          "robot",
+          7,
+          7
+        ],
+        "command": "intent",
+        "epoch": 7,
+        "interpretationBody": [
+          "recorded-perception-e3e8b30c-5015-4bfb-8f2c-f112fbf902bd",
+          "d80e17ee7ab3465ebcce885ccb4bfb37",
+          "robot",
+          7,
+          7
+        ],
+        "robotId": "robot",
+        "sequence": 1
+      },
+      "id": "ainekio-result-bdf313f7-e1c2-4be9-ad4b-d2f21db0dec9-cancelled",
+      "message": "stop",
+      "timestamp": "2026-10-08T21:09:03.516061+00:00",
+      "type": "cancelled"
+    },
+    "targetLossResponseMs": 444,
+    "pendingAtCancellation": {
+      "interpretation": "leased",
+      "conversation": "leased"
+    },
+    "lateJobStates": [
+      "cancelled",
+      "cancelled"
+    ]
+  },
+  {
+    "ending": "expiry-unknown",
+    "singlePersonDemo": true,
+    "recognition": {
+      "classes": {
+        "0": "person"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e",
+      "sourceSha256": "c02019c4979c191eb739ddd944445ef408dad5679acab6fd520ef9d434bfbc63",
+      "video": null,
+      "versions": {
+        "python": "3.12.3",
+        "torch": "2.11.0+cu130",
+        "ultralytics": "8.4.36",
+        "opencv": "4.13.0"
+      },
+      "device": "cpu",
+      "threads": 4,
+      "physicalDestination": false
+    },
+    "frames": [
+      {
+        "videoFrame": 0,
+        "counter": 1,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9325729012489319,
+            "box": {
+              "x": 0.053325582295656204,
+              "y": 0.1499427855014801,
+              "width": 0.1874058060348034,
+              "height": 0.7079672515392303
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:06.957469+00:00",
+        "expiresAt": "2026-10-08T21:09:07.957469+00:00",
+        "receivedAt": 1791493747334,
+        "observationAgeMs": 377,
+        "processing": {
+          "receivedFrames": 1,
+          "processedFrames": 1,
+          "freshResults": 1,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.10550901060923934,
+          "inferenceMs": 371.17969698738307,
+          "observationAgeMs": 371.33232300402597,
+          "processedFps": 2.6931970853866587,
+          "freshFps": 2.6931970853866587
+        }
+      },
+      {
+        "counter": 2,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9337318539619446,
+            "box": {
+              "x": 0.4052133560180664,
+              "y": 0.1497596800327301,
+              "width": 0.18807584047317505,
+              "height": 0.7073276340961456
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:08.255670+00:00",
+        "expiresAt": "2026-10-08T21:09:09.255670+00:00",
+        "receivedAt": 1791493748511,
+        "observationAgeMs": 256,
+        "processing": {
+          "receivedFrames": 2,
+          "processedFrames": 2,
+          "freshResults": 2,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.16016799781937152,
+          "inferenceMs": 242.98423501022626,
+          "observationAgeMs": 243.18947999563534,
+          "processedFps": 1.2975512949973642,
+          "freshFps": 1.2975512949973642
+        }
+      },
+      {
+        "counter": 3,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9341922998428345,
+            "box": {
+              "x": 0.7571344375610352,
+              "y": 0.14984969794750214,
+              "width": 0.18796098232269287,
+              "height": 0.7068978697061539
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:08.880117+00:00",
+        "expiresAt": "2026-10-08T21:09:09.880117+00:00",
+        "receivedAt": 1791493749137,
+        "observationAgeMs": 257,
+        "processing": {
+          "receivedFrames": 3,
+          "processedFrames": 3,
+          "freshResults": 3,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.0904949993127957,
+          "inferenceMs": 244.70957700395957,
+          "observationAgeMs": 244.83793599938508,
+          "processedFps": 1.3841074672147233,
+          "freshFps": 1.3841074672147233
+        }
+      },
+      {
+        "counter": 4,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9325729012489319,
+            "box": {
+              "x": 0.053325582295656204,
+              "y": 0.1499427855014801,
+              "width": 0.1874058060348034,
+              "height": 0.7079672515392303
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:09.510475+00:00",
+        "expiresAt": "2026-10-08T21:09:10.510475+00:00",
+        "receivedAt": 1791493749778,
+        "observationAgeMs": 268,
+        "processing": {
+          "receivedFrames": 4,
+          "processedFrames": 4,
+          "freshResults": 4,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.09206899267155677,
+          "inferenceMs": 251.6197320073843,
+          "observationAgeMs": 251.75004398624878,
+          "processedFps": 1.4261614596806795,
+          "freshFps": 1.4261614596806795
+        }
+      },
+      {
+        "counter": 5,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9341922998428345,
+            "box": {
+              "x": 0.7571344375610352,
+              "y": 0.14984969794750214,
+              "width": 0.18796098232269287,
+              "height": 0.7068978697061539
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:10.161170+00:00",
+        "expiresAt": "2026-10-08T21:09:11.161170+00:00",
+        "receivedAt": 1791493750433,
+        "observationAgeMs": 272,
+        "processing": {
+          "receivedFrames": 5,
+          "processedFrames": 5,
+          "freshResults": 5,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.08933700155466795,
+          "inferenceMs": 257.19412899343297,
+          "observationAgeMs": 257.32750400493387,
+          "processedFps": 1.444667718574822,
+          "freshFps": 1.444667718574822
+        }
+      },
+      {
+        "counter": 6,
+        "objects": [],
+        "observedAt": "2026-10-08T21:09:10.829002+00:00",
+        "expiresAt": "2026-10-08T21:09:11.829002+00:00",
+        "receivedAt": 1791493751091,
+        "observationAgeMs": 262,
+        "processing": {
+          "receivedFrames": 6,
+          "processedFrames": 6,
+          "freshResults": 6,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.08806800178717822,
+          "inferenceMs": 246.31044099805877,
+          "observationAgeMs": 246.4441009942675,
+          "processedFps": 1.4570347424162489,
+          "freshFps": 1.4570347424162489
+        }
+      }
+    ],
+    "commands": [
+      {
+        "at": 1791493747835,
+        "frameCounter": 1,
+        "action": {
+          "id": "0933b5c8-a982-4eb9-8a1f-6b8ee2f6d1f5",
+          "workItemId": "task-1791493747754-36a7e3e5",
+          "bodyLease": {
+            "bodyId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+            "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:07.754Z",
+          "type": "move",
+          "sessionId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+          "movementUpdate": {
+            "actionId": "00d414a8-f364-49ab-8985-0e46e3809379",
+            "revision": 1,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": 35.29715146869421
+            }
+          },
+          "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "effectId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b:3d1ce702d691a6c06277ccc95407edb31f4bb03c16aedbb624997bf089b32c8b:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:07.767Z",
+          "correlationId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:07.754Z",
+            "leaseGrantedAt": "2026-10-08T21:09:07.767Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 13
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": 35.29715146869421,
+          "epoch": 7,
+          "deadline_ms": 21865,
+          "seq": 2
+        },
+        "frameToCommandMs": 878
+      },
+      {
+        "at": 1791493748704,
+        "frameCounter": 2,
+        "action": {
+          "id": "28c3065c-22a7-4db0-a205-a6ef339e8e83",
+          "workItemId": "task-1791493748629-d58dc00b",
+          "bodyLease": {
+            "bodyId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+            "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:08.629Z",
+          "type": "move",
+          "sessionId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+          "movementUpdate": {
+            "actionId": "00d414a8-f364-49ab-8985-0e46e3809379",
+            "revision": 2,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": 0.07487237453460693
+            }
+          },
+          "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "effectId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b:fcb2c84edc308a99adc1dd5f6919b7145fe9ff6b78ff9d84575ca9a89b35cf02:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:08.641Z",
+          "correlationId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:08.629Z",
+            "leaseGrantedAt": "2026-10-08T21:09:08.641Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 12
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": 0.07487237453460693,
+          "epoch": 7,
+          "deadline_ms": 22733,
+          "seq": 3
+        },
+        "frameToCommandMs": 449
+      },
+      {
+        "at": 1791493749338,
+        "frameCounter": 3,
+        "action": {
+          "id": "12393936-21cb-4ea5-955d-75bee9065eea",
+          "workItemId": "task-1791493749255-5437a4a2",
+          "bodyLease": {
+            "bodyId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+            "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:09.255Z",
+          "type": "move",
+          "sessionId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+          "movementUpdate": {
+            "actionId": "00d414a8-f364-49ab-8985-0e46e3809379",
+            "revision": 3,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": -35.11149287223816
+            }
+          },
+          "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "effectId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b:81e838bf9c03109124de4768462503060180e11c6560a427088004009a7bbfd6:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:09.271Z",
+          "correlationId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:09.255Z",
+            "leaseGrantedAt": "2026-10-08T21:09:09.271Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 16
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": -35.11149287223816,
+          "epoch": 7,
+          "deadline_ms": 23364,
+          "seq": 4
+        },
+        "frameToCommandMs": 458
+      },
+      {
+        "at": 1791493749977,
+        "frameCounter": 4,
+        "action": {
+          "id": "35b3ee21-6970-4b83-ac9c-30f4d4794d87",
+          "workItemId": "task-1791493749893-f8a4497b",
+          "bodyLease": {
+            "bodyId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+            "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:09.893Z",
+          "type": "move",
+          "sessionId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+          "movementUpdate": {
+            "actionId": "00d414a8-f364-49ab-8985-0e46e3809379",
+            "revision": 4,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": 35.29715146869421
+            }
+          },
+          "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "effectId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b:54afc4e02bea7d096fd7e315f376c3d3abddc6de4f3696fe000d6357b2c6c404:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:09.908Z",
+          "correlationId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:09.893Z",
+            "leaseGrantedAt": "2026-10-08T21:09:09.908Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 15
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": 35.29715146869421,
+          "epoch": 7,
+          "deadline_ms": 24003,
+          "seq": 5
+        },
+        "frameToCommandMs": 467
+      },
+      {
+        "at": 1791493750644,
+        "frameCounter": 5,
+        "action": {
+          "id": "d4c71ccc-d946-40cd-b545-43138ffd8ac5",
+          "workItemId": "task-1791493750560-51c2db62",
+          "bodyLease": {
+            "bodyId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+            "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:10.560Z",
+          "type": "move",
+          "sessionId": "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+          "movementUpdate": {
+            "actionId": "00d414a8-f364-49ab-8985-0e46e3809379",
+            "revision": 5,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": -35.11149287223816
+            }
+          },
+          "executionId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "effectId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b:cf1e5a8c14fc54ab0a6c6d3ae82f50b59408679381a3eac6d27cb22e155454f1:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:10.576Z",
+          "correlationId": "2624cc27-9f13-4697-8e2e-f53c06c48b6b",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:10.560Z",
+            "leaseGrantedAt": "2026-10-08T21:09:10.576Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 16
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": -35.11149287223816,
+          "epoch": 7,
+          "deadline_ms": 24671,
+          "seq": 6
+        },
+        "frameToCommandMs": 483
+      }
+    ],
+    "bodyWire": [
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "speed": 40,
+        "forward": 60,
+        "turn": 0,
+        "epoch": 7,
+        "deadline_ms": 21671,
+        "seq": 1
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": 35.29715146869421,
+        "epoch": 7,
+        "deadline_ms": 21865,
+        "seq": 2
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": 0.07487237453460693,
+        "epoch": 7,
+        "deadline_ms": 22733,
+        "seq": 3
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": -35.11149287223816,
+        "epoch": 7,
+        "deadline_ms": 23364,
+        "seq": 4
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": 35.29715146869421,
+        "epoch": 7,
+        "deadline_ms": 24003,
+        "seq": 5
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": -35.11149287223816,
+        "epoch": 7,
+        "deadline_ms": 24671,
+        "seq": 6
+      },
+      {
+        "t": "stop",
+        "epoch": 7,
+        "seq": 7
+      }
+    ],
+    "termination": {
+      "actionId": "00d414a8-f364-49ab-8985-0e46e3809379",
+      "data": {
+        "cancellationBody": [
+          "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+          "f90a763d325d41e185ed9a1c899186ce",
+          "robot",
+          7,
+          7
+        ],
+        "command": null,
+        "epoch": null,
+        "interpretationBody": [
+          "recorded-perception-f28abfb8-4c3e-4290-bc29-de941dbf6189",
+          "f90a763d325d41e185ed9a1c899186ce",
+          "robot",
+          7,
+          7
+        ],
+        "robotId": null,
+        "sequence": null
+      },
+      "id": "ainekio-result-00d414a8-f364-49ab-8985-0e46e3809379-outcome_unknown",
+      "message": "Original command termination was not confirmed within the cancellation deadline",
+      "timestamp": "2026-10-08T21:09:13.328733+00:00",
+      "type": "outcome_unknown"
+    },
+    "targetLossResponseMs": 494,
+    "pendingAtCancellation": {
+      "interpretation": "leased",
+      "conversation": "leased"
+    },
+    "lateJobStates": [
+      "cancelled",
+      "cancelled"
+    ]
+  },
+  {
+    "ending": "explicit-cancel",
+    "singlePersonDemo": true,
+    "recognition": {
+      "classes": {
+        "0": "person"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e",
+      "sourceSha256": "c02019c4979c191eb739ddd944445ef408dad5679acab6fd520ef9d434bfbc63",
+      "video": null,
+      "versions": {
+        "python": "3.12.3",
+        "torch": "2.11.0+cu130",
+        "ultralytics": "8.4.36",
+        "opencv": "4.13.0"
+      },
+      "device": "cpu",
+      "threads": 4,
+      "physicalDestination": false
+    },
+    "frames": [
+      {
+        "videoFrame": 0,
+        "counter": 1,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9325729012489319,
+            "box": {
+              "x": 0.053325582295656204,
+              "y": 0.1499427855014801,
+              "width": 0.1874058060348034,
+              "height": 0.7079672515392303
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:16.880979+00:00",
+        "expiresAt": "2026-10-08T21:09:17.880979+00:00",
+        "receivedAt": 1791493757243,
+        "observationAgeMs": 363,
+        "processing": {
+          "receivedFrames": 1,
+          "processedFrames": 1,
+          "freshResults": 1,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.13249600306153297,
+          "inferenceMs": 356.49439599364996,
+          "observationAgeMs": 356.68281000107527,
+          "processedFps": 2.8038719183125056,
+          "freshFps": 2.8038719183125056
+        }
+      },
+      {
+        "counter": 2,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9337318539619446,
+            "box": {
+              "x": 0.4052133560180664,
+              "y": 0.1497596800327301,
+              "width": 0.18807584047317505,
+              "height": 0.7073276340961456
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:18.312809+00:00",
+        "expiresAt": "2026-10-08T21:09:19.312809+00:00",
+        "receivedAt": 1791493758537,
+        "observationAgeMs": 225,
+        "processing": {
+          "receivedFrames": 2,
+          "processedFrames": 2,
+          "freshResults": 2,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.09955100540537387,
+          "inferenceMs": 205.8628919912735,
+          "observationAgeMs": 206.0088490106864,
+          "processedFps": 1.2211453139050599,
+          "freshFps": 1.2211453139050599
+        }
+      },
+      {
+        "counter": 3,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9341922998428345,
+            "box": {
+              "x": 0.7571344375610352,
+              "y": 0.14984969794750214,
+              "width": 0.18796098232269287,
+              "height": 0.7068978697061539
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:18.977304+00:00",
+        "expiresAt": "2026-10-08T21:09:19.977304+00:00",
+        "receivedAt": 1791493759251,
+        "observationAgeMs": 274,
+        "processing": {
+          "receivedFrames": 3,
+          "processedFrames": 3,
+          "freshResults": 3,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.09680099901743233,
+          "inferenceMs": 254.77298299665563,
+          "observationAgeMs": 254.92216199927498,
+          "processedFps": 1.2759349021605642,
+          "freshFps": 1.2759349021605642
+        }
+      },
+      {
+        "counter": 4,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9325729012489319,
+            "box": {
+              "x": 0.053325582295656204,
+              "y": 0.1499427855014801,
+              "width": 0.1874058060348034,
+              "height": 0.7079672515392303
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:19.689468+00:00",
+        "expiresAt": "2026-10-08T21:09:20.689468+00:00",
+        "receivedAt": 1791493759962,
+        "observationAgeMs": 273,
+        "processing": {
+          "receivedFrames": 4,
+          "processedFrames": 4,
+          "freshResults": 4,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.10205598664470017,
+          "inferenceMs": 256.54685001063626,
+          "observationAgeMs": 256.69844599906355,
+          "processedFps": 1.3049903028813137,
+          "freshFps": 1.3049903028813137
+        }
+      },
+      {
+        "counter": 5,
+        "objects": [
+          {
+            "label": "person",
+            "score": 0.9341922998428345,
+            "box": {
+              "x": 0.7571344375610352,
+              "y": 0.14984969794750214,
+              "width": 0.18796098232269287,
+              "height": 0.7068978697061539
+            }
+          }
+        ],
+        "observedAt": "2026-10-08T21:09:20.413903+00:00",
+        "expiresAt": "2026-10-08T21:09:21.413903+00:00",
+        "receivedAt": 1791493760685,
+        "observationAgeMs": 272,
+        "processing": {
+          "receivedFrames": 5,
+          "processedFrames": 5,
+          "freshResults": 5,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.09084600606001914,
+          "inferenceMs": 254.11225100106094,
+          "observationAgeMs": 254.25095901300665,
+          "processedFps": 1.3202557860888922,
+          "freshFps": 1.3202557860888922
+        }
+      },
+      {
+        "counter": 6,
+        "objects": [],
+        "observedAt": "2026-10-08T21:09:21.133733+00:00",
+        "expiresAt": "2026-10-08T21:09:22.133733+00:00",
+        "receivedAt": 1791493761386,
+        "observationAgeMs": 253,
+        "processing": {
+          "receivedFrames": 6,
+          "processedFrames": 6,
+          "freshResults": 6,
+          "droppedFrames": 0,
+          "staleFrames": 0,
+          "errors": 0,
+          "queueDepth": 0,
+          "queueWaitMs": 0.10310199286323041,
+          "inferenceMs": 236.15588000393473,
+          "observationAgeMs": 236.3029599946458,
+          "processedFps": 1.3365926239509927,
+          "freshFps": 1.3365926239509927
+        }
+      }
+    ],
+    "commands": [
+      {
+        "at": 1791493757845,
+        "frameCounter": 1,
+        "action": {
+          "id": "29f2ad45-9b01-4537-976e-827de2b27977",
+          "workItemId": "task-1791493757739-f55f908e",
+          "bodyLease": {
+            "bodyId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+            "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:17.739Z",
+          "type": "move",
+          "sessionId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+          "movementUpdate": {
+            "actionId": "f79d4039-d652-476a-8237-6d988bbf87f9",
+            "revision": 1,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": 35.29715146869421
+            }
+          },
+          "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "effectId": "a9b9dc55-8767-457b-9550-3d241ac32977:6cce18c46ba7eb4e9a05a13bb78f166fccd9baadcd5cae5eba29ff07d94c4e53:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:17.756Z",
+          "correlationId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:17.739Z",
+            "leaseGrantedAt": "2026-10-08T21:09:17.756Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 17
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": 35.29715146869421,
+          "epoch": 7,
+          "deadline_ms": 21941,
+          "seq": 2
+        },
+        "frameToCommandMs": 965
+      },
+      {
+        "at": 1791493758774,
+        "frameCounter": 2,
+        "action": {
+          "id": "71c5e1ce-75f4-4d0d-a90e-76c3209391b4",
+          "workItemId": "task-1791493758675-3421b3c9",
+          "bodyLease": {
+            "bodyId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+            "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:18.675Z",
+          "type": "move",
+          "sessionId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+          "movementUpdate": {
+            "actionId": "f79d4039-d652-476a-8237-6d988bbf87f9",
+            "revision": 2,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": 0.07487237453460693
+            }
+          },
+          "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "effectId": "a9b9dc55-8767-457b-9550-3d241ac32977:9f0b3e2de37ea0607f33559c4d208b8d5db082f0b4c8902c62a1cc5c05d0ef89:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:18.695Z",
+          "correlationId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:18.675Z",
+            "leaseGrantedAt": "2026-10-08T21:09:18.695Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 20
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": 0.07487237453460693,
+          "epoch": 7,
+          "deadline_ms": 22878,
+          "seq": 3
+        },
+        "frameToCommandMs": 462
+      },
+      {
+        "at": 1791493759487,
+        "frameCounter": 3,
+        "action": {
+          "id": "3723458d-85c8-46ff-9af1-68475f5141b6",
+          "workItemId": "task-1791493759382-b35909de",
+          "bodyLease": {
+            "bodyId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+            "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:19.382Z",
+          "type": "move",
+          "sessionId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+          "movementUpdate": {
+            "actionId": "f79d4039-d652-476a-8237-6d988bbf87f9",
+            "revision": 3,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": -35.11149287223816
+            }
+          },
+          "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "effectId": "a9b9dc55-8767-457b-9550-3d241ac32977:16d3d046ad934ff227d6ff1e3962b364155d0dc2cd0604b21ea6cff6eccac6a0:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:19.403Z",
+          "correlationId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:19.382Z",
+            "leaseGrantedAt": "2026-10-08T21:09:19.403Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 21
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": -35.11149287223816,
+          "epoch": 7,
+          "deadline_ms": 23589,
+          "seq": 4
+        },
+        "frameToCommandMs": 510
+      },
+      {
+        "at": 1791493760201,
+        "frameCounter": 4,
+        "action": {
+          "id": "4f58d4a7-9938-4fb9-b064-b96427e79e5a",
+          "workItemId": "task-1791493760097-0dd17c41",
+          "bodyLease": {
+            "bodyId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+            "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:20.097Z",
+          "type": "move",
+          "sessionId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+          "movementUpdate": {
+            "actionId": "f79d4039-d652-476a-8237-6d988bbf87f9",
+            "revision": 4,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": 35.29715146869421
+            }
+          },
+          "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "effectId": "a9b9dc55-8767-457b-9550-3d241ac32977:a9fd3a8a7719b6339345a8d5967564798e3a7649971325d9ae72fd699c2225c4:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:20.117Z",
+          "correlationId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:20.097Z",
+            "leaseGrantedAt": "2026-10-08T21:09:20.117Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 20
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": 35.29715146869421,
+          "epoch": 7,
+          "deadline_ms": 24304,
+          "seq": 5
+        },
+        "frameToCommandMs": 512
+      },
+      {
+        "at": 1791493760924,
+        "frameCounter": 5,
+        "action": {
+          "id": "062d7052-13bd-46a5-afb6-ad78225d7de3",
+          "workItemId": "task-1791493760820-9c7a8c15",
+          "bodyLease": {
+            "bodyId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+            "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+            "generation": 1
+          },
+          "createdAt": "2026-10-08T21:09:20.820Z",
+          "type": "move",
+          "sessionId": "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+          "movementUpdate": {
+            "actionId": "f79d4039-d652-476a-8237-6d988bbf87f9",
+            "revision": 5,
+            "controls": {
+              "speed": 40,
+              "forward": 60,
+              "turn": -35.11149287223816
+            }
+          },
+          "executionId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "effectId": "a9b9dc55-8767-457b-9550-3d241ac32977:1f731cfc1fa1aeda1986810de8f659eaaf2b789c44845484f480b0e7424064f4:effect:0",
+          "status": "dispatched",
+          "dispatchedAt": "2026-10-08T21:09:20.841Z",
+          "correlationId": "a9b9dc55-8767-457b-9550-3d241ac32977",
+          "timing": {
+            "version": 1,
+            "queueEnteredAt": "2026-10-08T21:09:20.820Z",
+            "leaseGrantedAt": "2026-10-08T21:09:20.841Z"
+          },
+          "metadata": {
+            "actionStageDurations": {
+              "queueToLeaseMs": 21
+            }
+          }
+        },
+        "wire": {
+          "t": "intent",
+          "name": "walk",
+          "dir": "fwd",
+          "steps": 0,
+          "update": 1,
+          "gait": "walk",
+          "speed": 40,
+          "forward": 60,
+          "turn": -35.11149287223816,
+          "epoch": 7,
+          "deadline_ms": 25027,
+          "seq": 6
+        },
+        "frameToCommandMs": 511
+      }
+    ],
+    "bodyWire": [
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "speed": 40,
+        "forward": 60,
+        "turn": 0,
+        "epoch": 7,
+        "deadline_ms": 21712,
+        "seq": 1
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": 35.29715146869421,
+        "epoch": 7,
+        "deadline_ms": 21941,
+        "seq": 2
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": 0.07487237453460693,
+        "epoch": 7,
+        "deadline_ms": 22878,
+        "seq": 3
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": -35.11149287223816,
+        "epoch": 7,
+        "deadline_ms": 23589,
+        "seq": 4
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": 35.29715146869421,
+        "epoch": 7,
+        "deadline_ms": 24304,
+        "seq": 5
+      },
+      {
+        "t": "intent",
+        "name": "walk",
+        "dir": "fwd",
+        "steps": 0,
+        "update": 1,
+        "gait": "walk",
+        "speed": 40,
+        "forward": 60,
+        "turn": -35.11149287223816,
+        "epoch": 7,
+        "deadline_ms": 25027,
+        "seq": 6
+      },
+      {
+        "t": "stop",
+        "epoch": 7,
+        "seq": 7
+      }
+    ],
+    "termination": {
+      "actionId": "f79d4039-d652-476a-8237-6d988bbf87f9",
+      "data": {
+        "cancellationBody": [
+          "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+          "c0878ac1432946eb8776b2a5f676676c",
+          "robot",
+          7,
+          7
+        ],
+        "command": "intent",
+        "epoch": 7,
+        "interpretationBody": [
+          "recorded-perception-cd7ed77f-42c3-41ca-9149-769c3e3e8227",
+          "c0878ac1432946eb8776b2a5f676676c",
+          "robot",
+          7,
+          7
+        ],
+        "robotId": "robot",
+        "sequence": 1
+      },
+      "id": "ainekio-result-f79d4039-d652-476a-8237-6d988bbf87f9-cancelled",
+      "message": "stop",
+      "timestamp": "2026-10-08T21:09:21.665854+00:00",
+      "type": "cancelled"
+    },
+    "targetLossResponseMs": 512,
+    "pendingAtCancellation": {
+      "interpretation": "leased",
+      "conversation": "leased"
+    },
+    "lateJobStates": [
+      "cancelled",
+      "cancelled"
+    ]
+  }
+]

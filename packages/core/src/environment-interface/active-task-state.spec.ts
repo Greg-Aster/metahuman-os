@@ -589,3 +589,220 @@ test('unrelated, reordered and reconnected receipts cannot advance interpreted p
   assert.equal(unknown.feedback?.type, 'outcome_unknown')
   assert.equal(unknown.stepIndex, 0, 'Owned dispatch evidence is never terminal motion evidence')
 })
+
+// Restricted demo tests exercise the existing step/wait owner. Observations and
+// receipts here are synthetic; the separate paired replay runs the real detector.
+async function singlePersonFixture(run: (f: any) => Promise<void>) {
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  const { interpretationBody } = await import('./interpretation.js')
+  const { personFrameKey } = await import('./active-task.js')
+  const f = fixture({ steps: [{ ...search.steps[0], target: 'candidate person',
+    candidateLabels: ['person'], steering: { label: 'person', gain: 100 } } as any] })
+  const { setEnvironmentBridgeEnabled, subscribeEnvironmentActions } = await import('./store.js')
+  setEnvironmentBridgeEnabled(true)
+  const unsubscribe = subscribeEnvironmentActions(observation.sessionId, () => {})
+  const frame = (counter: number, count: number, offset = 0, ttl = 1000, x = .2) => {
+    const at = clock + offset
+    const perception = { version: 1, timeBasis: 'gateway_receipt', robotId: 'p4', epoch: 1, gatewayInstance: 'gateway',
+      frameCounter: counter, observedAt: new Date(at).toISOString(), expiresAt: new Date(at + ttl).toISOString(),
+      backend: 'synthetic', model: 'count-only', summary: 'Candidate persons, identity unknown',
+      objects: Array.from({ length: count }, () => ({ label: 'person', box: { x, y: .2, width: .2, height: .4 } })), uncertainties: [] }
+    recordEnvironmentObservation({ ...observation, state: { ...observation.state,
+      body: { authenticated: true, cameraReady: true, robotId: 'p4' },
+      gateway: { robots: { p4: { epoch: 1, connection_state: 'online' } } }, perception } })
+    return personFrameKey(perception as any)
+  }
+  frame(1, 1)
+  let state: ActiveTaskState = { ...f.state, singlePersonDemo: true, snapshotId: 'pending-capture',
+    interpretationFence: interpretationBody(observation) }
+  const advance = async () => { state = await f.advance(state); return state }
+  const terminal = async (type = 'cancelled') => { state = await f.receive(state, 'motion', type as any); return advance() }
+  const resume = async (candidateFrame = state.personLoss?.candidateFrame, extra = {}) => {
+    state = (await wait.execute({ state: { ...state, pendingEvents: [{ kind: 'single_person_resume', payload: {
+      executionId: 'execution', sessionId: observation.sessionId, confirmCandidate: true, resume: true, candidateFrame, ...extra },
+    }] } }, f.context, {})).state
+    return state
+  }
+  try { await run({ ...f, frame, advance, terminal, resume, state: () => state,
+    tick: (ms: number) => { clock += ms }, replace: (value: ActiveTaskState) => { state = value }, now: () => clock }) }
+  finally { Date.now = realNow; unsubscribe(); recordEnvironmentObservation(observation) }
+}
+
+for (const count of [0, 2]) test(`restricted demo cancels on first fresh ${count}-person observation without steering`, async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, count)
+    const state = await f.advance()
+    assert.equal(state.personLoss.startedAt, f.now())
+    assert.equal(state.personLoss.expiresAt, f.now() + 3000)
+    assert.equal(state.cancellationRequestedAt, f.now())
+    assert.equal(state.objectiveComplete, false)
+    assert.equal(f.dispatches.filter((d: any) => d.payload.handler === 'environment.cancel-owned-work' && d.payload.input.actionId === 'motion').length, 1)
+    assert.equal(f.dispatches.some((d: any) => d.payload.input.movementUpdate), false)
+    await f.advance()
+    assert.equal(f.dispatches.filter((d: any) => d.payload.handler === 'environment.cancel-owned-work' && d.payload.input.actionId === 'motion').length, 1)
+  })
+})
+
+test('restricted reacquisition counts three distinct successive fresh frames spanning one second', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance(); await f.terminal()
+    f.tick(100); f.frame(3, 1); await f.advance()
+    f.tick(600); await f.advance(); await f.advance()
+    assert.equal(f.state().personLoss.consecutive, 1, 'Repeated reads of the same frame do not count')
+    f.frame(4, 1); await f.advance()
+    assert.equal(f.state().personLoss.candidateFrame, undefined)
+    f.tick(500); const candidate = f.frame(5, 1); await f.advance()
+    assert.equal(f.state().personLoss.consecutive, 3)
+    assert.equal(f.state().personLoss.candidateFrame, candidate)
+    assert.equal(f.state().motionId, undefined, 'Reappearance never resumes movement')
+    await f.resume('old-frame')
+    assert.ok(f.state().personLoss.resumeRejection)
+    await f.resume(candidate, { resume: false })
+    assert.ok(f.state().personLoss)
+    await f.resume(candidate)
+    assert.equal(f.state().personLoss, undefined)
+    assert.equal(f.state().completedActionId, 'motion')
+    const resumed = await f.advance()
+    assert.ok(resumed.motionId)
+    assert.notEqual(resumed.motionId, 'motion')
+    assert.equal(f.dispatches.filter((d: any) => d.payload.input.type === 'move' && !d.payload.input.movementUpdate).length, 1)
+    await assert.rejects(() => f.resume(candidate), /WAIT/)
+    assert.equal(f.dispatches.filter((d: any) => d.payload.input.type === 'move' && !d.payload.input.movementUpdate).length, 1)
+  })
+})
+
+test('stale frames and a new ambiguous frame break the candidate streak without extending its window', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance(); await f.terminal()
+    const end = f.state().personLoss.expiresAt
+    f.tick(100); f.frame(3, 1); await f.advance()
+    f.tick(600); f.frame(4, 1, -2000); await f.advance()
+    assert.equal(f.state().personLoss.consecutive, 0)
+    assert.equal(f.state().personLoss.candidateFrame, undefined)
+    f.frame(5, 1); await f.advance()
+    f.tick(500); f.frame(6, 2); await f.advance()
+    assert.equal(f.state().personLoss.consecutive, 0)
+    assert.equal(f.state().personLoss.expiresAt, end)
+    f.tick(2000); f.frame(7, 1); await f.advance()
+    assert.equal(f.state().personLoss.windowExpired, true)
+    assert.equal(f.state().personLoss.candidateFrame, undefined)
+    assert.equal(f.state().objectiveComplete, false)
+  })
+})
+
+test('missing original terminal survives window expiry and later receipt reconciliation; Stop ACK cannot resume', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance()
+    for (const [counter, delay] of [[3, 100], [4, 600], [5, 500]]) {
+      f.tick(delay); f.frame(counter, 1); await f.advance()
+    }
+    const candidate = f.state().personLoss.candidateFrame
+    assert.ok(candidate)
+    await assert.rejects(() => f.receive(f.state(), 'stop-command', 'completed'), /WAIT/)
+    await f.resume(candidate)
+    assert.equal(f.state().motionId, 'motion')
+    f.tick(1900); f.frame(6, 1); await f.advance()
+    assert.equal(f.state().personLoss.windowExpired, true)
+    assert.equal(f.state().feedback.type, 'outcome_unknown')
+    assert.equal(f.state().motionId, 'motion')
+    assert.equal(f.state().done, undefined)
+    await f.resume(candidate)
+    assert.ok(f.state().personLoss)
+    await f.terminal()
+    assert.equal(f.state().completedActionId, 'motion')
+    assert.equal(f.state().motionId, undefined)
+    assert.equal(f.state().feedback.type, 'cancelled')
+    assert.equal(f.state().personLoss.windowExpired, true)
+    assert.equal(f.dispatches.some((d: any) => d.payload.input.type === 'move'), false)
+  })
+})
+
+for (const change of ['manual', 'reconnect']) test(`candidate resume cannot reclaim ownership after ${change}`, async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance(); await f.terminal()
+    for (const [counter, delay] of [[3, 100], [4, 600], [5, 500]]) {
+      f.tick(delay); f.frame(counter, 1); await f.advance()
+    }
+    const { getLatestEnvironmentObservation } = await import('./store.js')
+    const current = getLatestEnvironmentObservation(observation.sessionId)!
+    if (change === 'manual') (current.state!.gateway as any).robots.p4.body_command_sequence = 999
+    else (current.state!.activeMovementUpdates as any).epoch = 2
+    recordEnvironmentObservation(current)
+    await f.resume()
+    assert.ok(f.state().personLoss.resumeRejection)
+    assert.equal(f.state().motionId, undefined)
+  })
+})
+
+test('checkpoint recovery preserves the loss window and unknown receipt identity', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance()
+    const saved = JSON.parse(JSON.stringify(f.state()))
+    f.tick(3100); f.replace(saved); await f.advance()
+    assert.equal(f.state().personLoss.startedAt, saved.personLoss.startedAt)
+    assert.equal(f.state().motionId, saved.motionId)
+    assert.equal(f.state().feedback.type, 'outcome_unknown')
+    await f.terminal()
+    assert.equal(f.state().feedback.actionId, saved.motionId)
+    assert.equal(f.state().objectiveComplete, false)
+  })
+})
+
+test('IDENTITY LIMITATION: one person replacing another evades the count-only rule', async () => {
+  await singlePersonFixture(async f => {
+    const first = await f.advance()
+    f.tick(100); f.frame(2, 1, 0, 1000, .7)
+    f.replace(await f.receive(first, first.pendingControls.commandId, 'completed'))
+    const replaced = await f.advance()
+    assert.equal(replaced.personLoss, undefined)
+    assert.equal(replaced.cancellationRequestedAt, undefined)
+    assert.notEqual(replaced.desiredControls, first.desiredControls)
+    // This explicitly demonstrates a limitation, not stable-target qualification.
+    assert.equal(replaced.motionId, first.motionId)
+  })
+})
+
+test('owned cancellation advances the resume fence only from its correlated terminal receipt', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance()
+    const { getLatestEnvironmentObservation } = await import('./store.js')
+    const { interpretationBody } = await import('./interpretation.js')
+    const current = getLatestEnvironmentObservation(observation.sessionId)!
+    ;(current.state!.gateway as any).robots.p4.body_command_sequence = 1
+    recordEnvironmentObservation(current)
+    const fence = JSON.parse(interpretationBody(current))
+    f.replace(await f.receive(f.state(), 'motion', 'cancelled', { interpretationBody: fence, cancellationBody: fence }))
+    await f.advance()
+    for (const [counter, delay] of [[3, 100], [4, 600], [5, 500]]) {
+      f.tick(delay); f.frame(counter, 1)
+      const next = getLatestEnvironmentObservation(observation.sessionId)!
+      ;(next.state!.gateway as any).robots.p4.body_command_sequence = 1
+      recordEnvironmentObservation(next)
+      await f.advance()
+    }
+    assert.equal(f.state().interpretationFence, JSON.stringify(fence))
+    await f.resume()
+    assert.equal(f.state().personLoss, undefined)
+    const resumed = await f.advance()
+    assert.notEqual(resumed.motionId, 'motion')
+    const command = f.dispatches.find((d: any) => d.payload.input.id === resumed.motionId)
+    assert.deepEqual(command.payload.input.metadata.interpretationBody, fence)
+  })
+})
+
+test('restricted loss cannot advance to a later phase or apply an interpreted replacement', async () => {
+  await singlePersonFixture(async f => {
+    ;(f.context as any).activeProgram.steps.push({ kind: 'action', action: { type: 'robotCommand', command: 'wave' } })
+    f.frame(2, 2); await f.advance(); await f.terminal()
+    f.tick(3100); await f.advance()
+    assert.equal(f.state().stepIndex, 0)
+    assert.equal(f.state().objectiveComplete, false)
+    assert.equal(f.dispatches.some((d: any) => d.payload.input.command === 'wave'), false)
+    const { environmentActiveTaskNode } = await import('../nodes/environment/active-task.node.js')
+    await assert.rejects(() => environmentActiveTaskNode.execute({ program }, {
+      ...(f.context as any), activeTaskContinuation: { program, state: f.state(), decision },
+    }, {}), /operator selection and termination reconciliation/)
+  })
+})

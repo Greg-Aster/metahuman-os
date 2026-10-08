@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { defineNode, type NodeExecutionContext } from '../types.js'
 import { getLatestEnvironmentObservation, getEnvironmentPerception, prepareEnvironmentCommand } from '../../environment-interface/store.js'
 import type { EnvironmentTaskProgram, ActiveTaskState, ActiveTaskContinuation } from '../../environment-interface/active-task.js'
+import { observeSinglePersonDemo, personFrameKey } from '../../environment-interface/active-task.js'
 import type { EnvironmentAction, EnvironmentObservation, EnvironmentVisualFrame } from '../../environment-interface/types.js'
 import type { EnvironmentTaskDecision } from './helpers.js'
 import { loadGraphForMode } from '../../graph-streaming.js'
@@ -35,7 +36,7 @@ function clearDeadline(state: ActiveTaskState, context: NodeExecutionContext) {
 // Keep the receipt/failure as evidence, never as an active movement to adopt.
 function settleAction(state: ActiveTaskState, context: NodeExecutionContext) {
   clearDeadline(state, context)
-  state.completedActionId = state.motionId
+  if (state.motionId) state.completedActionId = state.motionId
   for (const field of ['motionId', 'action', 'accepted', 'snapshotId', 'identificationEffectId', 'identificationRequest', 'generationEffectId', 'image', 'identification', 'lastIdentifiedFrame', 'finishRequestedAt', 'cancellationRequestedAt', 'feedbackRequiredSince', 'pendingControls', 'desiredControls', 'acknowledgedControls', 'retrySteering', 'captureRequestedAt', 'captureCompleted'] as const) delete state[field]
   state.updateRevision = 0
 }
@@ -58,7 +59,7 @@ function observationReference(observation: EnvironmentObservation): EnvironmentO
 }
 
 export const environmentActiveTaskNode = defineNode({
-  id: 'environment_active_task', name: 'Execute Robot Task', category: 'environment', version: '2.0.0',
+  id: 'environment_active_task', name: 'Execute Robot Task', category: 'environment', version: '2.1.0',
   execution: { timeoutOwner: 'children' },
   description: 'Owns the complete task program within the existing durable execution.',
   inputs: [{ name: 'program', type: 'object', description: 'MetaHuman-selected ordered actions and ongoing behaviors' },
@@ -75,6 +76,10 @@ export const environmentActiveTaskNode = defineNode({
     const continuation = context.activeTaskContinuation as ActiveTaskContinuation | undefined
     const selected = inputs.program as EnvironmentTaskProgram
     let initial: ActiveTaskState | undefined
+    // A pending restricted attempt must remain with its receipt owner, even if
+    // interpretation proposes a replacement. Only an explicit operator event
+    // in that owner can select a candidate and resume.
+    if (continuation?.state.personLoss) throw new Error('Single-person attempt requires operator selection and termination reconciliation')
     if (continuation && JSON.stringify(selected) === JSON.stringify(continuation.program)) {
       initial = { ...continuation.state }; delete initial.userInput
     } else if (continuation) {
@@ -109,6 +114,11 @@ export const environmentActiveTaskNode = defineNode({
       initial.instructionRevision = continuation?.state.instructionRevision
       initial.interpretationFence = context.environmentInterpretation.body
     }
+    if (context.activeTaskSinglePersonDemo === true || continuation?.state.singlePersonDemo) {
+      initial ??= { stepIndex: 0, evidence: [], updateRevision: 0 }
+      initial.singlePersonDemo = true
+      initial.interpretationFence ??= interpretationBody(getLatestEnvironmentObservation(String(inputs.sessionId ?? context.sessionId)) ?? undefined)
+    }
     if (initial) initial.retrySteering = true
     if (initial) initial.pendingEvents = [...(initial.pendingEvents ?? []),
       ...((context.executionEvents as ActiveTaskState['pendingEvents']) ?? []).filter(event => event.kind !== 'user_steering')]
@@ -129,7 +139,7 @@ export const environmentActiveTaskNode = defineNode({
 })
 
 export const environmentActiveTaskStepNode = defineNode({
-  id: 'environment_active_task_step', name: 'Advance Active Task', category: 'environment', version: '2.0.0',
+  id: 'environment_active_task_step', name: 'Advance Active Task', category: 'environment', version: '2.1.0',
   execution: { activation: 'always' },
   description: 'Advances task phases and updates the admitted gait without waiting for remote inference.',
   inputs: [{ name: 'state', type: 'object', optional: true, description: 'Saved active task state' }],
@@ -151,7 +161,11 @@ export const environmentActiveTaskStepNode = defineNode({
     const record = (complete = false) => {
       const feedback = (state.feedback?.type === 'outcome_unknown' ? state.feedback : state.failure) ?? (state.completedActionId && state.feedback?.actionId === state.completedActionId
         ? state.feedback : state.steeringResult ?? state.feedback)
-      const reason = state.interpretationError ?? state.failure?.message ?? state.identificationError?.toString()
+      const loss = state.personLoss
+      const lossReason = loss && `${state.identificationError}; ${loss.windowExpired ? 'target-lost: observation window expired'
+        : loss.candidateFrame ? `candidate person available in frame ${loss.candidateFrame}; identity unverified`
+        : `observing candidate persons (${loss.consecutive} distinct successive fresh frames)`}`
+      const reason = state.interpretationError ?? lossReason ?? state.failure?.message ?? state.identificationError?.toString()
         ?? (complete ? state.evidence.at(-1) : state.steeringResult?.message ?? state.identification?.evidence)
       const task = { ...previous,
       objectiveId: previous?.objectiveId ?? execution.occurrenceId, executionId: execution.executionId,
@@ -233,6 +247,7 @@ export const environmentActiveTaskStepNode = defineNode({
     }
     let feedbackExpires: number | undefined
     const phase = program.steps[state.stepIndex]
+    if (state.singlePersonDemo && phase?.kind === 'behavior') observeSinglePersonDemo(state, Date.now())
     if (phase?.kind === 'behavior' && !state.finishRequestedAt && !state.failure && !state.identificationError) {
       state.feedbackRequiredSince ??= Date.now()
       const expires = state.perception ? Date.parse(state.perception.expiresAt) : state.feedbackRequiredSince + FEEDBACK_START_GRACE_MS
@@ -246,8 +261,8 @@ export const environmentActiveTaskStepNode = defineNode({
       const confirmed = state.feedback && state.feedback.actionId === state.motionId && terminalTypes.includes(state.feedback.type)
       if (!state.motionId || !state.action?.continuous || confirmed) {
         if (confirmed) settleAction(state, context)
-        else clearDeadline(state, context)
-        state.done = true
+        else if (!state.personLoss || state.personLoss.windowExpired) clearDeadline(state, context)
+        if (!state.personLoss) state.done = true
       } else {
         if (!state.cancellationRequestedAt) {
           cancelOwnedWork(context, { actionId: state.motionId,
@@ -262,6 +277,9 @@ export const environmentActiveTaskStepNode = defineNode({
             timestamp: new Date().toISOString(), message: 'Cancellation requested; original command termination is unconfirmed' }
         }
       }
+      // The observation window does not own movement settlement. Expiring it
+      // leaves an unknown command and its original receipt path intact.
+      if (state.personLoss && !state.personLoss.windowExpired) scheduleDeadline(state.personLoss.expiresAt)
       record(); return { state }
     }
     if (state.userInput && !state.motionId) { record(); return { state } }
@@ -359,6 +377,7 @@ export const environmentActiveTaskStepNode = defineNode({
       record(); return { state }
     }
     if (feedbackExpires !== undefined) scheduleDeadline(feedbackExpires)
+    if (state.singlePersonDemo && !state.perception) { record(); return { state } }
     identify(step.target, step.completionCriteria)
     if (!state.motionId) { delete state.feedback; state.action = step.motion; state.motionId = await send(step.motion); state.accepted = false }
     updateMovement(step.motion, step.steering)
@@ -376,7 +395,7 @@ export const environmentActiveTaskStepNode = defineNode({
 })
 
 export const environmentActiveTaskWaitNode = defineNode({
-  id: 'environment_active_task_wait', name: 'Receive Active Task Event', category: 'environment', version: '2.0.0',
+  id: 'environment_active_task_wait', name: 'Receive Active Task Event', category: 'environment', version: '2.1.0',
   description: 'Consumes observations and physical results within the current task phase.',
   inputs: [{ name: 'state', type: 'object', description: 'Current task phase and requests' }],
   outputs: [{ name: 'state', type: 'object', description: 'Updated task progress' },
@@ -410,7 +429,7 @@ export const environmentActiveTaskWaitNode = defineNode({
         if (event.kind !== 'user_steering') return true
         bufferInput(event); return false
       })
-      if (!state.userInput || !state.interpretationResult) return false
+      if (state.personLoss || !state.userInput || !state.interpretationResult) return false
       if (state.pendingEvents?.length || execution.pendingEvents().length) return false
       const result = state.interpretationResult
       if (result.revision !== state.instructionRevision || result.executionId !== execution.executionId
@@ -450,6 +469,32 @@ export const environmentActiveTaskWaitNode = defineNode({
       if (state.instructionRevision !== revision) return { state, continue: true }
       const event = state.pendingEvents?.shift() ?? execution.waitForEvent(`active_task:${context.activeTaskSessionId}`)
       const payload = event.payload as Record<string, any>
+      if (event.kind === 'single_person_resume' && state.personLoss) {
+        // This is an explicit operator event, not model text or a selector
+        // output. Resolve the candidate again at consumption, never at enqueue.
+        state.perception = getEnvironmentPerception(context.activeTaskSessionId as string) ?? undefined
+        observeSinglePersonDemo(state, Date.now())
+        const loss = state.personLoss
+        const body = interpretationBody(getLatestEnvironmentObservation(context.activeTaskSessionId as string) ?? undefined)
+        const terminal = !state.motionId && (!state.completedActionId || state.feedback?.actionId === state.completedActionId
+          && terminalTypes.includes(state.feedback.type))
+        if (payload.executionId !== execution.executionId || payload.sessionId !== context.activeTaskSessionId
+          || payload.confirmCandidate !== true || payload.resume !== true || !loss.candidateFrame
+          || payload.candidateFrame !== loss.candidateFrame || !state.perception
+          || personFrameKey(state.perception) !== loss.candidateFrame || !terminal
+          || body !== state.interpretationFence) {
+          loss.resumeRejection = 'Resume requires explicit selection of the current fresh candidate, confirmed prior termination and unchanged ownership'
+          return { state, continue: true }
+        }
+        state.evidence.push(`Operator selected candidate person in ${loss.candidateFrame}; identity continuity is unverified`)
+        // Invalidate pre-loss image/completion evidence. The next step admits a
+        // new action identity; it never adopts or replays the cancelled gait.
+        if (state.interpretation) cancelOwnedWork(context, { interpretationEffectId: state.interpretation.effectId, reason: 'Operator selected a new candidate' })
+        settleAction(state, context)
+        for (const field of ['personLoss', 'identificationError', 'failure', 'done', 'interpretation', 'interpretationResult', 'interpretationError', 'visualCompletionSatisfied'] as const) delete state[field]
+        state.objectiveComplete = false
+        return { state, continue: true }
+      }
       if (event.kind === 'work_result' && payload.effectId === state.deadlineEffectId) {
         delete state.deadlineEffectId; delete state.deadlineAt
         return { state, continue: true }

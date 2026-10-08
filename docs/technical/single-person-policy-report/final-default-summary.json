@@ -1,0 +1,85 @@
+{
+  "core": {
+    "head": "8c9d43e558e294470e5c17f2ee838432a03be8b8",
+    "files": {
+      "packages/core/src/environment-interface/active-task-state.spec.ts": "e42e52056a708020efa6ae0ed9f2af4586493b1eda87326c0d831bcfb768a9de",
+      "packages/core/src/environment-interface/active-task.ts": "3b0b239aeb52509512fcbd98a91a8f958ce16d5dc2d0649c2dcb3338d0440018",
+      "packages/core/src/environment-interface/perception-gateway.spec.ts": "43db0c58b1bc11307cd3ca70e175e10dfd9b650e80823d02567053ac57e8bb3b",
+      "packages/core/src/nodes/environment/active-task.node.ts": "fa2640102ee560c9f18f2b0397d2ab7fcc10abcdbad953dba877ec8540fcf292",
+      "tests/visual-control-report.py": "382185508cd211e3dce1a0a0622ae33e495ea41f2bf00335a5c5b17ae5c32384"
+    },
+    "sourceSha256": "993e4db9ec5af9a69a1ec7c7008debd840eaace25a608de125c708880b39f4ce"
+  },
+  "gateway": {
+    "head": "6d7e073ffee47a4b60c5ba2b1fa4ee40b3a3c846",
+    "files": {},
+    "sourceSha256": "8272196803420257c62b8b9e71c4d3b6f7b8e686aa84b2460815dfe23c68f081"
+  },
+  "cases": [
+    {
+      "case": "expiry-confirmed",
+      "frames": 6,
+      "inferenceMedianMs": 245.16907049837755,
+      "inferenceMaxMs": 365.59017399849836,
+      "observationAgeMedianMs": 252.5,
+      "observationAgeMaxMs": 373,
+      "frameToCommandMedianMs": 401.5,
+      "frameToCommandMaxMs": 545,
+      "freshFps": 1.4673075883494888,
+      "targetLossResponseMs": 406,
+      "expiryToCancellationMs": 217,
+      "cancelToStopMs": 3,
+      "cancelToResultMs": 4,
+      "result": "cancelled",
+      "pendingAtCancellation": {
+        "interpretation": "leased",
+        "conversation": "leased"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e"
+    },
+    {
+      "case": "expiry-unknown",
+      "frames": 6,
+      "inferenceMedianMs": 256.2392575055128,
+      "inferenceMaxMs": 393.9899489923846,
+      "observationAgeMedianMs": 272.0,
+      "observationAgeMaxMs": 403,
+      "frameToCommandMedianMs": 484,
+      "frameToCommandMaxMs": 549,
+      "freshFps": 1.1357238921288593,
+      "targetLossResponseMs": 484,
+      "expiryToCancellationMs": 284,
+      "cancelToStopMs": 3,
+      "cancelToResultMs": 2002,
+      "result": "outcome_unknown",
+      "pendingAtCancellation": {
+        "interpretation": "leased",
+        "conversation": "leased"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e"
+    },
+    {
+      "case": "explicit-cancel",
+      "frames": 6,
+      "inferenceMedianMs": 250.64858799305512,
+      "inferenceMaxMs": 382.7588639978785,
+      "observationAgeMedianMs": 270.0,
+      "observationAgeMaxMs": 390,
+      "frameToCommandMedianMs": 514,
+      "frameToCommandMaxMs": 534,
+      "freshFps": 1.122715982533246,
+      "targetLossResponseMs": 534,
+      "expiryToCancellationMs": null,
+      "cancelToStopMs": 16,
+      "cancelToResultMs": 17,
+      "result": "cancelled",
+      "pendingAtCancellation": {
+        "interpretation": "leased",
+        "conversation": "leased"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e"
+    }
+  ],
+  "policy": "generic-continuous-behavior",
+  "identityQualification": "not established; person counts do not associate a target"
+}

@@ -67,8 +67,11 @@ def snapshot(root):
 
 reports = [json.loads(file.read_text()) for file in sorted(output.glob('*/trace.json'))]
 natural = bool(reports and reports[0]['recognition'].get('video'))
-assert len(reports) == (1 if natural else 3) and all(report['completed'] for report in reports)
+assert len(reports) == (1 if natural else 3) and all(report.get('completed') or report.get('ambiguityVerified') for report in reports)
+restricted = all(report.get('singlePersonDemo') for report in reports)
 summary = {'core': snapshot(Path.cwd()), 'gateway': snapshot(gateway), 'cases': []}
+summary['policy'] = 'restricted-single-person-demo' if restricted else 'generic-continuous-behavior'
+summary['identityQualification'] = 'not established; person counts do not associate a target'
 page = ['<!doctype html><meta charset="utf-8"><title>Recorded visual control</title>',
         '<style>body{font:16px system-ui;max-width:1100px;margin:30px auto;background:#101820;color:#eef} '
         'section{margin:32px 0} .frames{display:flex;flex-wrap:wrap;gap:12px} figure{margin:0;width:340px} '
@@ -80,6 +83,15 @@ page = ['<!doctype html><meta charset="utf-8"><title>Recorded visual control</ti
         'Boxes are actual offline YOLO results. This is a controlled pixel replay, not natural video or identity tracking. '
         'Interpretation and conversation provider completions are deliberately held pending. No physical destination exists.</p>']
 for report in reports:
+    if report.get('ambiguityVerified'):
+        assert restricted and natural and report['bodyWire'] == []
+        item = {'case': 'initial-multiple-people', 'frames': len(report['frames']),
+                'people': len(report['frames'][0]['objects']), 'bodyCommands': 0,
+                'result': 'ambiguity prevents initial admission', 'model': report['recognition']['model']}
+        summary['cases'].append(item)
+        page.append(f'<section><h2>Restricted single-person ambiguity</h2><pre>{html.escape(json.dumps(item, indent=2))}</pre>'
+                    f'<img width="640" src="{report["ending"]}/001-detected.jpg"></section>')
+        continue
     ages = [frame['observationAgeMs'] for frame in report['frames']]
     inference = [frame['processing']['inferenceMs'] for frame in report['frames']]
     commands = report['commands']
@@ -110,7 +122,10 @@ for report in reports:
         caption = f"Frame {counter}: {len(frame['objects'])} detections; age {frame['observationAgeMs']} ms; turn {turn:.2f}" if turn is not None else f'Frame {counter}'
         page.append(f'<figure><img src="{name}/{counter:03}-detected.jpg"><figcaption>{html.escape(caption)}</figcaption></figure>')
     page.append(f'</div><p><a href="{name}/trace.json">Full correlated trace</a></p></section>')
-page.append('<p>Terminal receipts establish commanded outcomes, not physical rest. Loss of a detected target uses the selected base motion; only expired required feedback requests cancellation. Timings include a test driver servicing the real Coordinator handlers and are not deployed scheduling guarantees.</p>')
+page.append('<p>Terminal receipts establish commanded outcomes, not physical rest. '
+            + ('Restricted policy: fresh absence or multiple people requests owned cancellation; reacquisition never automatically resumes movement. '
+               if restricted else 'Loss of a detected target uses the selected base motion; only expired required feedback requests cancellation. ')
+            + 'Timings include a test driver servicing the real Coordinator handlers and are not deployed scheduling guarantees. Person counts do not establish identity.</p>')
 (output / 'index.html').write_text('\n'.join(page))
 (output / 'summary.json').write_text(json.dumps(summary, indent=2))
 print(json.dumps({**summary, 'core': {k: v for k, v in summary['core'].items() if k != 'files'},
