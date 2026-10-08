@@ -1,0 +1,71 @@
+{
+  "core": {
+    "head": "d0c6bfe3dc45c8b3c8c6198f331b6aa8b9f44595",
+    "files": {
+      "packages/core/src/environment-interface/perception-gateway.spec.ts": "f738653ddf4498de7616d7cb5a579325034bd4fbe602ce83549c95247dc487f5",
+      "tests/run-visual-control.sh": "82ab5b44814fdf8bd45fcfd7e2b46b08ac616fd1ee8d2c6aa4979a1e2cc76be0",
+      "tests/visual-control-report.py": "8a185a6b1f54b62300f5f07bbf294e72cd4e7be9ad704553e4d83eff7d7dad76"
+    },
+    "sourceSha256": "e390819821b73b1b2d95a6e6be074e4bd0c68f65042e6913272196d67237df4e"
+  },
+  "gateway": {
+    "head": "c7f4b52bf4da08eecebd9d0f0393c8aeaccbb877",
+    "files": {
+      "Emulator/tests/perception_harness.py": "022d2c4be574d4c2e1f58de92a241de57a0507315e0f3035dde8d26b99a9d87c"
+    },
+    "sourceSha256": "5a29defe6f8abdbd29ca2919a3f87b8bb2078d40bf9599bad1cfb6c3f47074d5"
+  },
+  "cases": [
+    {
+      "case": "expiry-confirmed",
+      "frames": 48,
+      "inferenceMedianMs": 202.42322849662742,
+      "inferenceMaxMs": 339.14448200084735,
+      "observationAgeMedianMs": 219.0,
+      "observationAgeMaxMs": 358,
+      "frameToCommandMedianMs": 433,
+      "frameToCommandMaxMs": 684,
+      "freshFps": 1.50732618979526,
+      "targetLossResponseMs": null,
+      "expiryToCancellationMs": 334,
+      "cancelToStopMs": 4,
+      "cancelToResultMs": 5,
+      "result": "cancelled",
+      "pendingAtCancellation": {
+        "interpretation": "leased",
+        "conversation": "leased"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e",
+      "sourceSha256": "3c643abd4f37f1c67815c5faaebac6bea98fe536e45d97aa82e9682991e47fae",
+      "maximumSourceFrameGapMs": 960,
+      "multiPersonFrames": 47,
+      "emptyFrames": 0,
+      "targetAudit": {
+        "method": "Independent per-frame maximum IoU >= 0.3 against marked pedestrian reference boxes; not an identity model or input to steering.",
+        "referenceSha256": "4827603ef87bbd61123cb4c5f194b3bf23531bd78ed9cd916084e53dca998013",
+        "selectedIdSwitches": 18,
+        "distinctMatchedIds": [
+          2,
+          5,
+          6,
+          7,
+          20,
+          22,
+          24,
+          25,
+          26,
+          28,
+          33,
+          42,
+          53,
+          133,
+          135,
+          148,
+          155
+        ],
+        "unmatchedSelections": 2,
+        "stableTargetQualification": "failed"
+      }
+    }
+  ]
+}

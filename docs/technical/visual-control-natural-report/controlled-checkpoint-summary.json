@@ -1,0 +1,89 @@
+{
+  "core": {
+    "head": "273bbe58309c8602243be2b2869d7d93fdeb9d48",
+    "files": {
+      "docs/technical/visual-control-demo.md": "769d2d0f698dea36a9cc82ce107451cbbd10b62faa7eba187bad8d9db40d1afd",
+      "packages/core/src/environment-interface/active-task.spec.ts": "b6e752344b253e877465e45bd46ab45bb1dff092d84d3cd7b7d4fe01ee2f4f98",
+      "packages/core/src/environment-interface/perception-gateway.spec.ts": "04062669331c3db484eb169991b3a7eba5b2b2206f3e719e82e56fce82ff3a5d",
+      "tests/run-visual-control.sh": "d7749a4daf24bdd324989b662161574f1aa68ccd333563ebe757ba7258b1a8b2",
+      "tests/visual-control-report.py": "c0083a9e6a0d323e12fb8db42656b067e59d3f5a2bd76d9e9b6b4da0116b0292"
+    },
+    "sourceSha256": "7a7033e527b5b731854d683ad6a5ea6404cc056889d04dec266084b632083fea"
+  },
+  "gateway": {
+    "head": "dbd15b921b4adf3db8ce9672f3c5c544778fa824",
+    "files": {
+      "Emulator/tests/perception_harness.py": "de911e05002724ffad7e3a283f9c040591c0136dab0c02d34a681bf3c6fd31c6",
+      "Emulator/tests/test_camera_perception.py": "34e0fce1e775d2a0baba308347b96ab2c5f0ccc87d9812d6a88b9eae6be46b5e",
+      "Emulator/tests/test_yolo_backend.py": "b0d7b99d7af382781d6b954932bacee8ed74cb823bb03dc38f75677074faf2c6",
+      "Master/gateway/README.md": "8249a042deb923c503b65054111ff7292ed81a5f8a1e0f97654f4b539f15ab63",
+      "Master/gateway/environment_adapter/server.py": "8f8454da55b92c4efb6799a690b8f7e7f5feb1fabe815531468c7f721619d84a",
+      "Master/gateway/plugins.py": "2442571fca18d212161cfeca6a31d7d60c22fbf344326ad177ea8ec94eea0ae8",
+      "Master/gateway/server/__main__.py": "691f144a10571df24804022e8c2e2200b3154fb402bcb7fcacb10163f7148678",
+      "Master/gateway/yolo_backend.py": "9615501e62a45b6a8593aa752f2713fc6abc4e3c982b204a3e1412deeafce7c5"
+    },
+    "sourceSha256": "a3a3a33b26b8f87422bd41547c4ef56d070114b8bd1357a8bd4b37f42971eaa4"
+  },
+  "cases": [
+    {
+      "case": "expiry-confirmed",
+      "frames": 6,
+      "inferenceMedianMs": 244.91276600019773,
+      "observationAgeMedianMs": 251.5,
+      "observationAgeMaxMs": 338,
+      "frameToCommandMedianMs": 416.0,
+      "frameToCommandMaxMs": 522,
+      "freshFps": 1.4713356287187214,
+      "targetLossResponseMs": 434,
+      "expiryToCancellationMs": 216,
+      "cancelToStopMs": 3,
+      "cancelToResultMs": 4,
+      "result": "cancelled",
+      "pendingAtCancellation": {
+        "interpretation": "leased",
+        "conversation": "leased"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e"
+    },
+    {
+      "case": "expiry-unknown",
+      "frames": 6,
+      "inferenceMedianMs": 251.10360400140053,
+      "observationAgeMedianMs": 266.5,
+      "observationAgeMaxMs": 370,
+      "frameToCommandMedianMs": 462.5,
+      "frameToCommandMaxMs": 671,
+      "freshFps": 1.27868157277624,
+      "targetLossResponseMs": 483,
+      "expiryToCancellationMs": 281,
+      "cancelToStopMs": 3,
+      "cancelToResultMs": 2003,
+      "result": "outcome_unknown",
+      "pendingAtCancellation": {
+        "interpretation": "leased",
+        "conversation": "leased"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e"
+    },
+    {
+      "case": "explicit-cancel",
+      "frames": 6,
+      "inferenceMedianMs": 246.9204590015579,
+      "observationAgeMedianMs": 264.0,
+      "observationAgeMaxMs": 376,
+      "frameToCommandMedianMs": 502,
+      "frameToCommandMaxMs": 506,
+      "freshFps": 1.1563379094949406,
+      "targetLossResponseMs": 499,
+      "expiryToCancellationMs": null,
+      "cancelToStopMs": 17,
+      "cancelToResultMs": 18,
+      "result": "cancelled",
+      "pendingAtCancellation": {
+        "interpretation": "leased",
+        "conversation": "leased"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e"
+    }
+  ]
+}

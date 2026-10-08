@@ -9,10 +9,12 @@ import { test } from 'node:test'
 import { fixture, route, decision, replies, core, manager, username, withUserContext,
   openExecutionStore, queuedInterpretation, executeWork, instruction } from './active-task.spec.js'
 
-for (const ending of ['expiry-confirmed', 'expiry-unknown', 'explicit-cancel'] as const) test(`recorded YOLO frames: ${ending}`, { timeout: 90000 }, async () => {
+const naturalVideo = Boolean(process.env.AINEKIO_RECORDED_VIDEO)
+const endings = naturalVideo ? ['expiry-confirmed'] as const : ['expiry-confirmed', 'expiry-unknown', 'explicit-cancel'] as const
+for (const ending of endings) test(`recorded YOLO frames: ${ending}`, { timeout: 90000 }, async () => {
   assert.ok(process.env.AINEKIO_SOFTWARE_TEST_GATEWAY)
   assert.ok(process.env.AINEKIO_SOFTWARE_TEST_PYTHON)
-  assert.ok(process.env.AINEKIO_YOLO_WEIGHTS && process.env.AINEKIO_RECORDED_IMAGE,
+  assert.ok(process.env.AINEKIO_YOLO_WEIGHTS && (process.env.AINEKIO_RECORDED_IMAGE || naturalVideo),
     'This opt-in qualification requires explicitly selected local weights and a public/approved recording')
   await withUserContext({ username, userId: username, role: 'owner' }, async () => {
     const artifacts = path.join(process.env.AINEKIO_PERCEPTION_ARTIFACTS!, ending)
@@ -36,7 +38,7 @@ for (const ending of ['expiry-confirmed', 'expiry-unknown', 'explicit-cancel'] a
     const ready = await read()
     assert.deepEqual(ready.classes, { 0: 'person' }, 'Report the evaluated checkpoint class set honestly')
     const f = fixture(ready.ready.observation.sessionId, false, ready.ready.observation)
-    const evidence: any = { ending, recognition: { ...ready, ready: undefined }, startedAt: Date.now(), source: 'recorded public image; offline CPU YOLO; synthetic body and scripted instruction selection', frames: [], commands: [] }
+    const evidence: any = { ending, recognition: { ...ready, ready: undefined }, startedAt: Date.now(), source: naturalVideo ? 'natural MOT17-13 raw video; real CPU YOLO; simulated body; scripted task' : 'recorded public image; offline CPU YOLO; synthetic body and scripted instruction selection', frames: [], commands: [] }
     let id: string | undefined, release: (() => void) | undefined, worker: Promise<void> | undefined
     let speechRelease: (() => void) | undefined, speechWorker: Promise<void> | undefined, speechJob: any, interpretation: any
     const request = async (op: string, fields: Record<string, any> = {}) => {
@@ -49,7 +51,7 @@ for (const ending of ['expiry-confirmed', 'expiry-unknown', 'explicit-cancel'] a
           const perception = event.telemetry.perception
           assert.equal(await core.recordEnvironmentPerception(snapshot.observation.sessionId, perception,
             async input => manager.enqueue(input)), true)
-          evidence.frames.push({ counter: perception.frameCounter, objects: perception.objects,
+          evidence.frames.push({ videoFrame: fields.videoFrame, mediaTimeMs: naturalVideo ? fields.videoFrame * 1000 / ready.video.fps : undefined, counter: perception.frameCounter, objects: perception.objects,
             observedAt: perception.observedAt, expiresAt: perception.expiresAt, receivedAt: Date.now(),
             observationAgeMs: Date.now() - Date.parse(perception.observedAt), processing: event.telemetry.processing })
         }
@@ -78,8 +80,11 @@ for (const ending of ['expiry-confirmed', 'expiry-unknown', 'explicit-cancel'] a
       assert.equal(f.received.length, 0, 'Steering must settle without an unbounded test-driver loop')
     }
     try {
-      await request('frame', { counter: 1, position: 'left' })
-      const behavior = { kind: 'behavior', target: 'the single visible person in the recorded replay', completionCriteria: 'Continue until explicitly changed.',
+      const first = await request('frame', { counter: 1, position: 'left', videoFrame: 0 })
+      evidence.startupProcessing = first.processing
+      assert.equal(evidence.frames.length, 1,
+        `Replay needs fresh recognition before selecting its task: ${JSON.stringify(first.processing)}`)
+      const behavior = { kind: 'behavior', target: 'the visible person in the recorded replay', completionCriteria: 'Continue until explicitly changed.',
         motion: { type: 'move', continuous: true, direction: 'forward', speed: 40, forward: 60, turn: 0 },
         candidateLabels: ['person'], identifyEveryFrames: 100, steering: { label: 'person', gain: 100 } }
       replies.push({ ...route, needsVision: false, needsResponse: true }, { program: { steps: [behavior] }, taskDecision: { ...decision,
@@ -112,21 +117,41 @@ for (const ending of ['expiry-confirmed', 'expiry-unknown', 'explicit-cancel'] a
       interpretation = queuedInterpretation(id)
       worker = executeWork(interpretation); await Promise.race([started, worker.then(() => { throw new Error('Interpretation ended before entering provider') })])
       evidence.interpretationStartedAt = Date.now()
-      for (const [counter, position] of [[2, 'center'], [3, 'right'], [4, 'left'], [5, 'right'], [6, 'lost']] as const) {
-        await request('frame', { counter, position })
+      let lastFrameRequest: Record<string, any> = {}
+      const applyFrame = async (fields: Record<string, any>) => {
+        lastFrameRequest = fields
+        await request('frame', fields)
         assert.equal(manager.getTask(interpretation.id)?.state, 'leased')
         assert.equal(manager.getTask(speechJob.id)?.state, 'leased')
         await f.run(id); await flushCommands()
       }
-      assert.deepEqual(evidence.frames.at(-1).objects, [], 'Target loss is a real detector result')
-      assert.equal(evidence.commands.at(-1).action.movementUpdate.controls.turn, 0, 'Fresh target loss returns to the selected base controls')
-      evidence.targetLossResponseMs = evidence.commands.at(-1).frameToCommandMs
-      const turns = evidence.commands.map((item: any) => item.action.movementUpdate.controls.turn)
-      assert.ok(turns.some((value: number) => value > 0) && turns.some((value: number) => value < 0),
-        'Actual detected boxes on both sides must produce opposite steering corrections')
+      if (naturalVideo) {
+        // Select the newest source frame at wall-clock playback time. Older
+        // video frames are not queued to make offline inference look fresh.
+        const playbackStarted = Date.now()
+        let previousFrame = 0
+        while (Date.now() - playbackStarted < ready.video.frames / ready.video.fps * 1000) {
+          const videoFrame = Math.min(ready.video.frames - 1, Math.max(previousFrame + 1,
+            Math.floor((Date.now() - playbackStarted) / 1000 * ready.video.fps)))
+          await applyFrame({ counter: videoFrame + 1, videoFrame })
+          previousFrame = videoFrame
+          if (videoFrame === ready.video.frames - 1) break
+        }
+        evidence.playbackElapsedMs = Date.now() - playbackStarted
+        assert.ok(evidence.frames.length >= 10, 'Natural replay must cover successive recognition results')
+        assert.ok(evidence.frames.some((frame: any) => frame.objects.length > 1), 'Multiple detections must exercise the existing selection')
+      } else {
+        for (const [counter, position] of [[2, 'center'], [3, 'right'], [4, 'left'], [5, 'right'], [6, 'lost']] as const)
+          await applyFrame({ counter, position })
+        assert.deepEqual(evidence.frames.at(-1).objects, [], 'Target loss is a real detector result')
+        assert.equal(evidence.commands.at(-1).action.movementUpdate.controls.turn, 0, 'Fresh target loss returns to the selected base controls')
+        evidence.targetLossResponseMs = evidence.commands.at(-1).frameToCommandMs
+        const turns = evidence.commands.map((item: any) => item.action.movementUpdate.controls.turn)
+        assert.ok(turns.some((value: number) => value > 0) && turns.some((value: number) => value < 0))
+      }
       assert.ok(evidence.commands.every((item: any) => item.action.movementUpdate.actionId === motion.id))
       const frameCount = evidence.frames.length
-      const stale = await request('frame', { counter: 7, position: 'left', ageSeconds: 2 })
+      const stale = await request('frame', { ...lastFrameRequest, counter: lastFrameRequest.counter + 1, ageSeconds: 2 })
       assert.equal(evidence.frames.length, frameCount, 'Expired recorded frames never become behavior observations')
       assert.equal(stale.processing.staleFrames, 1)
       const owned = manager.findTask(task => task.input?.id === motion.id)!

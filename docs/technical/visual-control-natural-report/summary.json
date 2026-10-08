@@ -1,0 +1,72 @@
+{
+  "core": {
+    "head": "d0c6bfe3dc45c8b3c8c6198f331b6aa8b9f44595",
+    "files": {
+      "docs/technical/visual-control-demo.md": "611a0c073bd51ea3abbb17881dc4c3f65611d370708bad00dced4b91ae495696",
+      "packages/core/src/environment-interface/perception-gateway.spec.ts": "af401207755194d50be7571962f3a7f6be565276c86efec8c5ee21583e4f8307",
+      "tests/run-visual-control.sh": "82ab5b44814fdf8bd45fcfd7e2b46b08ac616fd1ee8d2c6aa4979a1e2cc76be0",
+      "tests/visual-control-report.py": "8a185a6b1f54b62300f5f07bbf294e72cd4e7be9ad704553e4d83eff7d7dad76"
+    },
+    "sourceSha256": "4599c7e02418637f82ed5b70d6799d6f47aebd327fb36a253c574f3b67a84ca3"
+  },
+  "gateway": {
+    "head": "c7f4b52bf4da08eecebd9d0f0393c8aeaccbb877",
+    "files": {
+      "Emulator/tests/perception_harness.py": "022d2c4be574d4c2e1f58de92a241de57a0507315e0f3035dde8d26b99a9d87c"
+    },
+    "sourceSha256": "5a29defe6f8abdbd29ca2919a3f87b8bb2078d40bf9599bad1cfb6c3f47074d5"
+  },
+  "cases": [
+    {
+      "case": "expiry-confirmed",
+      "frames": 49,
+      "inferenceMedianMs": 204.5911680033896,
+      "inferenceMaxMs": 334.8190260003321,
+      "observationAgeMedianMs": 219,
+      "observationAgeMaxMs": 339,
+      "frameToCommandMedianMs": 438,
+      "frameToCommandMaxMs": 589,
+      "freshFps": 1.5400736285438466,
+      "targetLossResponseMs": null,
+      "expiryToCancellationMs": 339,
+      "cancelToStopMs": 4,
+      "cancelToResultMs": 5,
+      "result": "cancelled",
+      "pendingAtCancellation": {
+        "interpretation": "leased",
+        "conversation": "leased"
+      },
+      "model": "person_yolov8m-seg.pt@c8ab26f517173b1fe8342d336a09f443eb61cb08dcbfc78d53fff4c2547ae81e",
+      "sourceSha256": "3c643abd4f37f1c67815c5faaebac6bea98fe536e45d97aa82e9682991e47fae",
+      "maximumSourceFrameGapMs": 720,
+      "multiPersonFrames": 49,
+      "emptyFrames": 0,
+      "targetAudit": {
+        "method": "Independent per-frame maximum IoU >= 0.3 against marked pedestrian reference boxes; not an identity model or input to steering.",
+        "referenceSha256": "4827603ef87bbd61123cb4c5f194b3bf23531bd78ed9cd916084e53dca998013",
+        "selectedIdSwitches": 22,
+        "distinctMatchedIds": [
+          2,
+          5,
+          6,
+          7,
+          20,
+          21,
+          24,
+          25,
+          26,
+          28,
+          33,
+          42,
+          53,
+          133,
+          148,
+          155,
+          160
+        ],
+        "unmatchedSelections": 0,
+        "stableTargetQualification": "failed"
+      }
+    }
+  ]
+}

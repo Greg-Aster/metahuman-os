@@ -97,3 +97,40 @@ emergency control, stationary checks and then one bounded movement. Outstanding
 completion-contract and natural-language selection issues remain unresolved and
 do not gain qualification from this directly selected behavior. IMU acquisition
 is a separate deliverable; no sensor or calibration is changed here.
+
+## Natural-video qualification
+
+The frozen controlled-replay checkpoint is Core
+`d0c6bfe3dc45c8b3c8c6198f331b6aa8b9f44595` paired with gateway
+`c7f4b52bf4da08eecebd9d0f0393c8aeaccbb877`, on
+`checkpoint/visual-control-replay` in both repositories. Its passing evidence is
+preserved separately; natural-video changes extend only the replay and report
+infrastructure, not the production controller or detector.
+
+The same command accepts a local `.mp4`, `.avi` or `.mov` instead of the photo.
+For the independent target-switch audit, pass MOT's `gt.txt` as a sixth argument
+with its original `seqinfo.ini` beside it. Reference boxes and identities are
+read only by the report generator after execution. They never enter recognition,
+typed observations, steering or task admission.
+
+Use the official [MOT17 raw sequence](https://motchallenge.net/sequenceVideos/MOT17-13-SDP-raw.mp4)
+and [reference annotation archive](https://motchallenge.net/data/MOT17Labels.zip).
+Extract `train/MOT17-13-SDP/gt/gt.txt` and its `seqinfo.ini` to one directory.
+The [dataset page](https://motchallenge.net/data/MOT17/) describes the sequence as
+filmed from a bus at a busy intersection. The raw preview is 30 seconds, 25 fps,
+960×540; the reference coordinates are 1920×1080 and are normalized for scoring.
+The source SHA256 is
+`3c643abd4f37f1c67815c5faaebac6bea98fe536e45d97aa82e9682991e47fae`.
+
+Replay selects the newest source frame at native wall-clock playback time,
+then runs the actual recognition/behavior/command path. Unsampled source frames
+are skipped; they are not queued for delayed processing and relabeled fresh.
+The report gives processing/observation/command medians and maxima, source-frame
+sampling gaps, and candidate switches. It does not establish full-video detector
+recall. There is no artificial masking, panning, or target removal in this mode.
+
+Read [the qualification report](visual-control-natural-report/README.md).
+Its software-invariant pass must be kept separate from its failed stable-person
+qualification. Fresh detections of other people do not reveal that a particular
+person has been lost. A controller/desktop network trial and physical deployment
+are not implied by this result.

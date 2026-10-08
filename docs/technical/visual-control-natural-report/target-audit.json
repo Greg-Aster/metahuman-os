@@ -1,0 +1,518 @@
+{
+  "method": "Independent per-frame maximum IoU >= 0.3 against marked pedestrian reference boxes; not an identity model or input to steering.",
+  "referenceSha256": "4827603ef87bbd61123cb4c5f194b3bf23531bd78ed9cd916084e53dca998013",
+  "selectedIdSwitches": 22,
+  "distinctMatchedIds": [
+    2,
+    5,
+    6,
+    7,
+    20,
+    21,
+    24,
+    25,
+    26,
+    28,
+    33,
+    42,
+    53,
+    133,
+    148,
+    155,
+    160
+  ],
+  "unmatchedSelections": 0,
+  "frames": [
+    {
+      "counter": 1,
+      "mediaTimeMs": 0,
+      "detections": 11,
+      "selectedReferenceId": 2,
+      "selectedIoU": 0.8508319456877051,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 1.0,
+      "referenceDetectionIoU": 0.6127815564758977
+    },
+    {
+      "counter": 2,
+      "mediaTimeMs": 40,
+      "detections": 11,
+      "selectedReferenceId": 2,
+      "selectedIoU": 0.8089054568088478,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 1.0,
+      "referenceDetectionIoU": 0.6179414756400051
+    },
+    {
+      "counter": 20,
+      "mediaTimeMs": 760,
+      "detections": 10,
+      "selectedReferenceId": 6,
+      "selectedIoU": 0.9249612676643895,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.84615,
+      "referenceDetectionIoU": 0.6590468306249972
+    },
+    {
+      "counter": 35,
+      "mediaTimeMs": 1360,
+      "detections": 9,
+      "selectedReferenceId": 5,
+      "selectedIoU": 0.8102079581854416,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.47059,
+      "referenceDetectionIoU": 0
+    },
+    {
+      "counter": 49,
+      "mediaTimeMs": 1920,
+      "detections": 10,
+      "selectedReferenceId": 2,
+      "selectedIoU": 0.9084523014707068,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.62791,
+      "referenceDetectionIoU": 0
+    },
+    {
+      "counter": 64,
+      "mediaTimeMs": 2520,
+      "detections": 13,
+      "selectedReferenceId": 2,
+      "selectedIoU": 0.799016618140129,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.46154,
+      "referenceDetectionIoU": 0
+    },
+    {
+      "counter": 79,
+      "mediaTimeMs": 3120,
+      "detections": 14,
+      "selectedReferenceId": 2,
+      "selectedIoU": 0.86856176777835,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.37778,
+      "referenceDetectionIoU": 0
+    },
+    {
+      "counter": 94,
+      "mediaTimeMs": 3720,
+      "detections": 18,
+      "selectedReferenceId": 2,
+      "selectedIoU": 0.8897571386222963,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.05,
+      "referenceDetectionIoU": 0
+    },
+    {
+      "counter": 109,
+      "mediaTimeMs": 4320,
+      "detections": 18,
+      "selectedReferenceId": 2,
+      "selectedIoU": 0.9242073196453015,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.25103,
+      "referenceDetectionIoU": 0.08657359316604367
+    },
+    {
+      "counter": 124,
+      "mediaTimeMs": 4920,
+      "detections": 13,
+      "selectedReferenceId": 2,
+      "selectedIoU": 0.879974407728519,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.68882,
+      "referenceDetectionIoU": 0.6629427068122935
+    },
+    {
+      "counter": 138,
+      "mediaTimeMs": 5480,
+      "detections": 10,
+      "selectedReferenceId": 2,
+      "selectedIoU": 0.7479609159891726,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 1.0,
+      "referenceDetectionIoU": 0.6052820522859862
+    },
+    {
+      "counter": 153,
+      "mediaTimeMs": 6080,
+      "detections": 7,
+      "selectedReferenceId": 7,
+      "selectedIoU": 0.78857589391193,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.7945,
+      "referenceDetectionIoU": 0.7824473156183016
+    },
+    {
+      "counter": 168,
+      "mediaTimeMs": 6680,
+      "detections": 6,
+      "selectedReferenceId": 7,
+      "selectedIoU": 0.8979906547912716,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.24833,
+      "referenceDetectionIoU": 0
+    },
+    {
+      "counter": 182,
+      "mediaTimeMs": 7240,
+      "detections": 8,
+      "selectedReferenceId": 7,
+      "selectedIoU": 0.7809847462316538,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 0.66559,
+      "referenceDetectionIoU": 0.7030652026431313
+    },
+    {
+      "counter": 197,
+      "mediaTimeMs": 7840,
+      "detections": 7,
+      "selectedReferenceId": 7,
+      "selectedIoU": 0.8495033217911806,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 1.0,
+      "referenceDetectionIoU": 0.7483451605961757
+    },
+    {
+      "counter": 213,
+      "mediaTimeMs": 8480,
+      "detections": 10,
+      "selectedReferenceId": 7,
+      "selectedIoU": 0.8487387155440023,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 1.0,
+      "referenceDetectionIoU": 0.6135395046114599
+    },
+    {
+      "counter": 228,
+      "mediaTimeMs": 9080,
+      "detections": 8,
+      "selectedReferenceId": 7,
+      "selectedIoU": 0.866048775436335,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": 1.0,
+      "referenceDetectionIoU": 0.6818817541912043
+    },
+    {
+      "counter": 244,
+      "mediaTimeMs": 9720,
+      "detections": 4,
+      "selectedReferenceId": 7,
+      "selectedIoU": 0.9003788167458737,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 259,
+      "mediaTimeMs": 10320,
+      "detections": 7,
+      "selectedReferenceId": 7,
+      "selectedIoU": 0.8634449602473886,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 274,
+      "mediaTimeMs": 10920,
+      "detections": 7,
+      "selectedReferenceId": 33,
+      "selectedIoU": 0.9333713775493891,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 289,
+      "mediaTimeMs": 11520,
+      "detections": 10,
+      "selectedReferenceId": 7,
+      "selectedIoU": 0.8989190626815808,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 305,
+      "mediaTimeMs": 12160,
+      "detections": 7,
+      "selectedReferenceId": 148,
+      "selectedIoU": 0.7904097591537375,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 321,
+      "mediaTimeMs": 12800,
+      "detections": 8,
+      "selectedReferenceId": 148,
+      "selectedIoU": 0.7813732141332541,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 337,
+      "mediaTimeMs": 13440,
+      "detections": 12,
+      "selectedReferenceId": 133,
+      "selectedIoU": 0.8046752137246573,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 353,
+      "mediaTimeMs": 14080,
+      "detections": 12,
+      "selectedReferenceId": 133,
+      "selectedIoU": 0.7192004156243883,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 368,
+      "mediaTimeMs": 14680,
+      "detections": 13,
+      "selectedReferenceId": 133,
+      "selectedIoU": 0.7915441423379278,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 384,
+      "mediaTimeMs": 15320,
+      "detections": 11,
+      "selectedReferenceId": 133,
+      "selectedIoU": 0.9505066540092482,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 400,
+      "mediaTimeMs": 15960,
+      "detections": 12,
+      "selectedReferenceId": 133,
+      "selectedIoU": 0.8328891873147738,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 416,
+      "mediaTimeMs": 16600,
+      "detections": 15,
+      "selectedReferenceId": 133,
+      "selectedIoU": 0.6262993987212306,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 433,
+      "mediaTimeMs": 17280,
+      "detections": 14,
+      "selectedReferenceId": 160,
+      "selectedIoU": 0.8738122889015916,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 449,
+      "mediaTimeMs": 17920,
+      "detections": 10,
+      "selectedReferenceId": 155,
+      "selectedIoU": 0.8075788948548077,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 465,
+      "mediaTimeMs": 18560,
+      "detections": 8,
+      "selectedReferenceId": 20,
+      "selectedIoU": 0.5941855753239313,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 481,
+      "mediaTimeMs": 19200,
+      "detections": 4,
+      "selectedReferenceId": 20,
+      "selectedIoU": 0.42588688225229077,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 497,
+      "mediaTimeMs": 19840,
+      "detections": 2,
+      "selectedReferenceId": 21,
+      "selectedIoU": 0.8187606665878547,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 514,
+      "mediaTimeMs": 20520,
+      "detections": 6,
+      "selectedReferenceId": 21,
+      "selectedIoU": 0.8852732566546422,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 529,
+      "mediaTimeMs": 21120,
+      "detections": 4,
+      "selectedReferenceId": 25,
+      "selectedIoU": 0.9644754023519302,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 546,
+      "mediaTimeMs": 21800,
+      "detections": 4,
+      "selectedReferenceId": 24,
+      "selectedIoU": 0.9076580379970726,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 562,
+      "mediaTimeMs": 22440,
+      "detections": 3,
+      "selectedReferenceId": 25,
+      "selectedIoU": 0.7519927247743836,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 579,
+      "mediaTimeMs": 23120,
+      "detections": 4,
+      "selectedReferenceId": 25,
+      "selectedIoU": 0.5290178298910069,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 596,
+      "mediaTimeMs": 23800,
+      "detections": 4,
+      "selectedReferenceId": 26,
+      "selectedIoU": 0.8849786726033667,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 612,
+      "mediaTimeMs": 24440,
+      "detections": 4,
+      "selectedReferenceId": 28,
+      "selectedIoU": 0.8359114247360852,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 628,
+      "mediaTimeMs": 25080,
+      "detections": 3,
+      "selectedReferenceId": 28,
+      "selectedIoU": 0.8617241652090538,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 645,
+      "mediaTimeMs": 25760,
+      "detections": 3,
+      "selectedReferenceId": 53,
+      "selectedIoU": 0.5333575905526837,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 662,
+      "mediaTimeMs": 26440,
+      "detections": 3,
+      "selectedReferenceId": 28,
+      "selectedIoU": 0.8139542243878859,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 680,
+      "mediaTimeMs": 27160,
+      "detections": 3,
+      "selectedReferenceId": 42,
+      "selectedIoU": 0.8394102695784591,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 696,
+      "mediaTimeMs": 27800,
+      "detections": 7,
+      "selectedReferenceId": 42,
+      "selectedIoU": 0.7345385704349662,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 713,
+      "mediaTimeMs": 28480,
+      "detections": 7,
+      "selectedReferenceId": 28,
+      "selectedIoU": 0.9199232214170078,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 730,
+      "mediaTimeMs": 29160,
+      "detections": 8,
+      "selectedReferenceId": 28,
+      "selectedIoU": 0.9411512921012936,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    },
+    {
+      "counter": 747,
+      "mediaTimeMs": 29840,
+      "detections": 7,
+      "selectedReferenceId": 42,
+      "selectedIoU": 0.905262798850511,
+      "occlusionReferenceId": 4,
+      "referenceVisibility": null,
+      "referenceDetectionIoU": null
+    }
+  ],
+  "stableTargetQualification": "failed"
+}
