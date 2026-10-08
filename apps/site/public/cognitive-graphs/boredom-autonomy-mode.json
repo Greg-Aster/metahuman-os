@@ -1438,6 +1438,17 @@
           "truthy": true
         }
       }
+    },
+    {
+      "id": "active-task-result-context-review",
+      "source": "active-task",
+      "sourceHandle": "resultContext",
+      "target": "review-remaining-objective",
+      "targetHandle": "context",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
     }
   ]
 }

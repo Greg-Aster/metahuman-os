@@ -27,8 +27,11 @@
         "nodeType": "user_input",
         "properties": {
           "message": "",
-          "prioritizeChatInterface": true
-        }
+          "prioritizeChatInterface": true,
+          "saveToBuffer": true,
+          "saveToLongTermMemory": true
+        },
+        "comment": "Receives the unchanged request and completes the selected conversation-buffer and long-term-memory saves before forwarding it."
       }
     },
     {
@@ -64,9 +67,9 @@
         "x": 1460,
         "y": 80
       },
-      "width": 300,
+      "width": 420,
       "data": {
-        "label": "Choose Required Routes",
+        "label": "Intent Orchestrator",
         "nodeType": "orchestrator_llm",
         "properties": {
           "outputContract": "environment-request",
@@ -143,7 +146,7 @@
         "properties": {
           "sessionId": ""
         },
-        "comment": "Reads only Environment Bridge observations and diagnostics. It runs only when intent selected environment, vision, or action context."
+        "comment": "Reads the advertised interface independently of intent. Context Builder includes optional environment evidence only on the selected routes."
       }
     },
     {
@@ -157,30 +160,8 @@
       "data": {
         "label": "Active Persona",
         "nodeType": "persona_loader",
-        "properties": {},
-        "activation": {
-          "when": [
-            {
-              "nodeId": "intent-orchestrator",
-              "output": "needsPersona",
-              "truthy": true
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "persona-formatter",
-      "type": "personaNode",
-      "position": {
-        "x": 540,
-        "y": 449
-      },
-      "width": 250,
-      "data": {
-        "label": "Compact Persona Context",
-        "nodeType": "persona_formatter",
         "properties": {
+          "formatContext": true,
           "includeValues": true,
           "includeGoals": true,
           "includePersonality": true
@@ -193,7 +174,8 @@
               "truthy": true
             }
           ]
-        }
+        },
+        "comment": "Loads the selected persona and formats the enabled sections only when needsPersona is selected."
       }
     },
     {
@@ -450,34 +432,6 @@
       }
     },
     {
-      "id": "input-conversation-buffer",
-      "type": "outputNode",
-      "position": {
-        "x": 540,
-        "y": 80
-      },
-      "data": {
-        "label": "Admit User Input",
-        "nodeType": "conversation_buffer",
-        "properties": {},
-        "comment": "Admits the exact user message before any model call."
-      }
-    },
-    {
-      "id": "input-memory-capture",
-      "type": "outputNode",
-      "position": {
-        "x": 1000,
-        "y": 80
-      },
-      "data": {
-        "label": "Save User Input",
-        "nodeType": "memory_capture",
-        "properties": {},
-        "comment": "Durably saves the input before forwarding it to cognition. A generation failure must not lose the input."
-      }
-    },
-    {
       "id": "observation-history",
       "type": "contextNode",
       "position": {
@@ -642,7 +596,7 @@
         "nodeType": "graph_note",
         "properties": {
           "title": "How Environment Mode Works",
-          "content": "ENVIRONMENT MODE \u2014 REQUEST-FIRST DATA FLOW\n\n1. RECEIVE AND SAVE\nUser Input carries the unchanged incoming request. Admit User Input records its identity in the Conversation Buffer; Save User Input persists it before cognition. Saving this turn does not require loading earlier conversation into the LLM.\n\n2. CHOOSE REQUIRED ROUTES (FIRST LLM CALL)\nIntent Orchestrator receives only the incoming request plus its fixed route instructions. It selects sources and capabilities; it receives no conversation history, persona, robot observations or execution history. It does not choose a command or execution target.\n\n3. LOAD ONLY SELECTED SOURCES\nneedsPersona \u2192 Active Persona loads the selected persona configuration; Compact Persona Context formats it for the selector. Both nodes are skipped when this route is not selected. This choice is independent of response and action routes.\nneedsConversationHistory \u2192 Conversation History reads the rolling conversation buffer. Its Entry Limit controls the retained window; enabled inner dialogue retains its source and time.\nneedsMemory \u2192 Relevant Long-Term Memory searches stored experience using the model-selected query and optional memory types.\nneedsRobotStatus \u2192 Robot Status reads the robot condition, previous action and task projection.\nneedsEnvironment OR needsVision OR needsAction \u2192 Load Selected Environment Bridge Data reads the selected bridge observation and advertised command meanings. Reading this node sends no physical command. Observation History supplies saved image-linked interpretations from that environment.\nneedsVision \u2192 Use Current-Run Camera Evidence selects available dated images. Saved evidence is not relabelled as a fresh capture.\nneedsExecutionContext \u2192 Current Execution reads checkpointed objective/events and other unfinished executions. Durable execution is the task authority; conversation and Robot Status are supporting evidence.\nneedsResponse permits user-visible expression. needsAction exposes physical/sensing action selection. These routes are independent of history and recall.\nUnselected source branches are skipped by the scheduler. Selected sources converge on the Context Builder.\n\n4. BUILD SELECTED ENVIRONMENT CONTEXT\nThis existing node combines the original request, selected results, source/time information, and the compact active persona when selected. It creates the messages and capability-specific JSON schema for the next call. It does not search, decide intent, or execute movement.\n\n5. CHOOSE RESPONSE AND TASK (SECOND LLM CALL)\nThe Environment Action Selector chooses speech and/or a complete ordered program from the supplied command meanings. Action Parser validates the existing output/capability contract. Specific commands are model decisions, not keyword matching.\nWhen other executions were selected as context, this call also decides new/steer/cancel and the target. A steering handoff returns no local program or speech; Send Input to Existing Execution forwards the original request once. Cancellation uses the existing execution owner.\n\n6. PRESENT AND EXECUTE\nConversation Buffer \u2192 Memory Capture \u2192 TTS and Stream Writer preserve and present selected speech.\nExecute Robot Task advances the ordered program through the existing active-task workflow and correlated physical receipts. Its ongoing phases do not require a fresh decision LLM call for every movement.\nSave Visual Observation retains image-linked interpretations. Robot Status Out projects decisions and outcomes; it does not own task continuation.\nInput Events and Continue User Input preserve ongoing request continuity. Remaining Objective, Goal Review and Await Input use the saved execution state to continue or wait.\n\nEXAMPLES FOR UNDERSTANDING THE ROUTES\n\u201cPlease wave\u201d / \u201cDo a pushup\u201d: action capabilities, without conversation or memory retrieval.\n\u201cHello\u201d: response without earlier conversation.\n\u201cHow are you?\u201d: conversation, with robot status when relevant.\n\u201cWhat did you dream about yesterday?\u201d: conversation and relevant stored experience when needed.\n\u201cWhat is my cat\u2019s name?\u201d: conversation and/or memory recall.\n\u201cDo that again\u201d / \u201cStop what you\u2019re doing\u201d: context needed to resolve earlier dialogue or ongoing execution.\nThese examples explain intent; they are not hardcoded dispatch rules.\n\nEDITING AND DIAGNOSIS\nInspect each node\u2019s activation conditions and Last Run outputs to see selected/skipped branches. Keep optional sources after intent and connected only to their consumers. Do not reconnect history to the first LLM call. Check provider input/output token usage separately for the two calls. A selected command, acknowledgement, or spoken claim does not by itself prove physical completion.\n\nThis Graph Note is editor-only: its text never enters a model prompt and has no runtime connections.",
+          "content": "ENVIRONMENT MODE \u2014 REQUEST-FIRST DATA FLOW\n\n1. RECEIVE AND SAVE\nUser Input carries the unchanged incoming request and has independent Save to Conversation Buffer and Save to Long-Term Memory options. Both are enabled here. The node reuses canonical entry preparation and storage owners, preserves the original speaker/time/identity, and completes the selected saves before forwarding the request. Long-term saving respects profile memory-write settings. Either destination can be disabled independently. Saving this turn does not load earlier conversation into the LLM.\n\n2. CHOOSE REQUIRED ROUTES (FIRST LLM CALL)\nIntent Orchestrator receives only the incoming request plus its fixed route instructions. It selects optional context sources; it receives no conversation history, persona, robot observations or execution history. It does not choose a command or execution target.\n\n3. LOAD ONLY SELECTED SOURCES\nneedsPersona \u2192 Active Persona loads the selected persona and formats its model context. Format Model Context enables the formatted output; Include Personality, Include Values, and Include Goals select its optional sections. Identity and background are included when present. The Context Builder retains the existing 2,000-character limit. Active Persona is skipped when this route is not selected; the choice is independent of response and action routes.\nneedsConversationHistory \u2192 Conversation History reads the rolling conversation buffer. Its Entry Limit controls the retained window; enabled inner dialogue retains its source and time.\nneedsMemory \u2192 Relevant Long-Term Memory searches stored experience using the model-selected query and optional memory types.\nneedsRobotStatus \u2192 Robot Status reads the robot condition, previous action and task projection.\nEnvironment Bridge Input always exposes the advertised interface. needsEnvironment OR needsVision OR needsAction selects additional state and observation evidence for the Context Builder. Reading the Bridge sends no physical command. Observation History supplies saved image-linked interpretations from that environment.\nneedsVision \u2192 Use Current-Run Camera Evidence selects available dated images. Saved evidence is not relabelled as a fresh capture.\nneedsExecutionContext \u2192 Current Execution reads checkpointed objective/events and other unfinished executions. Durable execution is the task authority; conversation and Robot Status are supporting evidence.\nneedsResponse permits user-visible expression. needsAction is an early request for action-related context; available commands remain available to the informed selector independently of this guess. These routes are independent of history and recall.\nUnselected source branches are skipped by the scheduler. Selected sources converge on the Context Builder.\n\n4. BUILD SELECTED ENVIRONMENT CONTEXT\nThis existing node combines the original request, selected results, source/time information, and the compact active persona when selected. It creates the messages and capability-specific JSON schema for the next call. It does not search, decide intent, or execute movement.\n\n5. CHOOSE RESPONSE AND TASK (SECOND LLM CALL)\nThe Environment Action Selector chooses speech and/or a complete ordered program from the supplied command meanings. Action Parser validates the existing output/capability contract. Specific commands are model decisions, not keyword matching.\nWhen other executions were selected as context, this call also decides new/steer/cancel and the target. A steering handoff returns no local program or speech; Send Input to Existing Execution forwards the original request once. Cancellation uses the existing execution owner.\n\n6. PRESENT AND EXECUTE\nConversation Buffer \u2192 Memory Capture \u2192 TTS and Stream Writer preserve and present selected speech.\nExecute Robot Task advances the ordered program through the existing active-task workflow and correlated physical receipts. Its ongoing phases do not require a fresh decision LLM call for every movement. A capture step completes from its correlated receipt and image; later phases then proceed. Captured evidence reaches the existing Goal Review and response owners after the program, without treating capture as proof that a description was delivered.\nSave Visual Observation retains image-linked interpretations. Robot Status Out projects decisions and outcomes; it does not own task continuation.\nInput Events and Continue User Input preserve ongoing request continuity. Remaining Objective, Goal Review and Await Input use the saved execution state to continue or wait.\n\nEXAMPLES FOR UNDERSTANDING THE ROUTES\n\u201cPlease wave\u201d / \u201cDo a pushup\u201d: action capabilities, without conversation or memory retrieval.\n\u201cHello\u201d: response without earlier conversation.\n\u201cHow are you?\u201d: conversation, with robot status when relevant.\n\u201cWhat did you dream about yesterday?\u201d: conversation and relevant stored experience when needed.\n\u201cWhat is my cat\u2019s name?\u201d: conversation and/or memory recall.\n\u201cDo that again\u201d / \u201cStop what you\u2019re doing\u201d: context needed to resolve earlier dialogue or ongoing execution.\nThese examples explain intent; they are not hardcoded dispatch rules.\n\nEDITING AND DIAGNOSIS\nInspect each node\u2019s activation conditions and Last Run outputs to see selected/skipped branches. Keep optional sources after intent and connected only to their consumers. Do not reconnect history to the first LLM call. Check provider input/output token usage separately for the two calls. A selected command, acknowledgement, or spoken claim does not by itself prove physical completion.\n\nThis Graph Note is editor-only: its text never enters a model prompt and has no runtime connections.",
           "style": "info",
           "frame": false
         }
@@ -652,9 +606,9 @@
   "edges": [
     {
       "id": "e-user-intent",
-      "source": "input-memory-capture",
+      "source": "user-input",
       "target": "intent-orchestrator",
-      "sourceHandle": "passthrough",
+      "sourceHandle": "message",
       "targetHandle": "message",
       "type": "default",
       "data": {
@@ -674,9 +628,9 @@
     },
     {
       "id": "e-user-instruction-context",
-      "source": "input-memory-capture",
+      "source": "user-input",
       "target": "3",
-      "sourceHandle": "passthrough",
+      "sourceHandle": "message",
       "targetHandle": "instruction",
       "type": "default",
       "data": {
@@ -685,9 +639,9 @@
     },
     {
       "id": "e-user-provenance-context",
-      "source": "input-memory-capture",
+      "source": "user-input",
       "target": "3",
-      "sourceHandle": "passthrough",
+      "sourceHandle": "message",
       "targetHandle": "userInstruction",
       "type": "default",
       "data": {
@@ -718,9 +672,9 @@
     },
     {
       "id": "e-user-memory",
-      "source": "input-memory-capture",
+      "source": "user-input",
       "target": "memory-router",
-      "sourceHandle": "passthrough",
+      "sourceHandle": "message",
       "targetHandle": "userMessage",
       "type": "default",
       "data": {
@@ -782,67 +736,8 @@
       }
     },
     {
-      "id": "e-route-environment",
-      "source": "intent-orchestrator",
-      "target": "2",
-      "sourceHandle": "needsEnvironment",
-      "targetHandle": "control",
-      "type": "default",
-      "data": {
-        "type": "boolean",
-        "kind": "control",
-        "when": {
-          "output": "needsEnvironment",
-          "truthy": true
-        }
-      }
-    },
-    {
-      "id": "e-route-vision",
-      "source": "intent-orchestrator",
-      "target": "2",
-      "sourceHandle": "needsVision",
-      "targetHandle": "control",
-      "type": "default",
-      "data": {
-        "type": "boolean",
-        "kind": "control",
-        "when": {
-          "output": "needsVision",
-          "truthy": true
-        }
-      }
-    },
-    {
-      "id": "e-route-action",
-      "source": "intent-orchestrator",
-      "target": "2",
-      "sourceHandle": "needsAction",
-      "targetHandle": "control",
-      "type": "default",
-      "data": {
-        "type": "boolean",
-        "kind": "control",
-        "when": {
-          "output": "needsAction",
-          "truthy": true
-        }
-      }
-    },
-    {
-      "id": "e-persona-format",
-      "source": "persona-loader",
-      "target": "persona-formatter",
-      "sourceHandle": "persona",
-      "targetHandle": "persona",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
       "id": "e-persona-context",
-      "source": "persona-formatter",
+      "source": "persona-loader",
       "target": "3",
       "sourceHandle": "formatted",
       "targetHandle": "personaText",
@@ -1074,9 +969,9 @@
     },
     {
       "id": "e-user-status-out",
-      "source": "input-memory-capture",
+      "source": "user-input",
       "target": "robot-status-out",
-      "sourceHandle": "passthrough",
+      "sourceHandle": "message",
       "targetHandle": "userInstruction",
       "type": "default",
       "data": {
@@ -1162,7 +1057,7 @@
     },
     {
       "id": "execution-user-entry-execution-input-out-entry",
-      "source": "input-conversation-buffer",
+      "source": "user-input",
       "target": "execution-input-out",
       "sourceHandle": "entry",
       "targetHandle": "entry",
@@ -1173,9 +1068,9 @@
     },
     {
       "id": "execution-user-input-message-execution-input-out-message",
-      "source": "input-memory-capture",
+      "source": "user-input",
       "target": "execution-input-out",
-      "sourceHandle": "passthrough",
+      "sourceHandle": "message",
       "targetHandle": "message",
       "type": "default",
       "data": {
@@ -1207,50 +1102,6 @@
           "truthy": true,
           "output": "persisted"
         }
-      }
-    },
-    {
-      "id": "capture-user-buffer",
-      "source": "user-input",
-      "target": "input-conversation-buffer",
-      "sourceHandle": "message",
-      "targetHandle": "userMessage",
-      "type": "default",
-      "data": {
-        "type": "string"
-      }
-    },
-    {
-      "id": "capture-user-entry",
-      "source": "user-input",
-      "target": "input-conversation-buffer",
-      "sourceHandle": "entry",
-      "targetHandle": "entry",
-      "type": "default",
-      "data": {
-        "type": "message"
-      }
-    },
-    {
-      "id": "capture-user-entries",
-      "source": "input-conversation-buffer",
-      "target": "input-memory-capture",
-      "sourceHandle": "entries",
-      "targetHandle": "entries",
-      "type": "default",
-      "data": {
-        "type": "array"
-      }
-    },
-    {
-      "id": "capture-user-forward",
-      "source": "user-input",
-      "target": "input-memory-capture",
-      "sourceHandle": "message",
-      "targetHandle": "passthrough",
-      "type": "default",
-      "data": {
-        "type": "string"
       }
     },
     {
@@ -1562,6 +1413,17 @@
           "output": "needsExecutionContext",
           "truthy": true
         }
+      }
+    },
+    {
+      "id": "active-task-result-context-review",
+      "source": "active-task",
+      "sourceHandle": "resultContext",
+      "target": "review-remaining-objective",
+      "targetHandle": "context",
+      "type": "default",
+      "data": {
+        "type": "object"
       }
     }
   ],

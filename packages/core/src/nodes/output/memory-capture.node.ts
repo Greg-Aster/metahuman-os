@@ -1,8 +1,8 @@
 /**
  * Conversation Memory Saver Node
  *
- * Persists exact user/assistant entries to long-term Persona Memory after
- * short-term Conversation Buffer admission. The stable node id remains
+ * Persists exact user/assistant entries to long-term Persona Memory from
+ * shared conversation-entry preparation or Conversation Buffer admission. The stable node id remains
  * `memory_capture` so existing editable graphs keep their public node type.
  */
 
@@ -23,7 +23,7 @@ function timestampForEntry(entry: ConversationMessage): string {
   return new Date(parsed).toISOString();
 }
 
-function admittedEntries(inputs: Record<string, any>): ConversationMessage[] {
+function conversationEntries(inputs: Record<string, any>): ConversationMessage[] {
   const rawEntries = Array.isArray(inputs.entries)
     ? inputs.entries
     : inputs.entry && typeof inputs.entry === 'object'
@@ -53,12 +53,12 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
   name: 'Conversation Memory Saver',
   category: 'output',
   inputs: [
-    { name: 'entry', type: 'message', optional: true, description: 'One Conversation Buffer-admitted entry' },
-    { name: 'entries', type: 'array', optional: true, description: 'Ordered Conversation Buffer-admitted entries' },
-    { name: 'passthrough', type: 'any', optional: true, description: 'Forward only after the admitted entries have been saved' },
+    { name: 'entry', type: 'message', optional: true, description: 'One prepared conversation entry' },
+    { name: 'entries', type: 'array', optional: true, description: 'Ordered prepared conversation entries' },
+    { name: 'passthrough', type: 'any', optional: true, description: 'Forward only after the supplied entries have been saved' },
   ],
   outputs: [
-    { name: 'saved', type: 'boolean', description: 'Whether every admitted entry was saved' },
+    { name: 'saved', type: 'boolean', description: 'Whether every supplied entry was saved' },
     { name: 'savedCount', type: 'number' },
     { name: 'eventId', type: 'string', optional: true },
     { name: 'eventIds', type: 'array' },
@@ -67,7 +67,7 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
     { name: 'results', type: 'array' },
     { name: 'passthrough', type: 'any' },
   ],
-  description: 'Saves each admitted user or assistant entry as its own long-term conversation memory.',
+  description: 'Saves each supplied user or assistant entry as its own long-term conversation memory.',
 
   execute: async (inputs, context) => {
     const passthrough = inputs.passthrough ?? null;
@@ -75,7 +75,7 @@ export const MemoryCaptureNode: NodeDefinition = defineNode({
       return { saved: false, savedCount: 0, eventIds: [], eventPaths: [], results: [], passthrough, reason: 'Inner compose uses the Inner Dialogue Memory Saver' };
     }
 
-    const entries = admittedEntries(inputs);
+    const entries = conversationEntries(inputs);
     if (entries.length === 0) {
       return { saved: false, savedCount: 0, eventIds: [], eventPaths: [], results: [], passthrough, reason: 'No admitted conversation entries' };
     }

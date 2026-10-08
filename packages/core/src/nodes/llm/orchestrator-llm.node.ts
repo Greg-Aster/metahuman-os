@@ -166,7 +166,7 @@ export function resolveOrchestratorActionRequirement(input: {
 
 export const OrchestratorLLMNode: NodeDefinition = defineNode({
   id: 'orchestrator_llm',
-  name: 'Orchestrator LLM',
+  name: 'Intent Orchestrator',
   category: 'chat',
   inputs: [
     { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
@@ -198,6 +198,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'emotionalTone', type: 'string', description: 'Detected emotional context' },
   ],
   description: 'Enhanced intent analysis with action detection and conversation awareness',
+  presentation: { defaultExpanded: true },
 
   properties: {
     outputContract: 'general',
@@ -211,6 +212,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
       type: 'select',
       default: 'general',
       label: 'Routing Contract',
+      canvas: 'expanded',
       description: 'Selects the typed intent fields this instance must return. Environment routing emits route switches only.',
       options: [
         { value: 'general', label: 'General' },

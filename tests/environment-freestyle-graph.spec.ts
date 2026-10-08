@@ -50,8 +50,6 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   const contextBuilder = graph.nodes.find(node => node.data.nodeType === 'environment_context_builder')!;
   const actionParser = graph.nodes.find(node => node.data.nodeType === 'environment_action_parser')!;
   const userInput = graph.nodes.find(node => node.data.nodeType === 'user_input')!;
-  const inputBuffer = graph.nodes.find(node => node.id === 'input-conversation-buffer')!;
-  const savedInput = graph.nodes.find(node => node.id === 'input-memory-capture')!;
   const bridgeInput = graph.nodes.find(node => node.data.nodeType === 'environment_bridge_input')!;
   const history = graph.nodes.find(node => node.data.nodeType === 'conversation_history')!;
   const imageInput = graph.nodes.find(node => node.data.nodeType === 'environment_image_input')!;
@@ -107,15 +105,12 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.equal(hasEdge('11', 'frames', contextBuilder.id, 'frames'), true, 'Image Input owns the matching frame metadata');
 
   assert.equal(graph.nodes.some(node => node.data.nodeType === 'instruction_resolver'), false);
-  assert.equal(inputBuffer.data.nodeType, 'conversation_buffer');
-  assert.equal(savedInput.data.nodeType, 'memory_capture');
-  assert.equal(hasEdge(userInput.id, 'message', inputBuffer.id, 'userMessage'), true);
-  assert.equal(hasEdge(userInput.id, 'entry', inputBuffer.id, 'entry'), true);
-  assert.equal(hasEdge(inputBuffer.id, 'entries', savedInput.id, 'entries'), true);
-  assert.equal(hasEdge(userInput.id, 'message', savedInput.id, 'passthrough'), true);
-  assert.equal(hasEdge(savedInput.id, 'passthrough', orchestrator.id, 'message'), true);
+  assert.equal(userInput.data.properties?.saveToBuffer, true);
+  assert.equal(userInput.data.properties?.saveToLongTermMemory, true);
+  assert.equal(graph.nodes.some(node => ['input-conversation-buffer', 'input-memory-capture'].includes(node.id)), false);
+  assert.equal(hasEdge(userInput.id, 'message', orchestrator.id, 'message'), true);
   const inputHandoff = graph.nodes.find(node => node.data.nodeType === 'execution_event_out')!;
-  assert.equal(hasEdge(inputBuffer.id, 'entry', inputHandoff.id, 'entry'), true);
+  assert.equal(hasEdge(userInput.id, 'entry', inputHandoff.id, 'entry'), true);
   assert.equal(hasEdge(history.id, 'history', orchestrator.id, 'conversationHistory'), false);
   assert.deepEqual(graph.edges.filter(edge => edge.target === orchestrator.id).map(edge => edge.targetHandle), ['message']);
   assert.deepEqual(history.data.activation?.when, [{ nodeId: orchestrator.id, output: 'needsConversationHistory', truthy: true }]);
@@ -132,9 +127,9 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.deepEqual(imageInput.data.activation?.when, [
     { nodeId: orchestrator.id, output: 'needsVision', truthy: true },
   ]);
-  assert.equal(hasEdge(savedInput.id, 'passthrough', contextBuilder.id, 'instruction'), true);
-  assert.equal(hasEdge(savedInput.id, 'passthrough', contextBuilder.id, 'userInstruction'), true);
-  assert.equal(hasEdge(savedInput.id, 'passthrough', memoryRouter.id, 'userMessage'), true);
+  assert.equal(hasEdge(userInput.id, 'message', contextBuilder.id, 'instruction'), true);
+  assert.equal(hasEdge(userInput.id, 'message', contextBuilder.id, 'userInstruction'), true);
+  assert.equal(hasEdge(userInput.id, 'message', memoryRouter.id, 'userMessage'), true);
   assert.equal(hasEdge(memoryRouter.id, 'memories', contextBuilder.id, 'memories'), true);
   assert.equal(hasEdge(history.id, 'history', contextBuilder.id, 'conversationHistory'), true);
   assert.equal(hasEdge(statusInput.id, 'context', contextBuilder.id, 'robotStatus'), true);

@@ -63,8 +63,7 @@ async function run(request: string, selected: string[], response = { response: '
     execution_context: async () => { reads.push('execution'); return { context: { executionId: 'current', task: null }, activeExecutions } },
     environment_bridge_input: async () => { reads.push('bridge'); return { observation, sessionId: 'robot-1', isTriggeringObservation: false } },
     observation_history: async () => { reads.push('observations'); return { observations: [] } },
-    persona_loader: async () => { reads.push('persona'); return { persona: {} } },
-    persona_formatter: async () => { reads.push('persona-format'); return { formatted: 'fixture-persona' } },
+    persona_loader: async () => { reads.push('persona'); return { persona: {}, formatted: 'fixture-persona' } },
     robot_status_out: async () => { reads.push('status-out'); return { persisted: true } },
     environment_active_task: async () => { reads.push('physical-dispatch'); return { finished: false } },
     tts: async () => ({}), stream_writer: async () => ({}),
@@ -107,14 +106,15 @@ test('request-only intent payload is unchanged by explicit or implicit history a
 
 test('ordinary greeting skips optional source reads and the editor note', async () => {
   const { result, reads, envelope } = await run('Hello', ['needsResponse'])
-  assert.deepEqual(reads, ['status-out'])
-  for (const id of ['conversation-history', 'execution', 'memory-router', 'robot-status', '2', '11', 'observation-history', 'workflow-guide', 'persona-loader', 'persona-formatter']) {
+  assert.deepEqual(reads, ['bridge', 'observations', 'status-out'])
+  for (const id of ['conversation-history', 'execution', 'memory-router', 'robot-status', '11', 'workflow-guide', 'persona-loader']) {
     assert.equal(result.nodes.get(id)?.status, 'skipped', id)
   }
   assert.deepEqual(envelope.recentConversation, [])
   assert.deepEqual(envelope.memories, [])
   assert.equal(envelope.execution, null)
-  assert.equal(envelope.currentEnvironment, null)
+  assert.deepEqual(envelope.currentEnvironment.state, {})
+  assert.equal(envelope.currentEnvironment.capabilities.robotCommandCatalog.wave, 'Wave one front leg.')
   assert.equal(envelope.activePersona, null)
   assert.equal(JSON.stringify(calls).includes('ENVIRONMENT MODE — REQUEST-FIRST DATA FLOW'), false)
 })
@@ -142,7 +142,7 @@ test('an action reads bridge capabilities without history, memories, status or t
       continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
   })
   assert.equal(reads.filter(item => item === 'physical-dispatch').length, 1)
-  for (const source of ['history', 'memory', 'status', 'execution', 'persona', 'persona-format']) assert.equal(reads.includes(source), false)
+  for (const source of ['history', 'memory', 'status', 'execution', 'persona']) assert.equal(reads.includes(source), false)
   assert.equal(envelope.activePersona, null)
   assert.equal(envelope.currentEnvironment.capabilities.robotCommandCatalog.wave, 'Wave one front leg.')
   assert.deepEqual(envelope.recentConversation, [])
@@ -152,12 +152,11 @@ test('persona is loaded and formatted only when independently selected by the mo
   for (const selected of [['needsPersona'], ['needsResponse', 'needsPersona']]) {
     const { result, reads, envelope } = await run('Current request', selected)
     assert.equal(reads.filter(source => source === 'persona').length, 1)
-    assert.equal(reads.filter(source => source === 'persona-format').length, 1)
     assert.equal(envelope.activePersona, 'fixture-persona')
     assert.equal(result.nodes.get('persona-loader')?.status, 'completed')
-    assert.equal(result.nodes.get('persona-formatter')?.status, 'completed')
+    assert.equal(result.nodes.has('persona-formatter'), false)
     assert.equal(JSON.stringify(calls[0].messages).includes('fixture-persona'), false)
-    for (const source of ['history', 'memory', 'status', 'execution', 'bridge']) assert.equal(reads.includes(source), false)
+    for (const source of ['history', 'memory', 'status', 'execution']) assert.equal(reads.includes(source), false)
   }
 })
 
@@ -165,7 +164,7 @@ test('selected dialogue, recall and status load once and reach the second call',
   const { reads, envelope } = await run('What did you dream about yesterday?',
     ['needsResponse', 'needsConversationHistory', 'needsMemory', 'needsRobotStatus'])
   for (const source of ['history', 'memory', 'status']) assert.equal(reads.filter(item => item === source).length, 1)
-  assert.equal(reads.includes('bridge'), false)
+  assert.equal(reads.filter(source => source === 'bridge').length, 1)
   assert.equal(envelope.recentConversation[0].content, 'earlier-dialogue')
   assert.equal(envelope.memories[0].content, 'retrieved-memory')
   assert.equal(envelope.robotStatus.updatedAt, 'fixture-status')
@@ -193,4 +192,17 @@ test('cancellation uses the existing execution event owner and introduces no rob
   assert.equal(dispatches[0].payload.kind, 'user_cancelled')
   assert.equal(dispatches[0].payload.context.userMessage, 'Stop what you are doing')
   assert.equal(reads.includes('physical-dispatch'), false)
+})
+
+test('context-selected follow-up can choose an action after an early no-action guess', async () => {
+  const { reads, envelope } = await run('Do that again', ['needsConversationHistory', 'needsResponse'], {
+    response: '', program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] },
+    taskDecision: { outcome: 'act', objective: 'Wave again', reason: 'Repeat the requested action', completionCriteria: 'Wave completes',
+      continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
+  })
+  assert.equal(envelope.selectedRoutes.needsAction, false, 'Retain the early model decision as data')
+  assert.equal(envelope.recentConversation[0].content, 'earlier-dialogue')
+  assert.equal(reads.filter(item => item === 'physical-dispatch').length, 1)
+  const schema = calls[1].options.jsonSchema
+  assert.ok(schema.anyOf.some((branch: any) => branch.properties.program.type === 'object'))
 })

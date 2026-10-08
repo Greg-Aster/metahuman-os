@@ -145,26 +145,31 @@ test('cancelled task state cannot consume late results or dispatch more work', a
   assert.equal(f.dispatches.length, 1)
 })
 
-for (const outcome of ['positive', 'negative', 'ambiguous', 'failed', 'stale'] as const) {
-  test(`correlated ${outcome} perception leaves truthful visual task state`, async () => {
-    const capture: EnvironmentTaskProgram = { steps: [{ kind: 'action', action: { type: 'captureImage' } }] }
+for (const imageFirst of [false, true]) {
+  test(`capture completes its own step with receipt and image (imageFirst=${imageFirst})`, async () => {
+    const capture: EnvironmentTaskProgram = { steps: [
+      { kind: 'action', action: { type: 'captureImage' } },
+      { kind: 'action', action: { type: 'robotCommand', command: 'wave' } },
+    ] }
     const f = fixture(capture)
-    const evidence = `Remote image evidence: ${outcome}`
-    const identification = { matchesTarget: outcome === 'positive', completionSatisfied: outcome === 'positive',
-      outcome: outcome === 'positive' ? 'positive' : outcome === 'ambiguous' ? 'ambiguous' : 'negative', description: evidence, evidence }
-    const state = { ...f.state, action: { type: 'captureImage' as const }, captureCompleted: true,
-      identificationEffectId: 'image-effect', identificationRequest: { effectId: 'image-effect', frameId: 'frame', stepIndex: 0,
-        gatewayInstance: 'gateway', epoch: 1, ...(outcome === 'stale' ? { expiresAt: new Date(Date.now() - 1).toISOString() } : {}) },
-      pendingEvents: [{ kind: 'work_result', payload: { effectId: 'image-effect', result: outcome === 'failed'
-        ? { state: 'failed', error: { message: 'Remote server unavailable' } } : { state: 'completed', result: identification } } }] }
-    const received = (await wait.execute({ state }, f.context, {})).state as ActiveTaskState
-    const final = await f.advance(received)
-    assert.equal(final.objectiveComplete, outcome === 'positive')
-    assert.equal(f.task().decision.objectiveComplete, outcome === 'positive')
-    assert.equal(final.perceptionOutcome, outcome)
-    if (outcome !== 'positive') assert.equal(f.task().decision.outcome, 'continue', 'The existing LLM-led Goal Review must receive incomplete objectives')
-    if (outcome === 'failed') assert.match(f.task().decision.reason, /Remote server unavailable/)
-    assert.equal(f.dispatches.length, 0, 'A perception result cannot invent a motion command')
+    let state: ActiveTaskState = { ...f.state, action: { type: 'captureImage' }, snapshotId: 'motion' }
+    const image = { id: 'frame', timestamp: new Date().toISOString(), dataUrl: 'data:image/jpeg;base64,/9j/2Q==', metadata: { actionId: 'motion' } }
+    const receiveImage = async () => { state = (await wait.execute({ state: { ...state, pendingEvents: [{ kind: 'observation_received',
+      actionId: 'motion', payload: { environmentObservation: { ...observation, visual: image } } }] } }, f.context, {})).state }
+    if (imageFirst) await receiveImage()
+    else state = await f.receive(state, 'motion', 'completed')
+    assert.equal(state.stepIndex, 0, 'Neither receipt nor image alone advances a capture')
+    if (imageFirst) state = await f.receive(state, 'motion', 'completed')
+    else await receiveImage()
+    assert.equal(state.stepIndex, 1)
+    assert.deepEqual(state.capturedFrameIds, ['frame'])
+    assert.match(state.evidence[0], /frame/)
+    assert.equal(f.dispatches.length, 0, 'Capture completion does not ask a model to prove later steps')
+    // The integration test covers dispatch; here supply the later action receipt.
+    state = await f.receive({ ...state, action: { type: 'robotCommand', command: 'wave' }, motionId: 'wave-action' }, 'wave-action', 'completed')
+    state = await f.advance(state)
+    assert.equal(state.done, true)
+    assert.equal(state.objectiveComplete, false, 'The model-owned result review still receives captured evidence')
   })
 }
 
@@ -532,4 +537,55 @@ test('routing combined input to another execution preserves every turn and the e
   assert.deepEqual(events.map(event => event.payload.context.ttsGeneration), [1, 2])
   assert.ok(events.every(event => event.payload.executionId === 'other'))
   assert.equal(f.state.motionId, 'motion')
+})
+
+for (const nextAction of [{ type: 'stop' as const }, { type: 'move' as const, direction: 'forward' as const, durationMs: 1000 }]) {
+  test(`interpreted wave retains correlated ownership for later ${nextAction.type} across checkpoint and manual takeover`, async () => {
+    const bridge = await import('./store.js')
+    bridge.setEnvironmentBridgeEnabled(true)
+    const unsubscribe = bridge.subscribeEnvironmentActions(observation.sessionId, () => {})
+    const before = [observation.sessionId, 'gateway', 'p4', 1, 10]
+    const owned = [...before.slice(0, 4), 11]
+    const live = (sequence: number) => ({ ...observation, capabilities: { ...observation.capabilities,
+      actions: [...observation.capabilities.actions, 'robotCommand' as const], robotCommands: ['wave'] },
+      state: { ...observation.state, body: { authenticated: true, robotId: 'p4' },
+        gateway: { robots: { p4: { epoch: 1, body_command_sequence: sequence } } } } })
+    recordEnvironmentObservation(live(10))
+    try {
+      const f = fixture({ steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } },
+        { kind: 'action', action: nextAction }] })
+      let state = await f.advance({ stepIndex: 0, evidence: [], updateRevision: 0, interpretationFence: JSON.stringify(before) })
+      assert.equal(state.interpretationFence, JSON.stringify(before), 'Admission must not consume program ownership')
+      assert.deepEqual(f.dispatches[0].payload.input.metadata.interpretationBody, before)
+      state = await f.receive(state, state.motionId!, 'completed', { interpretationBody: owned })
+      assert.equal(state.interpretationFence, JSON.stringify(owned), 'Only this action receipt advances expected ownership')
+      // A recovered checkpoint sees a newer live command from the manual path.
+      // Gateway regressions drive that actual path; Core must not adopt it here.
+      state = JSON.parse(JSON.stringify(state))
+      recordEnvironmentObservation(live(12))
+      state = await f.advance(state)
+      assert.deepEqual(f.dispatches.at(-1).payload.input.metadata.interpretationBody, owned)
+      assert.equal(state.interpretationFence, JSON.stringify(owned))
+    } finally { unsubscribe(); recordEnvironmentObservation(observation) }
+  })
+}
+
+test('unrelated, reordered and reconnected receipts cannot advance interpreted program ownership', async () => {
+  const f = fixture()
+  const before = [observation.sessionId, 'gateway', 'p4', 1, 10]
+  const state = { ...f.state, interpretationFence: JSON.stringify(before) }
+  await assert.rejects(() => f.receive(state, 'other-execution-action', 'completed', {
+    interpretationBody: [...before.slice(0, 4), 90] }), /WAIT/)
+  for (const receipt of [[...before.slice(0, 4), 9], [observation.sessionId, 'gateway', 'p4', 2, 90],
+    ['other-session', 'gateway', 'p4', 1, 90], [observation.sessionId, 'other-gateway', 'p4', 1, 90],
+    [observation.sessionId, 'gateway', 'p4', 1, '90']]) {
+    const received = await f.receive(state, 'motion', 'status', { interpretationBody: receipt })
+    assert.equal(received.interpretationFence, state.interpretationFence)
+  }
+  const pending = { ...state, pendingControls: { commandId: 'update', motionId: 'motion', revision: 2, controls: '{}' } }
+  await assert.rejects(() => f.receive(pending, 'update', 'completed', { interpretationBody: [...before.slice(0, 4), 90],
+    movementUpdate: { actionId: 'motion', revision: 1, sessionId: observation.sessionId, version: 1 } }), /WAIT/)
+  const unknown = await f.receive(state, 'motion', 'outcome_unknown', { interpretationBody: [...before.slice(0, 4), 11] })
+  assert.equal(unknown.feedback?.type, 'outcome_unknown')
+  assert.equal(unknown.stepIndex, 0, 'Owned dispatch evidence is never terminal motion evidence')
 })

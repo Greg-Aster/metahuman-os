@@ -33,19 +33,22 @@ for (const name of ['dual', 'agent', 'emulation', 'environment']) {
   test(name + ' saves exact input through its real graph prefix before model failure', async () => {
     const original = JSON.parse(fs.readFileSync(path.join(repo, 'etc/cognitive-graphs', name + '-mode.json'), 'utf8'))
     const user = original.nodes.find((node: any) => node.data.nodeType === 'user_input')
-    const ids = new Set([user.id, 'input-conversation-buffer', 'input-memory-capture'])
-    assert.ok(original.edges.some((edge: any) => edge.source === user.id && edge.sourceHandle === 'entry'
+    const unified = user.data.properties?.saveToBuffer === true && user.data.properties?.saveToLongTermMemory === true
+    const ids = new Set(unified ? [user.id] : [user.id, 'input-conversation-buffer', 'input-memory-capture'])
+    const savedSource = unified ? user.id : 'input-memory-capture'
+    const savedHandle = unified ? 'message' : 'passthrough'
+    if (!unified) assert.ok(original.edges.some((edge: any) => edge.source === user.id && edge.sourceHandle === 'entry'
       && edge.target === 'input-conversation-buffer' && edge.targetHandle === 'entry'),
-    'A forwarded user entry retains its original admission identity')
-    const consumers = original.edges.filter((edge: any) => edge.source === 'input-memory-capture' && edge.sourceHandle === 'passthrough')
+      'A forwarded user entry retains its original admission identity')
+    const consumers = original.edges.filter((edge: any) => edge.source === savedSource && edge.sourceHandle === savedHandle)
     assert.ok(consumers.length > 0)
-    assert.equal(original.edges.some((edge: any) => edge.source === user.id && edge.sourceHandle === 'message' && !ids.has(edge.target)), false)
+    if (!unified) assert.equal(original.edges.some((edge: any) => edge.source === user.id && edge.sourceHandle === 'message' && !ids.has(edge.target)), false)
     const graph = { ...original, scheduler: { ...original.scheduler, eventInputNodeId: undefined },
       nodes: [...original.nodes.filter((node: any) => ids.has(node.id)), {
         id: 'failure', type: 'llmNode', position: { x: 1000, y: 0 },
         data: { nodeType: failure.id, label: 'Controlled failure', properties: {} } }],
       edges: [...original.edges.filter((edge: any) => ids.has(edge.source) && ids.has(edge.target)),
-        { id: 'saved-input-to-model', source: 'input-memory-capture', sourceHandle: 'passthrough',
+        { id: 'saved-input-to-model', source: savedSource, sourceHandle: savedHandle,
           target: 'failure', targetHandle: 'message', data: { type: 'string' } }] }
     const username = 'capture-' + name
     fs.mkdirSync(getProfilePaths(username).etc, { recursive: true })

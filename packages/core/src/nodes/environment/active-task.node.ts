@@ -40,6 +40,17 @@ function settleAction(state: ActiveTaskState, context: NodeExecutionContext) {
   state.updateRevision = 0
 }
 
+// Only a correlated receipt from the existing gateway wire owner can move this
+// program's fence. Observations may describe manual control and are never authority.
+function advanceInterpretationFence(state: ActiveTaskState, feedback: import('../../environment-interface/types.js').EnvironmentFeedback) {
+  if (!state.interpretationFence) return
+  const previous = JSON.parse(state.interpretationFence) as unknown[]
+  const next = feedback.data?.interpretationBody
+  if (!Array.isArray(next) || next.length !== 5 || next.slice(0, 4).some((value, index) => value !== previous[index])
+    || !Number.isSafeInteger(next[4]) || (typeof previous[4] === 'number' && next[4] < previous[4])) return
+  state.interpretationFence = JSON.stringify(next)
+}
+
 function observationReference(observation: EnvironmentObservation): EnvironmentObservation {
   const reference = ({ dataUrl: _pixels, ...frame }: EnvironmentVisualFrame) => frame
   return { ...observation, visual: observation.visual ? reference(observation.visual) : undefined,
@@ -58,7 +69,8 @@ export const environmentActiveTaskNode = defineNode({
     { name: 'result', type: 'object', description: 'Execution progress and phase evidence' },
     { name: 'userInput', type: 'object', description: 'New instruction returned to existing intent routing' },
     { name: 'taskDecision', type: 'object', description: 'Decision from this execution' },
-    { name: 'observation', type: 'object', description: 'Latest observation references' }],
+    { name: 'observation', type: 'object', description: 'Latest observation references' },
+    { name: 'resultContext', type: 'object', description: 'Observed results returned to the existing objective review' }],
   async execute(inputs, context) {
     const continuation = context.activeTaskContinuation as ActiveTaskContinuation | undefined
     const selected = inputs.program as EnvironmentTaskProgram
@@ -106,8 +118,13 @@ export const environmentActiveTaskNode = defineNode({
       activeTaskDecision: inputs.taskDecision ?? continuation?.decision, activeTaskSessionId: inputs.sessionId ?? continuation?.state.observation?.sessionId ?? context.sessionId,
       activeTaskInitialState: initial, activeTaskContinuation: undefined, environmentInterpretation: undefined, pendingInstructionTurns: undefined })
     const result = requireGraphNodeOutput(child, 'environment_active_task_wait').state as ActiveTaskState
+    const frames = (result.capturedFrameIds ?? []).map(id => context.graphExecution!.frame(id))
+      .filter((frame): frame is EnvironmentVisualFrame => Boolean(frame));
+    const resultObservation = result.observation && { ...result.observation,
+      ...(frames.length ? { visual: frames.at(-1), visuals: frames } : {}) };
     return { finished: result.done === true, completed: result.objectiveComplete === true, result, userInput: result.userInput,
-      taskDecision: context.graphExecution!.task()?.decision, observation: result.observation }
+      taskDecision: context.graphExecution!.task()?.decision, observation: result.observation,
+      resultContext: resultObservation ? { environmentObservation: resultObservation, environmentObservationCurrent: false } : {} }
   },
 })
 
@@ -169,7 +186,6 @@ export const environmentActiveTaskStepNode = defineNode({
         metadata: { ...action.metadata, ...(guarded ? { interpretationBody: JSON.parse(state.interpretationFence!) } : {}) } },
         sessionId, instruction: decision.objective }, context,
         { allowedActions: [action.type!], maxDurationMs: Number.MAX_SAFE_INTEGER, defaultDurationMs: 0 })
-      if (guarded && output.count) delete state.interpretationFence
       if (!output.count) throw new Error(String(output.message || 'Task action was not admitted'))
       return (output.commands as Array<{ id: string }>)[0].id
     }
@@ -306,8 +322,10 @@ export const environmentActiveTaskStepNode = defineNode({
     const step = program.steps[state.stepIndex]
     if (!step) {
       state.done = true
-      state.objectiveComplete = decision.requiredCompletionBasis === 'action_result'
-        || decision.requiredCompletionBasis === 'visual_observation' && state.visualCompletionSatisfied === true
+      // Captured evidence returns to the model-owned objective review. A finished
+      // sensing step cannot certify that its contents reached the user.
+      state.objectiveComplete = !state.capturedFrameIds?.length && (decision.requiredCompletionBasis === 'action_result'
+        || decision.requiredCompletionBasis === 'visual_observation' && state.visualCompletionSatisfied === true)
       record(state.objectiveComplete); return { state }
     }
     if (step.kind !== 'behavior') {
@@ -328,9 +346,6 @@ export const environmentActiveTaskStepNode = defineNode({
         if (state.action?.type === 'captureImage') {
           state.snapshotId = state.motionId; state.captureRequestedAt = new Date().toISOString()
         }
-      }
-      if (state.action?.type === 'captureImage') {
-        identify(decision.objective!, decision.completionCriteria!)
       }
       if (step.kind === 'action' && step.action.continuous) updateMovement(step.action)
       record(); return { state }
@@ -423,12 +438,11 @@ export const environmentActiveTaskWaitNode = defineNode({
       return { state, continue: !routeInput() }
     }
     const captureResult = () => {
-      if (!state.captureCompleted || !state.identification) return { state, continue: true }
-      state.visualCompletionSatisfied = state.identification.completionSatisfied
-      if (state.identification.completionSatisfied) return advance(state.identification.evidence)
-      state.evidence = [...state.evidence, state.identification.evidence]
-      state.done = true; state.objectiveComplete = false
-      return { state, continue: true }
+      if (!state.captureCompleted || !state.image) return { state, continue: true }
+      execution.recordFrames([state.image])
+      state.capturedFrameIds = [...(state.capturedFrameIds ?? []), state.image.id]
+      return advance(JSON.stringify({ actionId: state.motionId, type: 'captureImage', status: 'completed',
+        frameId: state.image.id, observedAt: state.image.timestamp }))
     }
     while (true) {
       const revision = state.instructionRevision
@@ -481,7 +495,6 @@ export const environmentActiveTaskWaitNode = defineNode({
           state.perceptionOutcome = 'failed'; state.identificationError = payload.result.error?.message ?? 'Remote perception failed'
           delete state.identification
         }
-        if (state.action?.type === 'captureImage') return captureResult()
         return { state, continue: true }
       }
       if (event.kind === 'work_result' && payload.effectId === state.generationEffectId) {
@@ -500,7 +513,8 @@ export const environmentActiveTaskWaitNode = defineNode({
           state.perceptionOutcome = 'stale'; state.identificationError = 'Capture returned missing, stale or uncorrelated image evidence'
         } else state.image = image
         state.observation = observationReference(observation)
-        delete state.snapshotId; return { state, continue: true }
+        delete state.snapshotId
+        return state.action?.type === 'captureImage' && state.image ? captureResult() : { state, continue: true }
       }
       if (event.kind !== 'physical_result') continue
       const feedback = payload.feedback as import('../../environment-interface/types.js').EnvironmentFeedback
@@ -519,6 +533,7 @@ export const environmentActiveTaskWaitNode = defineNode({
         if (pending.motionId !== state.motionId || reply && (reply.actionId !== pending.motionId
           || reply.revision !== pending.revision || reply.sessionId !== context.activeTaskSessionId || reply.version !== 1)) continue
         if (!['completed', 'failed', 'rejected', 'expired', 'cancelled', 'outcome_unknown'].includes(feedback.type)) continue
+        advanceInterpretationFence(state, feedback)
         state.steeringResult = feedback
         state.retrySteering = false
         if (feedback.type === 'completed') state.acknowledgedControls = pending.controls
@@ -526,6 +541,7 @@ export const environmentActiveTaskWaitNode = defineNode({
         return { state, continue: true }
       }
       if (event.actionId === state.motionId) {
+        advanceInterpretationFence(state, feedback)
         state.feedback = feedback
         if (feedback.type === 'accepted' || feedback.type === 'status') { state.accepted = true; return { state, continue: true } }
         if (program.steps[state.stepIndex].kind === 'behavior' && state.finishRequestedAt

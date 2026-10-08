@@ -65,6 +65,7 @@ export interface ActiveTaskState {
   failure?: EnvironmentFeedback
   identificationError?: unknown
   pendingEvents?: Array<{ kind: string; payload: unknown; actionId?: string }>
+  capturedFrameIds?: string[]
   evidence: string[]
 }
 

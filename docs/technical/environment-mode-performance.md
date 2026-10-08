@@ -6,16 +6,34 @@ This document is the maintained paper trail for Environment Mode response-time w
 
 ## Current Status
 
+The request-only pass selects optional evidence, while the informed selector
+retains the advertised action interface even when that first pass guessed that
+no action was needed. Unselected environment state and images remain omitted;
+the existing Bridge owner supplies capability facts. No model prompt or schema
+description changes are part of this repair.
+
+A finite capture completes its phase from a correlated receipt and image, not
+from proving the entire objective in that image. Later program phases execute
+in order. After the program, captured images return through the existing Goal
+Review, conversation buffer, and speech owners; physical capture alone never
+means that a requested description was delivered. Both interactive Environment
+Mode and the autonomy executor use this result-context handoff.
+
+
 2026-10-07 request-first routing (source changes; deployment and physical behavior
 remain separate): the first LLM call receives only the incoming request and fixed
-route instructions. Conversation History no longer feeds the orchestrator and
+route instructions. User Input now owns the two independently selectable save
+options, delegating to the existing Conversation Buffer and memory capture
+owners before forwarding the request. The separate input admission/saver nodes
+were removed from this graph. Read-only background interpretation disables both
+options on its graph copy. Conversation History no longer feeds the orchestrator and
 runs only when `needsConversationHistory` is selected. The Environment branch
 also no longer reads history implicitly from execution context. The new
 `needsExecutionContext` route activates the existing Current Execution node;
 its data reaches the Context Builder and Action Parser after routing. The
 informed selector owns execution disposition/target selection, using the existing
 handoff node and Coordinator. `needsPersona` independently activates the existing
-Active Persona and Compact Persona Context nodes; unselected persona data is
+Active Persona node, which loads and formats its selected sections; unselected persona data is
 neither loaded nor supplied to the selector. Autonomous workflows retain their
 existing persona handling. No new runtime node or execution owner was added.
 An editor-only Graph Note explains the stages, route fields, source ownership,
@@ -51,10 +69,9 @@ not an execution handoff or physical result. No robot commands were dispatched.
 
 Focused routing/scheduler tests cover skipped source reads, selected context,
 request-payload invariance, preserved autonomy input, and replay-safe steering
-and cancellation through the existing handoff owner. The context-builder suite
-has a pre-existing assertion expecting the retired actions/movementRequest
-schema (four alternatives) instead of the current program schema (two); this
-repair leaves that unrelated baseline failure visible.
+and cancellation through the existing handoff owner. The corrected context-builder
+suite validates the current program schema, advertised capabilities and completion
+evidence; it no longer asserts the retired actions/movementRequest schema.
 
 
 2026-09-30: the active task program is the sole physical execution path in both
@@ -152,6 +169,52 @@ owner to distinguish its own cleanup from manual takeover. This fence proves
 ownership of that dispatch, never physical stopping; original terminal receipts
 are still required. Recovered finite jobs reuse their durable effect identity,
 and duplicate or obsolete work receipts cannot apply a second action.
+
+The multi-step ownership correction retains `interpretationFence` throughout the
+interpreted program. Admission does not consume it. Each correlated gateway
+receipt can advance the saved fence only within the same session, gateway,
+robot and epoch, with a nondecreasing owned sequence. A later live observation
+cannot grant ownership of a manual command. The gateway records that successor
+under its existing send lock after admission checks, and replays the same value
+after receipt-store recovery. A body reconnect changes the epoch and blocks an
+old program; a bridge transport reconnect alone does not transfer ownership.
+
+Cancellation of read-only interpretation now releases its Coordinator lane even
+when a provider ignores abort and remains pending. Its detached result or failure
+cannot publish an execution result. This permits replacement work to be admitted;
+it cannot force an external provider's own serial queue or compute to unblock.
+The active execution and its feedback deadlines retain their existing owners.
+Detached provider calls can still retain backend or client resources until they
+return or the provider enforces its own timeout.
+
+Paired software qualification runs the real Environment routing graph, Coordinator,
+Core receipt ingestion, gateway adapter admission and dashboard manual-command
+route against a simulated body. Run with `AINEKIO_SOFTWARE_TEST_GATEWAY` pointing
+to the paired Ainekio checkout and invoke
+`packages/core/src/environment-interface/active-task-gateway.spec.ts`; it reuses
+and includes the existing active-task integration suite. The companion Python
+harness is `Emulator/tests/program_ownership_harness.py`. Network authentication,
+physical servos, speech recognition and live model semantics are outside this test.
+
+The spoken text “Stop what you are doing” is exercised both as direct selector
+cancellation and as the previously observed steering handoff followed by an
+interpreted Stop program. These are explicit simulated provider outputs through
+real routing, not evidence that a live model now chooses cancellation correctly.
+The direct cancellation path retains `outcome_unknown` without the original gait
+terminal receipt. An interpreted Stop may finish its own command while the durable
+execution remains waiting on the original unresolved gait; its receipt cannot
+complete that earlier command. A late original receipt reconciles it without replay.
+
+A single 2026-10-08 UTC text-only probe against the already-running local
+`qwen3.5:9b` / llama.cpp, using unchanged prompts and synthetic state, did not
+select cancellation. The incoming selector chose steer; the owning selector
+returned a stopping claim with `program: null` and outcome complete. Replaying
+those exact outputs through the paired software path emitted no Stop: only the
+original gait reached the simulated body, its receipt remained accepted, the
+execution waited, and its task decision was marked objective-complete. This is
+an unresolved semantic/completion-contract failure, not a passing spoken-stop
+qualification. The ownership correction does not add keyword handling, rewrite
+model-visible instructions or substitute a manual emergency stop for that check.
 
 Software tests use simulated model, perception and wire inputs. Deployment must
 qualify the paired Core/gateway changes, installed graph, Coordinator resource

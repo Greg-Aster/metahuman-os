@@ -34,7 +34,7 @@
       "description": "OpenAI Codex CLI",
       "enabled": true,
       "command": "codex",
-      "args": ["exec", "--color", "always", "--json"],
+      "args": ["exec", "--color", "always", "--json", "--config", "service_tier=\"fast\""],
       "reasoningEffort": "low",
       "timeout": 120000,
       "dangerouslySkipPermissions": true

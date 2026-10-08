@@ -1,7 +1,7 @@
 /**
  * Conversation Buffer Node
  *
- * The only graph node allowed to persist voiced Conversation Buffer entries.
+ * Conversation Buffer admission, also reused by User Input save options.
  */
 
 import {
@@ -71,49 +71,18 @@ function taskLifecycleMetadata(value: unknown): Record<string, unknown> | null {
   }
 }
 
-const execute: NodeExecutor = async (inputs, context) => {
-  const passthrough = inputs.passthrough ?? null;
+/** Shared entry preparation for buffer admission and optional long-term-only input saving. */
+export function prepareConversationEntries(inputs: Record<string, any>, context: Record<string, any>): ConversationMessage[] {
+  const pending = context.pendingInstructionTurns as Array<Record<string, any>> | undefined;
+  if (pending?.length && (inputs.userMessage || inputs.entry?.role === 'user')) {
+    return pending.flatMap(turn => prepareConversationEntries(
+      { userMessage: turn.userMessage, entry: turn.userMessageEntry },
+      { ...context, ...turn, pendingInstructionTurns: undefined },
+    ));
+  }
   const assistantResponse = assistantResponseText(inputs);
   const taskLifecycle = taskLifecycleMetadata(inputs.taskLifecycle);
   const assistantMetadata = taskLifecycleMetadata(inputs.metadata) ?? {};
-  const username = typeof context.username === 'string'
-    ? context.username.trim()
-    : typeof context.userId === 'string'
-      ? context.userId.trim()
-      : '';
-
-  if (!username || username === 'anonymous') {
-    return {
-      persisted: false,
-      skipped: true,
-      entries: [],
-      reason: 'No authenticated username',
-      response: assistantResponse,
-      responseBufferId: inputs.responseBufferId || '',
-      passthrough,
-    };
-  }
-
-  if (context.composeTarget === 'inner') {
-    return {
-      persisted: false,
-      skipped: true,
-      entries: [],
-      reason: 'Inner compose turn is owned by the Inner Dialogue Buffer node',
-      bufferPath: getBufferPathForUser(username, 'conversation'),
-      response: assistantResponse,
-      responseBufferId: inputs.responseBufferId || '',
-      passthrough,
-    };
-  }
-
-  const pending = context.pendingInstructionTurns as Array<Record<string, any>> | undefined;
-  if (pending?.length && (inputs.userMessage || inputs.entry?.role === 'user')) {
-    const results = [];
-    for (const turn of pending) results.push(await execute({ userMessage: turn.userMessage, entry: turn.userMessageEntry },
-      { ...context, ...turn, pendingInstructionTurns: undefined }, {}));
-    return { ...results.at(-1), entries: results.flatMap(result => result.entries), passthrough };
-  }
   const explicitEntry = inputs.entry;
   const entries: ConversationMessage[] = [];
   if (explicitEntry && typeof explicitEntry === 'object') {
@@ -165,13 +134,57 @@ const execute: NodeExecutor = async (inputs, context) => {
     }
   }
 
-  const allowedRoles = new Set(['user', 'assistant']);
-  const admittedEntries: ConversationMessage[] = [];
-  for (const rawEntry of entries) {
-    if (!allowedRoles.has(rawEntry.role) || typeof rawEntry.content !== 'string' || !rawEntry.content.trim()) {
+  return entries.map(rawEntry => {
+    if (!['user', 'assistant'].includes(rawEntry.role) || typeof rawEntry.content !== 'string' || !rawEntry.content.trim()) {
       throw new Error('Conversation Buffer requires a non-empty user or assistant entry');
     }
-    const entry = normalizeEntryIdentity(rawEntry, context);
+    return normalizeEntryIdentity(rawEntry, context);
+  });
+}
+
+const execute: NodeExecutor = async (inputs, context) => {
+  const passthrough = inputs.passthrough ?? null;
+  const assistantResponse = assistantResponseText(inputs);
+  const username = typeof context.username === 'string'
+    ? context.username.trim()
+    : typeof context.userId === 'string'
+      ? context.userId.trim()
+      : '';
+
+  if (!username || username === 'anonymous') {
+    return {
+      persisted: false,
+      skipped: true,
+      entries: [],
+      reason: 'No authenticated username',
+      response: assistantResponse,
+      responseBufferId: inputs.responseBufferId || '',
+      passthrough,
+    };
+  }
+
+  if (context.composeTarget === 'inner') {
+    return {
+      persisted: false,
+      skipped: true,
+      entries: [],
+      reason: 'Inner compose turn is owned by the Inner Dialogue Buffer node',
+      bufferPath: getBufferPathForUser(username, 'conversation'),
+      response: assistantResponse,
+      responseBufferId: inputs.responseBufferId || '',
+      passthrough,
+    };
+  }
+
+  const pending = context.pendingInstructionTurns as Array<Record<string, any>> | undefined;
+  if (pending?.length && (inputs.userMessage || inputs.entry?.role === 'user')) {
+    const results = [];
+    for (const turn of pending) results.push(await execute({ userMessage: turn.userMessage, entry: turn.userMessageEntry },
+      { ...context, ...turn, pendingInstructionTurns: undefined }, {}));
+    return { ...results.at(-1), entries: results.flatMap(result => result.entries), passthrough };
+  }
+  const admittedEntries: ConversationMessage[] = [];
+  for (const entry of prepareConversationEntries(inputs, context)) {
     admittedEntries.push(await admitBufferEntry(username, 'conversation', entry, context.graphExecution));
   }
 

@@ -56,16 +56,13 @@ const hasEdge = (source: string, sourceHandle: string, target: string, targetHan
 
 const historyId = nodeId('conversation_history');
 const userInputId = nodeId('user_input');
-const savedInputId = 'input-memory-capture';
-assert.ok(hasEdge(userInputId, 'message', 'input-conversation-buffer', 'userMessage'));
-assert.ok(hasEdge('input-conversation-buffer', 'entries', savedInputId, 'entries'));
-assert.ok(hasEdge(userInputId, 'message', savedInputId, 'passthrough'));
+assert.equal(graph.nodes.find(node => node.id === userInputId)?.data?.properties?.saveToBuffer, true);
+assert.equal(graph.nodes.find(node => node.id === userInputId)?.data?.properties?.saveToLongTermMemory, true);
 const orchestratorId = nodeId('orchestrator_llm');
 const bridgeInputId = nodeId('environment_bridge_input');
 const memoryRouterId = nodeId('memory_router');
 const contextId = nodeId('environment_context_builder');
 const personaLoaderId = nodeId('persona_loader');
-const personaFormatterId = nodeId('persona_formatter');
 const actionParserId = nodeId('environment_action_parser');
 const activeId = nodeId('environment_active_task');
 const bufferId = nodeId('conversation_buffer');
@@ -76,18 +73,17 @@ const robotStatusId = nodeId('robot_status');
 const robotStatusOutId = 'robot-status-out';
 
 assert.ok(hasEdge(historyId, 'history', contextId, 'conversationHistory'));
-assert.ok(hasEdge(savedInputId, 'passthrough', orchestratorId, 'message'));
-assert.ok(hasEdge(historyId, 'history', orchestratorId, 'conversationHistory'));
+assert.ok(hasEdge(userInputId, 'message', orchestratorId, 'message'));
+assert.equal(hasEdge(historyId, 'history', orchestratorId, 'conversationHistory'), false);
 assert.ok(hasEdge(orchestratorId, 'analysis', contextId, 'routingAnalysis'));
 assert.equal(
   graph.nodes.find(node => node.id === orchestratorId)?.data?.properties?.outputContract,
-  'environment',
+  'environment-request',
 );
-assert.ok(hasEdge(savedInputId, 'passthrough', memoryRouterId, 'userMessage'));
+assert.ok(hasEdge(userInputId, 'message', memoryRouterId, 'userMessage'));
 assert.ok(hasEdge(orchestratorId, 'analysis', memoryRouterId, 'orchestratorHints'));
 assert.ok(hasEdge(memoryRouterId, 'memories', contextId, 'memories'));
-assert.ok(hasEdge(personaLoaderId, 'persona', personaFormatterId, 'persona'));
-assert.ok(hasEdge(personaFormatterId, 'formatted', contextId, 'personaText'));
+assert.ok(hasEdge(personaLoaderId, 'formatted', contextId, 'personaText'));
 assert.ok(hasEdge(actionParserId, 'response', bufferId, 'response'));
 assert.equal(
   graph.nodes.some(node => node.data?.nodeType === 'instruction_resolver'),
@@ -95,8 +91,8 @@ assert.equal(
   'Interactive Environment Mode must not retain the autonomous instruction adapter',
 );
 assert.ok(hasEdge(robotStatusId, 'context', contextId, 'robotStatus'));
-assert.ok(hasEdge(savedInputId, 'passthrough', contextId, 'instruction'));
-assert.ok(hasEdge(savedInputId, 'passthrough', contextId, 'userInstruction'));
+assert.ok(hasEdge(userInputId, 'message', contextId, 'instruction'));
+assert.ok(hasEdge(userInputId, 'message', contextId, 'userInstruction'));
 assert.equal(graph.edges.some(edge => edge.target === bufferId && edge.targetHandle === 'userMessage'), false);
 assert.ok(hasEdge(bridgeInputId, 'observation', contextId, 'observation'));
 assert.ok(hasEdge(bridgeInputId, 'isTriggeringObservation', contextId, 'observationCurrent'));

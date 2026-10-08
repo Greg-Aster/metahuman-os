@@ -43,7 +43,9 @@ export function interpretationGraph(graph: SvelteFlowGraph): SvelteFlowGraph {
     for (const edge of edges) if (included.has(edge.target)) included.add(edge.source)
   }
   return { ...graph, name: `${graph.name} interpretation`, scheduler: { ...graph.scheduler, eventInputNodeId: undefined },
-    nodes: graph.nodes.filter(node => included.has(node.id)), edges: edges.filter(edge => included.has(edge.source) && included.has(edge.target)) }
+    nodes: graph.nodes.filter(node => included.has(node.id)).map(node => node.data.nodeType === 'user_input'
+      ? { ...node, data: { ...node.data, properties: { ...node.data.properties, saveToBuffer: false, saveToLongTermMemory: false } } }
+      : node), edges: edges.filter(edge => included.has(edge.source) && included.has(edge.target)) }
 }
 
 /** Finite Coordinator work: no execution lease, command, speech or task mutation. */

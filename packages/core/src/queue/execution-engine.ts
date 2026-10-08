@@ -229,7 +229,23 @@ export class ExecutionEngine {
       if (!task.durable || task.durable.executionId !== task.input.identity?.executionId)
         throw new Error('Instruction interpretation requires its durable execution owner');
       const { interpretInstructions } = await import('../environment-interface/interpretation.js');
-      return interpretInstructions(task.input as Parameters<typeof interpretInstructions>[0], task.username!, context.signal);
+      context.signal.throwIfAborted();
+      let abort!: () => void;
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(new DOMException('Instruction interpretation cancelled', 'AbortError'));
+        context.signal.addEventListener('abort', abort, { once: true });
+      });
+      try {
+        // This handler only reads and proposes: abandoning its result releases
+        // the Coordinator lane even if a provider ignores abort. Promise.race
+        // still observes detached failures; the proposal cannot deliver effects.
+        return await Promise.race([
+          interpretInstructions(task.input as Parameters<typeof interpretInstructions>[0], task.username!, context.signal),
+          cancelled,
+        ]);
+      } finally {
+        context.signal.removeEventListener('abort', abort);
+      }
     }));
     this.registerHandler('environment.cancel-owned-work', async task => {
       if (!task.durable) throw new Error('Active task cleanup requires a durable owner');

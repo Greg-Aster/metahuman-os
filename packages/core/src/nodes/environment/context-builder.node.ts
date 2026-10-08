@@ -109,9 +109,16 @@ export const environmentContextBuilderNode = defineNode({
     const environmentSelected = routingAnalysis.needsEnvironment === true
       || routingAnalysis.needsVision === true
       || routingAnalysis.needsAction === true;
-    const observation = environmentSelected && isRecord(inputs.observation)
+    const suppliedObservation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
+    // Intent selects optional evidence, not the interfaces the informed model
+    // may use. Keep the adapter's capability catalog available after retrieval.
+    const observation = suppliedObservation && (environmentSelected ? suppliedObservation : {
+      adapter: suppliedObservation.adapter, environmentId: suppliedObservation.environmentId,
+      sessionId: suppliedObservation.sessionId, timestamp: suppliedObservation.timestamp,
+      capabilities: suppliedObservation.capabilities,
+    });
 
     const location = observation?.location ?? null;
     const map = observation?.map ?? null;
@@ -148,8 +155,7 @@ export const environmentContextBuilderNode = defineNode({
     const activeExecutions = routingAnalysis.needsExecutionContext === true && Array.isArray(inputs.activeExecutions)
       ? inputs.activeExecutions as EnvironmentExecutionTarget[] : [];
     const currentVision = useImages && inputs.observationCurrent === true;
-    const actionRouteSelected = routingAnalysis.needsAction === true
-      || (routingAnalysis.needsVision === true && !currentVision);
+    const actionRouteSelected = Boolean(observation?.capabilities.actions.length);
     const withoutUnselectedVision = effectiveObservation
       ? useImages
         ? effectiveObservation

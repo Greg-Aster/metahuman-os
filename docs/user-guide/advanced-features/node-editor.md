@@ -67,10 +67,24 @@ The Environment Mode canvas includes **How Environment Mode Works**, an
 editor-only Graph Note with the workflow stages, route switches, examples and
 ownership boundaries. Its contents are never included in model prompts.
 
-**Choose Required Routes** reads only the incoming request. Conversation History,
-Relevant Long-Term Memory, Robot Status, Bridge data, images, Current Execution,
-and Active Persona → Compact Persona Context run on their selected branches.
-The LLM selects persona independently through `needsPersona`.
+**User Input** has independent **Save to Conversation Buffer** and
+**Save to Long-Term Memory** options, both enabled in Environment Mode. It
+completes selected saves before forwarding the unchanged request; long-term
+saving respects profile memory-write settings. These options default to off
+for other workflows, preserving their existing storage nodes.
+
+**Intent Orchestrator** reads only the incoming request. Its system prompt is open
+on the canvas by default; use the prompt selector to view the user prompt template.
+Conversation History,
+Relevant Long-Term Memory, Robot Status, images, Current Execution,
+and Active Persona run on their selected branches.
+The LLM selects persona independently through `needsPersona`. The Bridge
+supplies its advertised interface independently; the Context Builder includes
+environment state only when selected. An early no-action guess does not remove
+commands from the informed selector. Active Persona
+also formats its context: **Format Model Context** enables this output, and
+**Include Personality**, **Include Values**, and **Include Goals** control the
+optional sections. Identity and background remain included when present.
 **Build Selected Environment Context** combines those results with the original
 input for the second LLM call. That call selects speech, the complete robot program and, when execution
 context was requested, an existing execution to steer or cancel. The existing

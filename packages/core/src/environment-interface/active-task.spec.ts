@@ -124,9 +124,9 @@ const program = { steps: [behavior, { kind: 'action', action: { type: 'robotComm
 const route = { needsResponse: false, needsConversationHistory: false, needsMemory: false, needsRobotStatus: false,
   needsEnvironment: true, needsVision: true, needsAction: true, needsExecutionContext: false, needsPersona: false }
 
-function fixture(sessionId: string, automaticInterpretation = true) {
+function fixture(sessionId: string, automaticInterpretation = true, suppliedObservation?: EnvironmentObservation) {
   const timestamp = new Date().toISOString()
-  const observation: EnvironmentObservation = { adapter: 'ainekio-gateway', environmentId: 'fixture-room', sessionId, timestamp,
+  const observation: EnvironmentObservation = suppliedObservation ?? { adapter: 'ainekio-gateway', environmentId: 'fixture-room', sessionId, timestamp,
     capabilities: { actions: ['move', 'stop', 'captureImage', 'robotCommand'], robotCommands: ['wave', 'dance', 'turn_right_180', 'run'], visual: true, movement: true },
     state: { body: { authenticated: true, cameraReady: true, robotId: 'fixture-robot' },
       gateway: { robots: { 'fixture-robot': { epoch: 1, connection_state: 'online' } } },
@@ -138,7 +138,7 @@ function fixture(sessionId: string, automaticInterpretation = true) {
   const received: EnvironmentCommandWork[] = []
   core.recordEnvironmentObservation(observation); core.setEnvironmentBridgeEnabled(true)
   const unsubscribe = core.subscribeEnvironmentActions(sessionId, () => received.push(...core.dispatchEnvironmentActions(sessionId, 10)))
-  let initialPerceptionRecorded = false
+  let initialPerceptionRecorded = Boolean(suppliedObservation)
   async function run(executionId?: string, turnContext: Record<string, unknown> = {}) {
     core.touchEnvironmentSession(sessionId)
     if (!executionId && !initialPerceptionRecorded) {
@@ -169,7 +169,8 @@ function fixture(sessionId: string, automaticInterpretation = true) {
     if (result.status === 'waiting') {
       const saved = openExecutionStore(username)
       try {
-        if (saved.task(result.executionId!)?.decision.objectiveComplete) return run(result.executionId)
+        if (saved.task(result.executionId!)?.decision.objectiveComplete
+          && saved.get(result.executionId!).waitingReason !== 'effect_delivery') return run(result.executionId)
       } finally { saved.close() }
     }
     return result
@@ -379,45 +380,95 @@ test('ongoing named gaits retain their adapter defaults and accept speed changes
   })
 })
 
-for (const outcome of ['positive', 'negative', 'ambiguous', 'failed'] as const) {
-  test(`capture-only visual search uses remote ${outcome} evidence and returns to the existing planner`, async () => {
+test('capture then gesture advances from the capture receipt and image before objective review', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const f = fixture('capture-then-wave')
+    try {
+      replies.push(route, { response: '', taskDecision: { ...decision, objective: 'Take a picture then wave',
+        completionCriteria: 'The picture is captured and the wave completes', requiredCompletionBasis: 'action_result' },
+        program: { steps: [{ kind: 'action', action: { type: 'captureImage' } },
+          { kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] } })
+      const started = await f.run(); const id = started.executionId!
+      const [capture] = f.received.splice(0); assert.equal(capture.type, 'captureImage')
+      f.complete(capture)
+      core.publishEnvironmentObservation({ ...f.observation, metadata: { actionId: capture.id },
+        visual: { ...f.observation.visual!, id: 'before-wave', timestamp: new Date().toISOString(), metadata: { actionId: capture.id } } }, { username })
+      const before = calls.length
+      assert.equal((await f.run(id)).status, 'waiting')
+      const [wave] = f.received.splice(0); assert.equal(wave.command, 'wave')
+      assert.equal(calls.length, before, 'The capture does not ask vision to prove a future gesture')
+      f.complete(wave)
+      replies.push({ response: '', outcome: 'complete', taskId: 'none', instruction: '', requiredCompletionBasis: 'action_result',
+        observationSummary: 'The capture and wave returned completed receipts.', completionEvidence: 'Both action receipts completed.', reason: 'Requested sequence completed.' })
+      assert.equal((await f.run(id)).status, 'completed')
+      assert.equal(f.received.length, 0)
+    } finally { f.unsubscribe() }
+  })
+})
+
+for (const outcome of ['positive', 'negative', 'ambiguous'] as const) {
+  test(`capture evidence reaches the response owner for ${outcome} review exactly once`, async () => {
     await withUserContext({ username, userId: username, role: 'owner' }, async () => {
       const f = fixture(`capture-${outcome}`)
-      const visualDecision = { ...decision, objective: 'Find the red cup', completionCriteria: 'Identify the red cup in this captured image',
+      const visualDecision = { ...decision, objective: 'Take a picture and tell me what you see',
+        completionCriteria: 'A picture is captured and its visible contents are described to the user',
         requiredCompletionBasis: 'visual_observation' }
+      const description = `Observed evidence in captured-${outcome}`
       try {
         replies.push(route, { response: '', taskDecision: visualDecision,
           program: { steps: [{ kind: 'action', action: { type: 'captureImage' } }] } })
         const started = await f.run(); const id = started.executionId!
         const [capture] = f.received.splice(0)
         f.complete(capture)
-        assert.equal((await f.run(id)).status, 'waiting', 'A capture receipt cannot complete visual search')
-        const beforeImage = openExecutionStore(username)
-        assert.equal(beforeImage.task(id)?.decision.objectiveComplete, false); beforeImage.close()
+        assert.equal((await f.run(id)).status, 'waiting', 'A receipt without its image cannot complete capture')
         core.publishEnvironmentObservation({ ...f.observation, metadata: { actionId: capture.id },
           visual: { ...f.observation.visual!, id: `captured-${outcome}`, timestamp: new Date().toISOString(), metadata: { actionId: capture.id } } }, { username })
-        await f.run(id)
-        const identification = manager.getAllTasks().find(task => task.handler === 'environment.identify' && task.durable?.executionId === id)!
-        assert.ok(identification)
-        replies.push(outcome === 'failed' ? () => { throw new Error('Simulated remote perception unavailable') }
-          : { matchesTarget: outcome === 'positive', completionSatisfied: outcome === 'positive', outcome,
-            description: `Image assessment ${outcome}`, evidence: `Observed evidence in captured-${outcome}` })
-        assert.ok(manager.claim(identification.id))
-        await (engine as unknown as { execute(task: typeof identification): Promise<void> }).execute(identification)
-        if (outcome !== 'positive') replies.push({ response: '', outcome: 'wait', taskId: 'none', instruction: '', completionEvidence: '',
-          requiredCompletionBasis: 'visual_observation', observationSummary: `Perception ${outcome}`,
-          reason: outcome === 'failed' ? 'Remote perception unavailable; the target has not been established' : `The image assessment is ${outcome}` })
+        replies.push({ response: description, outcome: outcome === 'positive' ? 'complete' : 'request_user',
+          taskId: 'none', instruction: '', completionEvidence: outcome === 'positive' ? description : '',
+          requiredCompletionBasis: 'visual_observation', observationSummary: description, reason: description })
+        const beforeReview = calls.length
         const result = await f.run(id)
-        assert.equal(result.status, outcome === 'positive' ? 'completed' : 'waiting')
+        assert.equal(result.status, outcome === 'positive' ? 'completed' : 'waiting', result.error?.stack)
+        assert.equal(calls.length, beforeReview + 1, 'One result review, not another action selector or per-capture target classifier')
+        const review = calls.at(-1)
+        assert.match(JSON.stringify(review.messages), new RegExp(`captured-${outcome}`))
+        assert.ok(review.messages.some((m: any) => Array.isArray(m.content) && m.content.some((part: any) => part.type === 'image_url')),
+          'The observed image bytes reach the model, not just a capture promise')
+        assert.equal(manager.getAllTasks().filter(task => task.handler === 'environment.identify' && task.durable?.executionId === id).length, 0)
         const final = openExecutionStore(username)
-        assert.equal(final.task(id)?.decision.objectiveComplete, outcome === 'positive'); final.close()
-        assert.equal(f.received.length, 0, 'Neither a failed nor negative image result can invent body behavior')
-        if (outcome !== 'positive') assert.match(JSON.stringify(calls.at(-1).messages), outcome === 'failed'
-          ? /Simulated remote perception unavailable/ : new RegExp(`captured-${outcome}`))
+        try { assert.equal(final.task(id)?.decision.objectiveComplete, outcome === 'positive') } finally { final.close() }
+        const { loadBufferForUser } = await import('../conversation-buffer.js')
+        const responses = () => loadBufferForUser(username, 'conversation').messages.filter(message => message.role === 'assistant' && message.content === description)
+        assert.equal(responses().length, 1, 'The description is delivered to the shared conversation')
+        if (outcome !== 'positive') {
+          assert.equal((await f.run(id)).status, 'waiting')
+          assert.equal(calls.length, beforeReview + 1, 'A request for input produces a real wait')
+          assert.equal(responses().length, 1, 'Resuming without new input cannot duplicate the reply')
+        }
+        assert.equal(f.received.length, 0)
       } finally { f.unsubscribe() }
     })
   })
 }
+
+test('capture result review failure is visible and never reports objective completion', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const f = fixture('capture-review-failure')
+    try {
+      replies.push(route, { response: '', taskDecision: { ...decision, requiredCompletionBasis: 'visual_observation' },
+        program: { steps: [{ kind: 'action', action: { type: 'captureImage' } }] } })
+      const started = await f.run(); const id = started.executionId!
+      const [capture] = f.received.splice(0); f.complete(capture)
+      core.publishEnvironmentObservation({ ...f.observation, metadata: { actionId: capture.id },
+        visual: { ...f.observation.visual!, id: 'failed-review-frame', timestamp: new Date().toISOString(), metadata: { actionId: capture.id } } }, { username })
+      replies.push(() => { throw new Error('Simulated result review failure') })
+      await assert.rejects(() => f.run(id), /Simulated result review failure/)
+      const store = openExecutionStore(username)
+      try { assert.equal(store.task(id)?.decision.objectiveComplete, false) } finally { store.close() }
+      assert.equal(f.received.length, 0, 'Model failure cannot create another robot action')
+    } finally { f.unsubscribe() }
+  })
+})
 
 test('a stalled remote inference request remains cancellable without calling local inference', async () => {
   await withUserContext({ username, userId: username, role: 'owner' }, async () => {
@@ -769,7 +820,8 @@ test('delayed interpretation keeps steering live, combines superseded turns, and
       assert.ok(latest.input.identity.revision > old.input.identity.revision)
       assert.deepEqual(latest.input.turns.map((turn: any) => turn.userMessage), ['What do you see?', 'Keep searching, and answer my question.'])
       // The simulated provider ignores abort; its late result must still be discarded.
-      release(); await worker
+      await worker
+      assert.equal(manager.getTask(old.id)?.state, 'cancelled', 'Coordinator releases its slot while the provider is still pending')
       replies.push({ ...route, needsResponse: true, needsConversationHistory: true, needsVision: false },
         { response: 'I see an object and am still searching.', program: null, taskDecision: null })
       await executeWork(latest)
@@ -786,6 +838,7 @@ test('delayed interpretation keeps steering live, combines superseded turns, and
       const speech = claimNextTTS(username, 'slow-interpretation-fixture').item!
       assert.equal(speech.generation, secondGeneration)
       assert.equal(speech.text, 'I see an object and am still searching.')
+      release(); await new Promise(resolve => setImmediate(resolve))
       const store = openExecutionStore(username)
       try {
         store.deliverEvent(id, { eventId: randomUUID(), kind: 'work_result', payload: {
@@ -837,3 +890,6 @@ test('required feedback expiry cancels motion while instruction inference is sti
     } finally { release?.(); await worker; f.unsubscribe() }
   })
 })
+
+// The paired software qualification reuses this real graph/Coordinator fixture.
+export { fixture, route, decision, replies, calls, core, manager, username, withUserContext, openExecutionStore, queuedInterpretation, executeWork, instruction }

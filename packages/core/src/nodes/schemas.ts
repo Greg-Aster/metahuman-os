@@ -380,12 +380,25 @@ export const nodeSchemas: NodeSchema[] = [
     ],
     outputs: [
       { name: 'message', type: 'string', description: 'User message' },
-      { name: 'entry', type: 'message', optional: true, description: 'Original admitted entry when forwarding this chat input; fresh input gets its identity at Conversation Buffer' },
+      { name: 'entry', type: 'message', optional: true, description: 'Preserved or recorded conversation entry' },
+      { name: 'entries', type: 'array', description: 'Conversation entries prepared for selected storage destinations' },
+      { name: 'bufferSaved', type: 'boolean', description: 'Whether conversation buffer admission completed' },
+      { name: 'memorySaved', type: 'boolean', description: 'Whether long-term memory saving completed' },
       { name: 'inputSource', type: 'string', description: 'Input source: text, speech, or chat' },
       { name: 'instructionSource', type: 'string', description: 'Instruction provenance: user' },
       { name: 'sessionId', type: 'string', description: 'Session identifier' },
     ],
-    properties: { message: '', prioritizeChatInterface: true },
+    properties: { message: '', prioritizeChatInterface: true, saveToBuffer: false, saveToLongTermMemory: false },
+    propertySchemas: {
+      saveToBuffer: {
+        type: 'boolean', default: false, label: 'Save to Conversation Buffer',
+        description: 'Record the current input in the rolling conversation buffer before forwarding it',
+      },
+      saveToLongTermMemory: {
+        type: 'boolean', default: false, label: 'Save to Long-Term Memory',
+        description: 'Save the current input as a conversation memory when profile memory writes are enabled',
+      },
+    },
     description: 'Unified input node for text and speech',
   }),
   defineSchema({
@@ -1346,7 +1359,8 @@ export const nodeSchemas: NodeSchema[] = [
     { name: 'result', type: 'object', description: 'Execution progress and phase evidence' },
     { name: 'userInput', type: 'object', description: 'New instruction returned to existing intent routing' },
     { name: 'taskDecision', type: 'object', description: 'Decision from this execution' },
-    { name: 'observation', type: 'object', description: 'Latest observation references' }],
+    { name: 'observation', type: 'object', description: 'Latest observation references' },
+    { name: 'resultContext', type: 'object', description: 'Observed results returned to the existing objective review' }],
   }),
   defineSchema({
   id: 'environment_active_task_step', name: 'Advance Active Task', category: 'environment',
@@ -2647,6 +2661,7 @@ export const nodeSchemas: NodeSchema[] = [
     id: 'orchestrator_llm',
     name: 'Intent Orchestrator',
     category: 'chat',
+    presentation: { defaultExpanded: true },
     inputs: [
       { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
       { name: 'execution', type: 'object', optional: true, description: 'Current execution facts for routing an internal intention' },
@@ -2688,6 +2703,7 @@ export const nodeSchemas: NodeSchema[] = [
         type: 'select',
         default: 'general',
         label: 'Routing Contract',
+        canvas: 'expanded',
         description: 'Selects the typed intent fields this instance must return.',
         options: [
           { value: 'general', label: 'General' },
@@ -3031,7 +3047,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'results', type: 'array' },
       { name: 'passthrough', type: 'any' },
     ],
-    description: 'Saves each buffer-admitted user or assistant entry as its own long-term conversation memory.',
+    description: 'Saves each supplied user or assistant entry as its own long-term conversation memory.',
   }),
   defineSchema({
     id: 'conversation_buffer',
@@ -3599,6 +3615,7 @@ export const nodeSchemas: NodeSchema[] = [
     inputs: [],
     outputs: [
       { name: 'persona', type: 'object' },
+      { name: 'formatted', type: 'string', description: 'Selected persona sections formatted for model context, when enabled' },
       { name: 'identity', type: 'object' },
       { name: 'personality', type: 'object' },
       { name: 'values', type: 'object' },
@@ -3607,6 +3624,13 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'inactive', type: 'boolean' },
       { name: 'success', type: 'boolean' },
     ],
+    properties: { formatContext: false, includeValues: true, includeGoals: true, includePersonality: true },
+    propertySchemas: {
+      formatContext: { type: 'toggle', default: false, label: 'Format Model Context', description: 'Produce formatted persona text as well as the full persona object' },
+      includeValues: { type: 'toggle', default: true, label: 'Include Values' },
+      includeGoals: { type: 'toggle', default: true, label: 'Include Goals' },
+      includePersonality: { type: 'toggle', default: true, label: 'Include Personality' },
+    },
     description: 'Loads persona core configuration',
   }),
   defineSchema({

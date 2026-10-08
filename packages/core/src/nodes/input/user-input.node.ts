@@ -6,6 +6,8 @@
  */
 
 import { defineNode, type NodeDefinition } from '../types.js';
+import { ConversationBufferNode, prepareConversationEntries } from '../output/conversation-buffer.node.js';
+import { MemoryCaptureNode } from '../output/memory-capture.node.js';
 
 export const UserInputNode: NodeDefinition = defineNode({
   id: 'user_input',
@@ -17,7 +19,10 @@ export const UserInputNode: NodeDefinition = defineNode({
   ],
   outputs: [
     { name: 'message', type: 'string', description: 'Final user message' },
-    { name: 'entry', type: 'message', optional: true, description: 'Original admitted entry when forwarding this chat input; fresh input gets its identity at Conversation Buffer' },
+    { name: 'entry', type: 'message', optional: true, description: 'Preserved or recorded conversation entry' },
+    { name: 'entries', type: 'array', description: 'Conversation entries prepared for selected storage destinations' },
+    { name: 'bufferSaved', type: 'boolean', description: 'Whether conversation buffer admission completed' },
+    { name: 'memorySaved', type: 'boolean', description: 'Whether long-term memory saving completed' },
     { name: 'inputSource', type: 'string', description: 'Source of input: text, speech, or chat' },
     { name: 'instructionSource', type: 'string', description: 'Instruction provenance: user' },
     { name: 'sessionId', type: 'string', description: 'Current session ID' },
@@ -27,8 +32,18 @@ export const UserInputNode: NodeDefinition = defineNode({
   properties: {
     message: '',
     prioritizeChatInterface: true,
+    saveToBuffer: false,
+    saveToLongTermMemory: false,
   },
   propertySchemas: {
+    saveToBuffer: {
+      type: 'boolean', default: false, label: 'Save to Conversation Buffer',
+      description: 'Record the current input in the rolling conversation buffer before forwarding it',
+    },
+    saveToLongTermMemory: {
+      type: 'boolean', default: false, label: 'Save to Long-Term Memory',
+      description: 'Save the current input as a conversation memory when profile memory writes are enabled',
+    },
     message: {
       type: 'string',
       default: '',
@@ -104,9 +119,22 @@ export const UserInputNode: NodeDefinition = defineNode({
     const entry = inputSource === 'chat' && message === context.userMessage
       && context.userMessageEntry?.content === message ? context.userMessageEntry : undefined;
 
+    const storageInputs = { userMessage: message, entry };
+    const admission = properties?.saveToBuffer === true
+      ? await ConversationBufferNode.execute(storageInputs, context, {})
+      : null;
+    const entries = admission?.entries ?? (properties?.saveToLongTermMemory === true
+      ? prepareConversationEntries(storageInputs, context) : []);
+    const memory = properties?.saveToLongTermMemory === true
+      ? await MemoryCaptureNode.execute({ entries }, context, {})
+      : null;
+
     return {
       message,
-      entry,
+      entry: admission?.entry ?? entries.at(-1) ?? entry,
+      entries,
+      bufferSaved: admission?.persisted === true,
+      memorySaved: memory?.saved === true,
       inputSource,
       instructionSource: 'user',
       sessionId: context.sessionId || `session-${Date.now()}`,
