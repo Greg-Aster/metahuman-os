@@ -272,9 +272,9 @@ test('Environment selector schema describes conversation or an ordered program w
   for (const route of schema.anyOf) {
     assert.equal(route.type, 'object')
     assert.equal(route.additionalProperties, false)
-    assert.deepEqual(route.required, ['program', 'taskDecision', 'response'])
-    assert.deepEqual(Object.keys(route.properties), ['program', 'taskDecision', 'response'],
-      'The provider grammar selects the program and completion decision before composing speech')
+    assert.deepEqual(route.required, ['taskDecision', 'program', 'response'])
+    assert.deepEqual(Object.keys(route.properties), ['taskDecision', 'program', 'response'],
+      'The provider grammar selects objective state before its program and speech')
     assert.equal('allOf' in route, false)
     assert.equal(route.properties.response.type, 'string')
   }

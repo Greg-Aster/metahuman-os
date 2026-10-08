@@ -41,6 +41,12 @@ import type { CognitiveModeId } from '../../cognitive-mode.js';
 // NOTE: invalidateStatusCache was removed - statusCache no longer exists (was redundant)
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { getLlamaCppAdapters } from '../../providers/llama-cpp.js';
+
+function llamaAdapterModelId(model: string, endpoint: string, adapterPath: string): string {
+  return `llama-cpp-lora.${createHash('sha256').update(JSON.stringify([model, endpoint, adapterPath])).digest('hex').slice(0, 16)}`;
+}
 
 export const isRetiredDevelopmentModelId = (modelId: string): boolean => (
   modelId.startsWith('environment-classifier.')
@@ -84,7 +90,7 @@ export function collapseModelInventory(models: AvailableRegistryModel[]): Availa
   const inventory = new Map<string, AvailableRegistryModel>()
 
   for (const model of models) {
-    const key = JSON.stringify([model.provider, model.model])
+    const key = JSON.stringify([model.provider, model.model, model.adapters || [], model.options?.endpoint || null, model.options?.lora ?? null])
     const existing = inventory.get(key)
     if (!existing) {
       inventory.set(key, {
@@ -280,6 +286,8 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
         }))
     )
 
+    const nodeModels = [...availableModels];
+
     // Extract base role assignments (defaults)
     const defaults = registry.defaults || {};
     const cognitiveModeMappings = registry.cognitiveModeMappings || {};
@@ -361,6 +369,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
           }
         }))
 
+        nodeModels.push(...discovered);
         availableModels = collapseModelInventory([...availableModels, ...discovered])
 
         const installedNames = new Set(discovered.map(model => model.model))
@@ -434,6 +443,24 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       }
     }
 
+    const llamaConfig = loadBackendConfig().llamaCpp;
+    if (llamaConfig.model) nodeModels.push({
+      id: `llama-cpp.${llamaConfig.model}`, provider: 'llama-cpp', model: llamaConfig.model,
+      roles: [], capabilities: llamaConfig.capabilities, adapters: [], baseModel: null,
+      description: 'Configured llama.cpp model', options: { ...llamaConfig, lora: [] },
+      metadata: {}, source: 'user-registry',
+    });
+    if (query?.view === 'node' && availableBackends.llamaCpp?.running) {
+      const adapters = await getLlamaCppAdapters(llamaConfig);
+      for (const adapter of adapters) nodeModels.push({
+        id: llamaAdapterModelId(llamaConfig.model, llamaConfig.endpoint, adapter.path), provider: 'llama-cpp', model: llamaConfig.model,
+        roles: [], capabilities: llamaConfig.capabilities, adapters: [adapter.path], baseModel: llamaConfig.model,
+        description: `${llamaConfig.model} + ${path.basename(adapter.path)}`,
+        options: { ...llamaConfig, lora: [{ path: adapter.path, scale: 1 }] },
+        metadata: {}, source: 'user-registry',
+      });
+    }
+
     const modelCategories = {
       local: resolvedBackend === 'llama-cpp' ? llamaModels
         : activeBackend === 'vllm' && isVLLMRunning
@@ -460,6 +487,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     return successResponse({
       success: true,
       availableModels,
+      nodeModels: collapseModelInventory(nodeModels),
       roleAssignments,
       cognitiveModeMappings,
       globalSettings,
@@ -490,9 +518,9 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     // Allow authenticated users (owner or standard) to modify their model registry
     // Note: isAuthenticated check above already excludes guest/anonymous
 
-    const { role, modelId, cognitiveMode } = body || {};
+    const { role, modelId, cognitiveMode, registerOnly = false } = body || {};
 
-    if (!role || !modelId) {
+    if ((!registerOnly && !role) || !modelId) {
       return { status: 400, error: 'role and modelId are required' };
     }
     if (role === 'environmentRouter') {
@@ -501,7 +529,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
         error: 'environmentRouter is retired; assign the environmentActionSelector role instead',
       };
     }
-    if (!isModelRole(role)) {
+    if ((!registerOnly || role !== undefined) && !isModelRole(role)) {
       return { status: 400, error: `Unsupported model role: ${String(role)}` };
     }
     if (typeof modelId !== 'string') {
@@ -525,13 +553,28 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     // NO SYSTEM REGISTRY FALLBACK - only dynamic discovery types
     if (!registry.models[modelId]) {
 
-      if (modelId.startsWith('vllm.')) {
+      if (modelId.startsWith('llama-cpp-lora.')) {
+        const config = loadBackendConfig().llamaCpp;
+        const adapters = await getLlamaCppAdapters(config);
+        const adapter = adapters.find(value => modelId === llamaAdapterModelId(config.model, config.endpoint, value.path));
+        if (!adapter) return { status: 400, error: 'Unknown loaded llama.cpp adapter' };
+        registry.models[modelId] = { provider: 'llama-cpp', model: config.model,
+          roles: role ? [role] : [], capabilities: config.capabilities, adapters: [adapter.path], baseModel: config.model,
+          description: `${config.model} + ${path.basename(adapter.path)}`,
+          options: { ...config, lora: [{ path: adapter.path, scale: 1 }] } };
+      } else if (modelId.startsWith('llama-cpp.')) {
+        const config = loadBackendConfig().llamaCpp;
+        if (modelId !== `llama-cpp.${config.model}`) return { status: 400, error: 'Unknown llama.cpp model' };
+        registry.models[modelId] = { provider: 'llama-cpp', model: config.model,
+          roles: role ? [role] : [], capabilities: config.capabilities, adapters: [],
+          description: 'Configured llama.cpp model', options: { ...config, lora: [] } };
+      } else if (modelId.startsWith('vllm.')) {
         // vLLM model - runtime discovery
         const backendConfig = loadBackendConfig();
         registry.models[modelId] = {
           provider: 'vllm',
           model: backendConfig.vllm?.model || 'unknown',
-          roles: [role],
+          roles: role ? [role] : [],
           capabilities: [],
           adapters: [],
           description: `vLLM backend model`,
@@ -546,7 +589,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           provider: 'vllm',  // Use vllm provider, LoRA name is the model
           model: adapterName,  // vLLM routes to LoRA based on model name
           baseModel: backendConfig.vllm?.model,
-          roles: [role],
+          roles: role ? [role] : [],
           capabilities: [],
           adapters: [],
           description: `vLLM LoRA adapter: ${adapterName}`,
@@ -566,7 +609,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
           provider: useVllm ? 'vllm' : 'ollama',
           model: adapterName,
           baseModel: baseModel,
-          roles: [role],
+          roles: role ? [role] : [],
           capabilities: [],
           adapters: [],
           description: `LoRA adapter: ${adapterName}`,
@@ -580,7 +623,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
         registry.models[modelId] = {
           provider: 'ollama',
           model: inferredName,
-          roles: [role],
+          roles: role ? [role] : [],
           capabilities: normalizeProviderCapabilities(details.capabilities),
           adapters: [],
           description: `Ollama model ${inferredName}`,
@@ -598,7 +641,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
         registry.models[modelId] = {
           provider: 'remote-server',
           model: modelName,
-          roles: [role],
+          roles: role ? [role] : [],
           capabilities: [],
           adapters: [],
           description: `Remote server model (${remoteProvider}): ${modelName}`,
@@ -626,16 +669,16 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     if (!Array.isArray(entry.roles)) {
       entry.roles = [];
     }
-    if (!entry.roles.includes(role)) {
+    if (!registerOnly && !entry.roles.includes(role)) {
       entry.roles.push(role);
     }
 
     // Update cognitive mode mapping or default role assignment
-    if (cognitiveMode) {
+    if (!registerOnly && cognitiveMode) {
       registry.cognitiveModeMappings = registry.cognitiveModeMappings || {};
       registry.cognitiveModeMappings[cognitiveMode] = registry.cognitiveModeMappings[cognitiveMode] || {};
       registry.cognitiveModeMappings[cognitiveMode][role] = modelId;
-    } else {
+    } else if (!registerOnly && isModelRole(role)) {
       registry.defaults = registry.defaults || {};
       registry.defaults[role] = modelId;
     }
@@ -666,8 +709,8 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     await audit({
       category: 'data_change',
       level: 'info',
-      event: 'model_role_updated',
-      action: 'model_role_updated',
+      event: registerOnly ? 'model_registered' : 'model_role_updated',
+      action: registerOnly ? 'model_registered' : 'model_role_updated',
       actor: user.username,
       userId: user.userId,
       metadata: {
@@ -681,7 +724,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
 
     return successResponse({
       success: true,
-      message: `Role ${role} assigned to model ${modelId}`,
+      message: registerOnly ? `Model ${modelId} registered` : `Role ${role} assigned to model ${modelId}`,
       needsRestart,
       registry: {
         availableModels: Object.keys(registry.models || {}),

@@ -206,3 +206,49 @@ Avoid maintaining two graphs for the same live responsibility. Once a replacemen
 - [Architecture](/user-guide#architecture)
 - [Autonomous Work](/user-guide#autonomous-agents)
 - [Configuration Ownership](/user-guide#configuration-files)
+
+### Models and adapters on Environment LLM nodes
+
+**Intent Orchestrator** and **Model Router** expose **Model / LoRA** on the canvas
+and in the inspector. **Use configured role** follows the profile's role mapping
+and the preferred backend selected in the main interface. An explicit selection
+uses that registry model and provider for this node, independently of the preferred
+backend. Selecting a node model registers it without changing role assignments.
+An explicit text-only selection reports unsupported image input instead of
+substituting another model.
+
+The choices use the existing profile registry, installed Ollama models, configured
+llama.cpp model and its loaded adapters, and discovered vLLM adapters. Refresh the
+list after changing the serving configuration. A vLLM adapter that needs a server
+reload is labelled accordingly. A llama.cpp adapter is selected per request;
+its saved path is resolved to the server's current adapter ID. Registered models
+may also carry a different llama.cpp endpoint and an adapter combination in their
+model options. There is no global adapter toggle during a node call.
+
+The supplied Environment graph has three model stages. **Intent Orchestrator**
+selects context routes from the incoming request. **Task Decision** selects an
+execution target, task state and complete program from the retrieved context.
+Both select `ollama.qwen3.5:0.8b`. **Conversation** produces plain text only when
+intent selects a response; it follows the configured Persona role and preferred
+backend. Each stage has its own Model / LoRA control.
+
+Build Task Decision Context retrieves nothing: it packages the selected source
+outputs and the task JSON contract. Build Conversation Context reuses that
+package and the parsed task/admission result, omitting the task-selection rules
+and full command catalog. The conversation output reaches storage, TTS and the
+response stream; the task parser alone supplies decisions and programs to the
+existing execution owners. A saved ongoing-task interpretation is replayed only
+into Task Decision, never into Conversation.
+
+A normal pass makes two calls without speech or three with speech. Existing
+conditional motion generation, image identification, task reinterpretation,
+output correction and goal review can add calls. The small base model is not yet
+trained for either task; valid JSON does not establish correct decisions.
+Install/register the selected model on each machine or change its node selection.
+
+Ollama manages its own loaded models and residency; llama.cpp process lifecycle
+remains with its configured external launcher. Multiple llama.cpp adapters must
+be preloaded by that launcher. Different bases can use separate server endpoints.
+Each server's request slots, context allocation, and GPU memory determine actual
+concurrency. Selecting models in the graph does not reserve GPU memory or change
+server launch arguments.

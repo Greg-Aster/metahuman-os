@@ -201,6 +201,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   presentation: { defaultExpanded: true },
 
   properties: {
+    modelId: '',
     outputContract: 'general',
     systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
@@ -208,6 +209,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     maxTokens: 768,
   },
   propertySchemas: {
+    modelId: { type: 'string', default: '', label: 'Model / LoRA', emptyLabel: 'Use configured role', suggestions: 'models', description: 'Leave blank to follow the role and preferred backend. Select a registry model or served LoRA to use it for this node.' },
     outputContract: {
       type: 'select',
       default: 'general',
@@ -351,8 +353,10 @@ Adjust your routing based on this feedback. If memory search already failed, con
       ];
 
       const response = await callLLM({
+        modelId: properties?.modelId || undefined,
         signal: context.abortSignal,
         role: 'orchestrator',
+        userId: context.userId || context.username,
         messages,
         cognitiveMode: context.cognitiveMode,
         options: {

@@ -140,6 +140,7 @@ export const environmentActionParserNode = defineNode({
     { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
   ],
   outputs: [
+    { name: 'selection', type: 'object', description: 'Task selection and its capability admission result for conversation context' },
     { name: 'executionSelection', type: 'object', optional: true, description: 'Existing execution selected for steering or cancellation' },
     { name: 'continueHere', type: 'boolean', description: 'Whether this invocation handles the request instead of forwarding it' },
     { name: 'program', type: 'object', description: 'Complete task program for the canonical active executor' },
@@ -151,8 +152,13 @@ export const environmentActionParserNode = defineNode({
     { name: 'error', type: 'string', description: 'Parser error message' },
     { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
   ],
-  description: 'Separates a structured model response into conversational text and validated semantic actions.',
-  async execute(inputs, context) {
+  properties: { includeResponse: true },
+  propertySchemas: {
+    includeResponse: { type: 'boolean', default: true, label: 'Model Includes Conversation',
+      description: 'Disable for a task-only model output when a separate conversation node owns speech.' },
+  },
+  description: 'Validates task selection and capability admission; optionally separates speech from a combined model output.',
+  async execute(inputs, context, properties) {
     const sessionId = typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined;
     const observation = inputs.observation && typeof inputs.observation === 'object'
       ? inputs.observation as EnvironmentObservation
@@ -165,6 +171,7 @@ export const environmentActionParserNode = defineNode({
       inputs.response,
       sessionId,
       Array.isArray(inputs.activeExecutions) ? inputs.activeExecutions : [],
+      properties?.includeResponse !== false,
     );
     if (!validation.value) throw new NodeInputValidationError('response',
       `Environment Action Selector output is invalid: ${validation.errors.join('; ')}`,
@@ -265,6 +272,8 @@ export const environmentActionParserNode = defineNode({
       : null;
     const taskDecision = parsed.taskDecision;
     return {
+      selection: { program: parsed.program, taskDecision, executionSelection: executionSelection ?? null,
+        actionAdmission, error: movementError, visualObservation },
       executionSelection,
       continueHere: true,
       program: valid ? parsed.program : null,

@@ -344,6 +344,22 @@
       "metadata": {
         "source": "ollama-discovery"
       }
+    },
+    "ollama.qwen3.5:0.8b": {
+      "provider": "ollama",
+      "model": "qwen3.5:0.8b",
+      "adapters": [],
+      "roles": [],
+      "capabilities": [
+        "text",
+        "image"
+      ],
+      "description": "Qwen3.5 0.8B base model for configurable node experiments",
+      "options": {
+        "contextWindow": 8192,
+        "enableThinking": false
+      },
+      "metadata": {}
     }
   },
   "roleHierarchy": {

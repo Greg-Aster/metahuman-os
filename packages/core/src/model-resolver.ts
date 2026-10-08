@@ -461,7 +461,7 @@ export function resolveModel(
 /**
  * Resolve a model by ID instead of role
  */
-export function resolveModelById(modelId: string, username?: string): ResolvedModel {
+export function resolveModelById(modelId: string, username?: string, useBackendOverride = true): ResolvedModel {
   // Input validation
   if (!modelId || typeof modelId !== 'string') {
     throw new Error(`Invalid modelId parameter: ${modelId}`);
@@ -490,7 +490,7 @@ export function resolveModelById(modelId: string, username?: string): ResolvedMo
   };
 
   // Apply backend override to ensure correct model for active backend
-  return applyBackendOverride(resolved, registry);
+  return useBackendOverride || modelId === 'vllm.active' ? applyBackendOverride(resolved, registry) : resolved;
 }
 
 /**

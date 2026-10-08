@@ -88,6 +88,10 @@ export async function getLlamaCppStatus(config: LlamaCppConfig): Promise<{ runni
   }
 }
 
+export async function getLlamaCppAdapters(config: LlamaCppConfig): Promise<Array<{ id: number; path: string; scale: number }>> {
+  return requestJson(config.endpoint, '/lora-adapters', {}, 2000)
+}
+
 export async function callLlamaCpp(
   config: LlamaCppConfig,
   messages: ProviderMessage[],
@@ -105,12 +109,21 @@ export async function callLlamaCpp(
     throw new ProviderInputError('Requested output tokens must be positive and smaller than the llama.cpp context window')
   }
   onProgress?.({ phase: 'running', message: `Generating with llama.cpp (${config.model})` })
+  // Server IDs may change when adapters are reloaded in a different order.
+  const loadedAdapters = options.lora?.some(adapter => adapter.path)
+    ? await getLlamaCppAdapters(config) : []
+  const lora = options.lora?.map(adapter => {
+    const id = adapter.path ? loadedAdapters.find(loaded => loaded.path === adapter.path)?.id : adapter.id
+    if (id === undefined) throw new Error(`llama.cpp adapter is not loaded: ${adapter.path}`)
+    return { id, scale: adapter.scale }
+  })
   const response = await requestJson(config.endpoint, '/v1/chat/completions', {
     signal: options.signal,
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: config.model,
+      ...(lora !== undefined ? { lora } : {}),
       messages,
       stream: false,
       max_tokens: maxTokens,

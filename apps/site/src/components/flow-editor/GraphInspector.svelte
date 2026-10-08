@@ -47,13 +47,13 @@
         id="max-loop-iterations"
         class="property-input"
         type="number"
-        min="1"
+        min="0"
         max="100"
         step="1"
         value={graph.scheduler.maxLoopIterations}
         oninput={(event) => onUpdateGraph?.({ maxLoopIterations: Number((event.target as HTMLInputElement).value) })}
       />
-      <p class="hint">A conditional loop that remains selected beyond this limit fails the graph.</p>
+      <p class="hint">0 continues until the loop exits. With a positive limit, a conditional loop that remains selected beyond it fails the graph.</p>
       <label class="field-label" for="event-input-node">Input Received During Execution</label>
       <select id="event-input-node" class="property-input" value={graph.scheduler.eventInputNodeId ?? ''}
         onchange={(event) => onUpdateGraph?.({ eventInputNodeId: (event.target as HTMLSelectElement).value })}>

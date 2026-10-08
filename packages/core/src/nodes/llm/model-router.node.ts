@@ -20,9 +20,10 @@ export const ModelRouterNode: NodeDefinition = defineNode({
     { name: 'precomputedResponse', type: 'string', optional: true, description: 'Exact deterministic output that bypasses model inference when connected' },
   ],
   outputs: [
-    { name: 'response', type: 'llm_response', description: 'Normalized model text; downstream nodes own parsing, validation, and effects' },
+    { name: 'response', type: 'string', description: 'Normalized model text; downstream nodes own parsing, validation, and effects' },
   ],
   properties: {
+    modelId: '',
     role: 'persona',
     maxTokens: 2048,
     temperature: 0.7,
@@ -30,6 +31,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
     format: 'text',
   },
   propertySchemas: {
+    modelId: { type: 'string', default: '', label: 'Model / LoRA', emptyLabel: 'Use configured role', suggestions: 'models', description: 'Leave blank to follow the role and preferred backend. Select a registry model or served LoRA to use it for this node.' },
     role: {
       type: 'select',
       default: 'persona',
@@ -87,10 +89,6 @@ export const ModelRouterNode: NodeDefinition = defineNode({
   description: 'Calls the profile-resolved model using connected messages. Downstream nodes own validation and effects; rejected output returns as saved feedback to this model without repeating earlier actions.',
 
   execute: async (inputs, context, properties) => {
-    if (context.environmentInterpretation?.response) {
-      if (context.modelOutputFeedback) throw new Error('Interpretation proposal is no longer valid: ' + context.modelOutputFeedback.error);
-      return { response: context.environmentInterpretation.response, precomputed: true };
-    }
     const precomputedResponse = typeof inputs.precomputedResponse === 'string'
       ? inputs.precomputedResponse.trim()
       : '';
@@ -119,6 +117,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
     ] : suppliedMessages;
 
     const response = await callLLM({
+        modelId: properties?.modelId || undefined,
         role,
         messages,
         userId: username,

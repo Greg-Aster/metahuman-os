@@ -62,6 +62,8 @@ export const environmentContextBuilderNode = defineNode({
   name: 'Environment Context Builder',
   category: 'environment',
   inputs: [
+    { name: 'selectedContext', type: 'object', optional: true, description: 'Already selected evidence package from the task context builder' },
+    { name: 'selectedTask', type: 'object', optional: true, description: 'Parsed task selection and its admission result' },
     { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions available for steering or cancellation' },
     { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
     { name: 'execution', type: 'object', optional: true, description: 'Checkpointed objective and execution events' },
@@ -74,10 +76,12 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Shared rolling conversation history' },
     { name: 'memories', type: 'array', optional: true, description: 'Relevant long-term conversational memories' },
     { name: 'personaText', type: 'string', optional: true, description: 'Formatted active persona supplied once to the selector' },
-    { name: 'routingAnalysis', type: 'object', description: 'Intent Orchestrator route switches for this turn' },
+    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Intent Orchestrator route switches for this turn' },
     { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
   ],
   outputs: [
+    { name: 'selectedContext', type: 'object', description: 'Selected evidence reused by the conversation context builder without new retrieval' },
+    { name: 'precomputedResponse', type: 'string', optional: true, description: 'Saved task interpretation for the connected task model only' },
     { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
     { name: 'message', type: 'string', description: 'Prompt-ready environment message' },
     { name: 'messages', type: 'array', description: 'Compact action-selector message array' },
@@ -91,18 +95,48 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'availableActions', type: 'array', description: 'Available action types' },
   ],
   properties: {
+    purpose: 'combined',
     systemPrompt: '',
   },
   propertySchemas: {
+    purpose: { type: 'select', default: 'combined', label: 'Context Purpose',
+      description: 'Task builds task-only JSON; conversation reuses evidence and the parsed selection. Combined preserves the contract of existing saved graphs.',
+      options: [{ value: 'combined', label: 'Combined Selection' }, { value: 'task', label: 'Task Decision' }, { value: 'conversation', label: 'Conversation' }] },
     systemPrompt: {
       type: 'text_multiline',
       default: '',
       label: 'System Prompt',
+      description: 'Editable instructions for the connected model call.',
       rows: 5,
     },
   },
-  description: 'Packages only the context selected by Intent Orchestrator for one Environment Action Selector call.',
+  description: 'Builds task or conversation messages from the selected evidence. Conversation reuses the task context and validated selection without retrieval.',
   async execute(inputs, context, properties) {
+    if (properties?.purpose === 'conversation') {
+      const { capabilityRules: _rules, ...evidence } = inputs.selectedContext;
+      const environment = evidence.currentEnvironment;
+      const catalog = environment?.capabilities?.robotCommandCatalog ?? {};
+      const selectedTask = inputs.selectedTask;
+      const commands = (selectedTask.program?.steps ?? [])
+        .filter((step: any) => step.kind === 'action' && step.action.type === 'robotCommand')
+        .map((step: any) => step.action.command as string);
+      const commandDescriptions = Object.fromEntries(commands
+        .filter((command: string) => typeof catalog[command] === 'string')
+        .map((command: string) => [command, catalog[command]]));
+      if (environment) {
+        const { capabilities: _capabilities, ...observedEnvironment } = environment;
+        evidence.currentEnvironment = observedEnvironment;
+      }
+      const message = JSON.stringify({ ...evidence, selectedTask: { ...selectedTask, commandDescriptions } });
+      const images = Array.isArray(inputs.images) ? inputs.images : [];
+      return { message, messages: [
+        { role: 'system', content: String(properties.systemPrompt ?? '').trim() },
+        { role: 'user', content: images.length ? [
+          { type: 'text', text: `The attached images are what you saw at the corresponding visualFrames times.\n${message}` }, ...images,
+        ] : message },
+      ] };
+    }
+
     const routingAnalysis = isRecord(inputs.routingAnalysis)
       ? Object.fromEntries(Object.entries(inputs.routingAnalysis).filter(([, value]) => typeof value === 'boolean'))
       : {};
@@ -207,6 +241,7 @@ export const environmentContextBuilderNode = defineNode({
       currentVisionAvailable: currentVision,
     });
     const jsonSchema = buildEnvironmentSelectorJsonSchema({
+      includeResponse: properties?.purpose !== 'task',
       activeExecutions,
       actions: promptObservation?.capabilities.actions ?? [],
       robotCommands: promptObservation?.capabilities.robotCommands ?? [],
@@ -214,6 +249,8 @@ export const environmentContextBuilderNode = defineNode({
     });
 
     return {
+      selectedContext: JSON.parse(message),
+      precomputedResponse: context.environmentInterpretation?.response,
       message,
       jsonSchema: withVisualObservationSchema(jsonSchema, selectedFrames),
       frames: selectedFrames,

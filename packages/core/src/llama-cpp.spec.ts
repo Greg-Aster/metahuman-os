@@ -12,10 +12,10 @@ setAuditEnabled(false)
 const { eventBus } = await import('./infrastructure/event-bus/client.js')
 const { callLlamaCpp, getLlamaCppStatus, DEFAULT_LLAMA_CPP_CONFIG } = await import('./providers/llama-cpp.js')
 const { saveBackendConfig, loadBackendConfig, getBackendStatus, ensureBackendRunning } = await import('./llm-backend.js')
-const { resolveModel, resolveModelForCognitiveMode } = await import('./model-resolver.js')
+const { resolveModel, resolveModelById, resolveModelForCognitiveMode } = await import('./model-resolver.js')
 const { getProfilePaths } = await import('./path-builder.js')
 const { callProvider } = await import('./providers/bridge.js')
-const { handleGetModelRegistry } = await import('./api/handlers/model-registry.js')
+const { handleGetModelRegistry, handleAssignModelRole } = await import('./api/handlers/model-registry.js')
 const { handleSetLlmBackendConfig } = await import('./api/handlers/llm-backend-config.js')
 eventBus.disconnect()
 const fetchOriginal = globalThis.fetch
@@ -142,6 +142,8 @@ test('device routing overrides synced local chat/action roles without changing p
   const resolved = resolveModel('orchestrator', undefined, 'fixture')
   assert.equal(resolved.provider, 'llama-cpp')
   assert.equal(resolved.model, config.model)
+  assert.equal(resolveModelById('old', 'fixture', false).model, 'desktop-model')
+  assert.equal(resolveModelById('old', 'fixture', false).provider, 'ollama')
   assert.deepEqual(resolved.capabilities, ['text', 'image'])
   assert.equal(resolveModelForCognitiveMode('environment', 'environmentActionSelector', 'fixture').provider, 'llama-cpp')
   assert.equal(resolveModel('embedder', undefined, 'fixture').provider, 'local-models')
@@ -160,4 +162,73 @@ test('device routing overrides synced local chat/action roles without changing p
   assert(data.modelCategories.local[0].aliases.includes('old'))
   globalThis.fetch = async () => { throw new Error('server disconnected') }
   await assert.rejects(callProvider('llama-cpp', messages, {}), /[Nn]o.*backend|offline|not.*running|unavailable|disconnected/)
+})
+
+test('explicit llama.cpp node selection preserves model, endpoint and request adapters', async () => {
+  const selected = 'specialist'
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), 'http://127.0.0.1:8081/v1/chat/completions')
+    const body = JSON.parse(String(init?.body))
+    assert.equal(body.model, selected)
+    assert.deepEqual(body.lora, [{ id: 1, scale: 0.8 }])
+    return Response.json({ ...success, model: selected })
+  }
+  const result = await callProvider('llama-cpp', messages, {
+    explicitModel: true, model: selected, endpoint: 'http://127.0.0.1:8081',
+    modelCapabilities: ['text'], lora: [{ id: 1, scale: 0.8 }],
+  })
+  assert.equal(result.model, selected)
+})
+
+test('registering a node model does not change role assignments', async () => {
+  healthyFetch()
+  const file = path.join(getProfilePaths('fixture').etc, 'models.json')
+  const before = JSON.parse(fs.readFileSync(file, 'utf8'))
+  const result = await handleAssignModelRole({ user: { username: 'fixture', isAuthenticated: true },
+    body: { modelId: `llama-cpp.${config.model}`, registerOnly: true } } as any)
+  assert.equal(result.status, 200)
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.deepEqual(after.defaults, before.defaults)
+  assert.deepEqual(after.cognitiveModeMappings, before.cognitiveModeMappings)
+  assert.equal(after.models[`llama-cpp.${config.model}`].model, config.model)
+})
+
+test('router sends an explicit small model to Ollama while inherited calls use llama.cpp', async () => {
+  const { callLLM } = await import('./model-router.js')
+  const dispatched: string[] = []
+  globalThis.fetch = async (url, init) => {
+    const route = String(url)
+    if (route.endsWith('/api/version')) return Response.json({ version: 'fixture' })
+    if (route.endsWith('/api/ps')) return Response.json({ models: [{ name: 'desktop-model' }] })
+    if (route.endsWith('/api/chat')) {
+      const body = JSON.parse(String(init?.body))
+      dispatched.push(body.model)
+      return Response.json({ model: body.model, message: { role: 'assistant', content: 'small response' }, done: true })
+    }
+    if (route.endsWith('/health')) return Response.json({ status: 'ok' })
+    if (route.endsWith('/v1/models')) return Response.json({ data: [{ id: config.model }] })
+    if (route.endsWith('/v1/chat/completions')) {
+      dispatched.push(JSON.parse(String(init?.body)).model)
+      return Response.json(success)
+    }
+    throw new Error(`Unexpected route: ${route}`)
+  }
+  const small = await callLLM({ modelId: 'old', userId: 'fixture', role: 'orchestrator', cognitiveMode: 'environment', messages })
+  const inherited = await callLLM({ userId: 'fixture', role: 'orchestrator', cognitiveMode: 'environment', messages })
+  assert.equal(small.provider, 'ollama')
+  assert.equal(small.model, 'desktop-model')
+  assert.equal(inherited.model, config.model)
+  assert.deepEqual(dispatched, ['desktop-model', config.model])
+  await assert.rejects(callLLM({ modelId: 'old', userId: 'fixture', role: 'persona', messages: imageMessages }), /not configured for image/)
+  assert.equal(dispatched.length, 2)
+})
+
+test('named llama.cpp adapter selection resolves the current server ID after reload', async () => {
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/lora-adapters')) return Response.json([{ id: 7, path: '/models/specialist.gguf', scale: 0 }])
+    assert.deepEqual(JSON.parse(String(init?.body)).lora, [{ id: 7, scale: 1 }])
+    return Response.json(success)
+  }
+  await callLlamaCpp(config, messages, { lora: [{ path: '/models/specialist.gguf', scale: 1 }] })
+  await assert.rejects(callLlamaCpp(config, messages, { lora: [{ path: '/models/missing.gguf', scale: 1 }] }), /not loaded/)
 })

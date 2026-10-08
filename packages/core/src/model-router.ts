@@ -5,7 +5,7 @@
  * Handles provider dispatching, adapter loading, audit logging, and error handling.
  */
 
-import { resolveModel, resolveModelForCognitiveMode, type ModelRole, type ResolvedModel } from './model-resolver.js';
+import { resolveModel, resolveModelById, resolveModelForCognitiveMode, type ModelRole, type ResolvedModel } from './model-resolver.js';
 import { audit } from './audit.js';
 import { loadCognitiveMode } from './cognitive-mode.js';
 import { getUserContext } from './context.js';
@@ -34,6 +34,8 @@ export interface RouterCallOptions {
   /** Placement required by an asynchronous task; never permits local inference. */
   executionTarget?: 'remote';
   role: ModelRole;
+  /** Explicit registry selection; absent means follow the configured role/backend. */
+  modelId?: string;
   messages: RouterMessage[];
   cognitiveMode?: string;
   /** User ID for context tracking */
@@ -147,7 +149,9 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   const username = ctx?.username || callOptions.userId;
 
   // Resolve the model for this role (using user-specific models.json if available)
-  const requestedModel = effectiveCognitiveMode
+  const requestedModel = callOptions.modelId
+    ? resolveModelById(callOptions.modelId, username, false)
+    : effectiveCognitiveMode
     ? resolveModelForCognitiveMode(effectiveCognitiveMode, callOptions.role, username)
     : resolveModel(callOptions.role, callOptions.overrides, username);
 
@@ -158,7 +162,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   let messages = callOptions.messages;
   const hasImages = providerMessagesContainImages(messages);
   const declaredCapabilities = requestedModel.capabilities.map(value => value.toLowerCase());
-  const needsVisionFallback = hasImages
+  const needsVisionFallback = !callOptions.modelId && hasImages
     && declaredCapabilities.length > 0
     && !declaredCapabilities.some(value => value === 'vision' || value === 'image')
     && callOptions.role !== 'orchestrator';
@@ -203,6 +207,9 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
       messages,
       {
         model: resolved.model,
+        explicitModel: Boolean(callOptions.modelId),
+        endpoint: typeof mergedOptions.endpoint === 'string' ? mergedOptions.endpoint : undefined,
+        lora: mergedOptions.lora,
         executionTarget: callOptions.executionTarget,
         signal: callOptions.signal,
         temperature: mergedOptions.temperature,
@@ -211,7 +218,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         repeatPenalty: mergedOptions.repeatPenalty || mergedOptions.repeat_penalty,
         format: mergedOptions.format,
         jsonSchema: mergedOptions.jsonSchema,
-        keepAlive: callOptions.keepAlive as string | undefined,
+        keepAlive: (callOptions.keepAlive ?? mergedOptions.keepAlive) as string | undefined,
         contextWindow: mergedOptions.contextWindow,
         enableThinking: mergedOptions.enableThinking,
         maxImages: mergedOptions.maxImages,

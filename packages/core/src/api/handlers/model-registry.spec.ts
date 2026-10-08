@@ -61,6 +61,16 @@ test('collapseModelInventory keeps the same model name from different providers 
   assert.equal(inventory.length, 2)
 })
 
+test('model inventory preserves distinct adapters and serving endpoints', () => {
+  const base = model('base', 'llama-cpp', 'shared-base')
+  assert.equal(collapseModelInventory([
+    base,
+    { ...base, id: 'adapter-a', adapters: ['a.gguf'], options: { lora: [{ id: 0, scale: 1 }] } },
+    { ...base, id: 'adapter-b', adapters: ['b.gguf'], options: { lora: [{ id: 1, scale: 1 }] } },
+    { ...base, id: 'other-server', options: { endpoint: 'http://localhost:8081' } },
+  ]).length, 4)
+})
+
 test('production inventory rejects development folds and checkpoint tags', () => {
   assert.equal(isRetiredDevelopmentModelId('environment-classifier.run.fold-0.checkpoint-516'), true)
   assert.equal(isRetiredDevelopmentModelId('ollama.environment-classifier-2b:checkpoint-120'), true)

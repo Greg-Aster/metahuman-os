@@ -128,13 +128,15 @@ test('execution targets belong to the informed selector schema, only when suppli
   const idle = buildEnvironmentSelectorJsonSchema() as any
   assert.equal(JSON.stringify(idle).includes('executionDisposition'), false)
   for (const branch of idle.anyOf) {
-    assert.deepEqual(Object.keys(branch.properties), ['program', 'taskDecision', 'response'],
-      'Grammar-constrained decoding must select the program and task state before speech')
+    assert.deepEqual(Object.keys(branch.properties), ['taskDecision', 'program', 'response'],
+      'Grammar-constrained decoding selects objective state before its program and speech')
+    assert.deepEqual(branch.required, Object.keys(branch.properties))
   }
   const active = buildEnvironmentSelectorJsonSchema({ activeExecutions: [{ executionId: 'active-job', canSteer: true }] }) as any
   for (const branch of active.anyOf) {
-    assert.deepEqual(Object.keys(branch.properties), ['executionDisposition', 'targetExecutionId', 'program', 'taskDecision', 'response'],
-      'Grammar-constrained decoding must choose the execution branch and task before speech');
+    assert.deepEqual(Object.keys(branch.properties), ['executionDisposition', 'targetExecutionId', 'taskDecision', 'program', 'response'],
+      'Grammar-constrained decoding selects the execution target, objective state, program and speech in that order');
+    assert.deepEqual(branch.required, Object.keys(branch.properties))
     assert.ok(branch.required.includes('executionDisposition'))
     assert.ok(branch.required.includes('targetExecutionId'))
     assert.ok(branch.properties.targetExecutionId.enum.includes('active-job'))

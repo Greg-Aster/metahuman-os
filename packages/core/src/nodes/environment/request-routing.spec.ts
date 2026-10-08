@@ -11,11 +11,12 @@ globalThis.fetch = async () => { throw new Error('Network access is forbidden in
 const router = await import('../../model-router.js')
 const calls: any[] = []
 let routing: Record<string, boolean> = {}
-let choice: any = { response: 'Hello.', program: null, taskDecision: null }
+let choice: any = { program: null, taskDecision: null }
+let speech = 'Hello.'
 mock.module('../../model-router.js', { namedExports: { ...router,
   callLLM: async (options: any) => {
-    calls.push(structuredClone({ role: options.role, messages: options.messages, options: options.options }))
-    return { content: JSON.stringify(options.role === 'orchestrator' ? routing : choice) }
+    calls.push(structuredClone({ role: options.role, modelId: options.modelId, messages: options.messages, options: options.options }))
+    return { content: options.role === 'persona' ? speech : JSON.stringify(options.role === 'orchestrator' ? routing : choice) }
   },
 } })
 const { OrchestratorLLMNode } = await import('../../nodes/llm/orchestrator-llm.node.js')
@@ -46,7 +47,10 @@ const observation = { sessionId: 'robot-1', environmentId: 'fixture', timestamp:
 async function run(request: string, selected: string[], response = { response: 'Hello.', program: null, taskDecision: null } as any) {
   calls.length = 0
   routing = routes(selected)
-  choice = response
+  const { response: conversation, ...taskChoice } = response
+  choice = taskChoice
+  speech = conversation ?? 'Hello.'
+  const expectedCalls = selected.includes('needsResponse') && response.executionDisposition !== 'steer' ? 3 : 2
   const reads: string[] = []
   const store = new ExecutionStore(':memory:')
   const definition = executionDefinition(graph)
@@ -75,12 +79,12 @@ async function run(request: string, selected: string[], response = { response: '
       conversationHistory: [{ role: 'user', content: 'implicit-history-must-not-leak' }],
     }, undefined, undefined, { store, lease })
     assert.equal(result.status, 'completed', result.error?.stack)
-    assert.equal(calls.length, 2)
+    assert.equal(calls.length, expectedCalls)
     const dispatches = store.pendingDispatches().map(item => ({ kind: item.kind, payload: item.payload as Record<string, any> }))
     if (dispatches.length) {
       await executeGraph(graph, { userMessage: request, cognitiveMode: 'environment' }, undefined, undefined, { store, lease, resume: true })
       assert.equal(store.pendingDispatches().length, 1, 'Replaying saved outputs must not duplicate the handoff')
-      assert.equal(calls.length, 2, 'A completed checkpoint must not repeat either LLM call')
+      assert.equal(calls.length, expectedCalls, 'A completed checkpoint must not repeat model calls')
     }
     return { result, reads, dispatches, envelope: JSON.parse(calls[1].messages[1].content) }
   } finally {
@@ -205,4 +209,110 @@ test('context-selected follow-up can choose an action after an early no-action g
   assert.equal(reads.filter(item => item === 'physical-dispatch').length, 1)
   const schema = calls[1].options.jsonSchema
   assert.ok(schema.anyOf.some((branch: any) => branch.properties.program.type === 'object'))
+})
+
+ test('LLM nodes pass their explicit model selection without changing prompts', async () => {
+  calls.length = 0
+  await OrchestratorLLMNode.execute({ message: 'Please wave.' }, {}, { ...intentProperties, modelId: 'fixture.small' })
+  assert.equal(calls[0].modelId, 'fixture.small')
+  const { ModelRouterNode } = await import('../llm/model-router.node.js')
+  const messages = [{ role: 'user', content: 'Synthetic request' }]
+  await ModelRouterNode.execute({ messages }, {}, { modelId: 'fixture.adapter', role: 'persona' })
+  assert.equal(calls[1].modelId, 'fixture.adapter')
+  assert.deepEqual(calls[1].messages, messages)
+})
+
+
+test('task and conversation are separate model calls sharing selected evidence without repeated reads', async () => {
+  const { result, reads } = await run('Repeat the movement and explain it',
+    ['needsResponse', 'needsPersona', 'needsConversationHistory', 'needsMemory'], {
+      response: 'The movement is selected.',
+      program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] },
+      taskDecision: { outcome: 'act', objective: 'Wave', reason: 'Requested movement', completionCriteria: 'Wave completes',
+        continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
+    })
+  assert.deepEqual(calls.map(call => call.modelId), ['ollama.qwen3.5:0.8b', 'ollama.qwen3.5:0.8b', undefined])
+  assert.deepEqual(calls.map(call => call.role), ['orchestrator', 'environmentActionSelector', 'persona'])
+  assert.equal(calls[1].options.format, 'json')
+  for (const branch of calls[1].options.jsonSchema.anyOf) {
+    assert.equal('response' in branch.properties, false)
+    assert.equal(branch.required.includes('response'), false)
+  }
+  assert.equal(calls[2].options.format, undefined)
+  assert.equal(calls[2].options.jsonSchema, undefined)
+  const task = JSON.parse(calls[1].messages[1].content)
+  const conversation = JSON.parse(calls[2].messages[1].content)
+  for (const field of ['currentInstruction', 'activePersona', 'recentConversation', 'memories']) {
+    assert.deepEqual(conversation[field], task[field], field)
+  }
+  assert.equal('capabilityRules' in conversation, false)
+  assert.equal('capabilities' in conversation.currentEnvironment, false)
+  assert.equal(conversation.selectedTask.program.steps[0].action.command, 'wave')
+  assert.deepEqual(conversation.selectedTask.commandDescriptions, { wave: 'Wave one front leg.' })
+  assert.equal(conversation.selectedTask.actionAdmission.admitted, true)
+  assert.equal(conversation.selectedTask.taskDecision.objectiveComplete, false)
+  assert.equal(result.nodes.get('conversation-buffer')?.outputs?.response, 'The movement is selected.')
+  for (const source of ['persona', 'history', 'memory']) assert.equal(reads.filter(item => item === source).length, 1)
+})
+
+test('no-response and steering routes skip conversation inference and presentation', async () => {
+  for (const [selected, choice] of [
+    [[], { program: null, taskDecision: null }],
+    [['needsResponse', 'needsExecutionContext'], { program: null, taskDecision: null,
+      executionDisposition: 'steer', targetExecutionId: 'ongoing-1' }],
+  ] as Array<[string[], any]>) {
+    const { result } = await run('Current request', selected, choice)
+    assert.equal(calls.length, 2)
+    for (const id of ['conversation-context', 'conversation-model', 'conversation-buffer', 'tts-out', '12']) {
+      assert.equal(result.nodes.get(id)?.status, 'skipped', id)
+    }
+  }
+})
+
+test('saved interpretation feeds only the task model; conversation still performs its own inference', async () => {
+  const { environmentContextBuilderNode } = await import('./context-builder.node.js')
+  const { ModelRouterNode } = await import('../llm/model-router.node.js')
+  const proposal = JSON.stringify({ taskDecision: null, program: null })
+  const context = { environmentInterpretation: { response: proposal } }
+  const taskContext = await environmentContextBuilderNode.execute({ instruction: 'Current request', routingAnalysis: routes(['needsResponse']) },
+    context, fullGraph.nodes.find(node => node.id === '3')!.data.properties!)
+  calls.length = 0
+  const task = await ModelRouterNode.execute({ messages: taskContext.messages, precomputedResponse: taskContext.precomputedResponse }, context,
+    fullGraph.nodes.find(node => node.id === '4')!.data.properties!)
+  assert.equal(task.response, proposal)
+  assert.equal(calls.length, 0)
+  const conversationContext = await environmentContextBuilderNode.execute({ selectedContext: taskContext.selectedContext,
+    selectedTask: { program: null, taskDecision: null, actionAdmission: null } }, context,
+    fullGraph.nodes.find(node => node.id === 'conversation-context')!.data.properties!)
+  assert.equal(conversationContext.precomputedResponse, undefined)
+  speech = 'Independent conversation output'
+  const conversation = await ModelRouterNode.execute({ messages: conversationContext.messages }, context,
+    fullGraph.nodes.find(node => node.id === 'conversation-model')!.data.properties!)
+  assert.equal(calls.length, 1)
+  assert.equal(conversation.response, speech)
+  const { interpretationGraph } = await import('../../environment-interface/interpretation.js')
+  const interpretation = interpretationGraph(fullGraph)
+  assert.equal(interpretation.nodes.filter(node => node.data.nodeType === 'model_router').length, 1)
+  assert.equal(interpretation.nodes.some(node => node.id === 'conversation-model'), false)
+})
+
+test('task-only validation preserves action contracts while allowing no selected activity', async () => {
+  const { environmentActionParserNode } = await import('./action-parser.node.js')
+  const properties = { includeResponse: false }
+  const empty = await environmentActionParserNode.execute({ response: JSON.stringify({ program: null, taskDecision: null }) }, {}, properties)
+  assert.equal(empty.program, null)
+  assert.equal(empty.taskDecision, null)
+  assert.equal(empty.hasResponse, false)
+  await assert.rejects(environmentActionParserNode.execute({ response: JSON.stringify({ program: null, taskDecision: null, response: 'Leaked speech' }) }, {}, properties), /response is not an Environment model-output field/)
+  await assert.rejects(environmentActionParserNode.execute({ response: JSON.stringify({ program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] }, taskDecision: null }) }, {}, properties), /requires its objective decision/)
+})
+
+
+test('existing saved combined graphs retain their output contract while Environment selects task-only', async () => {
+  const { environmentContextBuilderNode } = await import('./context-builder.node.js')
+  const combined = await environmentContextBuilderNode.execute({ instruction: 'Saved request', routingAnalysis: routes(['needsResponse']) }, {}, {})
+  for (const branch of combined.jsonSchema.anyOf) assert.equal(branch.required.includes('response'), true)
+  const task = await environmentContextBuilderNode.execute({ instruction: 'Current request', routingAnalysis: routes(['needsResponse']) }, {},
+    fullGraph.nodes.find(node => node.id === '3')!.data.properties!)
+  for (const branch of task.jsonSchema.anyOf) assert.equal(branch.required.includes('response'), false)
 })

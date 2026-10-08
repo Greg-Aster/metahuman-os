@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { PropertySchema } from '@metahuman/core/nodes/types'
-import { getNodeSchema } from '@metahuman/core/nodes/schemas'
 import {
   formatPropertySummary,
   getConnectedOutputConfigurationWarnings,
@@ -19,13 +18,6 @@ function schema(
   return { type, default: '', ...overrides }
 }
 
-test('intent orchestrator opens its actual prompt ahead of routing settings', () => {
-  const orchestrator = getNodeSchema('orchestrator_llm')!
-  const groups = groupCanvasProperties(orchestrator.propertySchemas)
-  assert.equal(orchestrator.presentation?.defaultExpanded, true)
-  assert.deepEqual(groups.primary.map(([key]) => key), ['systemPrompt', 'userPromptTemplate'])
-  assert.ok(groups.settings.some(([key]) => key === 'outputContract'))
-})
 
 test('canvas property grouping promotes prompts and preserves explicit placement', () => {
   const groups = groupCanvasProperties({

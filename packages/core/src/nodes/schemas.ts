@@ -1207,6 +1207,8 @@ export const nodeSchemas: NodeSchema[] = [
     "name": "Environment Context Builder",
     "category": "environment",
     "inputs": [
+      { name: 'selectedContext', type: 'object', optional: true, description: 'Already selected evidence package from the task context builder' },
+      { name: 'selectedTask', type: 'object', optional: true, description: 'Parsed task selection and its admission result' },
     { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions available for steering or cancellation' },
     { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
       {
@@ -1272,6 +1274,7 @@ export const nodeSchemas: NodeSchema[] = [
       {
         "name": "routingAnalysis",
         "type": "object",
+        "optional": true,
         "description": "Intent Orchestrator route switches for this turn"
       },
       {
@@ -1282,6 +1285,8 @@ export const nodeSchemas: NodeSchema[] = [
       }
     ],
     "outputs": [
+      { name: 'selectedContext', type: 'object', description: 'Selected evidence reused by the conversation context builder without new retrieval' },
+      { name: 'precomputedResponse', type: 'string', optional: true, description: 'Saved task interpretation for the connected task model only' },
     { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
       {
         "name": "message",
@@ -1335,17 +1340,22 @@ export const nodeSchemas: NodeSchema[] = [
       }
     ],
     "properties": {
+      purpose: 'combined',
       "systemPrompt": ""
     },
     "propertySchemas": {
+      purpose: { type: 'select', default: 'combined', label: 'Context Purpose',
+        description: 'Task builds task-only JSON; conversation reuses evidence and the parsed selection. Combined preserves the contract of existing saved graphs.',
+        options: [{ value: 'combined', label: 'Combined Selection' }, { value: 'task', label: 'Task Decision' }, { value: 'conversation', label: 'Conversation' }] },
       "systemPrompt": {
         "type": "text_multiline",
         "default": "",
         "label": "System Prompt",
+        description: 'Editable instructions for the connected model call.',
         "rows": 5
       }
     },
-    "description": "Packages only the context selected by Intent Orchestrator for one Environment Action Selector call."
+    "description": "Builds task or conversation messages from the selected evidence. Conversation reuses the task context and validated selection without retrieval."
   }),
   defineSchema({
   id: 'environment_active_task', name: 'Execute Robot Task', category: 'environment',
@@ -1388,6 +1398,7 @@ export const nodeSchemas: NodeSchema[] = [
     { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified that the selected frame belongs to this graph run' },
   ],
   outputs: [
+    { name: 'selection', type: 'object', description: 'Task selection and its capability admission result for conversation context' },
     { name: 'executionSelection', type: 'object', optional: true, description: 'Existing execution selected for steering or cancellation' },
     { name: 'continueHere', type: 'boolean', description: 'Whether this invocation handles the request instead of forwarding it' },
     { name: 'program', type: 'object', description: 'Complete task program for the canonical active executor' },
@@ -1399,7 +1410,12 @@ export const nodeSchemas: NodeSchema[] = [
     { name: 'error', type: 'string', description: 'Parser error message' },
     { name: 'response', type: 'string', description: 'Conversational response separated from the structured action list' },
   ],
-  description: 'Separates a structured model response into conversational text and validated semantic actions.',
+  properties: { includeResponse: true },
+  propertySchemas: {
+    includeResponse: { type: 'boolean', default: true, label: 'Model Includes Conversation',
+      description: 'Disable for a task-only model output when a separate conversation node owns speech.' },
+  },
+  description: 'Validates task selection and capability admission; optionally separates speech from a combined model output.',
   }),
   defineSchema({
     id: 'movement_generator',
@@ -2691,7 +2707,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'isFollowUp', type: 'boolean', description: 'Is follow-up to previous' },
       { name: 'emotionalTone', type: 'string', description: 'Detected emotional context' },
     ],
-    properties: {
+    properties: { modelId: '',
       outputContract: 'general',
       systemPrompt: '',
       userPromptTemplate: 'Analyze this message: "{{userMessage}}"',
@@ -2699,6 +2715,7 @@ export const nodeSchemas: NodeSchema[] = [
       maxTokens: 768,
     },
     propertySchemas: {
+      modelId: { type: 'string', default: '', label: 'Model / LoRA', emptyLabel: 'Use configured role', suggestions: 'models' },
       outputContract: {
         type: 'select',
         default: 'general',
@@ -2754,9 +2771,10 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'jsonSchema', type: 'object', optional: true },
       { name: 'precomputedResponse', type: 'string', optional: true },
     ],
-    outputs: [{ name: 'response', type: 'llm_response' }],
-    properties: { role: 'persona', maxTokens: 2048, temperature: 0.7, format: 'text' },
+    outputs: [{ name: 'response', type: 'string' }],
+    properties: { modelId: '', role: 'persona', maxTokens: 2048, temperature: 0.7, format: 'text' },
     propertySchemas: {
+      modelId: { type: 'string', default: '', label: 'Model / LoRA', emptyLabel: 'Use configured role', suggestions: 'models' },
       role: { type: 'select', default: 'persona', label: 'Model Role', options: ['persona', 'environmentActionSelector', 'orchestrator', 'fallback', 'coder'] },
       maxTokens: { type: 'slider', default: 2048, label: 'Max Tokens', min: 256, max: 4096, step: 256 },
       temperature: { type: 'slider', default: 0.7, label: 'Temperature', min: 0, max: 1, step: 0.1 },

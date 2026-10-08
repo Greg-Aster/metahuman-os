@@ -163,7 +163,7 @@ export async function callProvider(
   // - enabled but not delegateAll (hybrid mode): only calls with useBigBrother option go to Big Brother
   // - disabled: all local
   const shouldUseBigBrother =
-    (bigBrotherEnabled && bigBrotherDelegateAll) || // Delegate all mode
+    (!options.explicitModel && bigBrotherEnabled && bigBrotherDelegateAll) || // Role-based delegate-all mode
     (options?.useBigBrother === true); // Explicit request from node (even if config cache misses)
 
   if (options?.useBigBrother === true && !bigBrotherEnabled) {
@@ -242,6 +242,26 @@ export async function callProvider(
       model: operatorConfig?.bigBrotherMode?.model || preferredBackend || 'big-brother',
       provider: 'big-brother',
     };
+  }
+
+  // A node's explicit registry selection can coexist with the preferred backend.
+  // Reuse each provider's transport and lifecycle owner, without switching it globally.
+  if (options.explicitModel) {
+    const backend = loadBackendConfig();
+    if (providerName === 'llama-cpp') {
+      return callLlamaCpp({ ...backend.llamaCpp,
+        endpoint: options.endpoint ?? backend.llamaCpp.endpoint,
+        model: options.model!,
+        contextWindow: options.contextWindow ?? backend.llamaCpp.contextWindow,
+        capabilities: (options.modelCapabilities?.length ? options.modelCapabilities : backend.llamaCpp.capabilities) as Array<'text' | 'image'>,
+      }, messages, options, onProgress);
+    }
+    if (providerName === 'ollama') return callOllamaProvider(messages, options, onProgress);
+    if (providerName === 'vllm') return callVLLMProvider(messages, options, backend.vllm.endpoint, onProgress, options.model);
+    if (isCloudProvider(providerName)) {
+      assertAdapterPreservesImageInput(providerName, contentInspection.imageCount);
+      return callCloudProvider(providerName, messages, options, config, onProgress);
+    }
   }
 
   const backendStatus = await getBackendStatus();

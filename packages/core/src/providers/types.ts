@@ -180,6 +180,11 @@ export interface ProviderOptions {
   signal?: AbortSignal;
   executionTarget?: 'remote';
   model?: string;
+  /** Preserve an explicit registry choice instead of substituting the global backend model. */
+  explicitModel?: boolean;
+  endpoint?: string;
+  /** Preloaded llama.cpp adapters and scales, scoped to this request. */
+  lora?: Array<{ id?: number; path?: string; scale: number }>;
   temperature?: number;
   maxTokens?: number;
   topP?: number;

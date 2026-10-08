@@ -179,3 +179,13 @@ test('auto layout follows dependency rank and scalar parsing preserves intent', 
   assert.equal(parseScalar('12.5'), 12.5)
   assert.equal(parseScalar('robot'), 'robot')
 })
+
+test('authoring accepts runtime-owned unbounded loops and rejects out-of-range limits', () => {
+  const graph = { version: '1.0', name: 'loop settings', description: '', nodes: [], edges: [],
+    scheduler: { ...DEFAULT_GRAPH_SCHEDULER, maxLoopIterations: 0 } }
+  assert.equal(validateAuthoringGraph(graph).some(issue => issue.message.includes('Maximum loop iterations')), false)
+  for (const maxLoopIterations of [-1, 101, 1.5]) {
+    assert.equal(validateAuthoringGraph({ ...graph, scheduler: { ...graph.scheduler, maxLoopIterations } })
+      .some(issue => issue.message.includes('Maximum loop iterations')), true)
+  }
+})

@@ -1,3 +1,5 @@
+import { getNodeSchema } from '../packages/core/src/nodes/schemas.js';
+import { groupCanvasProperties } from '../apps/site/src/lib/client/flow-editor/node-property-presentation.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -44,7 +46,7 @@ test('Environment Mode sends all physical phases to one active executor', () => 
   assert.equal(graph.nodes.some(node => node.data.properties?.graph === 'robot-action-result'), false);
 });
 
-test('Environment Mode uses one route-only orchestrator before selected context and one action selector', () => {
+test('Environment Mode uses one route-only orchestrator before selected context and separate task and conversation calls', () => {
   const orchestrator = graph.nodes.find(node => node.data.nodeType === 'orchestrator_llm')!;
   const memoryRouter = graph.nodes.find(node => node.data.nodeType === 'memory_router')!;
   const contextBuilder = graph.nodes.find(node => node.data.nodeType === 'environment_context_builder')!;
@@ -63,8 +65,19 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.ok(orchestrator);
   assert.ok(statusInput);
   assert.ok(statusOut);
-  assert.equal(graph.nodes.filter(node => node.data.nodeType === 'model_router').length, 1);
+  assert.equal(graph.nodes.filter(node => node.data.nodeType === 'model_router').length, 2);
   assert.equal(environmentLlm.data.properties?.role, 'environmentActionSelector');
+  assert.equal(environmentLlm.data.properties?.modelId, 'ollama.qwen3.5:0.8b');
+  const conversation = graph.nodes.find(node => node.id === 'conversation-model')!;
+  assert.equal(conversation.data.properties?.role, 'persona');
+  assert.equal(conversation.data.properties?.modelId, '');
+  assert.equal(conversation.data.properties?.format, 'text');
+  assert.equal(ModelRouterNode.outputs.find(output => output.name === 'response')?.type, 'string');
+  assert.equal(actionParser.data.properties?.includeResponse, false);
+  assert.equal(hasEdge(contextBuilder.id, 'precomputedResponse', environmentLlm.id, 'precomputedResponse'), true);
+  assert.equal(hasEdge('conversation-context', 'messages', conversation.id, 'messages'), true);
+  assert.equal(hasEdge(conversation.id, 'response', 'conversation-buffer', 'response'), true);
+  assert.equal(hasEdge(actionParser.id, 'response', 'conversation-buffer', 'response'), false);
   assert.equal(orchestrator.data.properties?.outputContract, 'environment-request');
   assert.equal(orchestrator.data.properties?.maxTokens, 768);
   const intentPrompt = String(orchestrator.data.properties?.systemPrompt);
@@ -162,7 +175,7 @@ test('Environment Mode uses one route-only orchestrator before selected context 
 test('Environment Action Selector documents its role and exposes every consumed setting', () => {
   const environmentLlm = graph.nodes.find(node => node.data.nodeType === 'model_router')!;
   assert.match(String(environmentLlm.data.comment), /executes the chosen routes/i);
-  assert.match(String(environmentLlm.data.comment), /does not decide which context branches run/i);
+  assert.match(String(environmentLlm.data.comment), /does not compose speech or decide which context branches run/i);
 
   const defaults = Object.keys(ModelRouterNode.properties ?? {}).sort();
   const editable = Object.keys(ModelRouterNode.propertySchemas ?? {}).sort();
@@ -202,3 +215,11 @@ test('ordinary selected-message replies remain on Environment Mode while dedicat
     cardType: 'selected_card',
   }), null);
 });
+
+test('intent orchestrator opens its actual prompt ahead of routing settings', () => {
+  const orchestrator = getNodeSchema('orchestrator_llm')!
+  const groups = groupCanvasProperties(orchestrator.propertySchemas)
+  assert.equal(orchestrator.presentation?.defaultExpanded, true)
+  assert.deepEqual(groups.primary.map(([key]) => key), ['systemPrompt', 'userPromptTemplate'])
+  assert.ok(groups.settings.some(([key]) => key === 'outputContract'))
+})

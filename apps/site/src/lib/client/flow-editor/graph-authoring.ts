@@ -167,9 +167,9 @@ export function formatScalar(value: unknown): string {
 
 function validateScheduler(scheduler: GraphSchedulerContract, issues: AuthoringIssue[]): void {
   if (!Number.isInteger(scheduler.maxLoopIterations)
-    || scheduler.maxLoopIterations < 1
+    || scheduler.maxLoopIterations < 0
     || scheduler.maxLoopIterations > 100) {
-    issues.push({ level: 'error', message: 'Maximum loop iterations must be an integer from 1 to 100.' })
+    issues.push({ level: 'error', message: 'Maximum loop iterations must be an integer from 0 to 100 (0 continues until the loop exits).' })
   }
 }
 

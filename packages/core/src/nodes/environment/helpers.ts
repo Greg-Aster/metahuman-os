@@ -333,8 +333,8 @@ function selectorCapabilityRules(capabilities: EnvironmentCapabilities, state: u
     actions.has('robotCommand')
       ? Object.keys(commandDescriptions).length > 0
         ? actions.has('robotMotionPlan')
-          ? 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. A chosen physical activity is represented by ordered program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail; use a generatedMotion step only when no description covers that current movement.'
-          : 'robotCommand: choose from robotCommandCatalog descriptions, never identifier names. A chosen physical activity is represented by ordered program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail.'
+          ? 'robotCommand: robotCommandCatalog maps command identifiers to descriptions of their effects. The command field of a robotCommand action contains the chosen catalog identifier. A chosen physical activity is represented by ordered program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail; use a generatedMotion step only when no description covers that current movement.'
+          : 'robotCommand: robotCommandCatalog maps command identifiers to descriptions of their effects. The command field of a robotCommand action contains the chosen catalog identifier. A chosen physical activity is represented by ordered program steps. Its local executor advances through action receipts and ongoing behaviors without a model call for each movement. For a directly specified movement, preserve every target or body part, motion, direction, and timing detail.'
         : actions.has('robotMotionPlan')
           ? 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects; use a generatedMotion step when a named effect cannot be identified confidently.'
           : 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects.'
@@ -735,6 +735,7 @@ function selectorActionItemSchema(
 }
 
 export interface EnvironmentSelectorJsonSchemaInput {
+  includeResponse?: boolean;
   activeExecutions?: EnvironmentExecutionTarget[];
   actions?: readonly string[];
   robotCommands?: readonly string[];
@@ -795,20 +796,20 @@ export function buildEnvironmentSelectorJsonSchema(
       ...(nullable ? { anyOf: [{ type: 'null' }, decision] } : decision),
     };
   };
-  const response = {
+  const responseProperties = input.includeResponse === false ? {} : { response: {
     ...SELECTOR_SCHEMA_STRING,
     description: 'Optional natural speech. It may accompany a selected consequence but never substitutes for a required physical or sensing action.',
-  };
+  } };
   const activeExecutions = input.activeExecutions ?? [];
   const executionProperties = activeExecutions.length ? {
     executionDisposition: { type: 'string', enum: ['new', 'cancel'] },
     targetExecutionId: { type: 'string', enum: ['', ...activeExecutions.map(item => item.executionId)] },
   } : {};
   // llama.cpp preserves property order in its grammar. Choose the execution
-  // target, program and task state before composing the spoken response.
+  // target and objective state before its program, then optional speech.
   const branch = (program: unknown, decision: unknown) => ({ type: 'object', additionalProperties: false,
-    required: [...Object.keys(executionProperties), 'program', 'taskDecision', 'response'],
-    properties: { ...executionProperties, program, taskDecision: decision, response } });
+    required: [...Object.keys(executionProperties), 'taskDecision', 'program', ...Object.keys(responseProperties)],
+    properties: { ...executionProperties, taskDecision: decision, program, ...responseProperties } });
   const alternatives: Record<string, unknown>[] = [];
   if (!input.requireAction || (!directActionTypes.length && !movementSupported)) {
     alternatives.push(branch({ type: 'null' }, taskSchema({ outcome: { type: 'string', enum: nonActionOutcomes } })));
@@ -836,11 +837,12 @@ export function buildEnvironmentSelectorJsonSchema(
     taskSchema({ outcome: { type: 'string', enum: ENVIRONMENT_TASK_OUTCOMES.filter(value => value !== 'complete') } }, false)));
   if (activeExecutions.some(item => item.canSteer)) alternatives.push({
     type: 'object', additionalProperties: false,
-    required: ['executionDisposition', 'targetExecutionId', 'program', 'taskDecision', 'response'],
+    required: ['executionDisposition', 'targetExecutionId', 'taskDecision', 'program', ...Object.keys(responseProperties)],
     properties: {
       executionDisposition: { const: 'steer' },
       targetExecutionId: { type: 'string', enum: activeExecutions.filter(item => item.canSteer).map(item => item.executionId) },
-      program: { type: 'null' }, taskDecision: { type: 'null' }, response: { const: '' },
+      taskDecision: { type: 'null' }, program: { type: 'null' },
+      ...(input.includeResponse === false ? {} : { response: { const: '' } }),
     },
   });
   return { anyOf: alternatives };
@@ -903,6 +905,7 @@ export function validateEnvironmentSelectorOutput(
   text: unknown,
   sessionId?: string,
   activeExecutions: EnvironmentExecutionTarget[] = [],
+  includeResponse = true,
 ): EnvironmentSelectorValidationResult {
   if (typeof text !== 'string') {
     return {
@@ -931,8 +934,9 @@ export function validateEnvironmentSelectorOutput(
   }
 
   const errors: string[] = [];
-  for (const field of SELECTOR_OUTPUT_FIELDS) if (!(field in raw)) errors.push(`${field} is required`);
-  for (const field of Object.keys(raw)) if (!SELECTOR_OUTPUT_FIELDS.has(field) && field !== 'visualObservation'
+  const outputFields = includeResponse ? SELECTOR_OUTPUT_FIELDS : new Set(['program', 'taskDecision']);
+  for (const field of outputFields) if (!(field in raw)) errors.push(`${field} is required`);
+  for (const field of Object.keys(raw)) if (!outputFields.has(field) && field !== 'visualObservation'
     && !(activeExecutions.length && ['executionDisposition', 'targetExecutionId'].includes(field))) errors.push(`${field} is not an Environment model-output field`);
   if (activeExecutions.length) {
     if (!['new', 'steer', 'cancel'].includes(String(raw.executionDisposition))) errors.push('Selector must select how this input relates to existing executions');
@@ -942,11 +946,11 @@ export function validateEnvironmentSelectorOutput(
       if (!selected) errors.push('Selector selected an unknown execution');
       else if (raw.executionDisposition === 'steer' && !selected.canSteer) errors.push(selected.resumeError || 'Selected execution has no input route');
     }
-    if (raw.executionDisposition === 'steer' && (raw.program !== null || raw.taskDecision !== null || raw.response !== '')) {
-      errors.push('A steering handoff requires null program and taskDecision and an empty response');
+    if (raw.executionDisposition === 'steer' && (raw.program !== null || raw.taskDecision !== null || (includeResponse && raw.response !== ''))) {
+      errors.push('A steering handoff requires null program and taskDecision' + (includeResponse ? ' and an empty response' : ''));
     }
   }
-  if (typeof raw.response !== 'string') errors.push('response must be a string');
+  if (includeResponse && typeof raw.response !== 'string') errors.push('response must be a string');
   const task = parseTaskDecision(raw.taskDecision);
   if (task.error) errors.push(task.error);
   if (isRecord(raw.taskDecision)) {
@@ -991,7 +995,7 @@ export function validateEnvironmentSelectorOutput(
   }
   const response = typeof raw.response === 'string' ? raw.response.trim() : '';
   const handoff = activeExecutions.length > 0 && (raw.executionDisposition === 'steer' || raw.executionDisposition === 'cancel');
-  if (!response && !program && !task.decision && !isRecord(raw.visualObservation) && !handoff) errors.push('selector output requires response, program, taskDecision, or visualObservation');
+  if (includeResponse && !response && !program && !task.decision && !isRecord(raw.visualObservation) && !handoff) errors.push('selector output requires response, program, taskDecision, or visualObservation');
   if (!program && task.decision?.outcome === 'act') errors.push('taskDecision outcome=act requires a program');
   if (errors.length) return { jsonValid: true, valid: false, errors };
   return { jsonValid: true, valid: true, errors, value: { response, program, taskDecision: task.decision,
