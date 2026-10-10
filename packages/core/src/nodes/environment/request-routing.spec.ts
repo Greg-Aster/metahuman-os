@@ -359,7 +359,7 @@ test('task and conversation are separate model calls sharing selected evidence w
         continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
     })
   assert(calls.every(call => call.modelId === undefined))
-  assert.deepEqual(calls.map(call => call.role), ['environmentIntent', 'environmentActionSelector', 'persona'])
+  assert.deepEqual(calls.map(call => call.role), ['orchestrator', 'environmentActionSelector', 'persona'])
   assert.equal(calls[1].options.format, 'json')
   for (const branch of calls[1].options.jsonSchema.anyOf) {
     assert.equal('response' in branch.properties, false)
@@ -536,7 +536,7 @@ test('the small model can delegate the unchanged context and the larger result u
   const plan = { program, taskDecision: { outcome: 'act', objective: 'Wave', reason: 'Requested gesture',
     completionCriteria: 'Wave completes', continuationPolicy: 'none', requiredCompletionBasis: 'action_result' } }
   const result = await run('Wave for me', ['needsAction'], { delegatePlanning: true }, { delegatedPlan: plan })
-  assert.deepEqual(calls.map(value => value.role), ['environmentIntent', 'environmentActionSelector', 'persona'])
+  assert.deepEqual(calls.map(value => value.role), ['orchestrator', 'environmentActionSelector', 'persona'])
   assert(calls.every(value => value.modelId === undefined))
   assert.deepEqual(calls[2].messages[1], calls[1].messages[1])
   assert.match(calls[1].messages[0].content, /delegatePlanning/)

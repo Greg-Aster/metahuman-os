@@ -91,7 +91,19 @@ export async function executeInBigBrotherSession(provider: TerminalProvider, pro
   const abort = new AbortController()
   const signal = options.signal ? AbortSignal.any([options.signal, abort.signal]) : abort.signal
   const { onReasoningStep, onChunk, onWaitingForInput: _waiting, signal: _signal, ...serializable } = options
-  const response = await terminalRequest('/execute', { provider, prompt, options: serializable }, signal)
+  return readProviderResult('/execute', { provider, prompt, options: serializable }, signal, abort, onReasoningStep, onChunk)
+}
+
+export async function executeBigBrotherTool(request: DiagnosticRequest, signal?: AbortSignal): Promise<BigBrotherSessionResult> {
+  signal?.throwIfAborted()
+  await startTerminalService(request.username)
+  const abort = new AbortController()
+  return readProviderResult('/tool', request, signal ? AbortSignal.any([signal, abort.signal]) : abort.signal, abort)
+}
+
+async function readProviderResult(path: string, payload: unknown, signal: AbortSignal, abort: AbortController,
+  onReasoningStep?: EscalationOptions['onReasoningStep'], onChunk?: EscalationOptions['onChunk']): Promise<BigBrotherSessionResult> {
+  const response = await terminalRequest(path, payload, signal)
   response.setEncoding('utf8')
   let buffered = ''
   try {

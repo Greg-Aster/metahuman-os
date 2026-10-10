@@ -75,9 +75,14 @@ export async function runTerminalService(): Promise<void> {
       } else if (req.method === 'POST' && url.pathname === '/input') { owner.input(data.id, data.data); result = { success: true } }
       else if (req.method === 'POST' && url.pathname === '/resize') { owner.resize(data.id, data.cols, data.rows); result = { success: true } }
       else if (req.method === 'POST' && url.pathname === '/close') { await owner.close(data.id); result = { success: true } }
-      else if (req.method === 'POST' && url.pathname === '/diagnostic') {
+      else if (req.method === 'POST' && (url.pathname === '/diagnostic' || url.pathname === '/tool')) {
         if (typeof data.prompt !== 'string' || typeof data.reasoning !== 'boolean'
           || (data.model !== undefined && typeof data.model !== 'string')) throw new TerminalError('Invalid diagnostic request', 400)
+        if (url.pathname === '/tool') {
+          stream(res)
+          const result = await owner.executeTool(data as import('./types.js').DiagnosticRequest, abort.signal)
+          send(res, { type: 'result', result }); res.end(); return
+        }
         result = await owner.submitDiagnostic(data as import('./types.js').DiagnosticRequest)
       } else if (req.method === 'POST' && url.pathname === '/diagnostic-input') {
         if (typeof data.message !== 'string') throw new TerminalError('Invalid diagnostic message', 400)

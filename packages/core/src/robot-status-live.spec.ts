@@ -133,6 +133,118 @@ test('Robot Status works before a semantic summary exists; task and conversation
   }
 })
 
+// Model context can reference an earlier identical object with a JSON Pointer.
+function expandedMessage(message: string): any {
+  const root = JSON.parse(message)
+  function expand(value: any): any {
+    if (!value || typeof value !== 'object') return value
+    if (typeof value.$ref === 'string') return expand(value.$ref.slice(2).split('/').reduce(
+      (node: any, key: string) => node[key.replace(/~1/g, '/').replace(/~0/g, '~')], root))
+    return Array.isArray(value) ? value.map(expand) : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, expand(item)]))
+  }
+  return expand(root)
+}
+
+test('vision task and conversation carry named-person evidence alongside the exact image without extra work', async () => {
+  const source = reset()
+  const frame = { id: 'camera-1', timestamp: source.timestamp, source: 'robot-camera',
+    metadata: { robotId: 'p4', gatewayInstance: 'gateway', epoch: 1, counter: 1 } }
+  const image = { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,fixture' } }
+  const jobs = getQueueManager().getAllTasks().length
+  const before = JSON.stringify(readEnvironmentBridgeState())
+  for (const purpose of ['task', 'conversation']) {
+    const result: any = await environmentContextBuilderNode.execute({
+      userInstruction: 'What do you see?', observation: source, sourceObservation: source,
+      frames: [frame], images: [image], selectedTask: { program: null, taskDecision: null },
+      routingAnalysis: { needsResponse: true, needsAction: false, taskContext: ['vision'], conversationContext: ['vision'] },
+    }, { username: 'vision-user', sessionId: source.sessionId } as any, { purpose })
+    const evidence = expandedMessage(result.message).currentEnvironment.recognition
+    assert.equal(evidence.people[0].identity.name, 'Person One')
+    assert.equal(evidence.people[0].identity.state, 'tracked')
+    assert.equal(evidence.people[0].identity.personId, 'p1')
+    assert.deepEqual(evidence.people[0].box, source.state.perception.objects[0].box)
+    assert.equal(evidence.people[0].detectionConfidence, 0.9)
+    assert.ok(evidence.people[0].identity.faceAgeMs >= 200)
+    assert.equal(evidence.identityVerification, 'estimates_only')
+    assert.deepEqual(evidence.matchingVisualFrameIds, ['camera-1'])
+    assert.equal(evidence.imageAssociation, 'exact_frame')
+    assert.ok(result.messages[1].content.some((part: any) => part.image_url?.url === image.image_url.url))
+    assert.ok(result.messages[1].content[0].text.includes('Person One'))
+  }
+  assert.equal(JSON.stringify(readEnvironmentBridgeState()), before)
+  assert.equal(getQueueManager().getAllTasks().length, jobs)
+})
+
+test('existing bridge telemetry supplies face-match and unknown people to vision context without exporting enrollment data', async () => {
+  const source = reset()
+  const token = process.env.MH_ENVIRONMENT_BRIDGE_TOKEN
+  process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'person-context-fixture'
+  try {
+    const perception = { ...source.state.perception, frameCounter: 2, objects: [
+      { label: 'person', score: 0.96, box: { x: 0.1, y: 0.1, width: 0.2, height: 0.7 },
+        identity: { state: 'face_match', trackId: 'track-a', personId: 'saved-person-a', name: 'Person Two', faceAgeMs: 0, similarity: 0.82 } },
+      { label: 'person', score: 0.91, box: { x: 0.6, y: 0.1, width: 0.2, height: 0.7 },
+        identity: { state: 'unknown', trackId: 'track-b' } },
+    ] }
+    const response: any = await handleEnvironmentBridgeTelemetry({
+      path: '/api/environment-bridge/telemetry', method: 'POST',
+      user: { userId: 'fixture', username: 'fixture', role: 'guest', isAuthenticated: false },
+      headers: { authorization: 'Bearer person-context-fixture' }, body: { sessionId: source.sessionId, perception },
+    } as any)
+    assert.equal(response.status, 200)
+    assert.equal(response.data.perceptionAccepted, true)
+    const result: any = await environmentContextBuilderNode.execute({ userInstruction: 'What do you see?',
+      observation: source, sourceObservation: source, selectedTask: { program: null },
+      routingAnalysis: { needsResponse: true, needsAction: false, taskContext: ['vision'], conversationContext: ['vision'] },
+    }, { username: 'vision-user', sessionId: source.sessionId } as any, { purpose: 'conversation' })
+    const evidence = expandedMessage(result.message).currentEnvironment.recognition
+    assert.equal(evidence.peopleCount, 2)
+    assert.equal(evidence.people[0].identity.name, 'Person Two', 'Read the accepted telemetry, not the old observation input')
+    assert.equal(evidence.people[0].identity.similarity, 0.82)
+    assert.equal(evidence.people[0].identity.state, 'face_match')
+    assert.deepEqual(evidence.people[1].identity, { trackId: 'track-b', state: 'unknown' })
+    assert.equal(evidence.imageAssociation, 'no_image')
+    assert.ok(!result.message.includes('Person One'))
+    assert.ok(!result.message.includes('embedding'))
+  } finally { if (token === undefined) delete process.env.MH_ENVIRONMENT_BRIDGE_TOKEN; else process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = token }
+})
+
+test('returned capture uses current identity evidence, never names an unrelated image or revives a stale match', async () => {
+  const source = reset()
+  const frame = { id: 'returned-2', timestamp: source.timestamp, source: 'robot-camera',
+    metadata: { robotId: 'p4', gatewayInstance: 'gateway', epoch: 1, counter: 2 } }
+  const image = { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,returned' } }
+  const inputs = { userInstruction: 'What do you see?', observation: source, sourceObservation: source,
+    resultFrames: [frame], resultImages: [image], taskResult: { done: true },
+    selectedTask: { program: null, taskDecision: null },
+    routingAnalysis: { needsResponse: true, needsAction: false, taskContext: [], conversationContext: [] } }
+  const run = async () => environmentContextBuilderNode.execute(inputs,
+    { username: 'vision-user', sessionId: source.sessionId } as any, { purpose: 'conversation' }) as Promise<any>
+  let result = await run()
+  let recognition = JSON.parse(result.message).currentEnvironment.recognition
+  assert.equal(recognition.people[0].identity.name, 'Person One')
+  assert.equal(recognition.imageAssociation, 'different_frame')
+  assert.deepEqual(recognition.matchingVisualFrameIds, [])
+  assert.equal(result.messages[1].content[1].image_url.url, image.image_url.url)
+  for (const key of ['epoch', 'counter', 'gatewayInstance', 'robotId'] as const) {
+    const { buildEnvironmentSelectorEnvelope } = await import('./nodes/environment/helpers.js')
+    const matched = { ...frame, metadata: { robotId: 'p4', gatewayInstance: 'gateway', epoch: 1, counter: 1, [key]: 'other' } }
+    const envelope = JSON.parse(buildEnvironmentSelectorEnvelope({ instruction: '', observation: source,
+      visualFrames: [matched], recognition }))
+    assert.deepEqual(envelope.currentEnvironment.recognition.matchingVisualFrameIds, [])
+  }
+  const expired = observation(Date.now() - 2000); reset(expired)
+  result = await run()
+  recognition = JSON.parse(result.message).currentEnvironment.recognition
+  assert.equal(recognition.people, null)
+  assert.equal(recognition.peopleCount, null)
+  assert.ok(!JSON.stringify(recognition).includes('Person One'))
+  source.state.recognition.enabled = false; reset(source)
+  recognition = JSON.parse((await run()).message).currentEnvironment.recognition
+  assert.equal(recognition.status, 'disabled')
+  assert.equal(recognition.people, null)
+})
+
 test('authenticated perception telemetry retains measured rate without new work or accepting stale metrics', async () => {
   const now = Date.now(); const source = reset(observation(now))
   const token = process.env.MH_ENVIRONMENT_BRIDGE_TOKEN; process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'status-fixture'

@@ -27,7 +27,7 @@ interface OwnedSession {
   diagnostic?: {
     username?: string
     request: DiagnosticRequest
-    pending: Array<{ id: string; receivedAt: string; request: DiagnosticRequest }>
+    pending: Array<{ id: string; receivedAt: string; request: DiagnosticRequest; complete?: (result: BigBrotherSessionResult) => void }>
     abort: AbortController
     finished?: Promise<void>
     cleanup?: () => Promise<void>
@@ -179,8 +179,9 @@ export class TerminalRuntime extends EventEmitter {
     } finally { this.providerActive = false; this.changed(); this.pumpDiagnostics() }
   }
 
-  async submitDiagnostic(request: DiagnosticRequest): Promise<DiagnosticReceipt> {
-    let session = [...this.sessions.values()].find(item => item.diagnostic?.username === request.username && item.diagnostic)
+  async submitDiagnostic(request: DiagnosticRequest, complete?: (result: BigBrotherSessionResult) => void): Promise<DiagnosticReceipt> {
+    let session = [...this.sessions.values()].find(item => item.diagnostic?.username === request.username && item.diagnostic
+      && item.diagnostic.request.toolTaskId === request.toolTaskId)
     if (!session) {
       this.admit()
       const id = randomUUID()
@@ -188,7 +189,7 @@ export class TerminalRuntime extends EventEmitter {
         username: request.username, request, pending: [], abort: new AbortController(),
       }
       session = {
-        info: { id, kind: 'provider', provider: 'codex', title: 'Big Brother Diagnostics', phase: 'completed',
+        info: { id, kind: 'provider', provider: 'codex', title: request.toolTaskId ? 'Big Brother Tools' : 'Big Brother Diagnostics', phase: 'completed',
           cols: 100, rows: 30, diagnostic: { pending: 0, repairLog: bigBrotherRepairLog } },
         screen: new TerminalScreen(100, 30), diagnostic, close: async () => {},
       }
@@ -202,7 +203,10 @@ export class TerminalRuntime extends EventEmitter {
         await diagnostic.finished
         await diagnostic.cleanup?.()
         await desktop?.stop()
-        for (const pending of diagnostic.pending.splice(0)) appendDiagnosticLog(pending.id, 'cancelled', 'Terminal closed before this submission ran.')
+        for (const pending of diagnostic.pending.splice(0)) {
+          if (!pending.request.toolTaskId) appendDiagnosticLog(pending.id, 'cancelled', 'Terminal closed before this submission ran.')
+          pending.complete?.({ success: false, output: '', error: 'Terminal closed before this submission ran.', executionTime: 0, metadata: {} })
+        }
       }
       current.ready = (async () => {
         // The desktop window is a view of this owner, not another provider process.
@@ -219,7 +223,7 @@ export class TerminalRuntime extends EventEmitter {
           if (current.closing || !this.sessions.has(id)) return
           if (code !== 0) {
             current.info.error = stderr.trim() || `Desktop terminal exited with code ${code}`
-            try { appendDiagnosticLog(id, 'desktop failed', current.info.error) }
+            try { if (!request.toolTaskId) appendDiagnosticLog(id, 'desktop failed', current.info.error) }
             catch (error) { console.error('[big-brother-diagnostic] Cannot record desktop failure:', error) }
           }
           void this.close(id).catch(error => { current.info.error = error.message; this.changed() })
@@ -234,13 +238,26 @@ export class TerminalRuntime extends EventEmitter {
     if (session.closing || !this.sessions.has(session.info.id) || this.status !== 'running') throw new TerminalError('Terminal session is closed or stopping', 409)
     const id = randomUUID()
     const diagnostic = session.diagnostic!
-    appendDiagnosticLog(id, 'submitted', JSON.stringify({ username: request.username, source: request.source, data: request.data }, null, 2))
-    diagnostic.pending.push({ id, receivedAt: new Date().toISOString(), request })
+    if (!request.toolTaskId) appendDiagnosticLog(id, 'submitted', JSON.stringify({ username: request.username, source: request.source, data: request.data }, null, 2))
+    diagnostic.pending.push({ id, receivedAt: new Date().toISOString(), request, complete })
     diagnostic.request = request
     session.info.diagnostic!.pending = diagnostic.pending.length
     this.changed()
     this.pumpDiagnostics()
     return { sessionId: session.info.id, submissionId: id, status: 'submitted' }
+  }
+
+  async executeTool(request: DiagnosticRequest, signal: AbortSignal): Promise<BigBrotherSessionResult> {
+    signal.throwIfAborted()
+    let complete!: (result: BigBrotherSessionResult) => void
+    const finished = new Promise<BigBrotherSessionResult>(resolve => { complete = resolve })
+    const receipt = await this.submitDiagnostic(request, complete)
+    const cancel = () => { void this.close(receipt.sessionId).catch(error => {
+      complete({ success: false, output: '', error: String(error), executionTime: 0, metadata: {} })
+    }) }
+    signal.addEventListener('abort', cancel, { once: true })
+    if (signal.aborted) cancel()
+    try { return await finished } finally { signal.removeEventListener('abort', cancel) }
   }
 
   async diagnosticInput(id: string, message: string): Promise<DiagnosticReceipt> {
@@ -268,10 +285,10 @@ export class TerminalRuntime extends EventEmitter {
         diagnostic.cleanup = undefined
         const request = submission.request
         const prompt = `${request.prompt}\n\n${JSON.stringify({
-          repairLog: bigBrotherRepairLog, submissionId: submission.id,
+          ...(!request.toolTaskId ? { repairLog: bigBrotherRepairLog } : { taskId: request.toolTaskId }), submissionId: submission.id,
           receivedAt: submission.receivedAt, source: request.source, data: request.data,
         }, null, 2)}`
-        await this.write(session, terminalHeading(`Diagnostic ${submission.id}`))
+        await this.write(session, terminalHeading(`${request.toolTaskId ? 'Tool task' : 'Diagnostic'} ${submission.id}`))
         const result = await runProvider('codex', prompt, {
           username: request.username,
           diagnostic: { model: request.model, reasoning: request.reasoning, threadId: state.threadId },
@@ -281,14 +298,16 @@ export class TerminalRuntime extends EventEmitter {
         diagnostic.cleanup = undefined
         session.info.phase = result.success ? 'completed' : 'failed'
         session.info.error = result.error
-        appendDiagnosticLog(submission.id, result.success ? 'agent turn completed' : 'agent turn failed',
+        if (!request.toolTaskId) appendDiagnosticLog(submission.id, result.success ? 'agent turn completed' : 'agent turn failed',
           [result.output, result.error].filter(Boolean).join('\n\n'))
         await this.write(session, terminalHeading(result.success ? 'Agent turn completed.' : result.error || 'Agent turn failed.',
           result.success ? 'success' : 'error'))
+        submission.complete?.(result)
       } catch (error) {
         session.info.phase = 'failed'
         session.info.error = (error as Error).message
         console.error('[big-brother-diagnostic]', error)
+        submission.complete?.({ success: false, output: '', error: session.info.error, executionTime: 0, metadata: {} })
         await this.write(session, terminalHeading(session.info.error!, 'error'))
       } finally {
         this.providerActive = false

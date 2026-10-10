@@ -251,8 +251,10 @@ export class ExecutionStore {
         if (record.status !== status) throw new ExecutionConflictError('A terminal execution cannot be revived')
         return
       }
-      const pending = this.db.prepare(`SELECT 1 FROM execution_outbox WHERE execution_id = ?
-        AND kind != 'graph_resume' AND status IN ('pending','admitted','accepted','outcome_unknown') LIMIT 1`).get(lease.executionId)
+      const pending = this.dispatches(lease.executionId).some(effect => effect.kind !== 'graph_resume'
+        && ['pending', 'admitted', 'accepted', 'outcome_unknown'].includes(effect.status)
+        && !(effect.kind === 'coordinator_work' && effect.status !== 'pending'
+          && (effect.payload as { executionScope?: string }).executionScope === 'independent'))
       const pendingInput = this.hasPendingInput(lease.executionId)
       this.db.prepare('UPDATE executions SET status = ?, updated_at = ? WHERE execution_id = ?')
         .run(status === 'completed' && (pending || pendingInput) ? 'waiting' : status, Date.now(), lease.executionId)
@@ -559,7 +561,10 @@ export class ExecutionStore {
     const dispatch = this.dispatch(effectId)
     const execution = this.get(dispatch.executionId)
     if (execution.cancelledAt !== null || dispatch.status === 'cancelled') throw new ExecutionCancelledError(dispatch.executionId)
-    if (!['running', 'waiting'].includes(execution.status) || !['pending', 'admitted'].includes(dispatch.status)) {
+    const independent = dispatch.kind === 'coordinator_work'
+      && (dispatch.payload as { executionScope?: string }).executionScope === 'independent'
+    if (!(['running', 'waiting'].includes(execution.status) || independent && execution.status === 'completed')
+      || !['pending', 'admitted'].includes(dispatch.status)) {
       throw new ExecutionConflictError(`Dispatch ${effectId} is not eligible (${dispatch.status})`)
     }
     return dispatch

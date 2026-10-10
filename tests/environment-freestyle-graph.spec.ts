@@ -70,7 +70,7 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.ok(statusOut);
   assert.equal(graph.nodes.filter(node => node.data.nodeType === 'model_router').length, 1);
   assert.equal(environmentLlm.data.properties?.role, 'environmentActionSelector');
-  assert.equal(orchestrator.data.properties?.role, 'environmentIntent');
+  assert.equal(orchestrator.data.properties?.role, 'orchestrator');
   assert.equal(orchestrator.data.properties?.modelId, undefined);
   assert.equal(environmentLlm.data.properties?.modelId, undefined);
   const conversation = graph.nodes.find(node => node.id === 'conversation-model')!;

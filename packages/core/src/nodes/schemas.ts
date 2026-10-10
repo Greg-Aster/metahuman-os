@@ -22,6 +22,7 @@ import { environmentTrainingReviewInputSchema, environmentTrainingReviewSaveSche
 import { freestyleRequestInputSchema, freestyleTrainingOutputSchema } from './environment/freestyle-training.schemas.js';
 import { MODEL_ROLE_OPTIONS } from '../model-roles.js';
 import { modelRouterDefinition } from './llm/model-router.schema.js';
+import { bigBrotherToolRequestSchema, bigBrotherToolExecutionSchema } from './utility/big-brother-tools.schema.js';
 import { bigBrotherSchema } from './utility/big-brother.schema.js';
 import {
   DEFAULT_ROBOT_AUTONOMY_TASK_IDS,
@@ -152,6 +153,8 @@ function robotContextSchema(
 
 export const nodeSchemas: NodeSchema[] = [
   defineSchema(bigBrotherSchema),
+  defineSchema(bigBrotherToolRequestSchema),
+  defineSchema(bigBrotherToolExecutionSchema),
   defineSchema(faceExpressionSchema),
   defineSchema(expressionFeedbackSchema),
   defineSchema(observationHistorySchema),
@@ -4354,6 +4357,7 @@ nodeSchemas.push(
 );
 const environmentContextSchema = getNodeSchema('environment_context_builder')!;
 environmentContextSchema.inputs.push(
+  { name: 'toolWork', type: 'object', optional: true, description: 'Attributed delegated-work identity, state, result, and error.' },
   { name: 'plannerDecision', type: 'object', optional: true, description: 'Internally authored intention with its recorded observation, reason and time' },
   { name: 'robotObserver', type: 'object', optional: true, description: 'Source and cycle identity of the internally authored intention' },
   { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Recorded observation time supplied with the planner intention' },
@@ -4366,6 +4370,8 @@ environmentContextSchema.outputs.push(
   { name: 'planningMessages', type: 'array', description: 'Original task messages for optional larger-model planning' },
   { name: 'planningSchema', type: 'object', description: 'Original task schema without delegation' },
 );
+
+getNodeSchema('orchestrator_llm')!.outputs.push({ name: 'needsToolUse', type: 'boolean', description: 'Whether delegated computer tool use is selected.' });
 
 // Helper function to get schema by ID
 export function getNodeSchema(id: string): NodeSchema | undefined {

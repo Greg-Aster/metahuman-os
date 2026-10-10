@@ -8,13 +8,21 @@ import {
 
 test('Environment intent selects context and routes without owning the later objective decision', () => {
   const routing = parseEnvironmentIntentRouting(JSON.stringify({
-    needsResponse: true, needsAction: true,
+    needsResponse: true, needsAction: true, needsToolUse: false,
     taskContext: ['environment', 'vision'],
     conversationContext: ['conversationHistory', 'robotStatus'],
   }));
   assert.equal(routing.needsAction, true);
   assert.deepEqual(ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA.required, Object.keys(routing));
   assert.equal('needsTaskLifecycle' in ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA.properties, false);
+});
+
+test('delegated tool use is independent of movement and legacy routes remain readable', () => {
+  const legacy = { needsResponse: true, needsAction: false, taskContext: [], conversationContext: [] };
+  assert.deepEqual(parseEnvironmentIntentRouting(JSON.stringify(legacy)), legacy);
+  const routing = { ...legacy, needsToolUse: true };
+  assert.deepEqual(parseEnvironmentIntentRouting(JSON.stringify(routing)), routing);
+  assert.throws(() => parseEnvironmentIntentRouting(JSON.stringify({ ...routing, needsToolUse: 'true' })), /boolean needsToolUse/);
 });
 
 test('Environment complexity never changes the advisory action hint', () => {

@@ -19,8 +19,9 @@ export function executionWorkInput(store: ExecutionStore, effect: DispatchRecord
   return {
     ...input, username: store.get(effect.executionId).username, correlationId: effect.executionId,
     durable: { executionId: effect.executionId, effectId: effect.effectId,
+      ...(input.executionScope ? { scope: input.executionScope } : {}),
       originRuntimeId: store.get(effect.executionId).originRuntimeId,
-      recovery: input.type === 'environment_command' || input.handler?.startsWith('agent.') ? 'reconcile' : 'resume' },
+      recovery: input.executionScope === 'independent' || input.type === 'environment_command' || input.handler?.startsWith('agent.') ? 'reconcile' : 'resume' },
   }
 }
 

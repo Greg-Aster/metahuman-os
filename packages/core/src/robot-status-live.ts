@@ -51,7 +51,7 @@ export async function readRobotStatusLive(username: string, requestedSessionId?:
     : failureCurrent ? 'error' : perception ? 'fresh' : raw ? 'stale' : 'unavailable'
   const people = perception && enabled !== false && !failureCurrent
     ? perception.objects.filter(item => item.label.toLowerCase() === 'person').map(item => ({
-      detectionConfidence: item.score ?? null, identity: item.identity ? {
+      box: item.box ?? null, detectionConfidence: item.score ?? null, identity: item.identity ? {
         ...item.identity,
         ...('faceAgeMs' in item.identity ? { faceAgeMs: item.identity.faceAgeMs + (age(perception.observedAt, now) ?? 0) } : {}),
       } : null,
@@ -116,6 +116,8 @@ export async function readRobotStatusLive(username: string, requestedSessionId?:
         receivingFrames: connected && receivingAgeMs !== null && number(health.maxFrameAgeMs) !== null
           ? receivingAgeMs < health.maxFrameAgeMs : null, lastFrameAgeMs: receivingAgeMs, receivedFrames: number(cameraFrames.received), frameCounter: cameraFrames.counter ?? null },
       recognition: { enabled, status: recognitionState, observedAt: raw?.observedAt ?? null,
+        sourceFrame: raw ? { robotId: raw.robotId, gatewayInstance: raw.gatewayInstance,
+          epoch: raw.epoch, counter: raw.frameCounter, timeBasis: raw.timeBasis } : null,
         observationAgeMs: age(raw?.observedAt, now), expiresAt: raw?.expiresAt ?? null,
         processingReportedAt: processingAt ?? null, processingAgeMs: healthAge,
         processedFps: number(processing.processedFps), freshResultsPerSecond: number(processing.freshFps),

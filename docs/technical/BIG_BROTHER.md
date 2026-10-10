@@ -76,3 +76,32 @@ submit before downstream response generation; a later Big Brother node can submi
 results to the same diagnostic session. Connecting an output that never executes
 does not itself trigger a report. The node does not install a system-wide error
 subscription.
+
+
+## Delegated Environment tool work
+
+Environment Mode's Intent Orchestrator selects `needsToolUse` independently of
+physical actions and conversation. Its configured general `orchestrator` role
+supports the extended routing contract; the existing trained adapters are not
+changed by this integration. Model selection remains editable in the graph.
+
+The conversation branch receives the selected delegation state and generates the
+acknowledgment. After the existing conversation-result node confirms delivery,
+`big_brother_tool_request` admits independent work through the Work Coordinator.
+The initial execution can then finish without waiting for Codex. Task-selected
+context goes to Codex; conversation-selected context is saved separately for the
+return response. A tool-only route bypasses local task-decision inference.
+
+The editable `big-brother-tool-mode.json` graph runs `big_brother_tool_execution`
+through the same Terminal service and native desktop view as diagnostics. Each
+admitted task has its own Codex session, separate from the repair thread and repair
+log. The request node exposes the approved prompt, model, and reasoning settings.
+The Terminal owner serializes provider turns and owns cancellation and cleanup.
+
+On completion, the graph feeds the attributed result or failure into the existing
+conversation context builder and Model Router, then the conversation buffer,
+memory capture, stream, and speech nodes. The original request stays attached to
+the returned evidence; no synthetic user turn is added. Provider failure can be
+explained in conversation while the Coordinator task remains failed. Interrupted
+external work uses the existing reconciliation contract rather than replaying
+computer operations automatically.

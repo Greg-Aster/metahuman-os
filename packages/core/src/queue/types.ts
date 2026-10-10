@@ -151,6 +151,7 @@ export interface WorkError {
 
 /** Identity of a checkpointed dispatch, retained beyond the dashboard history. */
 export interface DurableWorkReference {
+  scope?: 'independent';
   executionId: string;
   originRuntimeId?: string;
   effectId: string;
@@ -177,6 +178,7 @@ export class WorkOutcomeUnknownError extends Error {
 }
 
 export interface TaskInput {
+  executionScope?: 'independent';
   type: TaskType;
   handler?: string;
   resource?: WorkResource;

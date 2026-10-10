@@ -8,6 +8,7 @@ export type EnvironmentContextEntry = typeof ENVIRONMENT_CONTEXT_ENTRIES[number]
 export interface EnvironmentRequestRouting {
   needsResponse: boolean;
   needsAction: boolean;
+  needsToolUse?: boolean;
   taskContext: EnvironmentContextEntry[];
   conversationContext: EnvironmentContextEntry[];
   memoryQuery?: string;
@@ -25,6 +26,7 @@ export function selectedEnvironmentRoutes(
   return {
     needsResponse: routing.needsResponse,
     needsAction: routing.needsAction,
+    ...(routing.needsToolUse !== undefined ? { needsToolUse: routing.needsToolUse } : {}),
     needsPersona: selected.some(entry => entry.startsWith('persona.')),
     needsConversationHistory: selected.includes('conversationHistory'),
     needsMemory: selected.includes('memory'),

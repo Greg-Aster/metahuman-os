@@ -16,3 +16,4 @@ export { executionContextNode } from './execution-context.node.js';
 export { workResultWaitNode } from './work-result-wait.node.js';
 export { executionEventWaitNode } from './execution-event-wait.node.js';
 export { executionEventOutNode } from './execution-event-out.node.js';
+export { bigBrotherToolRequestNode, bigBrotherToolExecutionNode } from './big-brother-tools.node.js';

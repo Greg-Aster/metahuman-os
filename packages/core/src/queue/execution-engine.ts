@@ -245,6 +245,19 @@ export class ExecutionEngine {
       const { runEnvironmentConversationWork } = await import('../environment-interface/conversation.js');
       return runEnvironmentConversationWork(task.input as unknown as Parameters<typeof runEnvironmentConversationWork>[0], task.username!, context.signal);
     }));
+    this.registerHandler('environment.tools', (task, context) => withTaskUserContext(task, async () => {
+      const { runGraph, requireGraphNodeOutput } = await import('../graph-runtime.js');
+      const state = await runGraph({ graph: task.input.graph, signal: context.signal,
+        context: { ...task.input.graphContext, graphExecution: undefined, username: task.username,
+          userId: task.username, environmentToolWork: { ...task.input, taskId: task.id, effectId: task.durable?.effectId },
+          userMessage: '', userMessageEntry: undefined,
+          environmentConversationMetadata: { source: 'big-brother-tools', taskId: task.id,
+            originalRequest: task.input.request, requestedAt: task.input.requestedAt } } });
+      if (state.status !== 'completed') throw state.error ?? new Error('Big Brother tool workflow did not complete');
+      const result = requireGraphNodeOutput(state, 'big_brother_tool_execution').toolWork;
+      if (result.state === 'failed') throw new Error(result.error || 'Big Brother tool request failed');
+      return result;
+    }));
     this.registerHandler('environment.interpret', (task, context) => withTaskUserContext(task, async () => {
       if (!task.durable || task.durable.executionId !== task.input.identity?.executionId)
         throw new Error('Instruction interpretation requires its durable execution owner');

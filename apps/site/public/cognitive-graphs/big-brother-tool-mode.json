@@ -1,0 +1,219 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 0
+  },
+  "cognitiveMode": "environment",
+  "name": "Big Brother Tool Workflow",
+  "description": "Executes delegated computer work and returns its attributed result through conversation, memory, and speech.",
+  "nodes": [
+    {
+      "id": "tool-execution",
+      "type": "genericNode",
+      "position": {
+        "x": 0,
+        "y": 100
+      },
+      "data": {
+        "nodeType": "big_brother_tool_execution",
+        "label": "Big Brother Tool Execution",
+        "properties": {}
+      }
+    },
+    {
+      "id": "result-context",
+      "type": "genericNode",
+      "position": {
+        "x": 330,
+        "y": 100
+      },
+      "data": {
+        "nodeType": "environment_context_builder",
+        "label": "Build Tool Result Context",
+        "properties": {
+          "purpose": "conversation",
+          "systemPrompt": "ENVIRONMENT CONVERSATION\nactivePersona describes who you are. currentInstruction contains the person's current message; the selected context describes the shared situation. Produce the user-visible response as plain text.\n\nPersona describes identity and expression, not a record of events. Supplied context provides evidence with its recorded source and time. Missing evidence represents unknown information.\n\nselectedTask contains the task model's decision, selected program, and validation result. A selected program is a request for execution, not a receipt of completion. Supplied execution events and environment feedback describe recorded results. Speech does not dispatch actions or change task state. Factual claims should reflect the evidence actually supplied.\n\ntoolWork contains the attributed state and result of delegated Big Brother work. An admitted request is pending work, not a completed result. Respond to the original user request using the supplied work state and evidence. Preserve relevant sources, artifact paths, failures, and uncertainty in the response."
+        }
+      }
+    },
+    {
+      "id": "result-model",
+      "type": "genericNode",
+      "position": {
+        "x": 660,
+        "y": 100
+      },
+      "data": {
+        "nodeType": "model_router",
+        "label": "Conversation",
+        "properties": {
+          "role": "persona",
+          "maxTokens": 2048,
+          "temperature": 0.7,
+          "repeatPenalty": 1.15,
+          "format": "text"
+        }
+      }
+    },
+    {
+      "id": "conversation-buffer",
+      "type": "outputNode",
+      "position": {
+        "x": 990,
+        "y": 100
+      },
+      "width": 250,
+      "data": {
+        "label": "Save User and Optional Response",
+        "nodeType": "conversation_buffer",
+        "properties": {}
+      }
+    },
+    {
+      "id": "memory-capture",
+      "type": "outputNode",
+      "position": {
+        "x": 1320,
+        "y": 100
+      },
+      "width": 250,
+      "data": {
+        "label": "Conversation Memory Saver",
+        "nodeType": "memory_capture",
+        "properties": {}
+      }
+    },
+    {
+      "id": "tts-out",
+      "type": "outputNode",
+      "position": {
+        "x": 1650,
+        "y": 100
+      },
+      "width": 240,
+      "data": {
+        "label": "Speak Optional Response",
+        "nodeType": "tts",
+        "properties": {
+          "source": "environment-mode",
+          "defaultMode": "conversation"
+        }
+      }
+    },
+    {
+      "id": "12",
+      "type": "outputNode",
+      "position": {
+        "x": 1980,
+        "y": 100
+      },
+      "width": 180,
+      "data": {
+        "label": "Return Optional Response",
+        "nodeType": "stream_writer",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-conversation-memory",
+      "source": "conversation-buffer",
+      "target": "memory-capture",
+      "sourceHandle": "entries",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-conversation-tts",
+      "source": "memory-capture",
+      "target": "tts-out",
+      "sourceHandle": "passthrough",
+      "targetHandle": "conversation",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "when": {
+          "output": "passthrough",
+          "notEquals": ""
+        }
+      }
+    },
+    {
+      "id": "e-conversation-stream",
+      "source": "memory-capture",
+      "target": "12",
+      "sourceHandle": "passthrough",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string",
+        "when": {
+          "output": "passthrough",
+          "notEquals": ""
+        }
+      }
+    },
+    {
+      "id": "capture-response-forward",
+      "source": "conversation-buffer",
+      "target": "memory-capture",
+      "sourceHandle": "response",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "tool-execution-selectedContext-result-context-selectedContext",
+      "source": "tool-execution",
+      "sourceHandle": "selectedContext",
+      "target": "result-context",
+      "targetHandle": "selectedContext"
+    },
+    {
+      "id": "tool-execution-toolWork-result-context-toolWork",
+      "source": "tool-execution",
+      "sourceHandle": "toolWork",
+      "target": "result-context",
+      "targetHandle": "toolWork"
+    },
+    {
+      "id": "tool-execution-request-result-context-instruction",
+      "source": "tool-execution",
+      "sourceHandle": "request",
+      "target": "result-context",
+      "targetHandle": "instruction"
+    },
+    {
+      "id": "result-context-messages-result-model-messages",
+      "source": "result-context",
+      "sourceHandle": "messages",
+      "target": "result-model",
+      "targetHandle": "messages"
+    },
+    {
+      "id": "result-model-response-conversation-buffer-response",
+      "source": "result-model",
+      "sourceHandle": "response",
+      "target": "conversation-buffer",
+      "targetHandle": "response"
+    },
+    {
+      "id": "tool-execution-toolWork-conversation-buffer-metadata",
+      "source": "tool-execution",
+      "sourceHandle": "toolWork",
+      "target": "conversation-buffer",
+      "targetHandle": "metadata"
+    }
+  ]
+}

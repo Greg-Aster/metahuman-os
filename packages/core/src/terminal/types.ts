@@ -18,6 +18,7 @@ export interface DiagnosticRequest {
   reasoning: boolean
   username?: string
   source?: Record<string, unknown>
+  toolTaskId?: string
 }
 export interface DiagnosticReceipt {
   sessionId: string

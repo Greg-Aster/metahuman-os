@@ -307,3 +307,42 @@ test('diagnostic failures remain visible, new reports resume, and closing cancel
   await client.stopTerminalService()
   await waitForExit()
 })
+
+test('tool work returns Codex output through a desktop session separate from diagnostics', async t => {
+  await launch()
+  t.after(async () => { await client.stopTerminalService(); await waitForExit() })
+  for (const session of (await client.getTerminalState()).sessions) await client.terminalCall('/close', { id: session.id })
+  const diagnostic = await client.submitBigBrotherDiagnostic({ prompt: 'fixture diagnostic', data: 'original repair', reasoning: true, username: 'fixture' })
+  const first = await client.executeBigBrotherTool({ prompt: 'fixture tool', data: { request: 'Inspect the fixture' },
+    username: 'fixture', toolTaskId: 'tool-one', model: 'fixture-tool-model', reasoning: true })
+  assert.equal(first.success, true)
+  assert.equal(first.output, 'diagnostic fixture result')
+  const state = await client.getTerminalState()
+  assert.ok(state.sessions.find(s => s.id === diagnostic.sessionId))
+  const tool = state.sessions.find(s => s.title === 'Big Brother Tools')!
+  assert.ok(tool)
+  assert.notEqual(tool.id, diagnostic.sessionId)
+  const calls = fs.readFileSync(path.join(root, 'codex-calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  const execution = calls.slice().reverse().find(call => call.prompt.includes('tool-one'))
+  assert.equal(execution.args.includes('resume'), false, 'Tool work cannot inherit an unrelated diagnostic thread')
+  assert.ok(execution.args.includes('--dangerously-bypass-approvals-and-sandbox'))
+  assert.ok(execution.args.includes('model_reasoning_effort="high"'))
+  assert.equal(execution.args[execution.args.indexOf('--model') + 1], 'fixture-tool-model')
+  assert.equal(execution.prompt.includes('repairLog'), false)
+  const failed = await client.executeBigBrotherTool({ prompt: 'fixture tool', data: 'fail-diagnostic', reasoning: false, toolTaskId: 'tool-two' })
+  assert.equal(failed.success, false)
+  assert.ok(failed.error)
+  for (const session of (await client.getTerminalState()).sessions) await client.terminalCall('/close', { id: session.id })
+})
+
+test('closing the tool terminal settles its waiting caller and cancels owned work', async t => {
+  await launch()
+  t.after(async () => { await client.stopTerminalService(); await waitForExit() })
+  const work = client.executeBigBrotherTool({ prompt: 'fixture tool', data: 'hold-diagnostic', reasoning: true, toolTaskId: 'tool-cancel' })
+  await eventually(async () => (await client.getTerminalState()).sessions.some(s => s.title === 'Big Brother Tools' && s.phase === 'running'))
+  const session = (await client.getTerminalState()).sessions.find(s => s.title === 'Big Brother Tools')!
+  await client.terminalCall('/close', { id: session.id })
+  const result = await work
+  assert.equal(result.success, false)
+  assert.match(result.error || '', /closed/)
+})

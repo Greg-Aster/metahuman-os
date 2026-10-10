@@ -27,7 +27,7 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
   const parent = params.context.graphExecution
   if (parent?.callGraph) return parent.callGraph(params.graph, params.context)
   const scope = workScope.getStore()
-  const delegated = !params.executionId && scope?.task.handler !== 'graph.resume'
+  const delegated = !params.executionId && scope?.task.handler !== 'graph.resume' && scope?.task.durable?.scope !== 'independent'
     ? scope?.task.durable ?? (process.env.MH_PARENT_EXECUTION ? JSON.parse(process.env.MH_PARENT_EXECUTION) : null)
     : null
   const username = params.context.username || getUserContext()?.username || scope?.task.username

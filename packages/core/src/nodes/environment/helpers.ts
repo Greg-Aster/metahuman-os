@@ -314,6 +314,7 @@ export interface EnvironmentSelectorEnvelopeInput {
   personaText?: string;
   robotStatus?: unknown;
   liveStatus?: unknown;
+  recognition?: unknown;
   replyToContent?: string;
   inputSource?: 'user' | 'autonomy';
   routing?: Record<string, boolean>;
@@ -390,6 +391,10 @@ export function buildEnvironmentSelectorEnvelope(
       id: frame.id,
       timestamp: frame.timestamp,
       source: frame.source,
+      cameraFrame: frame.metadata ? {
+        robotId: frame.metadata.robotId, gatewayInstance: frame.metadata.gatewayInstance,
+        epoch: frame.metadata.epoch, counter: frame.metadata.counter,
+      } : undefined,
       correlationId: typeof frame.metadata?.correlationId === 'string'
         ? frame.metadata.correlationId
         : undefined,
@@ -397,6 +402,11 @@ export function buildEnvironmentSelectorEnvelope(
         ? frame.metadata.actionId
         : undefined,
     }));
+  const recognition = isRecord(input.recognition) ? input.recognition : null;
+  const sourceFrame = isRecord(recognition?.sourceFrame) ? recognition.sourceFrame : null;
+  const matchingVisualFrameIds = sourceFrame ? frames.filter(frame => frame.cameraFrame
+    && ['robotId', 'gatewayInstance', 'epoch', 'counter'].every(key => sourceFrame[key] !== undefined
+      && sourceFrame[key] === (frame.cameraFrame as Record<string, unknown>)[key])).map(frame => frame.id) : [];
   const feedback = (observation?.feedback ?? []).slice(-3).map(event => ({
     type: event.type,
     actionId: event.actionId,
@@ -442,6 +452,8 @@ export function buildEnvironmentSelectorEnvelope(
       },
       feedback,
       visualFrames: frames,
+      ...(recognition ? { recognition: { ...recognition, matchingVisualFrameIds,
+        imageAssociation: matchingVisualFrameIds.length ? 'exact_frame' : frames.length ? 'different_frame' : 'no_image' } } : {}),
       actionId: typeof observation.metadata?.actionId === 'string'
         ? observation.metadata.actionId
         : undefined,

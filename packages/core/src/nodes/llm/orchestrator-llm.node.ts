@@ -110,9 +110,10 @@ export const ENVIRONMENT_INTENT_JSON_SCHEMA = {
 
 export const ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['needsResponse', 'needsAction', 'taskContext', 'conversationContext'],
+  required: ['needsResponse', 'needsAction', 'needsToolUse', 'taskContext', 'conversationContext'],
   properties: {
     needsResponse: { type: 'boolean' }, needsAction: { type: 'boolean' },
+    needsToolUse: { type: 'boolean' },
     taskContext: { type: 'array', items: { type: 'string', enum: [...ENVIRONMENT_CONTEXT_ENTRIES] } },
     conversationContext: { type: 'array', items: { type: 'string', enum: [...ENVIRONMENT_CONTEXT_ENTRIES] } },
     memoryQuery: { type: 'string' }, memoryTypes: { type: 'array', items: { type: 'string' } },
@@ -134,6 +135,8 @@ export function parseEnvironmentIntentRouting(value: unknown, requestOnly = true
   const unexpected = Object.keys(record).filter(field => !fields.includes(field) && !['memoryQuery', 'memoryTypes'].includes(field));
   if (unexpected.length > 0) throw new Error(`Environment intent output contains unsupported field(s): ${unexpected.join(', ')}`);
   for (const field of fields) {
+    // Retained training examples and saved routes predate delegated tool use.
+    if (requestOnly && field === 'needsToolUse' && record[field] === undefined) continue;
     if (requestOnly && (field === 'taskContext' || field === 'conversationContext')) {
       if (!Array.isArray(record[field]) || record[field].some(entry => !ENVIRONMENT_CONTEXT_ENTRIES.includes(entry))) {
         throw new Error(`Environment intent output requires valid context entries in ${field}`);
@@ -175,6 +178,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
   ],
   outputs: [
+    { name: 'needsToolUse', type: 'boolean', description: 'Whether delegated computer tool use is selected.' },
     { name: 'raw', type: 'string', description: 'Exact model output before parsing' },
     { name: 'modelMessages', type: 'array', description: 'Exact messages supplied to this model call' },
     { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },

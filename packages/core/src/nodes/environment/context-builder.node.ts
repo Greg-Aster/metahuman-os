@@ -67,6 +67,7 @@ export const environmentContextBuilderNode = defineNode({
   name: 'Environment Context Builder',
   category: 'environment',
   inputs: [
+    { name: 'toolWork', type: 'object', optional: true, description: 'Attributed delegated-work identity, state, result, and error.' },
     { name: 'plannerDecision', type: 'object', optional: true, description: 'Internally authored intention with its recorded observation, reason and time' },
     { name: 'robotObserver', type: 'object', optional: true, description: 'Source and cycle identity of the internally authored intention' },
     { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Recorded observation time supplied with the planner intention' },
@@ -170,7 +171,8 @@ export const environmentContextBuilderNode = defineNode({
     const personaText = (Array.isArray(inputs.routingAnalysis?.taskContext) ? routingAnalysis.needsPersona : true) && typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 2_000)
       : '';
-    const liveStatus = (routingAnalysis.needsRobotStatus === true || environmentSelected) && typeof context.username === 'string'
+    const liveStatus = (routingAnalysis.needsRobotStatus === true || environmentSelected
+      || (consumer === 'conversation' && Array.isArray(inputs.resultImages) && inputs.resultImages.length > 0)) && typeof context.username === 'string'
       ? await readRobotStatusLive(context.username, suppliedObservation?.sessionId ?? inputs.robotStatus?.body?.sessionId) : undefined;
     const robotStatus = routingAnalysis.needsRobotStatus === true
       ? { ...(isRecord(inputs.robotStatus) ? inputs.robotStatus : {}), ...(liveStatus ? { live: liveStatus } : {}) } : null;
@@ -247,7 +249,8 @@ export const environmentContextBuilderNode = defineNode({
       memories: memoryItems,
       personaText,
       robotStatus,
-      liveStatus: robotStatus ? undefined : liveStatus,
+      liveStatus: robotStatus || !environmentSelected ? undefined : liveStatus,
+      recognition: liveStatus?.recognition,
       replyToContent,
       inputSource,
       routing: routingAnalysis as Record<string, boolean>,
@@ -263,9 +266,18 @@ export const environmentContextBuilderNode = defineNode({
       const selected = Array.isArray(inputs.routingAnalysis?.conversationContext) ? JSON.parse(message) : inputs.selectedContext;
       const { capabilityRules: _rules, ...evidence } = selected;
       if (evidence.robotStatus?.live && liveStatus) evidence.robotStatus = { ...evidence.robotStatus, live: liveStatus };
+      if (evidence.currentEnvironment && liveStatus) {
+        // Rebuild frame association and ages for this model call, including saved
+        // task context. A recent detection is not necessarily in an attached still.
+        evidence.currentEnvironment.recognition = JSON.parse(buildEnvironmentSelectorEnvelope({
+          instruction: rawInstruction, observation: suppliedObservation,
+          visualFrames: selectedFrames.length ? selectedFrames : (inputs.frames ?? []),
+          recognition: liveStatus.recognition,
+        })).currentEnvironment?.recognition;
+      }
       const environment = evidence.currentEnvironment;
       const catalog = environment?.capabilities?.robotCommandCatalog ?? {};
-      const selectedTask = inputs.selectedTask;
+      const selectedTask = inputs.selectedTask ?? {};
       const commands = (selectedTask.program?.steps ?? [])
         .filter((step: any) => step.kind === 'action' && step.action.type === 'robotCommand')
         .map((step: any) => step.action.command as string);
@@ -277,12 +289,15 @@ export const environmentContextBuilderNode = defineNode({
       const returned = taskResult && isRecord(inputs.observation)
         ? JSON.parse(buildEnvironmentSelectorEnvelope({ instruction: evidence.currentInstruction,
             observation: inputs.observation as unknown as EnvironmentObservation,
-            visualFrames: hasReturnedImages ? inputs.resultFrames : [] }))
+            visualFrames: hasReturnedImages ? inputs.resultFrames : (selectedFrames.length ? selectedFrames : (inputs.frames ?? [])),
+            recognition: liveStatus?.recognition }))
         : undefined;
       // Retain dated input images when this program returned none. Their old
       // frame times remain explicit alongside the new action evidence.
       if (returned && !hasReturnedImages) returned.currentEnvironment.visualFrames = environment?.visualFrames ?? [];
       const conversationMessage = serializeContext({ ...evidence,
+        ...(inputs.toolWork ? { toolWork: inputs.toolWork } : inputs.routingAnalysis?.needsToolUse === true
+          ? { toolWork: { state: 'selected', request: rawInstruction } } : {}),
         ...(returned ? { currentEnvironment: returned.currentEnvironment,
           evidenceAvailability: returned.evidenceAvailability } : {}),
         ...(taskResult ? { execution: inputs.execution ?? evidence.execution,
@@ -292,7 +307,7 @@ export const environmentContextBuilderNode = defineNode({
         selectedTask: { ...selectedTask, commandDescriptions } });
       const images = hasReturnedImages ? inputs.resultImages : Array.isArray(inputs.routingAnalysis?.conversationContext)
         ? selectedImages : (Array.isArray(inputs.images) ? inputs.images : []);
-      return { receivedInput: recalled?.receivedInput, message: conversationMessage, messages: [
+      return { receivedInput: recalled?.receivedInput, selectedContext: evidence, message: conversationMessage, messages: [
         { role: 'system', content: String(properties.systemPrompt ?? '').trim() },
         { role: 'user', content: images.length ? [
           { type: 'text', text: `The attached images are what you saw at the corresponding visualFrames times.\n${conversationMessage}` }, ...images,
@@ -325,7 +340,9 @@ export const environmentContextBuilderNode = defineNode({
       activeExecutions, currentVisualEvidence: currentVision,
       receivedInput: recalled?.receivedInput,
       selectedContext: JSON.parse(message),
-      precomputedResponse: context.environmentInterpretation?.response,
+      precomputedResponse: context.environmentInterpretation?.response
+        ?? (routingAnalysis.needsToolUse === true && routingAnalysis.needsAction !== true
+          ? JSON.stringify({ taskDecision: null, program: null }) : undefined),
       message,
       jsonSchema: delegatedSchema,
       frames: selectedFrames,

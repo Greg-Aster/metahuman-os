@@ -835,3 +835,21 @@ for (const boundary of ['checkpoint', 'pending writes'] as const) {
     }
   })
 }
+
+test('admitted independent work can finish after its parent turn without reopening that turn', async () => {
+  const f = fixture()
+  try {
+    await checkpoint(f, { transitionId: 'tool-handoff', dispatches: [{ effectId: 'tool-effect', kind: 'coordinator_work',
+      payload: { executionScope: 'independent', type: 'big_brother_escalation', handler: 'environment.tools', input: {} } }] })
+    f.store.settle(f.lease, 'completed')
+    assert.equal(f.store.get(f.execution.executionId).status, 'waiting', 'Unadmitted work must remain recoverable')
+    f.store.acknowledgeAdmission('tool-effect', 'tool-task')
+    f.store.settle(f.lease, 'completed')
+    assert.equal(f.store.get(f.execution.executionId).status, 'completed')
+    assert.equal(f.store.acceptAction('tool-effect').status, 'accepted')
+    f.store.deliverWorkResult('tool-effect', 'tool-task', { state: 'completed', result: { output: 'A sourced result.' } })
+    assert.equal(f.store.get(f.execution.executionId).status, 'completed')
+    assert.equal(f.store.pendingDispatches().filter(e => e.kind === 'graph_resume').length, 0)
+    assert.equal(f.store.dispatch('tool-effect').status, 'completed')
+  } finally { f.store.close() }
+})
