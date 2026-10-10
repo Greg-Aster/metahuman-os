@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 /**
  * Response Synthesizer Node
  *
@@ -101,6 +102,7 @@ async function applyPersonaVoice(
       userId,
       cognitiveMode,
       options: {
+        enableThinking: properties?.enableThinking === true,
         maxTokens: properties.personaVoiceMaxTokens ?? 2048,
         repeatPenalty: properties.personaVoiceRepeatPenalty ?? 1.3,
         temperature: properties.personaVoiceTemperature ?? 0.8,
@@ -379,6 +381,7 @@ Respond conversationally to help refine this goal.
         userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
+          enableThinking: properties?.enableThinking === true,
           maxTokens,
           repeatPenalty: properties.contextRepeatPenalty ?? 1.3,
           temperature,
@@ -475,6 +478,7 @@ Respond conversationally to help refine this goal.
         userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
+          enableThinking: properties?.enableThinking === true,
           maxTokens,
           repeatPenalty: properties.legacyRepeatPenalty ?? 1.3,
           temperature,
@@ -608,6 +612,7 @@ Respond conversationally to help refine this goal.
             userId: username,
             cognitiveMode: context.cognitiveMode,
             options: {
+              enableThinking: properties?.enableThinking === true,
               maxTokens: properties.delegatedWorkMaxTokens ?? 2048,
               repeatPenalty: properties.delegatedWorkRepeatPenalty ?? 1.3,
               temperature: properties.delegatedWorkTemperature ?? 0.8,
@@ -680,6 +685,7 @@ Respond conversationally to help refine this goal.
             userId: username,
             cognitiveMode: context.cognitiveMode,
             options: {
+              enableThinking: properties?.enableThinking === true,
               maxTokens: properties.unknownResponseMaxTokens ?? 512,
               repeatPenalty: properties.unknownResponseRepeatPenalty ?? 1.2,
               temperature: properties.unknownResponseTemperature ?? 0.7,
@@ -753,6 +759,7 @@ Observation: ${s.observation || 'N/A'}
       userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
+        enableThinking: properties?.enableThinking === true,
         maxTokens: properties.scratchpadMaxTokens ?? 2048,
         repeatPenalty: properties.scratchpadRepeatPenalty ?? 1.2,
         temperature: properties.scratchpadTemperature ?? 0.7,
@@ -865,6 +872,7 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
     { name: 'response', type: 'string', description: 'Final natural language response' },
   ],
   properties: {
+    enableThinking: false,
     model: 'persona',
     style: 'default',
     personaVoiceSystemPromptTemplate: DEFAULT_PERSONA_VOICE_SYSTEM_PROMPT_TEMPLATE,
@@ -899,6 +907,7 @@ export const ResponseSynthesizerNode: NodeDefinition = defineNode({
     scratchpadTemperature: 0.7,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     model: {
       type: 'string',
       default: 'persona',

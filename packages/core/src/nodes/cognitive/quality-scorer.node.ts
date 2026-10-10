@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 /**
  * Quality Scorer Node (Persona Values Alignment)
  *
@@ -159,6 +160,7 @@ ${styleText ? `\nSTYLE: ${styleText}` : ''}
       messages,
       cognitiveMode: context.cognitiveMode,
       options: {
+        enableThinking: properties?.enableThinking === true,
         maxTokens: 768,
         temperature: 0.1,
       },
@@ -266,12 +268,14 @@ export const QualityScorerNode: NodeDefinition = defineNode({
     { name: 'evaluation', type: 'string', description: 'Summary of persona alignment assessment' },
   ],
   properties: {
+    enableThinking: false,
     qualityThreshold: 0.7,
     strictHallucinationCheck: true,
     systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     qualityThreshold: {
       type: 'slider',
       default: 0.7,

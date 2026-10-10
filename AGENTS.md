@@ -34,6 +34,16 @@ capability restrictions, obstacle/edge avoidance, or extra sensor requirements.
 Explain a concrete concern and its tradeoff before proposing a mechanism; do not
 silently limit an experimental system.
 
+Do not add or tighten token caps, input-size rejection, silent truncation, or
+context-dropping workarounds without the Installation Owner's explicit approval
+of that specific behavior. When a model request exceeds capacity, trace the
+actual payload and configured provider capacity; repair duplicated data,
+incorrect context assembly, or mismatched configuration at its existing owner.
+Preserve requested information and model-selected context. Provider and hardware
+capacity are real constraints to report, not permission to add application limits
+or conceal missing information. Fix the underlying ownership and data flow rather
+than layering another limiter, retry loop, or fallback over a broken path.
+
 The LLM owns interpretation, goals, and behavior selection. The system presents
 accurate information with its source, speaker, time, and uncertainty, exposes
 available capabilities, and accurately executes and reports the LLM's selections.

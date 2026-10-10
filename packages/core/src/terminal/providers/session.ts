@@ -4,6 +4,7 @@ import { StringDecoder } from 'node:string_decoder'
 import { ROOT } from '../../path-builder.js'
 import { TerminalProcess } from '../process.js'
 import { terminalJobs } from '../paths.js'
+import { formatProviderDisplay, terminalHeading } from '../presentation.js'
 import {
   buildBigBrotherCLIInvocation, parseBigBrotherTerminalEvent, providerLabel,
   type BigBrotherSessionResult, type ParsedBigBrotherEvent, type TerminalBigBrotherProvider,
@@ -42,7 +43,7 @@ export async function runProvider(
   }
   try {
     signal.throwIfAborted()
-    await display(`MetaHuman Big Brother — ${providerLabel(provider)}\r\n\r\n`)
+    await display(terminalHeading(`MetaHuman Big Brother — ${providerLabel(provider)}`))
     signal.throwIfAborted()
     const child = spawn(invocation.command, invocation.args, {
       cwd: options.workingDirectory || ROOT, detached: true,
@@ -71,7 +72,7 @@ export async function runProvider(
         if (parsed.finalText.length > MAX_RESULT) throw new Error('Big Brother response exceeds 4 MiB')
         finalText = parsed.finalText
       }
-      if (parsed.displayLines.length) await display(`${parsed.displayLines.join('\n').replace(/\r?\n/g, '\r\n')}\r\n`)
+      if (parsed.displayLines.length) await display(formatProviderDisplay(providerLabel(provider), parsed.displayLines))
       observe(parsed)
     }
     const stdoutTask = (async () => {

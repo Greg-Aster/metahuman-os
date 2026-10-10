@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { audit } from '../../audit.js'
 import type { Desire } from '../../agency/types.js'
 import { callLLMText } from '../../model-router.js'
@@ -67,7 +68,7 @@ function throwIfAborted(context: NodeExecutionContext): void {
 export async function executeDesireFeasibility(
   inputs: Record<string, unknown>,
   context: NodeExecutionContext,
-  _properties: Record<string, unknown> = {},
+  properties: Record<string, unknown> = {},
   dependencies: DesireFeasibilityDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<Record<string, unknown>> {
   throwIfAborted(context)
@@ -104,7 +105,7 @@ ${toolCatalog}
 
 Return JSON only:
 {"feasible":true,"confidence":0.0,"reasoning":"brief explanation","suggestedApproach":"optional approach","blockers":["specific blocker"]}`
-  const response = await dependencies.callModel({
+  const response = await dependencies.callModel({ options: { enableThinking: properties?.enableThinking === true },
     role: 'orchestrator',
     messages: [{ role: 'user', content: prompt }],
     userId: typeof context.userId === 'string' ? context.userId : context.username,
@@ -127,6 +128,7 @@ Return JSON only:
 }
 
 export const DesireFeasibilityNode: NodeDefinition = defineNode({
+  propertySchemas: { enableThinking: reasoningProperty },
   id: 'desire_feasibility',
   name: 'Assess Desire Feasibility',
   category: 'agency',
@@ -142,7 +144,7 @@ export const DesireFeasibilityNode: NodeDefinition = defineNode({
     { name: 'suggestedApproach', type: 'string', optional: true },
     { name: 'blockers', type: 'array', optional: true },
   ],
-  properties: {},
+  properties: { enableThinking: false },
   description: 'Assesses one desire against the canonical tool catalog through the model router',
   execute: executeDesireFeasibility,
 })

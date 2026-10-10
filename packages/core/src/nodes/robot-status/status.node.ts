@@ -1,3 +1,4 @@
+import { readRobotStatusLive } from '../../robot-status-live.js'
 import { loadRobotStatus } from '../../robot-status.js'
 import { defineNode } from '../types.js'
 
@@ -12,6 +13,7 @@ function decisionContext(
     body: status.body
       ? {
           sessionId: status.body.sessionId,
+          identity: status.body.state?.body ?? null,
           environmentId: status.body.environmentId,
           connectionStatus: status.body.connectionStatus,
           observationAt: status.body.observationAt,
@@ -68,12 +70,13 @@ export const robotStatusNode = defineNode({
     const username = typeof context.username === 'string' ? context.username.trim() : ''
     if (!username) return { status: null, context: null, task: null, historyContext: null, summary: '', updatedAt: '', found: false }
     const status = loadRobotStatus(username)
-    if (!status) return { status: null, context: null, task: null, historyContext: null, summary: '', updatedAt: '', found: false }
+    const live = await readRobotStatusLive(username, context.environmentObservation?.sessionId ?? status?.body?.sessionId)
+    if (!status) return { status: null, context: { live }, task: null, historyContext: null, summary: '', updatedAt: live.readAt, found: false }
     const configuredHistoryLimit = properties?.historyLimit
     const historyLimit = Number.isInteger(configuredHistoryLimit)
       ? Math.max(0, Math.min(8, Number(configuredHistoryLimit)))
       : 3
-    const boundedContext = decisionContext(status, historyLimit)
+    const boundedContext: Record<string, unknown> = { ...decisionContext(status, historyLimit), live }
     return {
       status,
       context: boundedContext,

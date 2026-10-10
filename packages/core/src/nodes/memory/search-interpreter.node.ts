@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 /**
  * Search Interpreter Node
  *
@@ -140,6 +141,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       messages,
       cognitiveMode: context.cognitiveMode,
       options: {
+        enableThinking: properties?.enableThinking === true,
         maxTokens: 1024,
         temperature: 0.1,
       },
@@ -287,12 +289,14 @@ export const SearchInterpreterNode: NodeDefinition = defineNode({
     { name: 'fullResult', type: 'object', description: 'Complete result object for downstream nodes' },
   ],
   properties: {
+    enableThinking: false,
     relevanceThreshold: 0.6,
     maxResults: 10,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     relevanceThreshold: {
       type: 'slider',
       default: 0.6,

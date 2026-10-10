@@ -50,11 +50,18 @@ export function createRobotBufferMessage(record: RobotBridgeRecord) {
   const feedbackId = typeof record.feedback?.id === 'string' && record.feedback.id.trim()
     ? record.feedback.id.trim()
     : '';
+  const action = record.action && typeof record.action === 'object' && !Array.isArray(record.action)
+    ? record.action as Record<string, unknown> : null;
+  const command = typeof action?.command === 'string' ? action.command
+    : typeof record.feedback?.data?.command === 'string' ? record.feedback.data.command : '';
+  const actionLabel = action?.type === 'faceExpression'
+    ? `display ${action.displayRelease === true ? 'release' : typeof action.expression === 'string' ? action.expression : 'update'}`
+    : `action${command ? ` ${command}` : typeof action?.type === 'string' ? ` ${action.type}` : ''}`;
 
   return {
     role: 'robot' as const,
     content: direction === 'inbound'
-      ? `Robot action ${status}: ${message}`
+      ? `Robot ${actionLabel} ${status}: ${message}`
       : `Robot bridge ${status}: ${message}`,
     meta: {
       type: 'robot_bridge_message',

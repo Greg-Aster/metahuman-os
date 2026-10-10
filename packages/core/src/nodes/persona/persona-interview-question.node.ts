@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import type { PersonaInterviewConfig } from '../../persona/question-generator.js'
 import {
   PERSONA_INTERVIEW_CATEGORIES,
@@ -174,7 +175,7 @@ export function parsePersonaInterviewQuestion(
 export async function executePersonaInterviewQuestion(
   inputs: Record<string, unknown>,
   context: NodeExecutionContext,
-  _properties: Record<string, unknown> = {},
+  properties: Record<string, unknown> = {},
   dependencies: PersonaInterviewQuestionDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<Record<string, unknown>> {
   throwIfAborted(context)
@@ -223,7 +224,7 @@ Return JSON only: {"question":"one open-ended question","category":"${typedTarge
       ...history,
       { role: 'system', content: `Generate question ${session.questions.length + 1} now.` },
     ],
-    options: { temperature: 0.7, format: 'json', max_tokens: 512 },
+    options: { enableThinking: properties?.enableThinking === true, temperature: 0.7, format: 'json', max_tokens: 512 },
   })
   throwIfAborted(context)
   return parsePersonaInterviewQuestion(
@@ -252,6 +253,7 @@ export const PersonaInterviewInputNode: NodeDefinition = defineNode({
 })
 
 export const PersonaInterviewQuestionNode: NodeDefinition = defineNode({
+  propertySchemas: { enableThinking: reasoningProperty },
   id: 'persona_interview_question',
   name: 'Generate Persona Interview Question',
   category: 'persona',
@@ -264,7 +266,7 @@ export const PersonaInterviewQuestionNode: NodeDefinition = defineNode({
     { name: 'question', type: 'object' },
     { name: 'reasoning', type: 'string' },
   ],
-  properties: {},
+  properties: { enableThinking: false },
   description: 'Generates one typed, non-duplicate question for the selected persona category',
   execute: executePersonaInterviewQuestion,
 })

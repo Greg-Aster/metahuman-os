@@ -261,6 +261,20 @@ test('diagnostic node opens one desktop, queues reports, resumes the exact threa
   assert.ok(log.includes(first.submissionId))
   assert.ok(log.includes(second.submissionId))
   assert.match(log, /diagnostic fixture result/)
+  assert.equal(log.includes('\x1b['), false, 'Terminal styling must not enter saved agent results')
+  const screen = await client.terminalRequest(`/events?id=${first.sessionId}`)
+  screen.setEncoding('utf8')
+  let frames = ''
+  try {
+    for await (const chunk of screen) {
+      frames += chunk
+      if (frames.includes('"type":"screen"') && frames.endsWith('\n\n')) break
+    }
+  } finally { screen.destroy() }
+  const snapshot = frames.split('\n\n').filter(frame => frame.startsWith('data: '))
+    .map(frame => JSON.parse(frame.slice(6))).find(event => event.type === 'screen')
+  assert.match(snapshot.data, /\x1b\[/, 'Connected viewers receive styled output')
+  assert.match(snapshot.data, /diagnostic fixture result/)
   const chat = await client.executeInBigBrotherSession('claude-code', 'complete')
   assert.equal(chat.success, true)
   await client.stopBigBrotherSession()

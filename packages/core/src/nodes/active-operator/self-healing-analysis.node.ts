@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { callLLM } from '../../model-router.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext, type NodeExecutor } from '../types.js'
 
@@ -63,7 +64,7 @@ function throwIfAborted(context: NodeExecutionContext): void {
 export async function executeSelfHealingAnalysis(
   inputs: Record<string, unknown>,
   context: NodeExecutionContext,
-  _properties: Record<string, unknown> = {},
+  properties: Record<string, unknown> = {},
   dependencies: SelfHealingAnalysisDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<Record<string, unknown>> {
   throwIfAborted(context)
@@ -84,7 +85,7 @@ export async function executeSelfHealingAnalysis(
         content: `Error: ${JSON.stringify(inputs.error)}\n\nSource context:\n\`\`\`typescript\n${inputs.sourceContext}\n\`\`\`\n\nReturn JSON only: {"analysis":"root cause","suggestedFix":"specific change","diff":"optional before/after","confidence":"high|medium|low"}`,
       },
     ],
-    options: { maxTokens: 1_024, temperature: 0.2 },
+    options: { enableThinking: properties?.enableThinking === true, maxTokens: 1_024, temperature: 0.2 },
   })
   throwIfAborted(context)
   const result = parseSelfHealingAnalysis(response.content)
@@ -106,6 +107,7 @@ export const SelfHealingInputNode: NodeDefinition = defineNode({
 })
 
 export const SelfHealingAnalysisNode: NodeDefinition = defineNode({
+  propertySchemas: { enableThinking: reasoningProperty },
   id: 'self_healing_analysis',
   name: 'Analyze TypeScript Error',
   category: 'active-operator',
@@ -120,7 +122,7 @@ export const SelfHealingAnalysisNode: NodeDefinition = defineNode({
     { name: 'diff', type: 'string', optional: true },
     { name: 'confidence', type: 'string' },
   ],
-  properties: {},
+  properties: { enableThinking: false },
   description: 'Produces a typed, review-only TypeScript repair proposal',
   execute: executeSelfHealingAnalysis,
 })

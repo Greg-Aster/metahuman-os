@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { callLLM } from '../../model-router.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext, type NodeExecutor } from '../types.js'
 
@@ -271,7 +272,7 @@ function throwIfAborted(context: NodeExecutionContext): void {
 export async function executePersonaProfileExtractor(
   inputs: Record<string, unknown>,
   context: NodeExecutionContext,
-  _properties: Record<string, unknown> = {},
+  properties: Record<string, unknown> = {},
   dependencies: PersonaProfileExtractorDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<Record<string, unknown>> {
   throwIfAborted(context)
@@ -288,7 +289,7 @@ export async function executePersonaProfileExtractor(
       },
       { role: 'user', content: `Extract the supported persona information from this transcript:\n\n${conversationText}` },
     ],
-    options: { temperature: 0.3, max_tokens: 2_000 },
+    options: { enableThinking: properties?.enableThinking === true, temperature: 0.3, max_tokens: 2_000 },
   })
   throwIfAborted(context)
   const persona = parsePersonaDraft(response.content)
@@ -307,6 +308,7 @@ export const PersonaTranscriptInputNode: NodeDefinition = defineNode({
 })
 
 export const PersonaProfileExtractorNode: NodeDefinition = defineNode({
+  propertySchemas: { enableThinking: reasoningProperty },
   id: 'persona_profile_extractor',
   name: 'Extract Persona Profile',
   category: 'persona',
@@ -315,7 +317,7 @@ export const PersonaProfileExtractorNode: NodeDefinition = defineNode({
     { name: 'persona', type: 'object' },
     { name: 'confidence', type: 'object' },
   ],
-  properties: {},
+  properties: { enableThinking: false },
   description: 'Extracts a validated persona draft from a graph-supplied interview transcript',
   execute: executePersonaProfileExtractor,
 })

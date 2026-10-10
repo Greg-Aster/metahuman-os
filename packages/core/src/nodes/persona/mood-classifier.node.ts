@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 import { callLLM } from '../../model-router.js';
 import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
@@ -29,12 +30,14 @@ export const MoodClassifierNode: NodeDefinition = defineNode({
     { name: 'confidence', type: 'number', description: 'Classifier confidence' },
   ],
   properties: {
+    enableThinking: false,
     role: 'psychotherapist',
     temperature: 0.2,
     maxTokens: 500,
     systemPrompt: DEFAULT_PROMPT,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     role: { type: 'select', default: 'psychotherapist', label: 'LLM role',
       options: [...MODEL_ROLE_OPTIONS], },
     temperature: { type: 'slider', default: 0.2, label: 'Temperature', min: 0, max: 1, step: 0.05 },
@@ -87,6 +90,7 @@ export const MoodClassifierNode: NodeDefinition = defineNode({
         }) },
       ],
       options: {
+        enableThinking: properties?.enableThinking === true,
         temperature: properties?.temperature ?? 0.2,
         maxTokens: properties?.maxTokens ?? 500,
       },

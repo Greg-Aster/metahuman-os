@@ -12,7 +12,7 @@
     "maxLoopIterations": 0,
     "eventInputNodeId": "input-events"
   },
-  "last_modified": "2026-10-10T00:57:45.906Z",
+  "last_modified": "2026-10-10T01:15:01.919Z",
   "nodes": [
     {
       "id": "user-input",
@@ -47,7 +47,8 @@
         "nodeType": "conversation_history",
         "properties": {
           "mode": "conversation",
-          "limit": 20
+          "limit": 20,
+          "includeInnerDialogue": false
         },
         "activation": {
           "when": [
@@ -871,22 +872,6 @@
           "sourceNodeId": "4"
         },
         "comment": "Saves the task model output and its input messages when this branch called the model. Precomputed responses are not training candidates."
-      }
-    },
-    {
-      "id": "node-367fd7e0-a23a-40b7-8355-1988072c5c70",
-      "type": "genericNode",
-      "position": {
-        "x": 6795,
-        "y": -465
-      },
-      "data": {
-        "nodeType": "cognitive/big_brother",
-        "properties": {
-          "prompt": "You are MetaHuman OS Big Brother, the installation's diagnostic and repair agent. Read docs/technical/BIG_BROTHER.md and the supplied repair-log path. Evaluate the supplied diagnostic data, investigate the responsible system, and repair confirmed issues within the Installation Owner's authorization. Record findings, changes, validation results, and unresolved issues in the repair log. Distinguish reported symptoms, verified causes, attempted changes, and demonstrated repairs.",
-          "model": "",
-          "reasoning": true
-        }
       }
     }
   ],
@@ -2260,27 +2245,11 @@
       "data": {
         "type": "string"
       }
-    },
-    {
-      "id": "xy-edge__user-inputmessage-node-367fd7e0-a23a-40b7-8355-1988072c5c70data",
-      "source": "user-input",
-      "target": "node-367fd7e0-a23a-40b7-8355-1988072c5c70",
-      "sourceHandle": "message",
-      "targetHandle": "data",
-      "data": {}
-    },
-    {
-      "id": "xy-edge__conversation-contextmessages-node-367fd7e0-a23a-40b7-8355-1988072c5c70data2",
-      "source": "conversation-context",
-      "target": "node-367fd7e0-a23a-40b7-8355-1988072c5c70",
-      "sourceHandle": "messages",
-      "targetHandle": "data2",
-      "data": {}
     }
   ],
   "viewport": {
-    "x": -7418.257306815246,
-    "y": 515.4187985226333,
-    "zoom": 1.1876188565032382
+    "x": -3379.566050821206,
+    "y": 1125.591733116245,
+    "zoom": 0.835087919428368
   }
 }

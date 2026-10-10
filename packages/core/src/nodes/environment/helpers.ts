@@ -198,6 +198,7 @@ export function projectRobotStatusContext(value: unknown): unknown {
   const agency = isRecord(value.agency) ? value.agency : null;
   const task = isRecord(value.task) ? value.task : null;
   return {
+    ...(value.live ? { live: value.live } : {}),
     updatedAt: value.updatedAt,
     sourceUpdatedAt: value.sourceUpdatedAt,
     history: value.history,
@@ -312,6 +313,7 @@ export interface EnvironmentSelectorEnvelopeInput {
   currentTime?: string;
   personaText?: string;
   robotStatus?: unknown;
+  liveStatus?: unknown;
   replyToContent?: string;
   inputSource?: 'user' | 'autonomy';
   routing?: Record<string, boolean>;
@@ -418,6 +420,7 @@ export function buildEnvironmentSelectorEnvelope(
       currentVision: input.currentVisionAvailable === true,
     },
     currentEnvironment: observation ? {
+      ...(input.liveStatus ? { live: input.liveStatus } : {}),
       sessionId: observation.sessionId,
       timestamp: observation.timestamp,
       state,

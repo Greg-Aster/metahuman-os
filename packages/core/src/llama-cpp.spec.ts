@@ -307,3 +307,34 @@ test('named llama.cpp adapter selection resolves the current server ID after rel
   await callLlamaCpp(config, messages, { lora: [{ path: '/models/specialist.gguf', scale: 1 }] })
   await assert.rejects(callLlamaCpp(config, messages, { lora: [{ path: '/models/missing.gguf', scale: 1 }] }), /not loaded/)
 })
+
+test('graph Reasoning overrides model defaults per call and preserves prompts and final output', async () => {
+  healthyFetch()
+  saveBackendConfig({ activeBackend: 'llama-cpp', llamaCpp: { ...config, enableThinking: true } })
+  const profile = getProfilePaths('reasoning-fixture')
+  fs.mkdirSync(profile.etc, { recursive: true })
+  fs.writeFileSync(path.join(profile.etc, 'models.json'), JSON.stringify({
+    version: '1.0.0', description: 'Reasoning fixture', defaults: { persona: 'fixture' }, models: {
+      fixture: { provider: 'llama-cpp', model: config.model, roles: ['persona'],
+        options: { enableThinking: true }, capabilities: ['text'] },
+    },
+  }))
+  const { ModelRouterNode } = await import('./nodes/llm/model-router.node.js')
+  const { environmentConversationNode } = await import('./nodes/environment/conversation.node.js')
+  const { environmentTaskPlannerNode } = await import('./nodes/environment/task-planner.node.js')
+  const { getNodeSchema } = await import('./nodes/schemas.js')
+  for (const node of [ModelRouterNode, environmentConversationNode, environmentTaskPlannerNode]) {
+    assert.equal(node.propertySchemas?.enableThinking?.type, 'boolean')
+    assert.equal(node.properties?.enableThinking, false)
+    assert.deepEqual(getNodeSchema(node.id)?.propertySchemas?.enableThinking, node.propertySchemas?.enableThinking)
+  }
+  for (const flag of [true, false, undefined, true]) {
+    const result = await ModelRouterNode.execute!({ messages }, { username: 'reasoning-fixture' },
+      { maxTokens: 256, ...(flag === undefined ? {} : { enableThinking: flag }) })
+    const request = requests.filter(request => request.url.endsWith('/v1/chat/completions')).at(-1)!.body
+    assert.equal(request.chat_template_kwargs.enable_thinking, flag === true)
+    assert.deepEqual(request.messages, messages)
+    assert.equal(result.response, 'OK', 'Reasoning stays separate from the final answer')
+    assert.equal(JSON.stringify(result).includes('Reason'), false)
+  }
+})

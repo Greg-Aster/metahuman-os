@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Desire Plan Generator Node
@@ -410,6 +411,7 @@ Consider:
       messages,
       userId,
       options: {
+        enableThinking: properties?.enableThinking === true,
         temperature,
         responseFormat: 'json',
       },
@@ -559,6 +561,7 @@ export const DesirePlanGeneratorNode: NodeDefinition = defineNode({
     { name: 'goalProgress', type: 'object', optional: true, description: 'Progress tracking for long_running goals' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.3,
     role: 'orchestrator',
     systemPrompt: SYSTEM_PROMPT,
@@ -568,6 +571,7 @@ export const DesirePlanGeneratorNode: NodeDefinition = defineNode({
     milestoneContextTemplate: DEFAULT_MILESTONE_CONTEXT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'slider',
       default: 0.3,

@@ -22,8 +22,15 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
   properties: {
     mode: 'conversation',
     limit: 20,
+    includeInnerDialogue: true,
   },
   propertySchemas: {
+    includeInnerDialogue: {
+      type: 'boolean',
+      default: true,
+      label: 'Include Inner Dialogue',
+      description: 'Include the inner buffer when Unified Consciousness is enabled.',
+    },
     mode: {
       type: 'select',
       default: 'conversation',
@@ -73,7 +80,7 @@ export const ConversationHistoryNode: NodeDefinition = defineNode({
         console.log(`[ConversationHistory] Loaded ${messages.length} messages from persisted ${mode} buffer (${loadTime}ms)`);
 
         // Unified Consciousness: Load inner dialogue buffer and merge if enabled
-        if (mode === 'conversation') {
+        if (mode === 'conversation' && properties?.includeInnerDialogue !== false) {
           try {
             const unifiedConsciousness = loadChatSettingsForUser(username).unifiedConsciousness;
 

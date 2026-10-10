@@ -919,13 +919,13 @@ test('Robot Autonomy Controller context combines unfinished work, buffers, bridg
       },
     },
     conversationHistory: [
-      { role: 'user', content: 'Please keep looking for my keys.' },
+      { role: 'user', content: 'Please keep looking for my keys.', timestamp: 1000 },
       ...Array.from({ length: 8 }, (_, index) => ({
         role: 'assistant',
         content: `Later autonomous narrative ${index + 1}.`,
       })),
     ],
-    innerHistory: [{ role: 'reflection', content: 'The last view was too dark.' }],
+    innerHistory: [{ role: 'reflection', content: 'The last view was too dark.', timestamp: 2000 }],
     actionHistory: [{ actionId: 'turn-1', status: 'completed', verified: true, requested: { type: 'robotCommand', command: 'turn-right' } }],
     personaText: 'Curious, attentive, and persistent.',
     activeDesires: [{ id: 'desire-1', title: 'Explore carefully', status: 'pending' }],
@@ -951,6 +951,15 @@ test('Robot Autonomy Controller context combines unfinished work, buffers, bridg
   assert.equal(result.context.bridgeSummaryIncluded, true);
   assert.equal(result.context.autonomyActivityCount, 1);
   assert.deepEqual(result.jsonSchema.anyOf.flatMap((branch: any) => branch.properties.taskId.enum), ['boredom-observer', 'none']);
+  const envelope = JSON.parse(result.messages[1].content);
+  const entries = envelope.robotOperatorContext.recentNarrativeContext.entries;
+  const userTurn = entries.find((entry: any) => entry.content === 'Please keep looking for my keys.');
+  const innerTurn = entries.find((entry: any) => entry.content === 'The last view was too dark.');
+  assert.equal(userTurn.role, 'user');
+  assert.equal(userTurn.timestamp, 1000);
+  assert.equal(innerTurn.timestamp, 2000);
+  assert.equal(innerTurn.context.isInnerDialogue, true);
+  assert.equal(innerTurn.context.originalRole, 'reflection');
   const encoded = JSON.stringify(result.messages);
   assert.match(encoded, /Find the missing keys/);
   assert.match(encoded, /Please keep looking for my keys/);

@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Curator LLM Node
@@ -281,7 +282,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         messages,
         userId: username,
         cognitiveMode: context.cognitiveMode || 'dual',
-        options: { temperature, response_format: { type: 'json_object' } },
+        options: { enableThinking: properties?.enableThinking === true, temperature, response_format: { type: 'json_object' } },
         keepAlive: 0, // Unload model immediately - background agent shouldn't hog VRAM
       });
 
@@ -347,6 +348,7 @@ export const CuratorLLMNode: NodeDefinition = defineNode({
     { name: 'failedCount', type: 'number' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.3,
     timeout: 300000,
     role: 'curator',
@@ -354,6 +356,7 @@ export const CuratorLLMNode: NodeDefinition = defineNode({
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'number',
       default: 0.3,

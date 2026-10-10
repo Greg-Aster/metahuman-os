@@ -134,6 +134,22 @@ test('capture receipt alone never satisfies a visual objective', async () => {
   assert.equal(captured.captureCompleted, true)
 })
 
+for (const basis of ['action_result', 'visual_observation']) {
+  test(`a finished program preserves the objective for review (${basis})`, async () => {
+    const f = fixture()
+    Object.assign(f.context, { activeTaskDecision: { ...decision, requiredCompletionBasis: basis } })
+    const feedback = { id: 'receipt', actionId: 'walk', type: 'completed', message: 'done', timestamp: new Date().toISOString() }
+    const state = await f.advance({ stepIndex: 1, updateRevision: 0, evidence: ['walk: done'],
+      visualCompletionSatisfied: true, completedActionId: 'walk', feedback } as ActiveTaskState)
+    assert.equal(state.done, true)
+    assert.equal(state.objectiveComplete, false)
+    assert.equal(f.task().decision.objective, decision.objective)
+    assert.equal(f.task().decision.outcome, 'continue')
+    assert.deepEqual(f.task().feedback, { actionId: 'walk', type: 'completed', message: 'done', observedAt: feedback.timestamp })
+    assert.equal(f.dispatches.length, 0)
+  })
+}
+
 test('cancelled task state cannot consume late results or dispatch more work', async () => {
   const f = fixture()
   const sent = await f.advance(f.state)

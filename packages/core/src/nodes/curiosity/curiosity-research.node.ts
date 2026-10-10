@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { callLLM, type RouterMessage } from '../../model-router.js'
 import { queryIndexWithReconciliation, type VectorIndexItem } from '../../vector-index.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext } from '../types.js'
@@ -125,7 +126,7 @@ const inputExecute = async (_inputs: Record<string, unknown>, context: NodeExecu
 export async function executeCuriosityResearch(
   inputs: Record<string, unknown>,
   context: NodeExecutionContext,
-  _properties: Record<string, unknown> = {},
+  properties: Record<string, unknown> = {},
   dependencies: CuriosityResearchNodeDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<Record<string, unknown>> {
   throwIfAborted(context)
@@ -145,7 +146,7 @@ export async function executeCuriosityResearch(
     messages: topicMessages,
     userId: typeof context.userId === 'string' ? context.userId : username,
     cognitiveMode: context.cognitiveMode,
-    options: { temperature: 0.3, maxTokens: 80 },
+    options: { enableThinking: properties?.enableThinking === true, temperature: 0.3, maxTokens: 80 },
     onProgress: context.emitProgress,
   })
   throwIfAborted(context)
@@ -194,7 +195,7 @@ export async function executeCuriosityResearch(
     messages: summaryMessages,
     userId: typeof context.userId === 'string' ? context.userId : username,
     cognitiveMode: context.cognitiveMode,
-    options: { temperature: 0.5, maxTokens: 220 },
+    options: { enableThinking: properties?.enableThinking === true, temperature: 0.5, maxTokens: 220 },
     onProgress: context.emitProgress,
   })
   throwIfAborted(context)
@@ -223,6 +224,7 @@ export const CuriosityResearchInputNode: NodeDefinition = defineNode({
 })
 
 export const CuriosityResearchNode: NodeDefinition = defineNode({
+  propertySchemas: { enableThinking: reasoningProperty },
   id: 'curiosity_research',
   name: 'Research Curiosity Question',
   category: 'curiosity',
@@ -234,7 +236,7 @@ export const CuriosityResearchNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'finding', type: 'object', description: 'Grounded research finding with exact sources' },
   ],
-  properties: {},
+  properties: { enableThinking: false },
   description: 'Extracts topics, reconciles local memory search, and generates one grounded finding',
   execute: executeCuriosityResearch,
 })

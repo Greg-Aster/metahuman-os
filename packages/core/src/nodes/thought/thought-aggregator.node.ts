@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Thought Aggregator Node
@@ -73,6 +74,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     userId: username,
     cognitiveMode: context.cognitiveMode,
     options: {
+      enableThinking: properties?.enableThinking === true,
       maxTokens,
       temperature,
     },
@@ -127,6 +129,7 @@ export const ThoughtAggregatorNode: NodeDefinition = defineNode({
     { name: 'thoughtCount', type: 'number' },
   ],
   properties: {
+    enableThinking: false,
     summaryStyle: 'narrative',
     maxLength: 200,
     maxTokens: 800,
@@ -137,6 +140,7 @@ export const ThoughtAggregatorNode: NodeDefinition = defineNode({
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     summaryStyle: {
       type: 'select',
       default: 'narrative',

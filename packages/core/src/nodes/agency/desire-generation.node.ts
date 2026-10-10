@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { callLLM, type RouterMessage } from '../../model-router.js'
 import {
   DESIRE_SOURCE_WEIGHTS,
@@ -355,6 +356,7 @@ export async function executeDesireGeneration(
       userId,
       cognitiveMode: context.cognitiveMode,
       options: {
+        enableThinking: properties?.enableThinking === true,
         temperature: 0.3,
         format: 'json',
         jsonSchema: buildReinforcementJsonSchema(
@@ -407,6 +409,7 @@ export async function executeDesireGeneration(
     userId,
     cognitiveMode: context.cognitiveMode,
     options: {
+      enableThinking: properties?.enableThinking === true,
       temperature: 0.6,
       format: 'json',
       jsonSchema: buildGenerationJsonSchema(gathered),
@@ -454,10 +457,12 @@ export const DesireGenerationNode: NodeDefinition = defineNode({
     { name: 'modelCall', type: 'object', optional: true },
   ],
   properties: {
+    enableThinking: false,
     generationSystemPrompt: GENERATION_SYSTEM_PROMPT,
     reinforcementSystemPrompt: REINFORCEMENT_SYSTEM_PROMPT,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     generationSystemPrompt: {
       type: 'text_multiline',
       default: GENERATION_SYSTEM_PROMPT,

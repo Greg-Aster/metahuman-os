@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Dreamer Dream Generator Node
@@ -107,7 +108,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     role,
     messages: buildDreamerMessages(systemPrompt, userPrompt, inputs.personaPrompt),
     userId: username,
-    options: { temperature },
+    options: { enableThinking: properties?.enableThinking === true, temperature },
   });
 
   throwIfAborted(context.signal);
@@ -136,6 +137,7 @@ export const DreamerDreamGeneratorNode: NodeDefinition = defineNode({
     { name: 'sourceIds', type: 'array' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 1.0,
     role: 'persona',
     timeout: 300000,
@@ -143,6 +145,7 @@ export const DreamerDreamGeneratorNode: NodeDefinition = defineNode({
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'number',
       default: 1.0,

@@ -68,6 +68,25 @@ export class ExecutionCheckpointer extends SqliteSaver {
     return tuple ? this.logicalTuple(tuple) : undefined
   }
 
+  /** Read-only view of the existing active behavior checkpoint; never resumes it. */
+  async activeBehaviorSnapshot(sessionId: string) {
+    const heads = this.store.db.prepare('SELECT namespace FROM execution_heads WHERE execution_id = ?')
+      .all(this.lease.executionId) as Array<{ namespace: string }>
+    const candidates: Array<{ at: number; state: import('../environment-interface/active-task.js').ActiveTaskState;
+      program: import('../environment-interface/active-task.js').EnvironmentTaskProgram }> = []
+    for (const head of heads) {
+      const saved = await this.getTuple({ configurable: { thread_id: this.lease.executionId, checkpoint_ns: head.namespace } })
+      const values = saved?.checkpoint.channel_values
+      const context = values?.contextSnapshot as Record<string, any> | undefined
+      if (context?.activeTaskSessionId !== sessionId || !context.activeProgram) continue
+      for (const [, node] of (values?.nodeEntries ?? []) as Array<[string, import('../graph-executor.js').NodeExecutionState]>) {
+        if (!['environment_active_task_step', 'environment_active_task_wait'].includes(node.definition?.type ?? '') || !node.outputs?.state) continue
+        candidates.push({ at: node.endTime ?? node.startTime ?? 0, state: node.outputs.state, program: context.activeProgram })
+      }
+    }
+    return candidates.sort((a, b) => b.at - a.at)[0] ?? null
+  }
+
   /** Read the saved returns of finite child graphs belonging to one dispatch. */
   async workGraphResults(effectId: string, receipt: Pick<QueuedTask, 'state' | 'error'>) {
     const effect = this.store.dispatch(effectId)

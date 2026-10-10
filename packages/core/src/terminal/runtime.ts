@@ -13,6 +13,7 @@ import { TerminalProcess } from './process.js'
 import { TerminalError, dimensions, type TerminalEvent, type TerminalSession, type TerminalState, type TerminalProvider, type DiagnosticRequest, type DiagnosticReceipt } from './types.js'
 import { appendDiagnosticLog, bigBrotherRepairLog } from './diagnostics.js'
 import { runProvider } from './providers/session.js'
+import { terminalHeading } from './presentation.js'
 import type { BigBrotherSessionResult, ParsedBigBrotherEvent } from './providers/cli.js'
 
 interface OwnedSession {
@@ -270,7 +271,7 @@ export class TerminalRuntime extends EventEmitter {
           repairLog: bigBrotherRepairLog, submissionId: submission.id,
           receivedAt: submission.receivedAt, source: request.source, data: request.data,
         }, null, 2)}`
-        await this.write(session, `\r\nDiagnostic ${submission.id}\r\n`)
+        await this.write(session, terminalHeading(`Diagnostic ${submission.id}`))
         const result = await runProvider('codex', prompt, {
           username: request.username,
           diagnostic: { model: request.model, reasoning: request.reasoning, threadId: state.threadId },
@@ -282,12 +283,13 @@ export class TerminalRuntime extends EventEmitter {
         session.info.error = result.error
         appendDiagnosticLog(submission.id, result.success ? 'agent turn completed' : 'agent turn failed',
           [result.output, result.error].filter(Boolean).join('\n\n'))
-        await this.write(session, `\r\n${result.success ? 'Agent turn completed.' : result.error}\r\n`)
+        await this.write(session, terminalHeading(result.success ? 'Agent turn completed.' : result.error || 'Agent turn failed.',
+          result.success ? 'success' : 'error'))
       } catch (error) {
         session.info.phase = 'failed'
         session.info.error = (error as Error).message
         console.error('[big-brother-diagnostic]', error)
-        await this.write(session, `\r\n${session.info.error}\r\n`)
+        await this.write(session, terminalHeading(session.info.error!, 'error'))
       } finally {
         this.providerActive = false
         this.changed()

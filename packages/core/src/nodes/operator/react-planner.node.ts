@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 /**
  * ReAct Planner Node
  *
@@ -168,6 +169,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       userId: username,
       cognitiveMode: context.cognitiveMode,
       options: {
+        enableThinking: properties?.enableThinking === true,
         maxTokens: properties?.maxTokens ?? 1024,
         repeatPenalty: properties?.repeatPenalty ?? 1.15,
         temperature: properties?.temperature ?? 0.5,
@@ -203,6 +205,7 @@ export const ReActPlannerNode: NodeDefinition = defineNode({
     { name: 'action', type: 'object', description: 'Skill to execute' },
   ],
   properties: {
+    enableThinking: false,
     model: 'default.coder',
     temperature: 0.5,
     maxTokens: 1024,
@@ -213,6 +216,7 @@ export const ReActPlannerNode: NodeDefinition = defineNode({
     anonymousSearchGuidance: DEFAULT_ANONYMOUS_SEARCH_GUIDANCE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     model: {
       type: 'string',
       default: 'default.coder',

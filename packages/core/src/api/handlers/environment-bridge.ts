@@ -331,8 +331,17 @@ export async function handleEnvironmentBridgeTelemetry(req: UnifiedRequest): Pro
       return successResponse({ success: true, workId: work.id });
     }
     if (body.perception !== undefined) {
-      return successResponse({ success: true,
-        perceptionAccepted: await recordEnvironmentPerception(body.sessionId, body.perception) });
+      const perceptionAccepted = await recordEnvironmentPerception(body.sessionId, body.perception);
+      if (perceptionAccepted && body.recognitionProcessing && typeof body.recognitionProcessing === 'object') {
+        const perception = body.perception as { observedAt: string; robotId: string; epoch: number; gatewayInstance: string };
+        const processing = Object.fromEntries(Object.entries(body.recognitionProcessing).filter(([key, value]) =>
+          ['receivedFrames', 'processedFrames', 'freshResults', 'droppedFrames', 'staleFrames', 'errors',
+            'queueDepth', 'queueWaitMs', 'inferenceMs', 'observationAgeMs', 'processedFps', 'freshFps'].includes(key)
+          && (value === null || typeof value === 'number' && Number.isFinite(value) && value >= 0)));
+        recordEnvironmentBridgeTelemetry({ sessionId: body.sessionId, recognition: { reportedAt: typeof body.recognitionReportedAt === 'string' ? body.recognitionReportedAt : new Date().toISOString(), observedAt: perception.observedAt, robotId: perception.robotId, epoch: perception.epoch, gatewayInstance: perception.gatewayInstance,
+          processing: processing as Record<string, number | null> } });
+      }
+      return successResponse({ success: true, perceptionAccepted });
     }
     const diagnostics = recordEnvironmentBridgeTelemetry({
       sessionId: body.sessionId,

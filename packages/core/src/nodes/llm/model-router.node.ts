@@ -45,6 +45,7 @@ export const ModelRouterNode: NodeDefinition = defineNode({
         userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
+          enableThinking: properties?.enableThinking === true,
           maxTokens: properties?.maxTokens ?? 2048,
           repeatPenalty: properties?.repeatPenalty ?? 1.15,
           temperature: properties?.temperature ?? 0.7,

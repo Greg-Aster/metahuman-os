@@ -403,7 +403,7 @@ export function loadRobotStatus(username: string): RobotStatusSnapshot | null {
     const task = normalizeTask(store.projectedTask(username))
     return { ...parsed, agency: { activeDesires: projectDesireAwareness(parsed.agency?.activeDesires) }, task,
       situation: { ...parsed.situation, currentGoal: currentGoal(task),
-        currentIntent: currentGoal(task) ? task!.decision.reason : parsed.situation.currentIntent } }
+        currentIntent: currentGoal(task) ? task!.decision.reason : '' } }
   } finally { store.close() }
 }
 
@@ -418,7 +418,7 @@ function previousHistoryEntry(snapshot: RobotStatusSnapshot): RobotStatusHistory
     updatedAt: snapshot.updatedAt,
     situationalSummary: cleanText(snapshot.situation.situationalSummary, 500),
     currentGoal: cleanText(snapshot.situation.currentGoal, 300),
-    currentIntent: cleanText(snapshot.situation.currentIntent, 300),
+    currentIntent: cleanText(snapshot.situation.currentIntent || snapshot.task?.decision.reason, 300),
     lastActionStatus: cleanText(snapshot.lastAction?.status, 80),
   }
 }
@@ -468,7 +468,7 @@ export function buildRobotStatusProjection(
     task,
     agency: { activeDesires: projectDesireAwareness(sources.activeDesires) },
     situation: parseRobotStatusSituation({ ...situation, currentGoal: currentGoal(task),
-      currentIntent: currentGoal(task) ? task!.decision.reason : situation.currentIntent }, true),
+      currentIntent: currentGoal(task) ? task!.decision.reason : '' }, true),
     history,
   }
   return snapshot

@@ -1,3 +1,4 @@
+import { reasoningProperty } from './llm/model-router.schema.js';
 /**
  * Browser-safe Node Schemas Export
  *
@@ -1460,8 +1461,9 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'response', type: 'string', description: 'Visible generation result or rejection' },
       { name: 'planSummary', type: 'object', description: 'Bounded frame and duration summary' },
     ],
-    properties: { role: 'orchestrator', executionTarget: '', maxTokens: 4096, temperature: 0.2 },
+    properties: { enableThinking: false, role: 'orchestrator', executionTarget: '', maxTokens: 4096, temperature: 0.2 },
     propertySchemas: {
+      enableThinking: reasoningProperty,
       role: { type: 'select', default: 'orchestrator', label: 'Model Role', options: [...MODEL_ROLE_OPTIONS] },
       executionTarget: { type: 'select', default: '', label: 'Execution Target',
         options: [{ value: '', label: 'Configured role backend' }, { value: 'remote', label: 'Remote' }] },
@@ -2540,8 +2542,9 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'orchestratorData', type: 'object', optional: true, description: 'Instructions from orchestrator' },
     ],
     outputs: [{ name: 'response', type: 'string' }],
-    properties: { role: 'persona', temperature: 0.7 },
+    properties: { enableThinking: false, role: 'persona', temperature: 0.7 },
     propertySchemas: {
+      enableThinking: reasoningProperty,
       role: { ...modelRouterDefinition.propertySchemas.role, default: 'persona' },
       temperature: { type: 'slider', default: 0.7, label: 'Temperature', min: 0, max: 1, step: 0.1 },
     },
@@ -2586,7 +2589,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'isFollowUp', type: 'boolean', description: 'Is follow-up to previous' },
       { name: 'emotionalTone', type: 'string', description: 'Detected emotional context' },
     ],
-    properties: { role: 'orchestrator',
+    properties: { enableThinking: false, role: 'orchestrator',
       outputContract: 'general',
       systemPrompt: '',
       userPromptTemplate: 'Analyze this message: "{{userMessage}}"',
@@ -2594,6 +2597,7 @@ export const nodeSchemas: NodeSchema[] = [
       maxTokens: 768,
     },
     propertySchemas: {
+      enableThinking: reasoningProperty,
       role: { ...modelRouterDefinition.propertySchemas.role, default: 'orchestrator' },
       outputContract: {
         type: 'select',
@@ -2621,12 +2625,13 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'LLM-owned intent routing with a configurable per-workflow output contract.',
   }),
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
     id: 'reflector_llm',
     name: 'Reflector LLM',
     category: 'chat',
     inputs: [{ name: 'prompt', type: 'string', description: 'Reflection prompt' }],
     outputs: [{ name: 'response', type: 'string' }],
-    properties: { role: 'persona', temperature: 0.8, systemPrompt: '' },
+    properties: { enableThinking: false, role: 'persona', temperature: 0.8, systemPrompt: '' },
     description: 'Generates reflections/summaries',
   }),
   defineSchema({
@@ -2670,8 +2675,9 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'thought', type: 'string', description: 'Reasoning about next step' },
       { name: 'action', type: 'object', description: 'Skill to execute' },
     ],
-    properties: { model: 'default.coder', temperature: 0.2 },
+    properties: { enableThinking: false, model: 'default.coder', temperature: 0.2 },
     propertySchemas: {
+      enableThinking: reasoningProperty,
       model: { type: 'string', default: 'default.coder', label: 'Model' },
       temperature: { type: 'slider', default: 0.2, label: 'Temperature', min: 0, max: 1, step: 0.1 },
     },
@@ -2734,8 +2740,9 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'response', type: 'string', optional: true, description: 'Completed response to render in persona voice' },
     ],
     outputs: [{ name: 'response', type: 'string', description: 'Final natural language response' }],
-    properties: { model: 'persona', style: 'default' },
+    properties: { enableThinking: false, model: 'persona', style: 'default' },
     propertySchemas: {
+      enableThinking: reasoningProperty,
       model: { type: 'string', default: 'persona', label: 'Model' },
       style: { type: 'select', default: 'default', label: 'Response Style', options: ['default', 'strict', 'summary'] },
     },
@@ -3220,8 +3227,9 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'suggestions', type: 'array', description: 'How to better align with persona' },
       { name: 'evaluation', type: 'string', description: 'Summary of persona alignment assessment' },
     ],
-    properties: { qualityThreshold: 0.7, strictHallucinationCheck: true },
+    properties: { enableThinking: false, qualityThreshold: 0.7, strictHallucinationCheck: true },
     propertySchemas: {
+      enableThinking: reasoningProperty,
       qualityThreshold: { type: 'slider', default: 0.7, label: 'Alignment Threshold', min: 0.5, max: 0.95, step: 0.05 },
       strictHallucinationCheck: { type: 'toggle', default: true, label: 'Check Hallucination (when unknownSignal=true)' },
     },
@@ -3472,6 +3480,8 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Atomically updates enrichment metadata through Core memory persistence',
   }),
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
+    properties: { enableThinking: false },
     id: 'llm_enricher',
     name: 'LLM Enricher',
     category: 'agent',
@@ -3641,6 +3651,7 @@ export const nodeSchemas: NodeSchema[] = [
 
   // THOUGHT NODES
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
     id: 'thought_generator',
     name: 'Thought Generator',
     category: 'thought',
@@ -3655,7 +3666,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'keywords', type: 'array' },
       { name: 'confidence', type: 'number' },
     ],
-    properties: { temperature: 0.75, extractKeywords: true },
+    properties: { enableThinking: false, temperature: 0.75, extractKeywords: true },
     description: 'Generates a single reasoning step',
   }),
   defineSchema({
@@ -3673,6 +3684,7 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Decides if thought chain should continue',
   }),
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
     id: 'thought_aggregator',
     name: 'Thought Aggregator',
     category: 'thought',
@@ -3684,7 +3696,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'summary', type: 'string' },
       { name: 'thoughtCount', type: 'number' },
     ],
-    properties: { summaryStyle: 'narrative', maxLength: 200 },
+    properties: { enableThinking: false, summaryStyle: 'narrative', maxLength: 200 },
     description: 'Combines all thoughts into a coherent chain',
   }),
   defineSchema({
@@ -3751,6 +3763,7 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Curates a bounded, encryption-aware weighted sample of episodic memories',
   }),
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
     id: 'dreamer_dream_generator',
     name: 'Generate Dream',
     category: 'dreamer',
@@ -3764,7 +3777,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'sourceIds', type: 'array' },
       { name: 'username', type: 'string' },
     ],
-    properties: { temperature: 1.0, role: 'persona' },
+    properties: { enableThinking: false, temperature: 1.0, role: 'persona' },
     description: 'Generates surreal dream narratives',
   }),
   defineSchema({
@@ -3795,6 +3808,7 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Persists one bounded dream sequence and prepares its inner-dialogue admissions',
   }),
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
     id: 'dreamer_continuation_generator',
     name: 'Generate Continuation Dreams',
     category: 'dreamer',
@@ -3804,7 +3818,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'count', type: 'number' },
       { name: 'username', type: 'string' },
     ],
-    properties: { temperature: 1.0, continuationChance: 0.75, maxContinuations: 4, delaySeconds: 60 },
+    properties: { enableThinking: false, temperature: 1.0, continuationChance: 0.75, maxContinuations: 4, delaySeconds: 60 },
     description: 'Generates continuation dreams',
   }),
   // CURIOSITY NODES
@@ -3825,6 +3839,7 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Samples memories with exponential decay',
   }),
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
     id: 'curiosity_question_generator',
     name: 'Curiosity Question Generator',
     category: 'curiosity',
@@ -3835,7 +3850,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'username', type: 'string' },
       { name: 'memoriesConsidered', type: 'number' },
     ],
-    properties: { temperature: 0.6 },
+    properties: { enableThinking: false, temperature: 0.6 },
     description: 'Generates natural curiosity questions',
   }),
   defineSchema({
@@ -3875,6 +3890,7 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Resolves Inner Curiosity execution identity, configuration, and retry state',
   }),
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
     id: 'inner_curiosity_question_generator',
     name: 'Generate Inner Curiosity Question',
     category: 'curiosity',
@@ -3891,6 +3907,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'reason', type: 'string', optional: true },
     ],
     properties: {
+      enableThinking: false,
       temperature: 0.8,
       maxTokens: 192,
       timeout: 300000,
@@ -3919,6 +3936,7 @@ What question should I ask myself to deepen my understanding?`,
     description: 'Searches the reconciled profile-memory index for the private question',
   }),
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
     id: 'inner_curiosity_answer_generator',
     name: 'Answer Inner Curiosity Question',
     category: 'curiosity',
@@ -3935,6 +3953,7 @@ What question should I ask myself to deepen my understanding?`,
       { name: 'searchResultCount', type: 'number' },
     ],
     properties: {
+      enableThinking: false,
       temperature: 0.7,
       maxTokens: 768,
       timeout: 300000,
@@ -4053,6 +4072,7 @@ What grounded insights or patterns emerge?`,
     description: 'Loads persona identity summary',
   }),
   defineSchema({
+    propertySchemas: { enableThinking: reasoningProperty },
     id: 'curator_llm',
     name: 'Curate Memories (LLM)',
     category: 'curator',
@@ -4061,7 +4081,7 @@ What grounded insights or patterns emerge?`,
       { name: 'personaSummary', type: 'string', optional: true },
     ],
     outputs: [{ name: 'curatedMemories', type: 'array', description: 'LLM-curated conversational exchanges' }],
-    properties: { temperature: 0.3, timeout: 300000 },
+    properties: { enableThinking: false, temperature: 0.3, timeout: 300000 },
     description: 'Uses LLM to transform memories into training data',
   }),
   defineSchema({
@@ -4146,8 +4166,9 @@ What grounded insights or patterns emerge?`,
       { name: 'rejectedCount', type: 'number', description: 'Number of memories rejected as irrelevant' },
       { name: 'fullResult', type: 'object', description: 'Complete result object for Context Builder' },
     ],
-    properties: { relevanceThreshold: 0.6, maxResults: 5, strictMode: true },
+    properties: { enableThinking: false, relevanceThreshold: 0.6, maxResults: 5, strictMode: true },
     propertySchemas: {
+      enableThinking: reasoningProperty,
       relevanceThreshold: { type: 'slider', default: 0.6, label: 'Relevance Threshold', min: 0.3, max: 0.9, step: 0.05 },
       maxResults: { type: 'slider', default: 5, label: 'Max Results', min: 1, max: 10, step: 1 },
       strictMode: { type: 'toggle', default: true, label: 'Strict Mode' },

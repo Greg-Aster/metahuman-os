@@ -1,3 +1,4 @@
+import { reasoningProperty } from './model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Persona LLM Node
@@ -29,6 +30,7 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
     { name: 'response', type: 'llm_response', description: 'Generated response' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.7,
     maxTokens: 2048,
     repeatPenalty: 1.3,
@@ -37,6 +39,7 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
     systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'slider',
       default: 0.7,
@@ -158,6 +161,7 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
         userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
+          enableThinking: properties?.enableThinking === true,
           maxTokens,
           repeatPenalty,
           temperature,

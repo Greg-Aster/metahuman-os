@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 /**
  * Curiosity Question Generator Node
  * Generates a natural, conversational curiosity question via LLM
@@ -60,7 +61,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       role: 'persona',
       messages,
       userId: username,
-      options: { temperature }
+      options: { enableThinking: properties?.enableThinking === true, temperature }
     });
 
     const question = response.content.trim();
@@ -101,11 +102,13 @@ export const CuriosityQuestionGeneratorNode: NodeDefinition = defineNode({
     { name: 'rawQuestion', type: 'string' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.6,
     systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'number',
       default: 0.6,

@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 import { callLLM } from '../../model-router.js';
 import {
@@ -311,12 +312,14 @@ export const movementGeneratorNode = defineNode({
     { name: 'planSummary', type: 'object', description: 'Bounded frame and duration summary' },
   ],
   properties: {
+    enableThinking: false,
     role: 'orchestrator',
     executionTarget: '',
     maxTokens: 4096,
     temperature: 0.2,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     executionTarget: { type: 'select', default: '', label: 'Execution Target',
       options: [{ value: '', label: 'Configured role backend' }, { value: 'remote', label: 'Remote' }] },
     role: {
@@ -399,6 +402,7 @@ export const movementGeneratorNode = defineNode({
         userId: context.userId || context.username,
         cognitiveMode: 'environment',
         options: {
+          enableThinking: properties?.enableThinking === true,
           maxTokens: properties?.maxTokens || 4096,
           temperature: properties?.temperature ?? 0.2,
           repeatPenalty: 1,

@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { callLLM } from '../../model-router.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext, type NodeExecutor } from '../types.js'
 
@@ -62,7 +63,7 @@ function throwIfAborted(context: NodeExecutionContext): void {
 export async function executeGoalReviewInsights(
   inputs: Record<string, unknown>,
   context: NodeExecutionContext,
-  _properties: Record<string, unknown> = {},
+  properties: Record<string, unknown> = {},
   dependencies: GoalReviewInsightsDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<Record<string, unknown>> {
   throwIfAborted(context)
@@ -87,7 +88,7 @@ export async function executeGoalReviewInsights(
       role: 'user',
       content: `Analyze this weekly project progress. Provide specific, actionable, evidence-grounded insights. Return JSON only with bounded arrays named insights, recommendations, focusAreas, celebrateWins, and concernAreas.\n\n${JSON.stringify({ projects, overall: inputs.overallProgress })}`,
     }],
-    options: { temperature: 0.5, responseFormat: { type: 'json_object' } },
+    options: { enableThinking: properties?.enableThinking === true, temperature: 0.5, responseFormat: { type: 'json_object' } },
   })
   throwIfAborted(context)
   const result = parseGoalReviewInsights(response.content)
@@ -109,6 +110,7 @@ export const GoalReviewInputNode: NodeDefinition = defineNode({
 })
 
 export const GoalReviewInsightsNode: NodeDefinition = defineNode({
+  propertySchemas: { enableThinking: reasoningProperty },
   id: 'goal_review_insights',
   name: 'Generate Goal Review Insights',
   category: 'agent',
@@ -124,7 +126,7 @@ export const GoalReviewInsightsNode: NodeDefinition = defineNode({
     { name: 'celebrateWins', type: 'array' },
     { name: 'concernAreas', type: 'array' },
   ],
-  properties: {},
+  properties: { enableThinking: false },
   description: 'Generates typed weekly goal insights from graph-supplied progress evidence',
   execute: executeGoalReviewInsights,
 })

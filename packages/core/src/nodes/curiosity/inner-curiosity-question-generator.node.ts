@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { callLLM, type RouterMessage } from '../../model-router.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 import { defineNode, type NodeDefinition, type NodeExecutionContext } from '../types.js';
@@ -104,7 +105,7 @@ export async function executeInnerCuriosityQuestionGenerator(
     messages,
     userId: typeof context.userId === 'string' ? context.userId : context.username,
     cognitiveMode: context.cognitiveMode,
-    options: { temperature, maxTokens },
+    options: { enableThinking: properties?.enableThinking === true, temperature, maxTokens },
     onProgress: context.emitProgress,
   });
   throwIfAborted(context);
@@ -139,6 +140,7 @@ export const InnerCuriosityQuestionGeneratorNode: NodeDefinition = defineNode({
     { name: 'reason', type: 'string', optional: true },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.8,
     maxTokens: 192,
     timeout: 300_000,
@@ -146,6 +148,7 @@ export const InnerCuriosityQuestionGeneratorNode: NodeDefinition = defineNode({
     userPromptTemplate: DEFAULT_USER_PROMPT,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: { type: 'slider', default: 0.8, min: 0, max: 2, step: 0.05, label: 'Temperature' },
     maxTokens: { type: 'number', default: 192, min: 32, max: 2_048, label: 'Maximum Tokens' },
     timeout: { type: 'number', default: 300_000, min: 1_000, label: 'Timeout (ms)', advanced: true },

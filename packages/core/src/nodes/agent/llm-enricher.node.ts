@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * LLM Enricher Node
@@ -163,7 +164,7 @@ export async function enrichOrganizerMemory(
     ],
     userId: username,
     cognitiveMode: context.cognitiveMode || 'dual',
-    options: { maxTokens, repeatPenalty, temperature, format: 'json' },
+    options: { enableThinking: properties?.enableThinking === true, maxTokens, repeatPenalty, temperature, format: 'json' },
     keepAlive: 0,
   });
   throwIfAborted(context.abortSignal);
@@ -218,6 +219,7 @@ export const LLMEnricherNode: NodeDefinition = defineNode({
     { name: 'analysis', type: 'object', description: 'Validated tags and entities', optional: true },
   ],
   properties: {
+    enableThinking: false,
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     promptTemplate: DEFAULT_PROMPT_TEMPLATE,
     role: 'curator',
@@ -226,6 +228,7 @@ export const LLMEnricherNode: NodeDefinition = defineNode({
     repeatPenalty: 1.15,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     systemPrompt: {
       type: 'text_multiline',
       default: DEFAULT_SYSTEM_PROMPT,

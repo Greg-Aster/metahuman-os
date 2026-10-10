@@ -765,7 +765,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           if (message.type === 'environment.telemetry' && telemetry?.kind === 'vision.recognition') {
             if (message.sessionId !== latestObservation?.sessionId || localAbort.signal.aborted) return;
             const perception = normalizeEnvironmentPerception(telemetry.perception);
-            pendingPerception = { sessionId: message.sessionId, perception };
+            pendingPerception = { sessionId: message.sessionId, perception, recognitionProcessing: telemetry.processing, recognitionReportedAt: telemetry.timestamp };
             const operation = flushPerception();
             if (operation !== observedPerceptionFlush) {
               observedPerceptionFlush = operation;

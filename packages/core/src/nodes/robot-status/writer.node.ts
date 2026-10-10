@@ -20,12 +20,15 @@ function modelContent(value: unknown): string {
 
 function systemReport(status: RobotStatusSnapshot): string {
   const body = status.body
+  const identity = body?.state?.body as Record<string, unknown> | undefined
+  const robotId = typeof identity?.robotId === 'string' ? identity.robotId : ''
+  const gateway = body?.state?.gateway as { robots?: Record<string, { model?: string }> } | undefined
+  const model = robotId ? gateway?.robots?.[robotId]?.model : undefined
   const motion = body?.motion.available === true
     ? 'available'
     : body?.motion.available === false
       ? 'unavailable'
       : 'unknown'
-  const motionActivity = body?.motion.activity ? ` (${body.motion.activity})` : ''
   const action = status.lastAction
   const actionDescription = action
     ? action.description || action.command || action.type || 'unnamed action'
@@ -40,10 +43,15 @@ function systemReport(status: RobotStatusSnapshot): string {
   return [
     'Robot Status saved.',
     `Updated: ${status.updatedAt}`,
-    `Robot: ${body?.sessionId || 'none reported'} (${body?.connectionStatus || 'connection unknown'})`,
+    `Robot: ${robotId || 'identity not reported'}${model ? ` (${model})` : ''}`,
+    `Bridge session: ${body?.sessionId || 'none reported'} (${body?.connectionStatus || 'connection unknown'})`,
+    `Observation time: ${body?.observationAt || 'not reported'}`,
+    `Telemetry time: ${body?.telemetryAt || 'not reported'}`,
     `Battery: ${body?.battery.voltage === null || body?.battery.voltage === undefined ? 'unknown' : `${body.battery.voltage} V`}`,
-    `Motion: ${motion}${motionActivity}`,
+    `Motion: ${motion}`,
+    `Body state: ${body?.motion.activity || 'not reported'}`,
     `Last action: ${actionDescription}${actionStatus}`,
+    `Last body action: ${status.lastBodyAction?.description || status.lastBodyAction?.command || status.lastBodyAction?.type || 'none recorded'}${status.lastBodyAction?.status ? ` — ${status.lastBodyAction.status}` : ''}`,
     `Environment: ${status.situation.environmentDescription}`,
     `Goal: ${status.situation.currentGoal || 'none reported'}`,
     `Intent: ${status.situation.currentIntent || 'none reported'}`,

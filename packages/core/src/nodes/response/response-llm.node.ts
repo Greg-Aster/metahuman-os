@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 /**
  * Response LLM Node (Big Brother Integrated)
  *
@@ -325,6 +326,7 @@ async function callLocalLLM(
       { role: 'user', content: userPrompt },
     ],
     options: {
+      enableThinking: properties?.enableThinking === true,
       temperature: properties?.temperature ?? 0.7,
       maxTokens: properties?.maxTokens ?? 1024,
       json: true,
@@ -354,6 +356,7 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
     { name: 'usedBigBrother', type: 'boolean', description: 'Whether Big Brother was used' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.7,
     maxTokens: 1024,
     useBigBrother: true,
@@ -364,6 +367,7 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
     localUserPromptTemplate: DEFAULT_LOCAL_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'slider',
       default: 0.7,

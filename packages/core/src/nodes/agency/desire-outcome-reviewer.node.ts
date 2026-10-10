@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Desire Outcome Reviewer Node
@@ -254,6 +255,7 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `## Desire to Review
 }`;
 
 interface DesireOutcomeReviewOptions {
+  enableThinking?: boolean;
   systemPrompt?: string;
   userPromptTemplate?: string;
   role?: ModelRole;
@@ -326,7 +328,7 @@ export async function runDesireOutcomeReview(
     messages,
     userId,
     cognitiveMode: options.cognitiveMode,
-    options: { temperature: options.temperature ?? 0.3, responseFormat: 'json' },
+    options: { enableThinking: options?.enableThinking === true, temperature: options.temperature ?? 0.3, responseFormat: 'json' },
   });
   if (!response.content) throw new Error('Outcome review model returned an empty response');
   return parseDesireOutcomeReviewResponse(response.content);
@@ -356,6 +358,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   console.log(`[desire-outcome-reviewer] 🔍 Reviewing outcome for: ${desire.title}`);
 
   const reviewResult = await runDesireOutcomeReview(desire, execution, userId, {
+      enableThinking: properties?.enableThinking === true,
       systemPrompt: properties?.systemPrompt ?? SYSTEM_PROMPT,
       userPromptTemplate: properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE,
       role: normalizeModelRole(properties?.role, 'persona'),
@@ -463,12 +466,14 @@ export const DesireOutcomeReviewerNode: NodeDefinition = defineNode({
     { name: 'completionCriteriaMet', type: 'boolean', optional: true, description: 'True if ultimate completion criteria is met' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.3,
     role: 'persona',
     systemPrompt: SYSTEM_PROMPT,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'number',
       default: 0.3,

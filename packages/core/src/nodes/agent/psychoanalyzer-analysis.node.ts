@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import {
   callLLM,
   type RouterMessage,
@@ -150,6 +151,7 @@ export async function executePsychoanalyzerAnalysis(
     userId: typeof context.userId === 'string' ? context.userId : context.username,
     cognitiveMode: context.cognitiveMode,
     options: {
+      enableThinking: properties?.enableThinking === true,
       temperature: config.analysis.temperature,
       maxTokens: config.analysis.maxTokens,
     },
@@ -177,8 +179,9 @@ export const PsychoanalyzerAnalysisNode: NodeDefinition = defineNode({
   outputs: [
     { name: 'proposal', type: 'object', description: 'Validated evidence-backed persona proposal' },
   ],
-  properties: { instruction: DEFAULT_INSTRUCTION },
+  properties: { enableThinking: false, instruction: DEFAULT_INSTRUCTION },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     instruction: {
       type: 'text_multiline',
       default: DEFAULT_INSTRUCTION,

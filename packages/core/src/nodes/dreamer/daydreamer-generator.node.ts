@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Daydreamer Generator Node
@@ -87,6 +88,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       messages,
       userId: username,
       options: {
+        enableThinking: properties?.enableThinking === true,
         temperature,
         maxTokens,
       },
@@ -127,6 +129,7 @@ export const DaydreamerGeneratorNode: NodeDefinition = defineNode({
     { name: 'sourceIds', type: 'array' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.9,
     role: 'persona',
     maxTokens: 200,
@@ -134,6 +137,7 @@ export const DaydreamerGeneratorNode: NodeDefinition = defineNode({
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'number',
       default: 0.9,

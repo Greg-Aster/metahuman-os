@@ -1,3 +1,4 @@
+import { reasoningProperty } from './model-router.schema.js';
 import { ENVIRONMENT_CONTEXT_ENTRIES, selectedEnvironmentRoutes, type EnvironmentRequestRouting } from '../environment/context-routing.js';
 /**
  * ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -201,6 +202,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   presentation: { defaultExpanded: true },
 
   properties: {
+    enableThinking: false,
     role: 'orchestrator',
     outputContract: 'general',
     systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
@@ -209,6 +211,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     maxTokens: 768,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     role: { ...modelRouterDefinition.propertySchemas.role, default: 'orchestrator' },
     outputContract: {
       type: 'select',
@@ -359,6 +362,7 @@ Adjust your routing based on this feedback. If memory search already failed, con
         messages,
         cognitiveMode: context.cognitiveMode,
         options: {
+          enableThinking: properties?.enableThinking === true,
           maxTokens: properties?.maxTokens || 768,
           ...(requestOnly ? {} : { repeatPenalty: 1.15 }),
           temperature: properties?.temperature ?? 0.2,

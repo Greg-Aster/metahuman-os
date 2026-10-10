@@ -213,7 +213,9 @@ test('saved Environment workflow executes a selected expression through the time
     const delivered: EnvironmentCommandWork[] = []
     try {
       replies.push({ ...route, taskContext: ['environment'] }, { taskDecision: { ...decision, objective: 'Show the bow face.',
-        completionCriteria: 'The bow expression is applied.' }, program: { steps: [{ kind: 'action', action: { type: 'faceExpression', expression: 'bow' } }] } })
+        completionCriteria: 'The bow expression is applied.' }, program: { steps: [{ kind: 'action', action: { type: 'faceExpression', expression: 'bow' } }] } },
+        { response: '', outcome: 'complete', taskId: 'none', instruction: '', requiredCompletionBasis: 'action_result',
+          observationSummary: 'The selected expression completed.', completionEvidence: 'The bow display receipt completed.', reason: 'The requested display completed.' })
       let result = await f.run()
       for (let pass = 0; result.status !== 'completed' && pass < 8; pass++) {
         const pending = [...f.received.splice(0), ...core.dispatchEnvironmentActions(sessionId, 10)]
@@ -221,8 +223,8 @@ test('saved Environment workflow executes a selected expression through the time
         result = await f.run(result.executionId)
       }
       assert.equal(result.status, 'completed')
-      assert.equal(calls.length, before + 2, 'Only the existing Intent and Task models select the program')
-      assert.equal(delivered.length, 3, 'A skipped response branch must not replace the selected expression with thinking')
+      assert.equal(calls.length, before + 3, 'Goal Review evaluates the completed selected program')
+      assert.equal(delivered.length, 5, 'The request and Goal Review each release their thinking feedback')
       assert.ok(delivered.every(action => action.type === 'faceExpression' && !action.command))
       const selected = delivered.find(action => action.expression === 'bow')!
       assert.ok(selected)
@@ -305,6 +307,42 @@ test('conversation completes without any physical work', async () => {
     } finally { f.unsubscribe() }
   })
 })
+
+for (const outcome of ['complete', 'request_user'] as const) {
+  test(`program receipt delegates the original objective to Goal Review (${outcome})`, async () => {
+    await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+      const f = fixture(`receipt-review-${outcome}`)
+      const originalRequest = outcome === 'complete' ? 'Please wave.' : 'Please help me find my wallet on the floor.'
+      const before = calls.length
+      try {
+        replies.push(route, { taskDecision: { ...decision, objective: originalRequest,
+          completionCriteria: 'The selected program receives correlated completion results.', requiredCompletionBasis: 'action_result' },
+          program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] } })
+        const started = await f.run(undefined, { userMessage: originalRequest })
+        assert.equal(started.status, 'waiting')
+        const [action] = f.received.splice(0)
+        assert.equal(action.command, 'wave')
+        f.complete(action)
+        replies.push({ response: '', outcome, taskId: 'none', instruction: '', requiredCompletionBasis: 'action_result',
+          observationSummary: 'The selected wave returned a completed receipt.',
+          completionEvidence: outcome === 'complete' ? 'The requested wave completed.' : '',
+          reason: outcome === 'complete' ? 'The requested gesture completed.' : 'A wave receipt does not establish that the wallet was found.' })
+        const result = await f.run(started.executionId)
+        assert.equal(result.status, outcome === 'complete' ? 'completed' : 'waiting')
+        assert.equal(calls.length, before + 3, 'Intent, task decision, then the existing Goal Review')
+        assert.ok(JSON.stringify(calls.at(-1).messages).includes(originalRequest))
+        assert.ok(JSON.stringify(calls.at(-1).messages).includes(action.id))
+        const store = openExecutionStore(username)
+        try {
+          assert.equal(store.task(started.executionId!)?.decision.objectiveComplete, outcome === 'complete')
+        } finally { store.close() }
+        assert.equal(f.received.length, 0)
+        await f.run(started.executionId)
+        assert.equal(calls.length, before + 3, 'Repeated resume does not repeat a settled review')
+      } finally { f.unsubscribe() }
+    })
+  })
+}
 
 test('turn then dance executes locally with no model decision between movements', async () => {
   await withUserContext({ username, userId: username, role: 'owner' }, async () => {

@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Desire Question Generator Node
@@ -87,7 +88,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const response = await callLLMPrompt(
     normalizeModelRole(properties?.role, 'curator'),
     prompt,
-    {
+    { enableThinking: properties?.enableThinking === true,
       temperature: properties?.temperature ?? 0.5,
       maxTokens: properties?.maxTokens ?? 500,
     },
@@ -144,12 +145,14 @@ export const definition: NodeDefinition = defineNode({
     { name: 'reason', type: 'string', description: 'Why clarification is or is not needed' },
   ],
   properties: {
+    enableThinking: false,
     promptTemplate: DEFAULT_QUESTION_PROMPT_TEMPLATE,
     role: 'curator',
     temperature: 0.5,
     maxTokens: 500,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     promptTemplate: {
       type: 'text_multiline',
       default: DEFAULT_QUESTION_PROMPT_TEMPLATE,

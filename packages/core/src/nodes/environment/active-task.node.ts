@@ -361,10 +361,9 @@ export const environmentActiveTaskStepNode = defineNode({
     const step = program.steps[state.stepIndex]
     if (!step) {
       state.done = true
-      // Captured evidence returns to the model-owned objective review. A finished
-      // sensing step cannot certify that its contents reached the user.
-      state.objectiveComplete = !state.capturedFrameIds?.length && (decision.requiredCompletionBasis === 'action_result'
-        || decision.requiredCompletionBasis === 'visual_observation' && state.visualCompletionSatisfied === true)
+      // Program receipts describe executed steps. The existing objective review
+      // evaluates whether those results fulfil the person's overall request.
+      state.objectiveComplete = false
       record(state.objectiveComplete); return { state }
     }
     if (step.kind !== 'behavior') {

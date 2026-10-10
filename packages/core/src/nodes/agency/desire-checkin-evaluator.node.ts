@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { callLLMText } from '../../model-router.js'
 import type { Desire } from '../../agency/types.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext } from '../types.js'
@@ -83,7 +84,7 @@ function throwIfAborted(context: NodeExecutionContext): void {
 export async function executeDesireCheckinEvaluator(
   inputs: Record<string, unknown>,
   context: NodeExecutionContext,
-  _properties: Record<string, unknown> = {},
+  properties: Record<string, unknown> = {},
   dependencies: DesireCheckinEvaluatorDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<Record<string, unknown>> {
   throwIfAborted(context)
@@ -121,7 +122,7 @@ Use only the supplied goal state and memory references. Do not claim work was co
         }),
       },
     ],
-    options: { temperature: 0.3, maxTokens: 800 },
+    options: { enableThinking: properties?.enableThinking === true, temperature: 0.3, maxTokens: 800 },
   })
   throwIfAborted(context)
   const evaluation = parseDesireCheckinEvaluation(response)
@@ -129,6 +130,7 @@ Use only the supplied goal state and memory references. Do not claim work was co
 }
 
 export const DesireCheckinEvaluatorNode: NodeDefinition = defineNode({
+  propertySchemas: { enableThinking: reasoningProperty },
   id: 'desire_checkin_evaluator',
   name: 'Evaluate Desire Check-in',
   category: 'agency',
@@ -145,7 +147,7 @@ export const DesireCheckinEvaluatorNode: NodeDefinition = defineNode({
     { name: 'recommendation', type: 'string' },
     { name: 'recommendationReason', type: 'string', optional: true },
   ],
-  properties: {},
+  properties: { enableThinking: false },
   description: 'Evaluates progress for one long-running desire using graph-supplied memory evidence',
   execute: executeDesireCheckinEvaluator,
 })

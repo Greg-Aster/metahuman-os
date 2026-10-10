@@ -58,6 +58,7 @@ export interface EnvironmentBridgeDiagnosticsSession {
   lastTranscriptionStatus?: string;
   lastTranscript?: string;
   robotStatus?: Record<string, unknown>;
+  recognition?: { reportedAt: string; observedAt: string; robotId: string; epoch: number; gatewayInstance: string; processing: Record<string, number | null> };
   freestyleMovement?: EnvironmentBridgeFreestyleMovementDiagnostics;
   movementPlan?: EnvironmentBridgeMovementPlanDiagnostics;
   latestImage?: EnvironmentBridgeDiagnosticImage;
@@ -105,6 +106,7 @@ export interface EnvironmentBridgeTelemetryUpdate {
   transcriptionStatus?: string;
   transcript?: string;
   robotStatus?: Record<string, unknown>;
+  recognition?: { reportedAt: string; observedAt: string; robotId: string; epoch: number; gatewayInstance: string; processing: Record<string, number | null> };
   freestyleMovement?: EnvironmentBridgeFreestyleMovementDiagnostics;
   movementPlan?: EnvironmentBridgeMovementPlanDiagnostics;
   events?: EnvironmentBridgeDiagnosticEvent[];
@@ -226,6 +228,7 @@ export function recordEnvironmentBridgeTelemetry(
     lastTranscript: typeof update.transcript === 'string'
       ? update.transcript.slice(0, 4096)
       : current.lastTranscript,
+    recognition: update.recognition ?? current.recognition,
     robotStatus: update.robotStatus && typeof update.robotStatus === 'object'
       ? { ...update.robotStatus }
       : current.robotStatus,

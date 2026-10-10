@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Desire Alignment Reviewer Node
@@ -96,6 +97,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       messages,
       userId,
       options: {
+        enableThinking: properties?.enableThinking === true,
         temperature,
         responseFormat: 'json',
       },
@@ -150,12 +152,14 @@ export const DesireAlignmentReviewerNode: NodeDefinition = defineNode({
     { name: 'review', type: 'object', description: 'Typed aggregate alignment review' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.2,
     role: 'persona',
     systemPrompt: SYSTEM_PROMPT,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'slider',
       default: 0.2,

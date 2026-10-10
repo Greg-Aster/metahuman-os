@@ -212,12 +212,12 @@ test('Robot Status projects execution lifecycle without rewriting or reviving it
       assert.equal(read.task.executionStatus, state)
       assert.equal(read.task.objective, task.objective, 'Historical objectives remain inspectable')
       assert.equal(read.context.situation.currentGoal, ['running', 'waiting'].includes(state) ? task.objective : '')
-      if (['running', 'waiting'].includes(state)) {
-        assert.equal(read.context.situation.currentIntent, task.decision.reason, 'Active intent comes from the same execution as its objective')
-      }
+      assert.equal(read.context.situation.currentIntent, ['running', 'waiting'].includes(state) ? task.decision.reason : '',
+        'Terminal executions retain their decision as history, not current intent')
       assert.deepEqual(store.task(execution.executionId), task, 'A status read cannot rewrite the execution decision')
       const saved = saveRobotStatus(username, situation, sources)
       assert.equal(saved.situation.currentGoal, read.context.situation.currentGoal)
+      assert.equal(saved.situation.currentIntent, read.context.situation.currentIntent)
       assert.equal(saved.task?.executionStatus, state)
     } finally { store.close() }
   }
@@ -396,15 +396,21 @@ test('Robot Status writer and reusable input node share the same canonical snaps
       reason: 'Inspect the work area.', requiredCompletionBasis: 'visual_observation' } } },
     { type: 'robot_status_writer', inputs: {
       response: JSON.stringify({ ...situation, currentGoal: 'A different objective suggested by status prose.' }),
-      sourceFacts: sources,
+      sourceFacts: { ...sources, body: { ...sources.body, state: {
+        body: { robotId: 'selected-body' },
+        gateway: { robots: { 'selected-body': { model: 'v2-12servo' } } },
+      } } },
     } },
   ])
   assert.equal(written.persisted, true)
   assert.equal(written.event.meta.type, 'robot_status')
   assert.match(written.event.content, /^Robot Status saved\.\n/)
-  assert.match(written.event.content, /Robot: robot-1 \(connected\)/)
+  assert.match(written.event.content, /Robot: selected-body \(v2-12servo\)/)
+  assert.match(written.event.content, /Bridge session: robot-1 \(connected\)/)
+  assert.match(written.event.content, /Observation time: 2026-08-27T18:00:00.000Z/)
+  assert.match(written.event.content, /Telemetry time: 2026-08-27T18:00:01.000Z/)
   assert.match(written.event.content, /Battery: 7\.4 V/)
-  assert.match(written.event.content, /Motion: available \(idle\)/)
+  assert.match(written.event.content, /Motion: available\nBody state: idle/)
   assert.match(written.event.content, /Last action: Wave\. — completed/)
   assert.match(written.event.content, /Environment: A dim work area is the latest supported environment context\./)
   assert.match(written.event.content, /Goal: Continue inspecting the work area\./)
@@ -420,6 +426,7 @@ test('Robot Status writer and reusable input node share the same canonical snaps
   assert.equal(read.context.situation.currentGoal, '', 'The fixture graph ended; its saved objective is historical')
   assert.equal(read.task.executionStatus, 'completed')
   assert.equal(read.context.body.battery.voltage, 7.4)
+  assert.equal(read.context.body.identity.robotId, 'selected-body')
   assert.equal(read.context.body.motion.available, true)
   assert.equal(read.context.lastAction.command, 'wave')
   assert.equal(read.context.agency.activeDesires[0].title, 'Find the cat')
@@ -865,8 +872,9 @@ test('Robot task programs use the sole active executor and retain task-level cog
     assert.equal(active.length, 1)
     assert.equal(graph.nodes.some((node: any) => node.data?.nodeType === 'environment_send_action'), false)
     assert.equal(graph.nodes.some((node: any) => node.data?.properties?.graph === 'robot-action-result'), false)
-    const parser = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_action_parser')
-    assert.ok(graph.edges.some((edge: any) => edge.source === parser.id && edge.sourceHandle === 'program'
+    const planner = graph.nodes.find((node: any) => node.data?.nodeType === 'environment_task_planner')
+    assert.ok(planner, 'The task planner owns parsing and optional planning delegation')
+    assert.ok(graph.edges.some((edge: any) => edge.source === planner.id && edge.sourceHandle === 'program'
       && edge.target === active[0].id && edge.targetHandle === 'program'))
   }
   const activeGraph = readGraph('robot-active-task')
@@ -943,4 +951,22 @@ test('speech and camera projections preserve the last body action as historical 
   assert.equal(envelope.robotStatus.lastBodyAction.robotId, 'selected-body')
   assert.equal(envelope.robotStatus.lastBodyAction.completedAt, '2026-10-07T21:00:00Z')
   assert.equal(envelope.robotStatus.body.motion.posture, undefined, 'A completed command is not fabricated present posture')
+})
+
+test('reading a legacy snapshot removes stale current intent without deleting its historical evidence', () => {
+  const username = 'robot-status-legacy-intent'
+  saveRobotStatus(username, situation, sources)
+  const filename = robotStatusPath(username)
+  const legacy = JSON.parse(fs.readFileSync(filename, 'utf8'))
+  legacy.situation.currentIntent = 'An earlier action was rejected.'
+  fs.writeFileSync(filename, JSON.stringify(legacy))
+  const before = fs.readFileSync(filename, 'utf8')
+  const current = loadRobotStatus(username)!
+  assert.equal(current.situation.currentIntent, '')
+  assert.equal(current.situation.currentGoal, '')
+  assert.equal(fs.readFileSync(filename, 'utf8'), before, 'Reads do not rewrite recorded evidence')
+  const next = saveRobotStatus(username, situation, sources)
+  assert.equal(next.situation.currentIntent, '')
+  assert.ok(next.history.some(entry => entry.updatedAt === legacy.updatedAt
+    && entry.currentIntent === legacy.situation.currentIntent))
 })

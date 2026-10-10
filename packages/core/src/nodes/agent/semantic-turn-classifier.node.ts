@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { callLLMText } from '../../model-router.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext, type NodeExecutor } from '../types.js'
 
@@ -67,7 +68,7 @@ function throwIfAborted(context: NodeExecutionContext): void {
 export async function executeSemanticTurnClassifier(
   inputs: Record<string, unknown>,
   context: NodeExecutionContext,
-  _properties: Record<string, unknown> = {},
+  properties: Record<string, unknown> = {},
   dependencies: SemanticTurnClassifierDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<Record<string, unknown>> {
   throwIfAborted(context)
@@ -92,7 +93,7 @@ export async function executeSemanticTurnClassifier(
         content: `${previousContext ? `Previous context: ${previousContext}\n\n` : ''}User: ${transcript}`,
       },
     ],
-    options: { temperature: 0.1, max_tokens: 100 },
+    options: { enableThinking: properties?.enableThinking === true, temperature: 0.1, max_tokens: 100 },
   })
   throwIfAborted(context)
   const decision = parseSemanticTurnDecision(response)
@@ -114,6 +115,7 @@ export const SemanticTurnInputNode: NodeDefinition = defineNode({
 })
 
 export const SemanticTurnClassifierNode: NodeDefinition = defineNode({
+  propertySchemas: { enableThinking: reasoningProperty },
   id: 'semantic_turn_classifier',
   name: 'Classify Semantic Turn',
   category: 'agent',
@@ -127,7 +129,7 @@ export const SemanticTurnClassifierNode: NodeDefinition = defineNode({
     { name: 'confidence', type: 'number' },
     { name: 'reason', type: 'string' },
   ],
-  properties: {},
+  properties: { enableThinking: false },
   description: 'Classifies whether a spoken utterance is complete through the graph runtime',
   execute: executeSemanticTurnClassifier,
 })

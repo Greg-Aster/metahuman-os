@@ -1,3 +1,4 @@
+import { reasoningProperty } from './model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Reflector LLM Node
@@ -21,6 +22,7 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
     { name: 'response', type: 'llm_response', description: 'Generated reflection' },
   ],
   properties: {
+    enableThinking: false,
     systemPrompt: '',
     role: 'persona',
     temperature: 0.35,
@@ -28,6 +30,7 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
     repeatPenalty: 1.15,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     systemPrompt: {
       type: 'text_multiline',
       default: '',
@@ -98,6 +101,7 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
         userId: username,
         cognitiveMode: context.cognitiveMode,
         options: {
+          enableThinking: properties?.enableThinking === true,
           maxTokens,
           repeatPenalty,
           temperature,

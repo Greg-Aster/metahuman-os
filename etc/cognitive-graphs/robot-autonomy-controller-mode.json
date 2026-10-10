@@ -247,10 +247,11 @@
         "nodeType": "model_router",
         "properties": {
           "role": "persona",
-          "maxTokens": 768,
+          "maxTokens": 8192,
           "temperature": 0.7,
           "repeatPenalty": 1.1,
-          "format": "json"
+          "format": "json",
+          "enableThinking": true
         }
       }
     },

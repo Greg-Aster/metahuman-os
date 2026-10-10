@@ -1,3 +1,4 @@
+import { readRobotStatusLive } from '../../robot-status-live.js';
 import { serializeContext } from '../../context-serialization.js';
 import { selectedEnvironmentRoutes } from './context-routing.js';
 import { resolveMemoryWork } from '../memory/memory-router.node.js';
@@ -169,7 +170,10 @@ export const environmentContextBuilderNode = defineNode({
     const personaText = (Array.isArray(inputs.routingAnalysis?.taskContext) ? routingAnalysis.needsPersona : true) && typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 2_000)
       : '';
-    const robotStatus = isRecord(inputs.robotStatus) ? inputs.robotStatus : null;
+    const liveStatus = (routingAnalysis.needsRobotStatus === true || environmentSelected) && typeof context.username === 'string'
+      ? await readRobotStatusLive(context.username, suppliedObservation?.sessionId ?? inputs.robotStatus?.body?.sessionId) : undefined;
+    const robotStatus = routingAnalysis.needsRobotStatus === true
+      ? { ...(isRecord(inputs.robotStatus) ? inputs.robotStatus : {}), ...(liveStatus ? { live: liveStatus } : {}) } : null;
     const userInstruction = typeof inputs.userInstruction === 'string'
       ? inputs.userInstruction.trim()
       : '';
@@ -242,7 +246,8 @@ export const environmentContextBuilderNode = defineNode({
       currentTime: typeof context.currentTime === 'string' ? context.currentTime : undefined,
       memories: memoryItems,
       personaText,
-      robotStatus: routingAnalysis.needsRobotStatus === true ? robotStatus : null,
+      robotStatus,
+      liveStatus: robotStatus ? undefined : liveStatus,
       replyToContent,
       inputSource,
       routing: routingAnalysis as Record<string, boolean>,
@@ -257,6 +262,7 @@ export const environmentContextBuilderNode = defineNode({
     if (properties?.purpose === 'conversation') {
       const selected = Array.isArray(inputs.routingAnalysis?.conversationContext) ? JSON.parse(message) : inputs.selectedContext;
       const { capabilityRules: _rules, ...evidence } = selected;
+      if (evidence.robotStatus?.live && liveStatus) evidence.robotStatus = { ...evidence.robotStatus, live: liveStatus };
       const environment = evidence.currentEnvironment;
       const catalog = environment?.capabilities?.robotCommandCatalog ?? {};
       const selectedTask = inputs.selectedTask;

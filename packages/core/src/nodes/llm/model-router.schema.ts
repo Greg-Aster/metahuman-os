@@ -1,6 +1,11 @@
 import type { NodeDefinition } from '../types.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 
+export const reasoningProperty = {
+  type: 'boolean' as const, default: false, label: 'Reasoning',
+  description: 'Enable model reasoning for this call when supported by the selected provider. Reasoning shares the completion token budget and can increase latency.',
+};
+
 export const modelRouterDefinition: Omit<NodeDefinition, 'execute' | 'color' | 'bgColor' | 'execution'> & { execution: Partial<NodeDefinition['execution']>; propertySchemas: NonNullable<NodeDefinition['propertySchemas']> } = {
   id: 'model_router',
   name: 'Model Router',
@@ -16,6 +21,7 @@ export const modelRouterDefinition: Omit<NodeDefinition, 'execute' | 'color' | '
     { name: 'response', type: 'string', description: 'Normalized model text; downstream nodes own parsing, validation, and effects' },
   ],
   properties: {
+    enableThinking: false,
     role: 'persona',
     maxTokens: 2048,
     temperature: 0.7,
@@ -23,6 +29,7 @@ export const modelRouterDefinition: Omit<NodeDefinition, 'execute' | 'color' | '
     format: 'text',
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     role: {
       type: 'select',
       default: 'persona',
@@ -37,7 +44,7 @@ export const modelRouterDefinition: Omit<NodeDefinition, 'execute' | 'color' | '
       description: 'Maximum completion length. A limit that is too small can truncate structured output before it becomes valid JSON.',
       advanced: true,
       min: 256,
-      max: 4096,
+      max: 8192,
       step: 256,
     },
     temperature: {

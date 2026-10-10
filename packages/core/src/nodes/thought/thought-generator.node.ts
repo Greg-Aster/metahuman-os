@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Thought Generator Node
@@ -83,6 +84,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     userId: username,
     cognitiveMode: context.cognitiveMode,
     options: {
+      enableThinking: properties?.enableThinking === true,
       maxTokens,
       temperature,
       repeatPenalty,
@@ -149,6 +151,7 @@ export const ThoughtGeneratorNode: NodeDefinition = defineNode({
     { name: 'confidence', type: 'number', description: 'Confidence score' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 0.75,
     extractKeywords: true,
     maxTokens: 512,
@@ -159,6 +162,7 @@ export const ThoughtGeneratorNode: NodeDefinition = defineNode({
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'number',
       default: 0.75,

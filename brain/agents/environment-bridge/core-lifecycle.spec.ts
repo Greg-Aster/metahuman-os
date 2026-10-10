@@ -427,7 +427,7 @@ test('recognition delivery keeps only the newest waiting result and does not blo
   const recognition = (frameCounter: number) => {
     const now = Date.now();
     fixtureSocket.emit('message', JSON.stringify({ type: 'environment.telemetry', sessionId: 'robot-session',
-      telemetry: { kind: 'vision.recognition', perception: { version: 1, timeBasis: 'gateway_receipt',
+      telemetry: { kind: 'vision.recognition', processing: { freshFps: 3, receivedFrames: 20 }, perception: { version: 1, timeBasis: 'gateway_receipt',
         robotId: 'robot', epoch: 1, gatewayInstance: 'fixture', frameCounter,
         observedAt: new Date(now).toISOString(), expiresAt: new Date(now + 1000).toISOString(),
         backend: 'fixture', model: 'fixture', summary: 'table', objects: [], uncertainties: [] } } }), false);
@@ -444,6 +444,7 @@ test('recognition delivery keeps only the newest waiting result and does not blo
     }
     const body = JSON.parse(String(options?.body));
     if (pathname === '/api/environment-bridge/telemetry' && body.perception) {
+      assert.deepEqual(body.recognitionProcessing, { freshFps: 3, receivedFrames: 20 });
       delivered.push(body.perception.frameCounter);
       if (delivered.length === 1) {
         firstStarted();

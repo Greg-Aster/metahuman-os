@@ -1,3 +1,4 @@
+import { reasoningProperty } from '../llm/model-router.schema.js';
 import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Dreamer Continuation Generator Node
@@ -185,7 +186,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       role,
       messages,
       userId: username,
-      options: { temperature, maxTokens },
+      options: { enableThinking: properties?.enableThinking === true, temperature, maxTokens },
     });
 
     throwIfAborted(context.signal);
@@ -235,6 +236,7 @@ export const DreamerContinuationGeneratorNode: NodeDefinition = defineNode({
     { name: 'count', type: 'number' },
   ],
   properties: {
+    enableThinking: false,
     temperature: 1.0,
     continuationChance: 0.75,
     maxContinuations: 4,
@@ -246,6 +248,7 @@ export const DreamerContinuationGeneratorNode: NodeDefinition = defineNode({
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    enableThinking: reasoningProperty,
     temperature: {
       type: 'number',
       default: 1.0,
