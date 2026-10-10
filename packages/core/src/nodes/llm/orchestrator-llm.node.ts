@@ -1,3 +1,4 @@
+import { ENVIRONMENT_CONTEXT_ENTRIES, selectedEnvironmentRoutes, type EnvironmentRequestRouting } from '../environment/context-routing.js';
 /**
  * ╔═══════════════════════════════════════════════════════════════════════════╗
  * ║   NO HARDCODING! ALL INTENT DETECTION IS LLM-INTERPRETED                  ║
@@ -22,6 +23,7 @@ import { defineNode, type NodeDefinition } from '../types.js';
 import { projectEnvironmentHistory } from '../environment/helpers.js';
 import { callLLM } from '../../model-router.js';
 import { renderPromptTemplate } from '../prompt-template.js';
+import { modelRouterDefinition } from './model-router.schema.js';
 
 // Action types that can trigger Big Brother
 export type ActionType =
@@ -106,44 +108,40 @@ export const ENVIRONMENT_INTENT_JSON_SCHEMA = {
 } as const;
 
 export const ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA = {
-  ...ENVIRONMENT_INTENT_JSON_SCHEMA,
-  required: [...ENVIRONMENT_INTENT_FIELDS, 'needsExecutionContext', 'needsPersona'],
-  properties: { ...ENVIRONMENT_INTENT_JSON_SCHEMA.properties, needsExecutionContext: { type: 'boolean' }, needsPersona: { type: 'boolean' } },
+  type: 'object', additionalProperties: false,
+  required: ['needsResponse', 'needsAction', 'taskContext', 'conversationContext'],
+  properties: {
+    needsResponse: { type: 'boolean' }, needsAction: { type: 'boolean' },
+    taskContext: { type: 'array', items: { type: 'string', enum: [...ENVIRONMENT_CONTEXT_ENTRIES] } },
+    conversationContext: { type: 'array', items: { type: 'string', enum: [...ENVIRONMENT_CONTEXT_ENTRIES] } },
+    memoryQuery: { type: 'string' }, memoryTypes: { type: 'array', items: { type: 'string' } },
+  },
 } as const;
 
-export function parseEnvironmentIntentRouting(value: unknown, requestOnly = true): EnvironmentIntentRouting {
-  if (typeof value !== 'string') {
-    throw new Error('Environment intent output must be strict JSON text');
-  }
+export function parseEnvironmentIntentRouting(value: unknown, requestOnly: true): EnvironmentRequestRouting;
+export function parseEnvironmentIntentRouting(value: unknown, requestOnly: false): EnvironmentIntentRouting;
+export function parseEnvironmentIntentRouting(value: unknown): EnvironmentRequestRouting;
+export function parseEnvironmentIntentRouting(value: unknown, requestOnly: boolean): EnvironmentRequestRouting | EnvironmentIntentRouting;
+export function parseEnvironmentIntentRouting(value: unknown, requestOnly = true): EnvironmentRequestRouting | EnvironmentIntentRouting {
+  if (typeof value !== 'string') throw new Error('Environment intent output must be strict JSON text');
   let parsed: unknown;
-  try {
-    parsed = JSON.parse(value.trim());
-  } catch {
-    throw new Error('Environment intent output is not strict JSON');
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Environment intent output must be one JSON object');
-  }
+  try { parsed = JSON.parse(value.trim()); }
+  catch { throw new Error('Environment intent output is not strict JSON'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Environment intent output must be one JSON object');
   const record = parsed as Record<string, unknown>;
   const fields: readonly string[] = requestOnly ? ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA.required : ENVIRONMENT_INTENT_FIELDS;
-  const unexpected = Object.keys(record).filter(field => (
-    !fields.includes(field)
-    && !['memoryQuery', 'memoryTypes'].includes(field)
-  ));
-  if (unexpected.length > 0) {
-    throw new Error(`Environment intent output contains unsupported field(s): ${unexpected.join(', ')}`);
-  }
+  const unexpected = Object.keys(record).filter(field => !fields.includes(field) && !['memoryQuery', 'memoryTypes'].includes(field));
+  if (unexpected.length > 0) throw new Error(`Environment intent output contains unsupported field(s): ${unexpected.join(', ')}`);
   for (const field of fields) {
-    if (typeof record[field] !== 'boolean') {
-      throw new Error(`Environment intent output requires boolean ${field}`);
-    }
+    if (requestOnly && (field === 'taskContext' || field === 'conversationContext')) {
+      if (!Array.isArray(record[field]) || record[field].some(entry => !ENVIRONMENT_CONTEXT_ENTRIES.includes(entry))) {
+        throw new Error(`Environment intent output requires valid context entries in ${field}`);
+      }
+    } else if (typeof record[field] !== 'boolean') throw new Error(`Environment intent output requires boolean ${field}`);
   }
   if (record.memoryQuery !== undefined && typeof record.memoryQuery !== 'string') throw new Error('Invalid memory query');
   if (record.memoryTypes !== undefined && (!Array.isArray(record.memoryTypes) || record.memoryTypes.some(type => typeof type !== 'string'))) throw new Error('Invalid memory types');
-  return { ...(record.memoryQuery !== undefined ? { memoryQuery: record.memoryQuery as string } : {}),
-    ...(record.memoryTypes !== undefined ? { memoryTypes: record.memoryTypes as string[] } : {}), ...Object.fromEntries(
-    fields.map(field => [field, record[field] as boolean]),
-  ) } as EnvironmentIntentRouting;
+  return record as unknown as EnvironmentRequestRouting | EnvironmentIntentRouting;
 }
 
 function withAnalysis<T extends Record<string, any>>(result: T): T & { analysis: T } {
@@ -176,6 +174,8 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
   ],
   outputs: [
+    { name: 'raw', type: 'string', description: 'Exact model output before parsing' },
+    { name: 'modelMessages', type: 'array', description: 'Exact messages supplied to this model call' },
     { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
     { name: 'needsResponse', type: 'boolean', description: 'Whether this turn needs a conversational response' },
     { name: 'needsExecutionContext', type: 'boolean', description: 'Whether downstream reasoning needs execution context' },
@@ -201,7 +201,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   presentation: { defaultExpanded: true },
 
   properties: {
-    modelId: '',
+    role: 'orchestrator',
     outputContract: 'general',
     systemPrompt: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
@@ -209,7 +209,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     maxTokens: 768,
   },
   propertySchemas: {
-    modelId: { type: 'string', default: '', label: 'Model / LoRA', emptyLabel: 'Use configured role', suggestions: 'models', description: 'Leave blank to follow the role and preferred backend. Select a registry model or served LoRA to use it for this node.' },
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'orchestrator' },
     outputContract: {
       type: 'select',
       default: 'general',
@@ -353,15 +353,14 @@ Adjust your routing based on this feedback. If memory search already failed, con
       ];
 
       const response = await callLLM({
-        modelId: properties?.modelId || undefined,
         signal: context.abortSignal,
-        role: 'orchestrator',
+        role: properties?.role || 'orchestrator',
         userId: context.userId || context.username,
         messages,
         cognitiveMode: context.cognitiveMode,
         options: {
           maxTokens: properties?.maxTokens || 768,
-          repeatPenalty: 1.15,
+          ...(requestOnly ? {} : { repeatPenalty: 1.15 }),
           temperature: properties?.temperature ?? 0.2,
           format: environmentContract ? 'json' : undefined,
           jsonSchema: requestOnly ? ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA : environmentContract ? ENVIRONMENT_INTENT_JSON_SCHEMA : undefined,
@@ -373,7 +372,9 @@ Adjust your routing based on this feedback. If memory search already failed, con
         const routing = parseEnvironmentIntentRouting(response.content, requestOnly);
         return {
           ...routing,
+          ...selectedEnvironmentRoutes(routing),
           analysis: routing,
+          modelMessages: messages,
           raw: response.content,
           thinking: response.thinking,
         };

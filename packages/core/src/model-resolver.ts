@@ -10,6 +10,8 @@ import path from 'node:path';
 import { getProfilePaths } from './path-builder.js';
 import { safeWriteJSON } from './safe-file.js';
 import { loadBackendConfig } from './llm-backend.js';
+import { type ModelRole } from './model-roles.js';
+export { MODEL_ROLES, isModelRole, normalizeModelRole, type ModelRole } from './model-roles.js';
 import {
   DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL,
   DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID,
@@ -19,27 +21,6 @@ import {
 
 const LOG_PREFIX = '[model-resolver]';
 
-export const MODEL_ROLES = [
-  'orchestrator',
-  'persona',
-  'environmentActionSelector',
-  'curator',
-  'coder',
-  'planner',
-  'summarizer',
-  'psychotherapist',
-  'embedder',
-] as const;
-
-export type ModelRole = (typeof MODEL_ROLES)[number];
-
-export function isModelRole(value: unknown): value is ModelRole {
-  return typeof value === 'string' && (MODEL_ROLES as readonly string[]).includes(value);
-}
-
-export function normalizeModelRole(value: unknown, fallback: ModelRole): ModelRole {
-  return isModelRole(value) ? value : fallback;
-}
 export type ModelProvider = 'llama-cpp' | 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
 export type ModelCapability = 'text' | 'image';
 
@@ -118,8 +99,12 @@ export interface ResolvedModel {
   metadata: Record<string, unknown>; // Model metadata - intentionally flexible
 }
 
-const CACHE_TTL = 60000; // 1 minute
-const registryCache = new Map<string, { registry: ModelRegistry; timestamp: number }>();
+const registryCache = new Map<string, { registry: ModelRegistry; revision: string }>();
+
+function registryRevision(registryPath: string): string {
+  const stat = fs.statSync(registryPath, { bigint: true });
+  return `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}
 
 export interface ModelRegistryMigrationResult {
   registry: ModelRegistry;
@@ -209,6 +194,18 @@ export function migrateModelRegistry(
     'image',
   ]));
 
+  // Split the request-only specialist from general orchestration without
+  // changing an existing profile's model until that new role is assigned.
+  defaults.environmentIntent ??= defaults.orchestrator ?? DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID;
+  for (const mapping of Object.values(mappings)) {
+    if (mapping.orchestrator && !mapping.environmentIntent) mapping.environmentIntent = mapping.orchestrator;
+  }
+  for (const id of new Set([defaults.environmentIntent,
+    ...Object.values(mappings).map(mapping => mapping.environmentIntent).filter((id): id is string => Boolean(id))])) {
+    const definition = registry.models[id];
+    if (definition && !definition.roles.includes('environmentIntent')) definition.roles.push('environmentIntent');
+  }
+
   return {
     registry,
     changed: before !== JSON.stringify(registry),
@@ -245,6 +242,10 @@ function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry):
   }
 
   if (resolved.roles.includes('embedder')) return resolved;
+
+  // A registered llama.cpp deployment owns its endpoint, checkpoint and adapters.
+  // Role selection must retain the same deployment as direct registry resolution.
+  if (resolved.provider === 'llama-cpp') return resolved;
 
   if (activeBackend === 'llama-cpp' && ['local', 'ollama', 'vllm', 'llama-cpp'].includes(resolved.provider)) {
     const llama = backend.llamaCpp;
@@ -333,32 +334,24 @@ export function updateModelGlobalSettings(username: string, settings: unknown): 
  * @param username - Optional username to explicitly resolve user's profile path
  */
 export function loadModelRegistry(forceFresh = false, username?: string): ModelRegistry {
-
-
-  const now = Date.now();
-
   const registryPath = resolveRegistryPath(username);
-
-  if (!forceFresh) {
-    const cached = registryCache.get(registryPath);
-    if (cached && (now - cached.timestamp) < CACHE_TTL) {
-
-      return cached.registry;
-    }
-  }
-
   if (!fs.existsSync(registryPath)) {
     throw new Error(`Model registry not found at ${registryPath}`);
   }
 
   try {
+    const revision = registryRevision(registryPath);
+    const cached = registryCache.get(registryPath);
+    if (!forceFresh && cached?.revision === revision) return cached.registry;
+
     const content = fs.readFileSync(registryPath, 'utf-8');
     const parsedRegistry = parseModelRegistry(JSON.parse(content));
     const migration = migrateModelRegistry(parsedRegistry);
     const registry = migration.registry;
     if (migration.changed) persistMigratedRegistry(registryPath, registry);
 
-    registryCache.set(registryPath, { registry, timestamp: now });
+    registryCache.set(registryPath, { registry,
+      revision: migration.changed ? registryRevision(registryPath) : revision });
 
     return registry;
   } catch (error) {
@@ -531,11 +524,7 @@ export function resolveModelForCognitiveMode(
     }
 
     // If specific model ID provided, use it
-    if (modelId && typeof modelId === 'string') {
-      const resolved = resolveModelById(modelId, username);
-      // Apply backend override to ensure correct model for active backend
-      return applyBackendOverride(resolved, registry);
-    }
+    if (modelId && typeof modelId === 'string') return resolveModelById(modelId, username);
 
     // Cognitive-mode mappings override defaults. Roles omitted from the mode
     // continue through their normal default assignment.

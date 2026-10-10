@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 import { callLLM } from '../../model-router.js';
 import {
   ENVIRONMENT_MOTION_PLAN_JOINTS,
@@ -299,6 +300,8 @@ export const movementGeneratorNode = defineNode({
     { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
   ],
   outputs: [
+    { name: 'modelMessages', type: 'array', description: 'Exact messages supplied to the trajectory model' },
+    { name: 'rawOutput', type: 'string', description: 'Exact trajectory model output before validation' },
     { name: 'action', type: 'object', description: 'One validated robotMotionPlan action, or null' },
     { name: 'actions', type: 'array', description: 'Validated action list for Environment Bridge Out' },
     { name: 'valid', type: 'boolean', description: 'Whether a validated plan was produced' },
@@ -309,15 +312,18 @@ export const movementGeneratorNode = defineNode({
   ],
   properties: {
     role: 'orchestrator',
+    executionTarget: '',
     maxTokens: 4096,
     temperature: 0.2,
   },
   propertySchemas: {
+    executionTarget: { type: 'select', default: '', label: 'Execution Target',
+      options: [{ value: '', label: 'Configured role backend' }, { value: 'remote', label: 'Remote' }] },
     role: {
       type: 'select',
       default: 'orchestrator',
       label: 'Model Role',
-      options: ['orchestrator', 'persona', 'fallback'],
+      options: [...MODEL_ROLE_OPTIONS],
     },
     maxTokens: {
       type: 'number',
@@ -379,12 +385,15 @@ export const movementGeneratorNode = defineNode({
     }
     const currentPose = commandedPose(observation);
     const needsStandingPreparation = !currentPose;
+    let modelMessages: Array<{ role: 'system' | 'user'; content: string }> = [];
+    let rawOutput = '';
     try {
       const instruction = typeof inputs.instruction === 'string' ? inputs.instruction.trim() : '';
       const messages = movementGeneratorPrompt(request, instruction, observation);
+      modelMessages = messages;
       const callGenerator = (generatorMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => callLLM({
         signal: context.abortSignal,
-        executionTarget: properties?.executionTarget,
+        executionTarget: properties?.executionTarget === 'remote' ? 'remote' : undefined,
         role: properties?.role || 'orchestrator',
         messages: generatorMessages,
         userId: context.userId || context.username,
@@ -402,6 +411,7 @@ export const movementGeneratorNode = defineNode({
       const result = typeof injected === 'function'
         ? { content: await injected({ request, instruction, observation, messages }) }
         : await callGenerator(messages);
+      rawOutput = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
       const generated = normalizeGeneratedMotionPlan(result.content, sessionId, request.description);
       const normalized = needsStandingPreparation
         ? normalizeGeneratedMotionPlan({
@@ -431,6 +441,8 @@ export const movementGeneratorNode = defineNode({
         },
       };
       return {
+        modelMessages,
+        rawOutput,
         action,
         actions: [action],
         valid: true,
@@ -447,6 +459,8 @@ export const movementGeneratorNode = defineNode({
       const detail = cause instanceof Error ? cause.message : String(cause);
       const error = `Generated movement was rejected: ${detail}`;
       return {
+        modelMessages,
+        rawOutput,
         action: null,
         actions: [],
         valid: false,

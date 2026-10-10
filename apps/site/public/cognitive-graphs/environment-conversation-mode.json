@@ -152,6 +152,17 @@
       "data": {
         "type": "string"
       }
+    },
+    {
+      "id": "response-origin-metadata",
+      "source": "response",
+      "sourceHandle": "metadata",
+      "target": "conversation-buffer",
+      "targetHandle": "metadata",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
     }
   ]
 }

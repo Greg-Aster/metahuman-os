@@ -61,6 +61,38 @@ test('serial task queue reports the first failure and skips queued work', async 
   assert.equal(ranAfterFailure, false);
 });
 
+test('independent actions progress while each action and its dependent observation stay ordered', async () => {
+  const held = deferred();
+  const order: string[] = [];
+  const errors: unknown[] = [];
+  const queue = createSerialTaskQueue(error => errors.push(error), 8);
+  queue.enqueue(async () => { order.push('face:start'); await held.promise; order.push('face:end'); }, 'face');
+  queue.enqueue(async () => { order.push('face:next'); }, 'face');
+  queue.enqueue(async () => { order.push('observation'); }, 'adapter', queue.pending('face'));
+  await queue.enqueue(async () => { order.push('wave:accepted'); }, 'wave');
+  assert.deepEqual(order, ['face:start', 'wave:accepted']);
+  let drained = false;
+  const draining = queue.drain().then(() => { drained = true; });
+  await Promise.resolve();
+  assert.equal(drained, false, 'Drain retains pending work across all ordering keys');
+  held.resolve(); await draining;
+  assert.deepEqual(order, ['face:start', 'wave:accepted', 'face:end', 'face:next', 'observation']);
+  assert.deepEqual(errors, []);
+});
+
+test('independent message ordering still shares the existing pending-work bound', async () => {
+  const held = deferred();
+  const errors: unknown[] = [];
+  const queue = createSerialTaskQueue(error => errors.push(error), 2);
+  queue.enqueue(async () => { await held.promise; }, 'one');
+  queue.enqueue(async () => { await held.promise; }, 'two');
+  await Promise.resolve();
+  await queue.enqueue(async () => assert.fail('Overflow must not execute'), 'three');
+  assert.equal(errors.length, 1);
+  assert.match(String(errors[0]), /exceeded 2 pending tasks/);
+  held.resolve(); await queue.drain();
+});
+
 test('serial task queue rejects overflow without accumulating more work', async () => {
   const first = deferred();
   const errors: unknown[] = [];

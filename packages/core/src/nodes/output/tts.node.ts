@@ -15,13 +15,14 @@ import { audit } from '../../audit.js';
 import { queueTTS, type TTSQueueItem } from '../../tts/delivery-queue.js';
 import {
   getSpeechOutputSettings,
-  prepareRobotSpeech,
+  getRobotSpeakerSession,
   renderRobotSpeech,
   type RobotSpeechDelivery,
   type SpeechOutputSettings,
 } from '../../tts/robot-speech.js';
 import { prepareEnvironmentCommand } from '../../environment-interface/store.js';
 import type { GraphNodeExecution } from '../../durable-execution/graph-contract.js';
+import { loadGraphForMode } from '../../graph-streaming.js';
 
 export interface TTSOutputDelivery {
   accepted: boolean;
@@ -101,12 +102,17 @@ export async function deliverTTSOutput(
 
     try {
       if (request.execution) {
-        const prepared = await prepareRobotSpeech({ username: request.username, text: request.text,
-          requestId: request.execution.occurrenceId, signal: request.signal });
+        const sessionId = getRobotSpeakerSession();
+        if (!sessionId) throw new Error('The Environment Bridge robot speaker is not ready');
+        const loaded = await loadGraphForMode('robot-speech', request.username);
         request.signal?.throwIfAborted();
-        const command = prepareEnvironmentCommand(prepared.action, { allowedActions: ['speak'], username: request.username, source: 'system' });
-        request.execution.dispatch({ kind: 'coordinator_work', actionId: command.input.id, payload: command });
-        return { accepted: true, deliveryId: command.input.id, route: 'robot' };
+        const work = request.execution.dispatch({ kind: 'coordinator_work', payload: {
+          type: 'generic', handler: 'tts.robot-speech', resource: 'robot-speech-render', source: 'system',
+          username: request.username, maxAttempts: 1,
+          input: { text: request.text, sessionId, requestId: request.execution.occurrenceId,
+            generation: request.generation, graph: loaded.graph },
+        } });
+        return { accepted: true, deliveryId: work.effectId, route: 'robot' };
       }
       const delivery = await dependencies.renderRobot({
         username: request.username,
@@ -150,6 +156,21 @@ export async function deliverTTSOutput(
     reason: item ? undefined : 'TTS queue rejected the item',
   };
 }
+
+/** Audio preparation runs outside the parent lease; this node commits playback. */
+export const RobotSpeechDeliveryNode = defineNode({
+  id: 'robot_speech_delivery', name: 'Deliver Prepared Robot Speech', category: 'output',
+  inputs: [],
+  outputs: [{ name: 'actionId', type: 'string', description: 'Durable speech playback action identity' }],
+  description: 'Admits prepared audio through the existing Environment Bridge command owner.',
+  async execute(_inputs, context) {
+    const command = prepareEnvironmentCommand(context.preparedRobotSpeech.action, {
+      allowedActions: ['speak'], username: context.username, source: 'system',
+    });
+    context.graphExecution!.dispatch({ kind: 'coordinator_work', actionId: command.input.id, payload: command });
+    return { actionId: command.input.id };
+  },
+});
 
 // ============================================================================
 // TTS Node Definition

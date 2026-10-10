@@ -33,6 +33,16 @@ interface StreamingSpeechOptions {
   speed?: number;
   source?: string;
   requestId?: string;
+  prepared?: PreparedSpeech;
+}
+
+export interface PreparedSpeech {
+  readonly requestId?: string;
+  readonly text: string;
+  readonly result: Promise<{ native: boolean; streaming: boolean; provider?: string; response?: Response }>;
+  readonly finished: Promise<void>;
+  readonly signal: AbortSignal;
+  cancel(): void;
 }
 
 export type TTSPlaybackOutcome = 'completed' | 'interrupted' | 'suppressed' | 'failed';
@@ -418,12 +428,114 @@ function createTTS() {
     });
   }
 
-  /**
-   * Speak text using server-side TTS (Piper)
-   * Uses Web Audio API instead of Audio elements to avoid stealing media session
-   * Automatically routes to native TTS if native voice mode is enabled
-   */
-  async function speakText(text: string): Promise<TTSPlaybackOutcome> {
+  /** Request batch audio using the current profile's voice configuration. */
+  async function requestBatchSpeech(speechText: string, signal: AbortSignal): Promise<Response> {
+    // Fetch voice metadata for current session/profile
+    console.log('[useTTS] Fetching voice metadata...');
+    const [{ multiVoice, models: voiceModels }, provider] = await Promise.all([
+      fetchVoiceModels(),
+      fetchVoiceProvider(),
+    ]);
+    if (multiVoice && voiceModels) {
+      console.log(`[useTTS] Multi-voice mode active with ${voiceModels.length} voices`);
+    }
+
+    console.log('[useTTS] Fetching TTS from /api/tts...');
+
+    const ttsBody: any = { text: speechText };
+
+    // Include provider if available
+    if (provider) {
+      ttsBody.provider = provider;
+    }
+
+    // If multi-voice, use models array; otherwise use default single voice
+    if (multiVoice && voiceModels) {
+      ttsBody.models = voiceModels;
+    }
+
+    return apiFetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ttsBody),
+      signal,
+    });
+  }
+
+  async function requestStreamingSpeech(text: string, options: StreamingSpeechOptions, signal: AbortSignal): Promise<Response> {
+    const provider = options.provider ?? await fetchVoiceProvider();
+    signal.throwIfAborted();
+    return apiFetch('/api/tts-stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+      body: JSON.stringify({ text, provider, source: options.source, requestId: options.requestId,
+        voice: options.voice, langCode: options.langCode, pitchShift: options.pitchShift, speed: options.speed }),
+    });
+  }
+
+  // Network preparation is independent of playback. Drain each response while
+  // it is produced so its HTTP connection is released before playback ends.
+  // Preparation follows admission order; the server still owns playback leases.
+  let preparationTail = Promise.resolve();
+  function prepareSpeech(text: string, options: StreamingSpeechOptions = {}): PreparedSpeech {
+    const controller = new AbortController();
+    let resolve!: (value: Awaited<PreparedSpeech['result']>) => void;
+    let reject!: (error: unknown) => void;
+    const result = new Promise<Awaited<PreparedSpeech['result']>>((yes, no) => { resolve = yes; reject = no; });
+    // Preparation can fail before its playback lease arrives. Retain that error
+    // for the consumer without producing an unhandled rejection in the meantime.
+    void result.catch(() => undefined);
+    const finished = preparationTail.then(async () => {
+      let sink: ReadableStreamDefaultController<Uint8Array> | undefined;
+      let closed = false;
+      const abort = () => {
+        if (sink && !closed) { closed = true; sink.error(controller.signal.reason); }
+      };
+      controller.signal.addEventListener('abort', abort, { once: true });
+      try {
+        controller.signal.throwIfAborted();
+        if (!options.provider && isNativeVoiceModeEnabled() && isNativeTTSAvailable()) {
+          resolve({ native: true, streaming: false });
+          return;
+        }
+        const provider = options.provider ?? await fetchVoiceProvider();
+        controller.signal.throwIfAborted();
+        const streaming = provider === 'rvc' || provider === 'kokoro' || provider === 'kitten';
+        const speechText = normalizeTextForSpeech(text);
+        const response = streaming
+          ? await requestStreamingSpeech(speechText, { ...options, provider }, controller.signal)
+          : await requestBatchSpeech(speechText, controller.signal);
+        controller.signal.throwIfAborted();
+        const reader = response.body?.getReader();
+        const body = reader ? new ReadableStream<Uint8Array>({
+          start(value) { sink = value; },
+          cancel() { controller.abort(); },
+        }) : null;
+        resolve({ native: false, streaming, provider, response: new Response(body, {
+          status: response.status, statusText: response.statusText, headers: response.headers,
+        }) });
+        if (reader) {
+          try {
+            while (true) {
+              const next = await reader.read();
+              controller.signal.throwIfAborted();
+              if (next.done) break;
+              sink!.enqueue(next.value);
+            }
+            closed = true;
+            sink!.close();
+          } finally { reader.releaseLock(); }
+        }
+      } catch (error) {
+        reject(error);
+        if (sink && !closed) { closed = true; sink.error(error); }
+      } finally { controller.signal.removeEventListener('abort', abort); }
+    });
+    preparationTail = finished;
+    return { requestId: options.requestId, text, result, finished, signal: controller.signal,
+      cancel: () => controller.abort() };
+  }
+
+  async function speakText(text: string, prepared?: PreparedSpeech): Promise<TTSPlaybackOutcome> {
     // Check if native voice mode is enabled - route to native TTS
     if (isNativeVoiceModeEnabled() && isNativeTTSAvailable()) {
       console.log('[useTTS] Native voice mode enabled - routing to native TTS');
@@ -449,36 +561,10 @@ function createTTS() {
     isLoading.set(true);
 
     try {
-      // Fetch voice metadata for current session/profile
-      console.log('[useTTS] Fetching voice metadata...');
-      const [{ multiVoice, models: voiceModels }, provider] = await Promise.all([
-        fetchVoiceModels(),
-        fetchVoiceProvider(),
-      ]);
-      if (multiVoice && voiceModels) {
-        console.log(`[useTTS] Multi-voice mode active with ${voiceModels.length} voices`);
-      }
-
-      console.log('[useTTS] Fetching TTS from /api/tts...');
-
-      const ttsBody: any = { text: speechText };
-
-      // Include provider if available
-      if (provider) {
-        ttsBody.provider = provider;
-      }
-
-      // If multi-voice, use models array; otherwise use default single voice
-      if (multiVoice && voiceModels) {
-        ttsBody.models = voiceModels;
-      }
-
-      const ttsRes = await apiFetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(ttsBody),
-        signal: controller.signal
-      });
+      if (prepared) controller.signal.addEventListener('abort', prepared.cancel, { once: true });
+      const ttsRes = prepared
+        ? (await prepared.result).response!
+        : await requestBatchSpeech(speechText, controller.signal);
 
       if (playbackWasStopped(token)) return finishPlayback(token, false);
       currentTtsAbort = null;
@@ -584,36 +670,11 @@ function createTTS() {
     isLoading.set(true);
 
     try {
-      // Fetch voice provider to determine streaming endpoint
-      const provider = options?.provider ?? await fetchVoiceProvider();
+      if (options?.prepared) controller.signal.addEventListener('abort', options.prepared.cancel, { once: true });
+      const response = options?.prepared
+        ? (await options.prepared.result).response!
+        : await requestStreamingSpeech(speechText, options ?? {}, controller.signal);
       if (playbackWasStopped(token)) return finishPlayback(token, false);
-      console.log('[useTTS] Streaming with provider:', provider);
-
-      // Build request body with provider-specific parameters
-      const requestBody: Record<string, unknown> = {
-        text: speechText,
-        provider: provider,
-        source: options?.source,
-        requestId: options?.requestId,
-        voice: options?.voice,
-        langCode: options?.langCode,
-      };
-
-      // Add optional parameters
-      if (options?.pitchShift !== undefined) {
-        requestBody.pitchShift = options.pitchShift;
-      }
-      if (options?.speed !== undefined) {
-        requestBody.speed = options.speed;
-      }
-
-      // Start SSE connection to streaming endpoint
-      const response = await apiFetch('/api/tts-stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
 
       if (!response.ok) {
         throw new Error(`Streaming TTS request failed: ${response.status}`);
@@ -921,6 +982,17 @@ function createTTS() {
   }): Promise<TTSPlaybackOutcome> {
     const playbackRequest = playbackRequests.begin(options?.requestId);
     try {
+      if (options?.prepared) {
+        options.prepared.signal.throwIfAborted();
+        const prepared = await options.prepared.result;
+        options.prepared.signal.throwIfAborted();
+        if (!playbackRequests.isActive(playbackRequest)) return 'interrupted';
+        if (prepared.native) return await speakTextNative(text);
+        return prepared.streaming
+          ? await speakTextStreaming(text, { ...options, provider: prepared.provider })
+          : await speakText(text, options.prepared);
+      }
+
       // Check if native voice mode is enabled
       if (
         !options?.provider && isNativeVoiceModeEnabled()
@@ -970,6 +1042,7 @@ function createTTS() {
     streamProgress,
 
     // Methods
+    prepareSpeech,      // Prepare without taking playback ownership
     speak,              // Smart speak - auto-selects native vs server
     speakText,          // Force server TTS (batch)
     speakTextStreaming, // Force server TTS (streaming)

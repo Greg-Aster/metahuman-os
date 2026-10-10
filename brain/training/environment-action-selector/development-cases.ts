@@ -1,7 +1,13 @@
 import type { EnvironmentObservation } from '@metahuman/core'
 
 export type Specialist = 'intent' | 'task'
-export type CaseSplit = 'development' | 'evaluation'
+export type CaseSplit = 'development' | 'evaluation' | 'regression'
+export interface ContextRequirement {
+  required: string[]
+  optional: string[]
+  anyOf?: string[][]
+}
+export type IntentRequirements = Partial<Record<'taskContext' | 'conversationContext', ContextRequirement>>
 export interface SpecialistCase {
   id: string
   specialist: Specialist
@@ -13,21 +19,41 @@ export interface SpecialistCase {
   routes: Record<string, boolean | string | string[]>
   inputs?: Record<string, unknown>
   expected: Record<string, any>
+  targets?: Record<number, Record<string, any>>
+  contextRequirements?: IntentRequirements
+  responseOptional?: true
 }
-export const ROUTE_FIELDS = ['needsResponse', 'needsConversationHistory', 'needsMemory', 'needsRobotStatus',
-  'needsEnvironment', 'needsVision', 'needsAction', 'needsExecutionContext', 'needsPersona'] as const
-export function routes(selected: string[], memoryQuery?: string): SpecialistCase['routes'] {
-  return { ...Object.fromEntries(ROUTE_FIELDS.map(key => [key, selected.includes(key)])),
+export const ROUTE_FIELDS = ['needsResponse', 'needsAction', 'taskContext', 'conversationContext'] as const
+export const intentOutput = (task: string[], conversation: string[], response = true, action = false) => ({
+  needsResponse: response, needsAction: action, taskContext: task, conversationContext: conversation,
+})
+// Synthetic corpus annotations only; runtime route decisions belong to the model.
+export function routes(selected: string[], memoryQuery?: string, personaSections = ['personality']): SpecialistCase['routes'] {
+  const fields: Record<string, string> = { needsConversationHistory: 'conversationHistory', needsMemory: 'memory',
+    needsRobotStatus: 'robotStatus', needsEnvironment: 'environment', needsVision: 'vision', needsExecutionContext: 'executionContext' }
+  const sources = selected.flatMap(field => fields[field] ? [fields[field]!] : [])
+  const persona = selected.includes('needsPersona') ? personaSections.map(section => `persona.${section}`) : []
+  const needsResponse = selected.includes('needsResponse'), needsAction = selected.includes('needsAction')
+  return { needsResponse, needsAction,
+    taskContext: needsAction || !needsResponse ? [...sources, ...(!needsResponse ? persona : [])] : [],
+    conversationContext: needsResponse ? [...(needsAction ? [] : sources), ...persona] : [],
     ...(memoryQuery ? { memoryQuery } : {}) }
 }
 export const cases: SpecialistCase[] = []
+/** Reviewed corpus choice; never a runtime routing rule or prompt directive. */
+export function allowResponseChoice(source: SpecialistCase): void {
+  source.responseOptional = true
+  source.contextRequirements = { ...source.contextRequirements,
+    conversationContext: { required: [], optional: ['persona.personality'] } }
+}
 export function addCase(specialist: Specialist, suite: string, instructions: string[], selected: string[],
-  expected: Record<string, any> | null, inputs: Record<string, unknown> = {}, split: CaseSplit = 'development', memoryQuery?: string) {
+  expected: Record<string, any> | null, inputs: Record<string, unknown> = {}, split: CaseSplit = 'development', memoryQuery?: string, personaSections?: string[]) {
   const familyIndex = cases.filter(item => item.specialist === specialist && item.split === split).length
-  const routing = routes(selected, memoryQuery)
+  const routing = specialist === 'intent' && expected ? expected : routes(selected, memoryQuery, personaSections)
   cases.push({ id: `${specialist}-${split}-${String(familyIndex + 1).padStart(3, '0')}`, specialist, suite,
-    risk: selected.includes('needsAction') || selected.includes('needsExecutionContext') ? 'high' : 'low',
+    risk: routing.needsAction === true || (Array.isArray(routing.taskContext) && routing.taskContext.includes('executionContext')) ? 'high' : 'low',
     fold: familyIndex % 4, split, instructions, routes: routing, inputs, expected: expected ?? routing })
+  return cases[cases.length - 1]!
 }
 export const TIME = '2030-01-15T12:00:00.000Z'
 export const COMMAND_DESCRIPTIONS: Record<string, string> = {

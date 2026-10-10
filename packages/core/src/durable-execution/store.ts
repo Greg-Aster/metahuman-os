@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { validateVisualObservation, type ObservationHistoryQuery, type VisualObservationRecord } from '../visual-observation.js'
+import { immutableEnvironmentVisualFrame } from '../environment-interface/timing.js'
 import {
   ExecutionCancelledError, ExecutionConflictError, ExecutionBusyError,
   type CheckpointTransition, type DispatchIntent, type DispatchRecord,
@@ -139,6 +140,9 @@ export class ExecutionStore {
       }
       if (!(this.db.pragma('table_info(execution_outbox)') as { name: string }[]).some(column => column.name === 'attempt_generation')) {
         this.db.exec('ALTER TABLE execution_outbox ADD COLUMN attempt_generation INTEGER')
+      }
+      if (!(this.db.pragma('table_info(execution_outbox)') as { name: string }[]).some(column => column.name === 'work_result_identity')) {
+        this.db.exec('ALTER TABLE execution_outbox ADD COLUMN work_result_identity TEXT')
       }
     }).immediate()
   }
@@ -440,10 +444,13 @@ export class ExecutionStore {
         ON CONFLICT(execution_id) DO UPDATE SET checkpoint_id = excluded.checkpoint_id, task = excluded.task`)
         .run(executionId, checkpointId, this.encodeDocument(executionId, transition.task))
     }
-    for (const frame of transition.frames ?? []) {
+    for (const supplied of transition.frames ?? []) {
+      const frame = immutableEnvironmentVisualFrame(supplied)
       if (!frame.id) throw new ExecutionConflictError('Evidence frame has no identity')
       const previous = this.frame(executionId, frame.id)
-      if (previous && contentHash(previous) !== contentHash(frame)) throw new ExecutionConflictError('Frame identity reused with different evidence')
+      // Older checkpoints retained delivery diagnostics. Compare the same
+      // immutable evidence contract without rewriting their committed bytes.
+      if (previous && contentHash(immutableEnvironmentVisualFrame(previous)) !== contentHash(frame)) throw new ExecutionConflictError('Frame identity reused with different evidence')
       if (!previous) this.db.prepare('INSERT INTO execution_frames VALUES (?, ?, ?, ?)')
         .run(executionId, frame.id, contentHash(frame), this.encodeDocument(executionId, frame))
     }
@@ -765,6 +772,13 @@ export class ExecutionStore {
   }
 
   /** Coordinator receipts are facts about jobs, not decisions that an objective succeeded. */
+  hasWorkResultReceipt(effectId: string, workItemId: string, payload: unknown): boolean {
+    const row = this.db.prepare(`SELECT work_result_identity FROM execution_outbox
+      WHERE effect_id=? AND work_item_id=? AND status IN ('completed', 'cancelled')`)
+      .get(effectId, workItemId) as { work_result_identity: string | null } | undefined
+    return Boolean(row?.work_result_identity && row.work_result_identity === contentHash(payload))
+  }
+
   deliverWorkResult(effectId: string, workItemId: string,
     payload: { state: string; result?: unknown; error?: unknown }, graphResults?: unknown[]): ExecutionEvent | null {
     return this.db.transaction(() => {
@@ -806,7 +820,11 @@ export class ExecutionStore {
             this.requestRecovery(effect.executionId, workItemId)
           }
         }
-        this.db.prepare("UPDATE execution_outbox SET status = 'completed' WHERE effect_id = ? AND status NOT IN ('cancelled', 'completed')").run(effectId)
+        this.db.prepare(`UPDATE execution_outbox SET
+          status = CASE WHEN status = 'cancelled' THEN status ELSE 'completed' END,
+          work_result_identity = ? WHERE effect_id = ?
+          AND (status NOT IN ('cancelled', 'completed') OR work_result_identity IS NOT ?)`)
+          .run(contentHash(payload), effectId, contentHash(payload))
         return result
       }
       // The first committed receipt owns its derived graph-return snapshot.
@@ -824,7 +842,11 @@ export class ExecutionStore {
         eventId: `work:${workItemId}:terminal`, kind: 'work_result', workItemId,
         payload: { effectId, result: savedResult ?? { ...payload, ...(graphResults?.length ? { graphResults } : {}) } },
       })
-      this.db.prepare("UPDATE execution_outbox SET status = 'completed' WHERE effect_id = ? AND status NOT IN ('cancelled', 'completed')").run(effectId)
+      this.db.prepare(`UPDATE execution_outbox SET
+        status = CASE WHEN status = 'cancelled' THEN status ELSE 'completed' END,
+        work_result_identity = ? WHERE effect_id = ?
+        AND (status NOT IN ('cancelled', 'completed') OR work_result_identity IS NOT ?)`)
+        .run(contentHash(payload), effectId, contentHash(payload))
       this.scheduleResume(result)
       return result
     }).immediate()
@@ -853,6 +875,11 @@ export class ExecutionStore {
   /** Content-addressed values retain complete evidence without copying it into every checkpoint/write. */
   stageDocument(value: unknown): { encoded: string; blobs: Map<string, string> } {
     const blobs = new Map<string, string>()
+    // Repeated Bridge fields and node inputs can reference the same evidence.
+    // Share its encoding within this document without caching mutable values
+    // across checkpoints or changing the independent values returned on read.
+    const strings = new Map<string, string>()
+    const objects = new WeakMap<object, unknown>()
     const reference = (item: unknown): string => {
       const hash = contentHash(item)
       blobs.set(hash, this.codec.encode(item))
@@ -860,15 +887,21 @@ export class ExecutionStore {
     }
     const pack = (item: any): any => {
       if (typeof item === 'string') {
-        if (item.length > 4096) return reference(item)
+        if (item.length > 4096) {
+          if (!strings.has(item)) strings.set(item, reference(item))
+          return strings.get(item)
+        }
         return item.startsWith('\u0000mh-') ? `\u0000mh-literal:${item}` : item
       }
       if (item && typeof item === 'object') {
+        if (objects.has(item)) return objects.get(item)
         const packed = Array.isArray(item) ? item.map(pack)
           : Object.fromEntries(Object.entries(item).filter(([, entry]) => entry !== undefined).map(([key, entry]) => [key, pack(entry)]))
         // Child references are formed first, so unchanged node outputs/context
         // are shared even when the surrounding scheduler state advances.
-        return JSON.stringify(packed).length > 4096 ? reference(packed) : packed
+        const result = JSON.stringify(packed).length > 4096 ? reference(packed) : packed
+        objects.set(item, result)
+        return result
       }
       return item
     }

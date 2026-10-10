@@ -62,21 +62,28 @@ test('Environment Mode uses one route-only orchestrator before selected context 
 
   assert.ok(memoryRouter);
   assert.ok(imageInput);
+  assert.equal(hasEdge(bridgeInput.id, 'sessionId', imageInput.id, 'sessionId'), true,
+    'Selected vision reads the session camera evidence independently of the triggering transcript');
+  assert.deepEqual(imageInput.data.activation?.when, [{ nodeId: orchestrator.id, output: 'needsVision', truthy: true }]);
   assert.ok(orchestrator);
   assert.ok(statusInput);
   assert.ok(statusOut);
   assert.equal(graph.nodes.filter(node => node.data.nodeType === 'model_router').length, 1);
   assert.equal(environmentLlm.data.properties?.role, 'environmentActionSelector');
-  assert.equal(environmentLlm.data.properties?.modelId, 'ollama.qwen3.5:0.8b');
+  assert.equal(orchestrator.data.properties?.role, 'environmentIntent');
+  assert.equal(orchestrator.data.properties?.modelId, undefined);
+  assert.equal(environmentLlm.data.properties?.modelId, undefined);
   const conversation = graph.nodes.find(node => node.id === 'conversation-model')!;
   assert.equal(conversation.data.properties?.role, 'persona');
-  assert.equal(conversation.data.properties?.modelId, '');
+  assert.equal(conversation.data.properties?.modelId, undefined);
   assert.equal(conversation.data.properties?.format, 'text');
   assert.equal(ModelRouterNode.outputs.find(output => output.name === 'response')?.type, 'string');
   assert.equal(actionParser.data.properties?.role, 'persona');
   assert.equal(actionParser.data.properties?.format, 'json');
   assert.equal(hasEdge(contextBuilder.id, 'precomputedResponse', environmentLlm.id, 'precomputedResponse'), true);
-  assert.equal(hasEdge('conversation-context', 'messages', conversation.id, 'messages'), true);
+  assert.equal(hasEdge('conversation-context', 'messages', 'response-thinking', 'control'), true);
+  assert.equal(hasEdge('response-thinking', 'control', 'response-thinking-out', 'control'), true);
+  assert.equal(hasEdge('response-thinking-out', 'control', conversation.id, 'messages'), true);
   assert.equal(conversation.data.nodeType, 'environment_conversation');
   const delivery = JSON.parse(fs.readFileSync(new URL('../etc/cognitive-graphs/environment-conversation-mode.json', import.meta.url), 'utf8'));
   assert.ok(delivery.edges.some((edge: any) => edge.source === 'response' && edge.target === 'conversation-buffer'));
@@ -88,33 +95,14 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.equal(orchestrator.data.properties?.maxTokens, 768);
   const intentPrompt = String(orchestrator.data.properties?.systemPrompt);
   assert.match(intentPrompt, /needsResponse for user-visible expression/i);
-  assert.match(intentPrompt, /needsRobotStatus for robot condition and task status/i);
-  assert.match(intentPrompt, /Select independently/i);
-  assert.match(intentPrompt, /Read the current incoming request/i);
-  assert.deepEqual(parseEnvironmentIntentRouting(JSON.stringify({
-    needsResponse: true,
-    needsConversationHistory: false,
-    needsExecutionContext: false,
-    needsPersona: false,
-    needsMemory: false,
-    needsRobotStatus: true,
-    needsEnvironment: true,
-    needsVision: false,
-    needsAction: true,
-  })), {
-    needsResponse: true,
-    needsConversationHistory: false,
-    needsExecutionContext: false,
-    needsPersona: false,
-    needsMemory: false,
-    needsRobotStatus: true,
-    needsEnvironment: true,
-    needsVision: false,
-    needsAction: true,
-  });
+  assert.match(intentPrompt, /robotStatus for reported body condition, task state/i);
+  assert.match(intentPrompt, /Select each consumer’s context independently/i);
+  assert.match(intentPrompt, /Read the incoming request/i);
+  const selection = { needsResponse: true, needsAction: true, taskContext: ['robotStatus', 'environment'], conversationContext: [] };
+  assert.deepEqual(parseEnvironmentIntentRouting(JSON.stringify(selection)), selection);
   assert.throws(
     () => parseEnvironmentIntentRouting('{"needsResponse":true}'),
-    /requires boolean needsConversationHistory/,
+    /requires boolean needsAction/,
   );
   assert.equal('recentHistoryLimit' in (contextBuilder.data.properties ?? {}), false,
     'The connected Buffer History node owns the conversation window');
@@ -127,7 +115,9 @@ test('Environment Mode uses one route-only orchestrator before selected context 
   assert.equal(userInput.data.properties?.saveToBuffer, true);
   assert.equal(userInput.data.properties?.saveToLongTermMemory, true);
   assert.equal(graph.nodes.some(node => ['input-conversation-buffer', 'input-memory-capture'].includes(node.id)), false);
-  assert.equal(hasEdge(userInput.id, 'message', orchestrator.id, 'message'), true);
+  assert.equal(hasEdge(userInput.id, 'message', 'thinking-on', 'control'), true);
+  assert.equal(hasEdge('thinking-on', 'control', 'thinking-out', 'control'), true);
+  assert.equal(hasEdge('thinking-out', 'control', orchestrator.id, 'message'), true);
   const inputHandoff = graph.nodes.find(node => node.data.nodeType === 'execution_event_out')!;
   assert.equal(hasEdge(userInput.id, 'entry', inputHandoff.id, 'entry'), true);
   assert.equal(hasEdge(history.id, 'history', orchestrator.id, 'conversationHistory'), false);

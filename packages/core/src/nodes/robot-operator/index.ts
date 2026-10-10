@@ -1,7 +1,6 @@
 export { robotOperatorInputNode } from './input.node.js';
 export {
   robotAutonomyControllerContextNode,
-  robotAutonomyExecutorContextNode,
   robotAutonomyPlannerContextNode,
   robotGoalReviewContextNode,
 } from './context-builder.node.js';

@@ -8,6 +8,7 @@ function decisionContext(
   return {
     version: status.version,
     updatedAt: status.updatedAt,
+    sourceUpdatedAt: status.sourceUpdatedAt,
     body: status.body
       ? {
           sessionId: status.body.sessionId,

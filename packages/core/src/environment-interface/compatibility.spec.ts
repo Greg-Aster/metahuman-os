@@ -22,6 +22,7 @@ const {
   enqueueEnvironmentAction,
   getEnvironmentActionContext,
   getEnvironmentBridgeStatePath,
+  getLatestEnvironmentVisual,
   publishEnvironmentObservation,
   prepareEnvironmentCommand,
   readEnvironmentBridgeState,
@@ -128,7 +129,7 @@ try {
   const lateFrame = {
     id: 'late-audio-frame', environmentId: 'ainekio', adapter: 'ainekio-gateway', sessionId: 'robot-1',
     timestamp: new Date().toISOString(), capabilities: { actions: ['captureImage'], visual: true },
-    visual: { id: 'late-image', mimeType: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=' },
+    visual: { id: 'late-image', timestamp: new Date().toISOString(), mimeType: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=' },
     metadata: { audioUtteranceId: 'already-admitted-turn' },
   };
   for (let retry = 0; retry < 2; retry++) {
@@ -138,6 +139,47 @@ try {
     assert.equal(readEnvironmentBridgeState().sessions['robot-1']?.latestObservation?.visual?.id, 'late-image', 'The frame is persisted before its transport ACK');
     assert.equal(manager.getAllTasks().length, 0);
   }
+  const cachedFrame = getLatestEnvironmentVisual('robot-1')!;
+  assert.equal(cachedFrame.id, 'late-image');
+  const withoutImage: EnvironmentObservation = { environmentId: 'ainekio', adapter: 'ainekio-gateway',
+    sessionId: 'robot-1', timestamp: new Date().toISOString(), capabilities: { actions: ['captureImage'], visual: true },
+    text: [{ id: 'second-request', source: 'player', text: 'Please wave.', timestamp: new Date().toISOString() }] };
+  recordEnvironmentObservation(withoutImage);
+  assert.equal(readEnvironmentBridgeState().sessions['robot-1'].latestObservation?.visual, undefined,
+    'A previous picture must not be attached to a new speech observation');
+  const cachedSelection = await environmentImageInputNode.execute({ sessionId: 'robot-1', observationCurrent: true }, {});
+  assert.deepEqual(cachedSelection.frames, [cachedFrame], 'Selected vision can read a frame after text replaced the latest observation');
+  assert.equal(cachedSelection.current, false, 'Cached evidence cannot claim to accompany the triggering observation');
+  assert.equal(cachedSelection.verified, true);
+  const cachedContext = await environmentContextBuilderNode.execute({
+    observation: withoutImage, observationCurrent: true, images: cachedSelection.images, frames: cachedSelection.frames,
+    userInstruction: 'What is in the available picture?', routingAnalysis: { needsVision: true },
+  }, {}, {});
+  assert.equal(cachedContext.images.length, 1);
+  assert.equal(cachedContext.currentVisualEvidence, false, 'A current transcript cannot make an earlier frame current evidence');
+  assert.ok(cachedContext.message.includes(cachedFrame.timestamp), 'The model receives the recorded camera time');
+  const laterFrame = { ...cachedFrame, id: 'newer-image', timestamp: new Date(Date.parse(cachedFrame.timestamp) + 1000).toISOString(),
+    metadata: { actionId: 'previous-capture', robotId: 'robot-1', epoch: 1 } };
+  recordEnvironmentObservation({ ...withoutImage, text: undefined, visual: laterFrame });
+  recordEnvironmentObservation({ ...withoutImage, text: undefined, visual: cachedFrame });
+  recordEnvironmentObservation(withoutImage);
+  const latestSelection = await environmentImageInputNode.execute({ sessionId: 'robot-1', visual: cachedFrame }, {});
+  assert.deepEqual(latestSelection.frames, [laterFrame], 'Late delivery of an older frame cannot replace newer camera evidence');
+  assert.equal(latestSelection.current, false);
+  assert.deepEqual((await environmentImageInputNode.execute({ sessionId: 'different-session' }, {})).frames, []);
+  const requestedCapture = await environmentImageInputNode.execute({ sessionId: 'robot-1',
+    terminalFeedback: { actionId: 'fresh-capture', type: 'completed' }, actionId: 'fresh-capture' }, {});
+  assert.equal(requestedCapture.verified, false, 'An available earlier frame cannot satisfy a requested fresh capture');
+  assert.deepEqual((await environmentImageInputNode.execute({}, {})).frames, [], 'No implicit global-camera lookup');
+  for (const [robotId, epoch] of [['v1', 1], ['v1', 2], ['v2', 2]] as const) {
+    const bodyObservation = { ...withoutImage, state: { body: { robotId }, gateway: { robots: { [robotId]: { epoch } } } } };
+    recordEnvironmentObservation(bodyObservation);
+    assert.equal(getLatestEnvironmentVisual('robot-1'), undefined, 'Body/epoch changes cannot inherit another camera source');
+    recordEnvironmentObservation({ ...bodyObservation, visual: laterFrame });
+    recordEnvironmentObservation(bodyObservation);
+    assert.deepEqual(getLatestEnvironmentVisual('robot-1'), laterFrame, 'Status refresh preserves evidence from the same body epoch');
+  }
+  assert.equal(manager.getAllTasks().length, 0, 'Reading and retaining camera frames must not dispatch actions or start cognition');
   resetState();
   const readinessTimestamp = new Date().toISOString();
   recordEnvironmentObservation({

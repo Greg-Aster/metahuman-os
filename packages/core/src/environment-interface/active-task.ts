@@ -23,6 +23,19 @@ export interface ActiveTaskContinuation {
   state: ActiveTaskState
 }
 export interface ActiveTaskState {
+  personLoss?: {
+    startedAt: number
+    expiresAt: number
+    reason: 'absent' | 'ambiguous'
+    lastFrame?: string
+    lastObservedAt?: number
+    lastExpiresAt?: number
+    firstObservedAt?: number
+    consecutive: number
+    candidateFrame?: string
+    windowExpired?: boolean
+    resumeRejection?: string
+  }
   stepIndex: number
   completedActionId?: string
   motionId?: string
@@ -67,6 +80,51 @@ export interface ActiveTaskState {
   pendingEvents?: Array<{ kind: string; payload: unknown; actionId?: string }>
   capturedFrameIds?: string[]
   evidence: string[]
+}
+
+/** A source-frame identity, scoped across gateway restarts and reconnects. */
+export function personFrameKey(perception: EnvironmentPerception): string {
+  return JSON.stringify([perception.gatewayInstance, perception.robotId, perception.epoch, perception.frameCounter])
+}
+
+/** Update only the existing execution checkpoint; recognition never grants resume. */
+export function observeSinglePerson(state: ActiveTaskState, now: number): void {
+  const perception = state.perception
+  const fresh = perception && Date.parse(perception.observedAt) <= now && now < Date.parse(perception.expiresAt)
+  const people = fresh ? perception.objects.filter(object => object.label.toLowerCase() === 'person') : []
+  if (!state.personLoss && fresh && people.length !== 1) {
+    state.personLoss = { startedAt: now, expiresAt: now + 3000,
+      reason: people.length === 0 ? 'absent' : 'ambiguous', consecutive: 0 }
+    state.identificationError = 'Single-person behavior lost an unambiguous candidate; owned cancellation required'
+    state.objectiveComplete = false
+  }
+  const loss = state.personLoss
+  if (!loss) return
+  if (now >= loss.expiresAt) loss.windowExpired = true
+  if (!fresh || loss.windowExpired) {
+    loss.consecutive = 0; delete loss.firstObservedAt; delete loss.candidateFrame
+    return
+  }
+  const key = personFrameKey(perception)
+  // Re-reading a frame cannot count as more evidence or renew the window.
+  if (key === loss.lastFrame) return
+  const observedAt = Date.parse(perception.observedAt)
+  const sameSource = loss.lastFrame && JSON.parse(loss.lastFrame).slice(0, 3).join() === JSON.parse(key).slice(0, 3).join()
+  const advance = loss.lastFrame ? (perception.frameCounter - JSON.parse(loss.lastFrame)[3]) >>> 0 : 1
+  if (sameSource && (advance === 0 || advance >= 0x80000000 || observedAt <= loss.lastObservedAt!)) return
+  const consecutive = loss.lastObservedAt !== undefined && observedAt > loss.lastObservedAt
+    && observedAt <= loss.lastExpiresAt!
+    && sameSource
+  if (people.length !== 1 || !people[0].box || !consecutive) {
+    loss.consecutive = 0; delete loss.firstObservedAt; delete loss.candidateFrame
+  }
+  // An older source frame cannot qualify a candidate, even if delivered late.
+  if (people.length === 1 && people[0].box && (loss.lastObservedAt === undefined || observedAt > loss.lastObservedAt)) {
+    loss.firstObservedAt ??= observedAt
+    loss.consecutive += 1
+    if (loss.consecutive >= 3 && observedAt - loss.firstObservedAt >= 1000) loss.candidateFrame = key
+  }
+  loss.lastFrame = key; loss.lastObservedAt = observedAt; loss.lastExpiresAt = Date.parse(perception.expiresAt)
 }
 
 /** One finite Coordinator job; it has no command or task-completion authority. */

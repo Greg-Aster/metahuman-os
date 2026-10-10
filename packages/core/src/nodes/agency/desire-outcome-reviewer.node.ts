@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Desire Outcome Reviewer Node
  *
@@ -475,9 +476,10 @@ export const DesireOutcomeReviewerNode: NodeDefinition = defineNode({
       description: 'LLM temperature for review (lower = more deterministic)',
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'persona',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     systemPrompt: {
       type: 'text_multiline',

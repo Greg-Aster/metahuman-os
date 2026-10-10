@@ -170,9 +170,10 @@ export function evaluateTrainOfThoughtGraph(
       `Train of Thought persistence failed: ${persistence.error || persistence.reason || 'no durable output'}`,
     )
   }
-  const eventId = typeof persistence.eventId === 'string' ? persistence.eventId.trim() : ''
-  const eventPath = typeof persistence.eventPath === 'string' ? persistence.eventPath.trim() : ''
-  if (!eventId || !eventPath) {
+  const memory = graphNodeOutputs(graph, graphResult, 'inner_dialogue_saver')
+  const eventId = typeof memory.eventId === 'string' ? memory.eventId.trim() : ''
+  const eventPath = typeof memory.eventPath === 'string' ? memory.eventPath.trim() : ''
+  if (memory.saved !== true || !eventId || !eventPath) {
     throw new Error('Train of Thought persistence did not confirm long-term memory capture')
   }
 

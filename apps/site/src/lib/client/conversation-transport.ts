@@ -37,12 +37,6 @@ export interface SelectedReplyRouteInput {
   isAgencyMessage?: boolean;
 }
 
-export interface EventSourceConnectionRef {
-  name: string;
-  source: EventSource | null;
-  clear: () => void;
-}
-
 export function readLlmOptions(storage: Storage | undefined = globalThis.localStorage): Record<string, unknown> {
   if (!storage) return {};
 
@@ -123,23 +117,4 @@ export function responsePipelineCardTypeForReply(input: SelectedReplyRouteInput)
   const agencyReply = input.isAgencyMessage === true || input.dialogueSource === 'agency-system';
   if (!agencyReply || !input.desireId || !input.cardType) return null;
   return DESIRE_RESPONSE_CARD_TYPES[input.cardType] || null;
-}
-
-export function closeEventSourceConnections(logPrefix: string, connections: EventSourceConnectionRef[]): number {
-  let closedCount = 0;
-
-  for (const connection of connections) {
-    if (!connection.source) continue;
-
-    console.log(`${logPrefix} → Closing ${connection.name}`);
-    try {
-      connection.source.close();
-      connection.clear();
-      closedCount++;
-    } catch (error) {
-      console.error(`${logPrefix} ❌ Error closing ${connection.name}:`, error);
-    }
-  }
-
-  return closedCount;
 }

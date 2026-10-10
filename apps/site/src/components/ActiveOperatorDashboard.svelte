@@ -12,7 +12,7 @@
     createdAt: string;
   }
 
-  type RobotOperatorChildId = 'robot-status' | 'robot-goal-review' | 'boredom-observer' | 'boredom-movement' | 'boredom-reflection';
+  type RobotOperatorChildId = 'robot-autonomy-controller' | 'robot-status' | 'robot-goal-review' | 'boredom-observer' | 'boredom-movement' | 'boredom-reflection';
 
   interface RobotOperatorChildRuntime {
     id: RobotOperatorChildId;
@@ -25,9 +25,9 @@
     lastOutcome?: string;
   }
 
-  interface BoredomEpisode {
+  interface AutonomyEpisode {
     id: string;
-    child: Extract<RobotOperatorChildId, `boredom-${string}`>;
+    child: RobotOperatorChildId;
     handler: string;
     state: string;
     source: string;
@@ -51,7 +51,7 @@
         reason: string;
         children: Record<RobotOperatorChildId, RobotOperatorChildRuntime>;
       } | null;
-      episodes: BoredomEpisode[];
+      episodes: AutonomyEpisode[];
     };
   }
 
@@ -59,8 +59,9 @@
   let error = '';
   let timer: ReturnType<typeof setInterval> | undefined;
 
-  const childOrder: RobotOperatorChildId[] = ['robot-status', 'robot-goal-review', 'boredom-observer', 'boredom-movement', 'boredom-reflection'];
+  const childOrder: RobotOperatorChildId[] = ['robot-autonomy-controller', 'robot-status', 'robot-goal-review', 'boredom-observer', 'boredom-movement', 'boredom-reflection'];
   const childLabels: Record<RobotOperatorChildId, string> = {
+    'robot-autonomy-controller': 'Autonomy Controller',
     'robot-status': 'Robot Status',
     'robot-goal-review': 'Robot Goal Review',
     'boredom-observer': 'Boredom Observer',
@@ -133,7 +134,7 @@
       <div class="border-b border-gray-200 p-3 dark:border-gray-800">
         <div class="font-semibold text-gray-900 dark:text-gray-100">Robot Operator</div>
         <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          Robot-side workflow scheduler. Every child and Robot Autonomy Executor run once and end; later work begins as a new scheduled workflow.
+          Robot Operator admits configured workflows through the Work Coordinator. Full mode continues an existing execution or starts a controller decision after the preceding work finishes. Semi mode uses the configured idle triggers; Reactive mode waits for input.
         </div>
       </div>
       {#if !status.robotOperator.runtime}
@@ -169,9 +170,9 @@
         </div>
       {/if}
 
-      <div class="border-t border-gray-200 p-3 font-medium text-gray-900 dark:border-gray-800 dark:text-gray-100">Recent boredom episodes</div>
+      <div class="border-t border-gray-200 p-3 font-medium text-gray-900 dark:border-gray-800 dark:text-gray-100">Recent autonomy activity</div>
       {#if status.robotOperator.episodes.length === 0}
-        <div class="border-t border-gray-200 p-4 text-gray-500 dark:border-gray-800 dark:text-gray-400">No boredom episodes recorded.</div>
+        <div class="border-t border-gray-200 p-4 text-gray-500 dark:border-gray-800 dark:text-gray-400">No autonomy activity recorded.</div>
       {:else}
         <div class="divide-y divide-gray-200 border-t border-gray-200 dark:divide-gray-800 dark:border-gray-800">
           {#each status.robotOperator.episodes as episode}

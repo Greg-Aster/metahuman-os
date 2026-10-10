@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { apiEventSource, apiFetch } from '../lib/client/api-config';
+  import { apiFetch } from '../lib/client/api-config';
   import { readAssistantSpeechEnabled } from '../lib/client/assistant-speech-preference';
-  import { useTTS } from '../lib/client/composables/useTTS';
+  import { useTTS, type PreparedSpeech } from '../lib/client/composables/useTTS';
   import { shouldPlayAdmittedSpeech } from '../lib/client/inner-dialogue-speech-visibility';
 
   type TTSQueueItem = {
@@ -17,6 +17,7 @@
 
   const ttsApi = useTTS();
   let queueStream: EventSource | null = null;
+  const preparations = new Map<string, PreparedSpeech>();
   let playbackQueue = Promise.resolve();
   let mounted = false;
   let consumerId = '';
@@ -48,6 +49,29 @@
     } catch (error) {
       console.warn(`[tts-queue] Delivery ${action} failed for ${item.id}:`, error);
       return false;
+    }
+  }
+
+  function cancelPreparations(): void {
+    for (const prepared of preparations.values()) prepared.cancel();
+    preparations.clear();
+  }
+
+  function prepareItems(items: TTSQueueItem[]): void {
+    const admitted = new Set(items.map(item => item.id));
+    for (const [id, prepared] of preparations) {
+      if (!admitted.has(id) && id !== activeDeliveryId) {
+        prepared.cancel();
+        preparations.delete(id);
+      }
+    }
+    for (const item of items) {
+      if (!item.id || !item.text || preparations.has(item.id)) continue;
+      if (!readAssistantSpeechEnabled() || !shouldPlayAdmittedSpeech(item.mode)) continue;
+      if (typeof item.generation === 'number' && item.generation < queueGeneration) continue;
+      preparations.set(item.id, ttsApi.prepareSpeech(item.text, {
+        source: item.source || item.mode, requestId: item.id,
+      }));
     }
   }
 
@@ -113,7 +137,7 @@
         await updateDelivery(item, 'suppress');
         return;
       }
-      const outcome = await ttsApi.speak(text, { source, requestId: item.id });
+      const outcome = await ttsApi.speak(text, { source, requestId: item.id, prepared: preparations.get(item.id) });
       if (!mounted) return;
       if (queueInterruptedDeliveries.delete(item.id)) return;
       const action: DeliveryAction = outcome === 'completed'
@@ -129,6 +153,8 @@
       if (mounted) await updateDelivery(item, 'retry');
     } finally {
       if (activeDeliveryId === item.id) activeDeliveryId = '';
+      preparations.get(item.id)?.cancel();
+      preparations.delete(item.id);
       window.clearInterval(renewInterval);
     }
   }
@@ -143,12 +169,8 @@
     if (queueStream) return;
 
     console.log('[tts-queue] Connecting app-level TTS queue stream');
-    const stream = apiEventSource(
-      `/api/tts-queue-stream?consumerId=${encodeURIComponent(consumerId)}`,
-    );
-    queueStream = stream;
-
-    stream.onmessage = (event) => {
+    queueStream = new EventSource(`/api/tts-queue-stream?consumerId=${encodeURIComponent(consumerId)}`);
+    queueStream.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'connected') {
@@ -156,6 +178,7 @@
             leaseDurationMs = data.leaseDurationMs;
           }
           if (typeof data.generation === 'number') {
+            if (data.generation > queueGeneration) cancelPreparations();
             if (data.generation > queueGeneration && activeDeliveryId) {
               queueInterruptedDeliveries.add(activeDeliveryId);
               ttsApi.interruptPlaybackRequest(activeDeliveryId, 'interrupted');
@@ -165,10 +188,15 @@
           return;
         }
         if (data.type === 'heartbeat') return;
+        if (data.type === 'prepare') {
+          prepareItems(data.items ?? []);
+          return;
+        }
         if (data.type === 'interrupt') {
           if (typeof data.generation === 'number') {
             queueGeneration = Math.max(queueGeneration, data.generation);
           }
+          cancelPreparations();
           console.log('[tts-queue] Interrupting superseded playback', data.interruption);
           if (activeDeliveryId) {
             queueInterruptedDeliveries.add(activeDeliveryId);
@@ -187,10 +215,7 @@
         console.error('[tts-queue] Could not parse queue event:', error);
       }
     };
-
-    stream.onerror = (error) => {
-      // Native EventSource reconnects automatically. Keep this app-lifetime
-      // stream independent of Chat view changes and foreground pool suspension.
+    queueStream.onerror = (error) => {
       console.warn('[tts-queue] Queue connection interrupted; waiting for reconnect', error);
     };
   }
@@ -248,6 +273,7 @@
     queueStream?.close();
     queueStream = null;
     removeAudioUnlockListeners();
+    cancelPreparations();
     ttsApi.cleanup();
   });
 </script>

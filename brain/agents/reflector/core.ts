@@ -175,8 +175,10 @@ export function evaluateReflectorGraph(
       `Reflection persistence failed: ${persistence.error || persistence.reason || 'no durable reflection output'}`,
     )
   }
-  if (typeof persistence.eventId !== 'string' || !persistence.eventId.trim()
-      || typeof persistence.eventPath !== 'string' || !persistence.eventPath.trim()) {
+  const captured = graphNodeOutputs(graph, graphResult, 'inner_dialogue_saver',
+    node => node.data.properties?.roles?.includes('reflection'))
+  if (captured.saved !== true || typeof captured.eventId !== 'string' || !captured.eventId.trim()
+      || typeof captured.eventPath !== 'string' || !captured.eventPath.trim()) {
     throw new Error('Reflection persistence did not confirm long-term memory capture')
   }
 
@@ -185,8 +187,8 @@ export function evaluateReflectorGraph(
     ...summary,
     status: 'generated',
     reflection,
-    eventId: persistence.eventId,
-    eventPath: persistence.eventPath,
+    eventId: captured.eventId,
+    eventPath: captured.eventPath,
     ttsQueued: tts.queued === true,
   }
 }

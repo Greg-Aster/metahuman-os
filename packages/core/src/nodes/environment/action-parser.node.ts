@@ -49,6 +49,11 @@ function actionIsAdvertised(
   return observation.capabilities.actions.includes(action.type as any);
 }
 
+function expressionIsAdvertised(action: Partial<EnvironmentAction>, observation: EnvironmentObservation | undefined): boolean {
+  return action.type !== 'faceExpression'
+    || observation?.capabilities.expressionLibrary?.some(entry => entry.name === action.expression) === true;
+}
+
 function isPhysicalMotionAction(action: Partial<EnvironmentAction>): boolean {
   return PHYSICAL_MOTION_ACTIONS.has(action.type ?? '');
 }
@@ -207,9 +212,11 @@ export const environmentActionParserNode = defineNode({
     );
     const movementSupported = observation?.capabilities?.actions?.includes('robotMotionPlan') === true;
     const unavailableAction = parsed.actions.find(action => !actionIsAdvertised(action, observation));
+    const unavailableExpression = parsed.actions.find(action => !expressionIsAdvertised(action, observation));
     const supportedParsedActions = parsed.actions.filter(action => (
       actionIsAdvertised(action, observation)
       && !unsupportedRobotCommand([action], observation?.capabilities?.robotCommands)
+      && expressionIsAdvertised(action, observation)
     ));
     const hasNonMotionAlternative = supportedParsedActions.some(action => !isPhysicalMotionAction(action));
     const targetFeedbackActionSelected = supportedParsedActions.some(action => (
@@ -239,6 +246,8 @@ export const environmentActionParserNode = defineNode({
       admissionBlockedReason = 'camera_unavailable';
     } else if (!admissionBlockedReason && unavailableAction) {
       admissionBlockedReason = 'action_capability_unavailable';
+    } else if (!admissionBlockedReason && unavailableExpression) {
+      admissionBlockedReason = 'expression_unavailable';
     }
     const admissionBlocked = Boolean(admissionBlockedReason);
     const requiresGeneratedMovement = !admissionBlocked
@@ -249,7 +258,7 @@ export const environmentActionParserNode = defineNode({
           motionClass: 'body_local' as const,
         }
       : null;
-    const movementError = motionAdmissionMessage(admissionBlockedReason)
+    const movementError = (admissionBlockedReason === 'expression_unavailable' ? 'The selected expression is not in the advertised expression library.' : motionAdmissionMessage(admissionBlockedReason))
       || (requiresGeneratedMovement && !connectedSession
         ? 'The requested robot movement cannot run because no robot session is connected.'
         : requiresGeneratedMovement && !movementSupported

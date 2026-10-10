@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Desire Question Generator Node
  *
@@ -157,9 +158,10 @@ export const definition: NodeDefinition = defineNode({
       rows: 24,
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'curator',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     temperature: {
       type: 'number',

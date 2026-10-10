@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Environment Training Curator",
+  "description": "Reviews one saved Environment decision through the configured curator model and saves a proposal for human review.",
+  "cognitiveMode": "environment",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 0
+  },
+  "nodes": [
+    {
+      "id": "review-input",
+      "type": "environmentNode",
+      "position": { "x": 80, "y": 160 },
+      "data": {
+        "label": "Load Decision and Evidence",
+        "nodeType": "environment_training_review_input",
+        "properties": {
+          "systemPrompt": "Review one saved Environment Mode decision using its original input, output, advertised capabilities, and separately attributed execution and observation evidence. Decide whether the output fulfilled the request. A selected or dispatched command alone does not establish physical movement. Return JSON with verdict (correct, incorrect, or uncertain), reason, and a complete corrected output when the decision is incorrect and the evidence supports a correction. Use uncertain when the evidence cannot establish correctness or a correction. Preserve the original decision’s output format."
+        }
+      }
+    },
+    {
+      "id": "curator-model",
+      "type": "llmNode",
+      "position": { "x": 480, "y": 160 },
+      "data": {
+        "label": "Curator Model",
+        "nodeType": "model_router",
+        "properties": { "role": "curator", "maxTokens": 4096, "temperature": 0.1, "repeatPenalty": 1.1, "format": "json" }
+      }
+    },
+    {
+      "id": "save-proposal",
+      "type": "environmentNode",
+      "position": { "x": 820, "y": 160 },
+      "data": { "label": "Save Review Proposal", "nodeType": "environment_training_review_save", "properties": {} }
+    }
+  ],
+  "edges": [
+    { "id": "review-messages", "source": "review-input", "sourceHandle": "messages", "target": "curator-model", "targetHandle": "messages", "data": { "type": "array" } },
+    { "id": "review-response", "source": "curator-model", "sourceHandle": "response", "target": "save-proposal", "targetHandle": "response", "data": { "type": "string" } },
+    { "id": "review-bank", "source": "review-input", "sourceHandle": "bank", "target": "save-proposal", "targetHandle": "bank", "data": { "type": "string" } },
+    { "id": "review-id", "source": "review-input", "sourceHandle": "candidateId", "target": "save-proposal", "targetHandle": "candidateId", "data": { "type": "string" } },
+    { "id": "review-digest", "source": "review-input", "sourceHandle": "sourceDigest", "target": "save-proposal", "targetHandle": "sourceDigest", "data": { "type": "string" } }
+  ]
+}

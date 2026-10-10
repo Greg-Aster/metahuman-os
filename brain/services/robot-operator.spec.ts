@@ -24,7 +24,6 @@ let history: QueuedTask[] = []
 let runtime: RobotOperatorRuntimeState | undefined
 let executions: ReturnType<typeof core.activeRobotExecutions> = []
 let admitted = 0
-const queueFile = path.join(core.getQueueStateDir(), 'work-items.json')
 const configuration = { ...core.loadRobotOperatorConfig(), enabled: true }
 const coreMock = mock.module('@metahuman/core', { namedExports: {
   ...core,
@@ -56,7 +55,7 @@ async function until(predicate: () => boolean): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 10))
   }
 }
-function wakeQueue() { fs.writeFileSync(queueFile, JSON.stringify({ items })) }
+function wakeQueue() { core.persistQueueState({ items, history, inFlightRemote: [], lastUpdated: new Date().toISOString() }) }
 
 test('real Full service admits only a loadable Controller, independently of history and selected child failures', async () => {
   fs.writeFileSync(path.join(graphs, 'controller-a-mode.json'), '{invalid json')

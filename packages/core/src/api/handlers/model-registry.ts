@@ -31,6 +31,7 @@ import {
 import {
   isModelRole,
   resolveModelById,
+  resolveModelForCognitiveMode,
   invalidateModelCache,
   updateModelGlobalSettings,
   migrateModelRegistry,
@@ -43,6 +44,57 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { getLlamaCppAdapters } from '../../providers/llama-cpp.js';
+import { compareEnvironmentSpecialistReports,
+  type EnvironmentSpecialistEvaluationReport } from '../../environment-training-promotion.js';
+import { loadGraphForMode } from '../../graph-streaming.js';
+import type { SvelteFlowGraph } from '../../cognitive-graph-schema.js';
+import { getNodeSchema } from '../../nodes/index.js';
+import { loadRobotOperatorConfig } from '../../robot-operator.js';
+
+/** Project configured nodes through the same resolver used by model calls. */
+export interface WorkflowModelBinding {
+  nodeId: string; label: string; role: string; modelId: string; selection: string;
+  resolvedModelId?: string; model?: string; provider?: string; error?: string;
+}
+export function projectWorkflowModels(
+  graph: SvelteFlowGraph,
+  resolve: (role: string) => { id: string; model: string; provider: string },
+) {
+  return graph.nodes.flatMap<WorkflowModelBinding>(node => {
+    const schema = getNodeSchema(node.data.nodeType);
+    if (!schema?.propertySchemas?.role || !isModelRole(schema.properties?.role)) return [];
+    const properties = { ...schema.properties, ...node.data.properties };
+    const role = String(properties.role || (node.data.nodeType === 'orchestrator_llm' ? 'orchestrator' : 'persona'));
+    const connectedRole = graph.edges.some(edge => edge.target === node.id && edge.targetHandle === 'role');
+    const binding = { nodeId: node.id, label: node.data.label || schema.name, role, modelId: '',
+      selection: connectedRole ? 'runtime-role' : 'role' };
+    if (connectedRole) return [{ ...binding, model: 'Selected at runtime' }];
+    try {
+      const resolved = resolve(role);
+      return [{ ...binding, modelId: resolved.id, resolvedModelId: resolved.id, model: resolved.model, provider: resolved.provider }];
+    } catch (error) {
+      return [{ ...binding, error: (error as Error).message }];
+    }
+  });
+}
+
+async function workflowModelBindings(mode: CognitiveModeId, username: string) {
+  const config = mode === 'environment' ? loadRobotOperatorConfig() : null;
+  const keys = new Set([mode, ...(config ? Object.entries(config)
+    .filter(([key]) => key.endsWith('Graph')).map(([, value]) => String(value)) : [])]);
+  return Promise.all([...keys].map(async key => {
+    try {
+      const { graph } = await loadGraphForMode(key);
+      const models = projectWorkflowModels(graph, role => {
+        if (!isModelRole(role)) throw new Error(`Unknown model role: ${role}`);
+        return resolveModelForCognitiveMode(mode, role, username);
+      });
+      return { key, name: graph.name, models };
+    } catch (error) {
+      return { key, name: key, models: [], error: (error as Error).message };
+    }
+  }));
+}
 
 function llamaAdapterModelId(model: string, endpoint: string, adapterPath: string): string {
   return `llama-cpp-lora.${createHash('sha256').update(JSON.stringify([model, endpoint, adapterPath])).digest('hex').slice(0, 16)}`;
@@ -235,6 +287,53 @@ function writeModelRegistry(username: string, registry: ModelRegistry): void {
   invalidateModelCache();
 }
 
+/** Commit an evaluated Environment LoRA through the profile's existing role owner. */
+export async function promoteEnvironmentSpecialist(input: {
+  username: string;
+  specialist: 'intent' | 'task';
+  previousModelId: string;
+  artifactPath: string;
+  run: string;
+  currentReport: string;
+  evaluationReport: string;
+}): Promise<string> {
+  const currentEvidence = JSON.parse(fs.readFileSync(input.currentReport, 'utf8')) as EnvironmentSpecialistEvaluationReport;
+  const candidateEvidence = JSON.parse(fs.readFileSync(input.evaluationReport, 'utf8')) as EnvironmentSpecialistEvaluationReport;
+  if (candidateEvidence.specialist !== input.specialist
+    || !compareEnvironmentSpecialistReports(currentEvidence, candidateEvidence).promote) {
+    throw new Error('Environment candidate does not beat the current adapter under the approved comparison rule');
+  }
+  const role = input.specialist === 'intent' ? 'environmentIntent' : 'environmentActionSelector';
+  const registry = readModelRegistry(input.username);
+  const assigned = registry.cognitiveModeMappings?.environment?.[role];
+  if (assigned !== input.previousModelId) throw new Error('Environment model role changed during training');
+  const previous = registry.models[input.previousModelId];
+  if (!previous || previous.provider !== 'llama-cpp' || typeof previous.options.endpoint !== 'string') {
+    throw new Error('Active Environment specialist is not a configured llama.cpp model');
+  }
+  const loaded = await getLlamaCppAdapters({ ...loadBackendConfig().llamaCpp,
+    endpoint: previous.options.endpoint, model: previous.model });
+  if (!loaded.some(adapter => adapter.path === input.artifactPath)) {
+    throw new Error('New Environment LoRA is not loaded by the selected llama.cpp service');
+  }
+  const modelId = llamaAdapterModelId(previous.model, previous.options.endpoint, input.artifactPath);
+  registry.models[modelId] = {
+    ...previous,
+    adapters: [input.artifactPath],
+    roles: [role],
+    description: `Environment ${input.specialist} specialist from ${input.run}`,
+    options: { ...previous.options, lora: [{ path: input.artifactPath, scale: 1 }] },
+    metadata: { ...previous.metadata, specialist: input.specialist, run: input.run,
+      artifactPath: input.artifactPath, evaluationReport: input.evaluationReport,
+      activatedAt: new Date().toISOString() },
+  };
+  registry.cognitiveModeMappings ??= {};
+  registry.cognitiveModeMappings.environment ??= {};
+  registry.cognitiveModeMappings.environment[role] = modelId;
+  writeModelRegistry(input.username, registry);
+  return modelId;
+}
+
 function normalizeProviderCapabilities(value: unknown): Array<'text' | 'image'> {
   if (!Array.isArray(value)) return []
   const capabilities = new Set<'text' | 'image'>()
@@ -286,7 +385,6 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
         }))
     )
 
-    const nodeModels = [...availableModels];
 
     // Extract base role assignments (defaults)
     const defaults = registry.defaults || {};
@@ -330,13 +428,14 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       }
     }
 
-    // Project the canonical resolver's device override without rewriting the synced profile registry.
+    // Inventory retains registered deployments. Role assignments are resolved
+    // separately; applying the preferred backend here hides resident specialists.
     if (activeBackend === 'llama-cpp') {
       availableModels = collapseModelInventory(availableModels.map(model => {
-        const resolved = resolveModelById(model.id, user.username);
+        const resolved = resolveModelById(model.id, user.username, model.provider !== 'llama-cpp');
         return resolved.provider === 'llama-cpp'
           ? { ...model, provider: resolved.provider, model: resolved.model, capabilities: resolved.capabilities,
-              options: resolved.options, adapters: [], baseModel: null,
+              options: resolved.options, adapters: resolved.adapters, baseModel: resolved.baseModel || null,
               description: `Configured llama.cpp model: ${resolved.model}` }
           : model;
       }));
@@ -369,7 +468,6 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
           }
         }))
 
-        nodeModels.push(...discovered);
         availableModels = collapseModelInventory([...availableModels, ...discovered])
 
         const installedNames = new Set(discovered.map(model => model.model))
@@ -400,12 +498,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       };
     }
 
-    const llamaModels = availableModels.filter(model => model.provider === 'llama-cpp');
-    if (resolvedBackend === 'llama-cpp' && llamaModels.length) {
-      localModel = { id: llamaModels[0].id, name: backendStatus.model!, provider: 'llama-cpp', locked: true };
-    }
-
-    // Model categories - only show local models if the server is actually running
+    // Registered llama.cpp deployments remain selectable independently of server state.
     const cloudProviderSet = new Set(['runpod_serverless', 'huggingface', 'openai', 'openrouter', 'remote-server']);
     const bigBrotherProviders = new Set(['claude-code', 'anthropic']);
 
@@ -444,15 +537,15 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     }
 
     const llamaConfig = loadBackendConfig().llamaCpp;
-    if (llamaConfig.model) nodeModels.push({
+    if (llamaConfig.model) availableModels.push({
       id: `llama-cpp.${llamaConfig.model}`, provider: 'llama-cpp', model: llamaConfig.model,
       roles: [], capabilities: llamaConfig.capabilities, adapters: [], baseModel: null,
       description: 'Configured llama.cpp model', options: { ...llamaConfig, lora: [] },
       metadata: {}, source: 'user-registry',
     });
-    if (query?.view === 'node' && availableBackends.llamaCpp?.running) {
+    if (availableBackends.llamaCpp?.running) {
       const adapters = await getLlamaCppAdapters(llamaConfig);
-      for (const adapter of adapters) nodeModels.push({
+      for (const adapter of adapters) availableModels.push({
         id: llamaAdapterModelId(llamaConfig.model, llamaConfig.endpoint, adapter.path), provider: 'llama-cpp', model: llamaConfig.model,
         roles: [], capabilities: llamaConfig.capabilities, adapters: [adapter.path], baseModel: llamaConfig.model,
         description: `${llamaConfig.model} + ${path.basename(adapter.path)}`,
@@ -461,13 +554,18 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       });
     }
 
+    availableModels = collapseModelInventory(availableModels);
+    const llamaModels = availableModels.filter(model => model.provider === 'llama-cpp');
+    if (resolvedBackend === 'llama-cpp' && llamaModels.length) {
+      localModel = { id: `llama-cpp.${llamaConfig.model}`, name: backendStatus.model!, provider: 'llama-cpp', locked: true };
+    }
+
     const modelCategories = {
-      local: resolvedBackend === 'llama-cpp' ? llamaModels
-        : activeBackend === 'vllm' && isVLLMRunning
+      local: [...llamaModels, ...(activeBackend === 'vllm' && isVLLMRunning
         ? [{ id: 'vllm.active', model: backendStatus.model || 'unknown', provider: 'vllm', locked: true }]
-        : isOllamaRunning
+        : activeBackend !== 'llama-cpp' && isOllamaRunning
           ? installedOllamaModels
-          : [],
+          : []), ...availableModels.filter(model => model.provider === 'local-models')],
       lora: vllmLoras,  // vLLM LoRA adapters
       remote: availableModels.filter(m => cloudProviderSet.has(m.provider)),
       bigBrother: availableModels.filter(m => bigBrotherProviders.has(m.provider))
@@ -487,8 +585,12 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     return successResponse({
       success: true,
       availableModels,
-      nodeModels: collapseModelInventory(nodeModels),
       roleAssignments,
+      resolvedRoles: Object.fromEntries(Object.keys(roleAssignments).filter(isModelRole).map(role => {
+        try { return [role, resolveModelForCognitiveMode(currentMode || 'dual', role, user.username)]; }
+        catch (error) { return [role, { error: (error as Error).message }]; }
+      })),
+      workflowModels: currentMode ? await workflowModelBindings(currentMode, user.username) : [],
       cognitiveModeMappings,
       globalSettings,
       version: registry.version || '1.0.0',
@@ -518,9 +620,9 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     // Allow authenticated users (owner or standard) to modify their model registry
     // Note: isAuthenticated check above already excludes guest/anonymous
 
-    const { role, modelId, cognitiveMode, registerOnly = false } = body || {};
+    const { role, modelId, cognitiveMode } = body || {};
 
-    if ((!registerOnly && !role) || !modelId) {
+    if (!role || !modelId) {
       return { status: 400, error: 'role and modelId are required' };
     }
     if (role === 'environmentRouter') {
@@ -529,7 +631,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
         error: 'environmentRouter is retired; assign the environmentActionSelector role instead',
       };
     }
-    if ((!registerOnly || role !== undefined) && !isModelRole(role)) {
+    if (!isModelRole(role)) {
       return { status: 400, error: `Unsupported model role: ${String(role)}` };
     }
     if (typeof modelId !== 'string') {
@@ -669,16 +771,16 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     if (!Array.isArray(entry.roles)) {
       entry.roles = [];
     }
-    if (!registerOnly && !entry.roles.includes(role)) {
+    if (!entry.roles.includes(role)) {
       entry.roles.push(role);
     }
 
     // Update cognitive mode mapping or default role assignment
-    if (!registerOnly && cognitiveMode) {
+    if (cognitiveMode) {
       registry.cognitiveModeMappings = registry.cognitiveModeMappings || {};
       registry.cognitiveModeMappings[cognitiveMode] = registry.cognitiveModeMappings[cognitiveMode] || {};
       registry.cognitiveModeMappings[cognitiveMode][role] = modelId;
-    } else if (!registerOnly && isModelRole(role)) {
+    } else if (isModelRole(role)) {
       registry.defaults = registry.defaults || {};
       registry.defaults[role] = modelId;
     }
@@ -709,8 +811,8 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     await audit({
       category: 'data_change',
       level: 'info',
-      event: registerOnly ? 'model_registered' : 'model_role_updated',
-      action: registerOnly ? 'model_registered' : 'model_role_updated',
+      event: 'model_role_updated',
+      action: 'model_role_updated',
       actor: user.username,
       userId: user.userId,
       metadata: {
@@ -724,7 +826,7 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
 
     return successResponse({
       success: true,
-      message: registerOnly ? `Model ${modelId} registered` : `Role ${role} assigned to model ${modelId}`,
+      message: `Role ${role} assigned to model ${modelId}`,
       needsRestart,
       registry: {
         availableModels: Object.keys(registry.models || {}),

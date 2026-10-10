@@ -38,3 +38,21 @@ test('existing load-only workflows and inactive persona retain their behavior', 
   assert.equal(inactive.formatted, '')
   assert.equal(inactive.inactive, true)
 })
+
+test('routed persona sections differ per consumer without implicit identity or background', async () => {
+  persona = identity.getDefaultPersonaCore()
+  persona.background = 'Unselected background'
+  const result = await PersonaLoaderNode.execute({ routingAnalysis: {
+    taskContext: ['persona.values'], conversationContext: ['persona.personality'],
+  } }, {}, { formatContext: true })
+  assert.match(result.taskFormatted, /## Core Values/)
+  assert.doesNotMatch(result.taskFormatted, /## Identity|## Background|## Personality/)
+  assert.match(result.conversationFormatted, /## Personality/)
+  assert.doesNotMatch(result.conversationFormatted, /## Identity|## Background|## Core Values/)
+  const none = await PersonaLoaderNode.execute({ routingAnalysis: {
+    taskContext: [], conversationContext: ['persona.identity'],
+  } }, {}, { formatContext: true })
+  assert.equal(none.taskFormatted, '')
+  assert.match(none.conversationFormatted, /## Identity/)
+  assert.doesNotMatch(none.conversationFormatted, /Unselected background/)
+})

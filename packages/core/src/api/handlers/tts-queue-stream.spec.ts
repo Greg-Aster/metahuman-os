@@ -18,7 +18,7 @@ eventBus.disconnect();
 const { setAuditEnabled } = await import('../../audit.js');
 setAuditEnabled(false);
 const { runGraph } = await import('../../graph-runtime.js');
-const { handleTtsQueueDelivery } = await import('./tts-queue-stream.js');
+const { handleTtsQueueDelivery, handleTtsQueueStream } = await import('./tts-queue-stream.js');
 const { claimNextTTS, createTTSDeliveryQueueStore, queueTTS, TTS_DELIVERY_LEASE_MS } =
   await import('../../tts/delivery-queue.js');
 const username = 'tts-api-fixture';
@@ -98,4 +98,39 @@ test('graph speech IDs renew and complete through the API without replaying play
       body: { ...ordinaryRequest.body, itemId: invalid } })).status, 400);
   }
   assert.equal((await handleTtsQueueDelivery(ordinaryRequest)).data.state, 'completed');
+});
+
+test('the active stream exposes pending preparation without granting a second playback lease', { timeout: 5000 }, async () => {
+  const owner = 'speech-preparation-fixture';
+  const first = queueTTS(owner, 'First queued speech.', 'conversation')!;
+  const second = queueTTS(owner, 'Second queued speech.', 'conversation')!;
+  const controller = new AbortController();
+  const response = await handleTtsQueueStream({ user: { username: owner, isAuthenticated: true },
+    query: { consumerId: 'preparing-browser' }, signal: controller.signal } as unknown as UnifiedRequest);
+  const stream = response.stream![Symbol.asyncIterator]();
+  const next = async () => JSON.parse(String((await stream.next()).value).slice(6));
+  try {
+    assert.equal((await next()).type, 'connected');
+    const prepare = await next();
+    assert.equal(prepare.type, 'prepare');
+    assert.deepEqual(prepare.items.map((item: any) => item.id), [first.id, second.id]);
+    assert.ok(prepare.items.every((item: any) => !item.leaseToken), 'preparation does not authorize playback');
+    const delivery = await next();
+    assert.equal(delivery.item.id, first.id);
+    assert.equal(claimNextTTS(owner, 'competing-browser').item, null);
+
+    const third = queueTTS(owner, 'Arrived during playback.', 'conversation')!;
+    const update = await next();
+    assert.equal(update.type, 'prepare');
+    assert.deepEqual(update.items.map((item: any) => item.id), [first.id, second.id, third.id]);
+    assert.equal(createTTSDeliveryQueueStore(owner).peek().filter(item => item.lease).length, 1);
+    const req = { user: { username: owner, isAuthenticated: true },
+      body: { itemId: first.id, leaseToken: delivery.item.leaseToken, action: 'complete' } } as unknown as UnifiedRequest;
+    assert.equal((await handleTtsQueueDelivery(req)).status, 200);
+    assert.equal((await next()).type, 'prepare');
+    assert.equal((await next()).item.id, second.id, 'the queue alone advances playback order');
+  } finally {
+    controller.abort();
+    await stream.return?.();
+  }
 });

@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Daydreamer Generator Node
  * Generates brief, whimsical daydreams from memory fragments using LLM
@@ -140,9 +141,10 @@ export const DaydreamerGeneratorNode: NodeDefinition = defineNode({
       description: 'LLM temperature (0.9 for creative but focused)',
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'persona',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     maxTokens: {
       type: 'number',

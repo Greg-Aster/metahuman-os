@@ -18,7 +18,10 @@ function requestedCommand(args: string[]): string {
 
 const command = requestedCommand(process.argv.slice(2))
 
-if (command === 'help' || command === '--help' || command === '-h') {
+if (process.argv[2] === 'terminal' && process.argv[3] === 'view' && process.argv[4]) {
+  const { terminalView } = await import('./commands/terminal-view.js')
+  await terminalView(process.argv[4])
+} else if (command === 'help' || command === '--help' || command === '-h') {
   printHelp()
 } else {
   await import('./main.js')

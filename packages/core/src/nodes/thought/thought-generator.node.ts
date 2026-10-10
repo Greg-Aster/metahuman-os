@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Thought Generator Node
  * Generates a single reasoning step from memory context
@@ -180,9 +181,10 @@ export const ThoughtGeneratorNode: NodeDefinition = defineNode({
       label: 'Repeat Penalty',
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'persona',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     timeout: {
       type: 'number',

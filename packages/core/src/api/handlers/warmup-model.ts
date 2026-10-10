@@ -8,7 +8,9 @@
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
 import { successResponse } from '../types.js';
 import { audit } from '../../audit.js';
-import { callLLM } from '../../model-router.js';
+import { callLLM, callEmbeddings } from '../../model-router.js';
+import { isModelRole, type ModelRole } from '../../model-roles.js';
+import { resolveModel, resolveModelForCognitiveMode } from '../../model-resolver.js';
 
 // In-memory cache to prevent duplicate warmups
 const warmupCache = new Map<string, number>();
@@ -25,21 +27,21 @@ function markAsWarmed(role: string): void {
   warmupCache.set(role, Date.now());
 }
 
-async function warmupWithTimeout(role: string, cognitiveMode?: string): Promise<any> {
-  return Promise.race([
-    callLLM({
-      role: role as any,
-      messages: [{ role: 'user', content: 'hi' }],
-      cognitiveMode,
-      options: {
-        maxTokens: 1,
-        temperature: 0,
-      },
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`Warmup timeout after ${WARMUP_TIMEOUT}ms`)), WARMUP_TIMEOUT)
-    ),
-  ]);
+async function warmupWithTimeout(role: ModelRole, username: string, cognitiveMode?: string): Promise<any> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      role === 'embedder'
+        ? callEmbeddings({ text: 'hi', userId: username, cognitiveMode })
+        : callLLM({ role, userId: username, messages: [{ role: 'user', content: 'hi' }],
+            cognitiveMode, options: { maxTokens: 1, temperature: 0 } }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Warmup timeout after ${WARMUP_TIMEOUT}ms`)), WARMUP_TIMEOUT);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -67,16 +69,20 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
     }
 
     // Validate role
-    const validRoles = ['orchestrator', 'persona', 'environmentActionSelector', 'curator', 'coder', 'planner', 'summarizer', 'fallback'];
-    if (!validRoles.includes(role)) {
+    if (!isModelRole(role)) {
       return {
         status: 400,
         error: `Invalid role: ${role}`,
       };
     }
 
-    // Skip if recently warmed (deduplication)
-    if (isRecentlyWarmed(`${user.username}:${role}:${cognitiveMode || 'default'}`)) {
+    const resolved = cognitiveMode
+      ? resolveModelForCognitiveMode(cognitiveMode, role, user.username)
+      : resolveModel(role, undefined, user.username);
+    const warmupKey = JSON.stringify([user.username, role, cognitiveMode, resolved.id,
+      resolved.provider, resolved.model, resolved.options, resolved.adapters]);
+    // Skip only if this assignment has already been warmed.
+    if (isRecentlyWarmed(warmupKey)) {
       return successResponse({
         success: true,
         message: `Model for role "${role}" was recently warmed (cached)`,
@@ -88,12 +94,12 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
 
     try {
       // Send minimal inference to trigger ordinary model loading with timeout.
-      await warmupWithTimeout(role, cognitiveMode);
+      await warmupWithTimeout(role, user.username, cognitiveMode);
 
       const duration = Date.now() - startTime;
 
       // Mark as warmed for deduplication
-      markAsWarmed(`${user.username}:${role}:${cognitiveMode || 'default'}`);
+      markAsWarmed(warmupKey);
 
       audit({
         category: 'system',

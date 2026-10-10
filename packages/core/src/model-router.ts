@@ -218,6 +218,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         repeatPenalty: mergedOptions.repeatPenalty || mergedOptions.repeat_penalty,
         format: mergedOptions.format,
         jsonSchema: mergedOptions.jsonSchema,
+        jsonSchemaMode: mergedOptions.jsonSchemaMode,
         keepAlive: (callOptions.keepAlive ?? mergedOptions.keepAlive) as string | undefined,
         contextWindow: mergedOptions.contextWindow,
         enableThinking: mergedOptions.enableThinking,
@@ -387,6 +388,8 @@ export async function isModelAvailable(role: ModelRole, userId?: string): Promis
 // ============================================================================
 
 export interface EmbeddingCallOptions {
+  /** Saved role assignment for this cognitive mode. */
+  cognitiveMode?: string;
   /** Text to embed */
   text: string;
   /** User ID for context tracking */
@@ -424,7 +427,10 @@ export async function callEmbeddings(options: EmbeddingCallOptions): Promise<Emb
   const username = ctx?.username || options.userId;
 
   // Resolve the embedder model
-  const resolved = resolveModel('embedder', options.overrides, username);
+  const cognitiveMode = getContextualCognitiveMode(options.cognitiveMode);
+  const resolved = cognitiveMode && !options.overrides
+    ? resolveModelForCognitiveMode(cognitiveMode, 'embedder', username)
+    : resolveModel('embedder', options.overrides, username);
 
   try {
     let embeddings: number[];
@@ -435,13 +441,8 @@ export async function callEmbeddings(options: EmbeddingCallOptions): Promise<Emb
       const backendConfig = loadBackendConfig();
       const endpoint = backendConfig.localModels?.endpoint || 'http://127.0.0.1:4324';
 
-      // Check if service is running
-      const isRunning = await isLocalModelServiceRunning(endpoint);
-      if (!isRunning) {
-        throw new Error(`Local model service not running at ${endpoint}. Start with: ./bin/start-local-models`);
-      }
-
-      // Generate embeddings via llama.cpp service
+      // The operation itself reports availability and inference failures. A
+      // separate short health probe can time out while the service is healthy.
       embeddings = await embedWithLocalService(options.text, {
         model: resolved.model,
         endpoint,

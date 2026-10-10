@@ -16,6 +16,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--lora-only", action="store_true")
     arguments = parser.parse_args()
 
     adapter_path = Path(arguments.adapter).resolve()
@@ -26,7 +27,10 @@ def main() -> None:
     final_gguf = output_path / "merged-gguf-no-mtp.Q4_K_M.gguf"
     projector_gguf = output_path / "mmproj-base.BF16.gguf"
     lora_directory = output_path / "adapter-gguf"
-    if final_gguf.is_file() and projector_gguf.is_file() and list(lora_directory.glob("*.gguf")):
+    if arguments.lora_only and list(lora_directory.glob("*.gguf")):
+        print(f"GGUF LoRA already exists: {lora_directory}")
+        return
+    if not arguments.lora_only and final_gguf.is_file() and projector_gguf.is_file() and list(lora_directory.glob("*.gguf")):
         print(f"Merged language GGUF and base projector already exist: {final_gguf}")
         return
 
@@ -49,6 +53,8 @@ def main() -> None:
         sys.executable, str(lora_converter), str(adapter_path),
         "--base", str(base_path), "--outtype", "f16", "--outfile", str(lora_directory / "adapter.F16.gguf"),
     ], check=True)
+    if arguments.lora_only:
+        return
 
     merged_index = output_path / "model.safetensors.index.json"
     if not merged_index.is_file():

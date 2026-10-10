@@ -331,7 +331,32 @@ async function executeNode(
 
   try {
     // Execute the node based on its type
-    const outputs = await executeNodeByType(node, inputs, contextData);
+    const describeNode = (source: SvelteFlowNode) => ({
+      id: source.id, type: source.data.nodeType, label: source.data.label,
+      name: getNode(source.data.nodeType)?.name,
+      description: getNode(source.data.nodeType)?.description,
+    });
+    const graphNode = {
+      graphName: graph.name,
+      graphDescription: graph.description,
+      ...describeNode(node),
+      inputs: graph.edges.filter(edge => edge.target === nodeId).map(edge => {
+        const source = graph.nodes.find(candidate => candidate.id === edge.source)!;
+        const recorded = executionState.get(edge.source);
+        return {
+          edgeId: edge.id, input: edge.targetHandle, output: edge.sourceHandle,
+          source: describeNode(source),
+          outputDescription: getNode(source.data.nodeType)?.outputs.find(slot => slot.name === edge.sourceHandle.split('.')[0])?.description,
+          active: isEdgeActive(edge, executionState), kind: edge.data?.kind ?? 'data',
+          status: recorded?.status ?? 'pending',
+          startedAt: recorded?.startTime, endedAt: recorded?.endTime,
+          durationMs: recorded?.endTime !== undefined && recorded.startTime !== undefined
+            ? recorded.endTime - recorded.startTime : undefined,
+          skipReason: recorded?.skipReason, error: recorded?.error?.message,
+        };
+      }),
+    };
+    const outputs = await executeNodeByType(node, inputs, { ...contextData, graphNode });
 
     const outputSummary = typeof outputs === 'object' ? `{${Object.keys(outputs).join(',')}}` : outputs;
     const duration = Date.now() - state.startTime!;
@@ -745,8 +770,13 @@ export async function executeGraph(
       startedAt: Annotation<number>(),
     });
     const maxLoopIterations = graph.scheduler.maxLoopIterations;
+    let correctionError: NodeInputValidationError | undefined;
     const program = new StateGraph(Schedule).addNode('execute', async (schedule, runtimeConfig) => {
       signal?.throwIfAborted();
+      // The preceding synchronous checkpoint saved the rejected output and its
+      // correction position. Return this attempt's error to the Work Coordinator;
+      // its next invocation resumes that position under the existing retry policy.
+      if (correctionError) throw correctionError;
       if (durable) {
         durable.store.assertLease(durable.lease);
         if (durable.store.get(durable.lease.executionId).cancelledAt !== null) throw new DOMException('Graph execution cancelled', 'AbortError');
@@ -875,7 +905,7 @@ export async function executeGraph(
         await executeNode(nodeId, graph, executionState, inputs, nodeContext, eventHandler);
       } catch (error) {
         signal?.throwIfAborted();
-        if (!(error instanceof NodeInputValidationError)) throw error;
+        if (!(error instanceof NodeInputValidationError) || !durable) throw error;
         const sources = graph.edges.filter(edge => edge.target === nodeId
           && edge.targetHandle === error.input && isEdgeActive(edge, executionState));
         const source = sources.length === 1 ? graph.nodes.find(node => node.id === sources[0].source) : undefined;
@@ -891,6 +921,7 @@ export async function executeGraph(
         if (!source || !output || sources[0].sourceHandle !== output || typeof response !== 'string'
           || alreadyEvaluated || dispatches.length || taskUpdate || processedEventIds.length || frames.length || observations.length || retainedObservations.length || childIndex) throw error;
         modelFeedback[source.id] = { response, error: error.message, consumerId: nodeId };
+        correctionError = error;
         // The rejected answer remains in earlier immutable checkpoints. This
         // checkpoint records the feedback and the next model occurrence together,
         // so recovery cannot replay a parser against the same rejected answer.
@@ -1102,6 +1133,15 @@ export async function executeGraph(
         data: { error: (error as Error).message, ...(interrupted ? { interrupted: true } : {}) },
         timestamp: Date.now(),
       });
+    }
+    if (!interrupted && contextData.username) {
+      try {
+        const { reportGraphDisplayFailure } = await import('./environment-interface/display-feedback.js');
+        await reportGraphDisplayFailure(contextData.username, graphState);
+      } catch (feedbackError) {
+        graphState.error = new AggregateError([error, feedbackError], 'Graph failed and its display feedback could not be admitted');
+        console.error('[GraphExecutor] Display failure feedback was not admitted:', feedbackError);
+      }
     }
     return graphState;
   } finally {

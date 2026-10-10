@@ -35,7 +35,6 @@ const SERVICE_ID = 'robot-operator'
 const ACTIVE_OPERATOR_CONFIG = path.join(systemPaths.etc, 'active-operator.json')
 const SERVICES_CONFIG = path.join(systemPaths.etc, 'services.json')
 const AGENTS_CONFIG = path.join(systemPaths.etc, 'agents.json')
-const WORK_COORDINATOR_STATE = path.join(getQueueStateDir(), 'work-items.json')
 const RETRY_DELAY_MS = 30_000
 const FULL_CONTROLLER: RobotOperatorStimulusAgent = 'robot-autonomy-controller'
 const SEMI_CHILDREN: RobotOperatorStimulusAgent[] = [
@@ -408,7 +407,7 @@ export async function run(): Promise<void> {
     watchFile(SLEEP_RUNTIME_FILE, () => armForMode('sleep-state')),
     watchFile(SERVICES_CONFIG, () => armForMode('service-config')),
     watchFile(AGENTS_CONFIG, () => armForMode('agent-config')),
-    watchFile(WORK_COORDINATOR_STATE, () => {
+    fs.watch(getQueueStateDir(), () => {
       if (getOperatorMode() === 'full') checkFullCycle()
     }),
     // Reconsider the selected Controller after an edit, without a retry timer.

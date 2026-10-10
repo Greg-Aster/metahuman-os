@@ -17,7 +17,7 @@ interface Options {
   root: string
   folds: number[]
   dryRun: boolean
-  checkpointPolicy: 'best-loss' | 'epoch-2' | 'final-epoch'
+  checkpointPolicy: 'best-loss' | 'epoch-1' | 'epoch-2' | 'final-epoch'
 }
 
 function parseOptions(arguments_: string[]): Options {
@@ -32,7 +32,7 @@ function parseOptions(arguments_: string[]): Options {
     const value = arguments_[index + 1]
     if (argument === '--') continue
     if (argument === '--dry-run') options.dryRun = true
-    else if (argument === '--checkpoint-policy' && (value === 'best-loss' || value === 'epoch-2' || value === 'final-epoch')) {
+    else if (argument === '--checkpoint-policy' && (value === 'best-loss' || value === 'epoch-1' || value === 'epoch-2' || value === 'final-epoch')) {
       options.checkpointPolicy = value
       index += 1
     }
@@ -58,7 +58,8 @@ async function selectAdapter(foldRoot: string, checkpointPolicy: Options['checkp
     .map(entry => ({ name: entry.name, step: Number.parseInt(entry.name.slice('checkpoint-'.length), 10) }))
     .sort((left, right) => left.step - right.step)
   if (checkpoints.length < 3) throw new Error(`Expected three retained checkpoints under ${adapterRoot}`)
-  const selected = checkpointPolicy === 'epoch-2' ? checkpoints[1] : checkpoints.at(-1)
+  const selected = checkpointPolicy === 'epoch-1' ? checkpoints[0]
+    : checkpointPolicy === 'epoch-2' ? checkpoints[1] : checkpoints.at(-1)
   return resolve(adapterRoot, selected!.name)
 }
 

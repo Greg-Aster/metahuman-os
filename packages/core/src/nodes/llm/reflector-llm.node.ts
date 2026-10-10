@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Reflector LLM Node
  *
@@ -38,7 +39,7 @@ export const ReflectorLLMNode: NodeDefinition = defineNode({
       type: 'select',
       default: 'persona',
       label: 'Model Role',
-      options: ['persona', 'summarizer', 'fallback'],
+      options: [...MODEL_ROLE_OPTIONS],
     },
     temperature: {
       type: 'slider',

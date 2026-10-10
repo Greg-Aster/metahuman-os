@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { TerminalController } from './controller.js'
-import { connectionManager } from '../../lib/client/connection-manager.js'
-import { connectionPool, ConnectionPriority } from '../../lib/client/connection-pool.js'
 
 class Source extends EventTarget {
   static all: Source[] = []
@@ -19,7 +17,7 @@ const originalSource = globalThis.EventSource
 globalThis.EventSource = Source as unknown as typeof EventSource
 const state = { status: 'running', sessions: [{ id: 'one', kind: 'shell', phase: 'running', title: 'Shell', cols: 80, rows: 24 }] }
 function reply(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } }) }
-test.after(() => { globalThis.fetch = originalFetch; globalThis.EventSource = originalSource; connectionPool.closeAll(); connectionManager.cleanup() })
+test.after(() => { globalThis.fetch = originalFetch; globalThis.EventSource = originalSource })
 
 test('late initial response after disposal cannot subscribe or create a session', async () => {
   let resolve!: (value: Response) => void
@@ -33,7 +31,7 @@ test('late initial response after disposal cannot subscribe or create a session'
   await assert.rejects(pending, /aborted/)
   assert.deepEqual(urls, ['/api/terminal/state'])
   assert.deepEqual(events, [])
-  assert.equal(connectionPool.getStatus().active, 0)
+  assert.equal(Source.all.filter(source => source.readyState !== 2).length, 0)
 })
 
 test('stopped status creates no subscription; hide closes one stream without closing its shell', async () => {
@@ -41,12 +39,12 @@ test('stopped status creates no subscription; hide closes one stream without clo
   globalThis.fetch = async url => { calls.push(String(url)); return reply({ status: 'stopped', sessions: [] }) }
   const controller = new TerminalController(() => {}, () => {})
   await controller.refresh()
-  assert.equal(connectionPool.getStatus().active, 0)
+  assert.equal(Source.all.filter(source => source.readyState !== 2).length, 0)
   globalThis.fetch = async url => { calls.push(String(url)); return reply(state) }
   await controller.refresh()
-  assert.equal(connectionPool.getStatus().active, 1)
+  assert.equal(Source.all.filter(source => source.readyState !== 2).length, 1)
   controller.dispose()
-  assert.equal(connectionPool.getStatus().active, 0)
+  assert.equal(Source.all.filter(source => source.readyState !== 2).length, 0)
   assert.deepEqual(calls, ['/api/terminal/state', '/api/terminal/state'])
 })
 
@@ -63,13 +61,13 @@ test('failed close preserves selection; reconnect replaces the stream and stale 
     assert.equal(controller.selected, 'one')
     assert.equal(first.readyState, 1)
     first.onerror!()
-    assert.equal(connectionPool.getStatus().active, 0)
+    assert.equal(Source.all.filter(source => source.readyState !== 2).length, 0)
     globalThis.fetch = async () => reply(state)
     await controller.refresh()
     const count = events.length
     first.send({ type: 'error', error: 'stale callback' })
     assert.equal(events.length, count)
-    assert.equal(connectionPool.getStatus().active, 1)
+    assert.equal(Source.all.filter(source => source.readyState !== 2).length, 1)
     assert.equal(errors.length, 1)
   } finally { controller.dispose() }
 })
@@ -100,22 +98,18 @@ test('input is ordered and a transport failure is surfaced without replay', asyn
   } finally { controller.dispose() }
 })
 
-test('visible terminal streams during chat suspension while background streams remain deferred', async () => {
+test('terminal opens alongside existing streams and disposal closes only its own stream', async () => {
   globalThis.fetch = async () => reply(state)
-  const background = connectionPool.request({ id: 'background-fixture', name: 'Background fixture',
-    url: '/fixture-events', priority: ConnectionPriority.LOW })
-  connectionPool.suspend()
+  const background = Array.from({ length: 12 }, (_, i) => new Source(`/fixture-${i}`))
   const controller = new TerminalController(() => {}, () => {})
   try {
     await controller.refresh()
-    assert.equal(connectionPool.getStatus().active, 1)
-    assert.equal(Source.all.at(-1)?.url, '/api/terminal/events?id=one')
-    assert.equal(Source.all.at(-1)?.readyState, 1)
-    const terminalSource = Source.all.at(-1)!
-    connectionPool.resume()
-    connectionPool.suspend()
-    assert.equal(terminalSource.readyState, 1)
+    const terminal = Source.all.at(-1)!
+    assert.equal(terminal.url, '/api/terminal/events?id=one')
+    assert.equal(terminal.readyState, 1)
+    assert.ok(background.every(source => source.readyState === 1))
     controller.dispose()
-    assert.equal(connectionPool.getStatus().active, 0)
-  } finally { controller.dispose(); background.close(); connectionPool.resume() }
+    assert.equal(terminal.readyState, 2)
+    assert.ok(background.every(source => source.readyState === 1))
+  } finally { controller.dispose(); background.forEach(source => source.close()) }
 })

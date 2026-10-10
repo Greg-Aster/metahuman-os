@@ -368,18 +368,11 @@ export class KokoroService implements ITextToSpeechService {
     if (available) return true;
 
     try {
-      await ensureVoiceServiceRunning('kokoro');
+      return (await ensureVoiceServiceRunning('kokoro')).healthy;
     } catch (error) {
       console.error('[KokoroService] Auto-start server failed:', error);
       return false;
     }
-
-    const deadline = Date.now() + 10000;
-    while (Date.now() < deadline) {
-      if (await this.checkServerHealth(serverUrl)) return true;
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    return false;
   }
 
   /**

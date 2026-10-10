@@ -317,6 +317,116 @@ test('input admitted at finalization resumes only the graph-declared input tail,
   })
 })
 
+test('invalid model output yields a durable correction instead of holding the worker indefinitely', async () => {
+  let calls = 0
+  const controller = new AbortController()
+  const model = defineNode({
+    id: 'test_invalid_model', name: 'Invalid model', category: 'model', description: 'Rejected output fixture',
+    execution: { modelOutput: 'response' }, inputs: [], outputs: [{ name: 'response', type: 'string' }],
+    async execute(_inputs, context) {
+      if (++calls > 2) controller.abort('Test detected an inline correction loop')
+      if (calls > 1) assert.deepEqual(context.modelOutputFeedback,
+        { response: 'invalid', error: 'Expected an action object', consumerId: 'validate' })
+      return { response: 'invalid' }
+    },
+  })
+  const validate = testNode('test_invalid_validator', [{ name: 'response', type: 'string' }], [], async () => {
+    throw new NodeInputValidationError('response', 'Expected an action object')
+  })
+  await withTestNodes([model, validate], async () => {
+    const workflow = graph([{ id: 'model', nodeType: model.id }, { id: 'validate', nodeType: validate.id }], [
+      { id: 'response', source: 'model', sourceHandle: 'response', target: 'validate', targetHandle: 'response' },
+    ])
+    workflow.scheduler.maxLoopIterations = 0
+    const store = new ExecutionStore(path.join(isolatedRoot, 'invalid-model.sqlite'))
+    const definition = executionDefinition(workflow)
+    const execution = store.create('test-user', definition)
+    const lease = store.claim(execution.executionId, definition)
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await executeGraph(workflow, {}, undefined, controller.signal,
+          { store, lease, resume: attempt > 0 })
+        assert.equal(result.status, 'failed')
+        assert.ok(result.error instanceof NodeInputValidationError, result.error?.stack)
+        assert.equal(calls, attempt + 1, 'Each rejected inference returns control to the existing work retry owner')
+        const saved = await new ExecutionCheckpointer(store, lease).getTuple({ configurable: { thread_id: execution.executionId } })
+        assert.deepEqual(saved?.checkpoint.channel_values.queue, ['model', 'validate'])
+        assert.deepEqual(saved?.checkpoint.channel_values.modelFeedback,
+          { model: { response: 'invalid', error: 'Expected an action object', consumerId: 'validate' } })
+        assert.equal(store.pendingDispatches().length, 0)
+      }
+    } finally { store.release(lease); store.close() }
+  })
+})
+
+test('Coordinator retries saved corrections and releases local inference capacity for a second message', async () => {
+  const { UnifiedQueueManager } = await import('./queue/unified-queue-manager.js')
+  const { ExecutionEngine } = await import('./queue/execution-engine.js')
+  for (const nested of [false, true]) for (const corrects of [false, true]) {
+    const username = `correction-coordinator-${nested}-${corrects}`
+    fs.mkdirSync(path.join(isolatedRoot, 'profiles', username), { recursive: true })
+    let badCalls = 0
+    let goodCalls = 0
+    const model = defineNode({
+      id: 'test_coordinator_model', name: 'Coordinator model', category: 'model', description: 'Inference fixture',
+      execution: { modelOutput: 'response' }, inputs: [], outputs: [{ name: 'response', type: 'string' }],
+      async execute(_inputs, context) {
+        if (context.userMessage === 'Second message unchanged') { goodCalls++; return { response: 'valid' } }
+        assert.equal(context.userMessage, 'Original objective unchanged')
+        if (++badCalls > 1) assert.equal(context.modelOutputFeedback?.response, 'invalid')
+        return { response: corrects && badCalls > 1 ? 'valid' : 'invalid' }
+      },
+    })
+    const validate = testNode('test_coordinator_validator', [{ name: 'response', type: 'string' }], [], async inputs => {
+      if (inputs.response !== 'valid') throw new NodeInputValidationError('response', 'Expected valid output')
+      return { accepted: true }
+    })
+    const child = graph([{ id: 'model', nodeType: model.id }, { id: 'validate', nodeType: validate.id }], [
+        { id: 'response', source: 'model', sourceHandle: 'response', target: 'validate', targetHandle: 'response' },
+    ])
+    child.scheduler.maxLoopIterations = 0
+    const call = testNode('test_correction_child', [], [], async (_inputs, context) => {
+      const result = await context.graphExecution.callGraph(child, { userMessage: context.userMessage })
+      return result.nodes.get('validate').outputs
+    })
+    await withTestNodes([model, validate, call], async () => {
+      const workflow = nested ? graph([{ id: 'validate', nodeType: call.id }], []) : child
+      workflow.scheduler.maxLoopIterations = 0
+      const manager = new UnifiedQueueManager()
+      const engine = new ExecutionEngine({ wakeFallbackMs: 10 }, manager)
+      engine.registerHandler('test.correction', async (task, context) => {
+        const state = await runGraph({ graph: workflow, context: { username, userMessage: task.input.message },
+          signal: AbortSignal.any([context.signal, AbortSignal.timeout(5_000)]) })
+        if (state.status === 'failed') throw state.error
+        return { accepted: state.nodes.get('validate')?.outputs?.accepted }
+      })
+      const first = manager.enqueue({ type: 'generic', handler: 'test.correction', source: 'user', resource: 'local-llm',
+        username, input: { message: 'Original objective unchanged' } })
+      const second = manager.enqueue({ type: 'generic', handler: 'test.correction', source: 'user', resource: 'local-llm',
+        username, input: { message: 'Second message unchanged' } })
+      engine.start()
+      try {
+        const deadline = Date.now() + 5_000
+        while (![first, second].every(task => ['completed', 'failed'].includes(manager.getTask(task.id)!.state))) {
+          assert.ok(Date.now() < deadline, 'Another message must not be starved by invalid inference')
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+        assert.equal(manager.getTask(first.id)?.state, corrects ? 'completed' : 'failed')
+        assert.equal(badCalls, corrects ? 2 : first.maxAttempts, 'Corrections use the existing Coordinator attempt policy')
+        assert.equal(manager.getTask(second.id)?.state, 'completed')
+        assert.equal(manager.getTask(second.id)?.result?.accepted, true)
+        assert.equal(goodCalls, 1)
+        const store = openExecutionStore(username)
+        try {
+          assert.equal(store.list().length, 2, 'Retries and child graphs retain the original execution identity')
+          assert.equal(store.list().filter(record => record.status === 'failed').length, corrects ? 0 : 1)
+          assert.ok(store.list().every(record => record.owner === null), 'Every attempt releases its execution lease')
+        } finally { store.close() }
+      } finally { await engine.stop() }
+    })
+  }
+})
+
 test('model correction survives both feedback and corrected-output checkpoints without replaying committed effects', async () => {
   for (const crashAt of ['feedback', 'corrected-output']) {
     let modelCalls = 0
@@ -361,7 +471,7 @@ test('model correction survives both feedback and corrected-output checkpoints w
       const definition = executionDefinition(workflow)
       const execution = store.create('test-user', definition)
       let lease = store.claim(execution.executionId, definition)
-      const first = await executeGraph(workflow, { userMessage: 'Original objective and complete success criteria' }, undefined, undefined, {
+      const options = {
         store, lease, afterCheckpoint: async () => {
           const saved = await new ExecutionCheckpointer(store, lease).getTuple({ configurable: { thread_id: execution.executionId } })
           const values = saved?.checkpoint.channel_values
@@ -370,9 +480,16 @@ test('model correction survives both feedback and corrected-output checkpoints w
             : (nodes.get('model') as any)?.outputs?.response === '{"action":"chosen"}'
           if (reached && !stopped) { stopped = true; throw new Error('Process interrupted at committed correction boundary') }
         },
-      })
+      }
+      const first = await executeGraph(workflow, { userMessage: 'Original objective and complete success criteria' }, undefined, undefined, options)
       assert.equal(first.status, 'failed')
-      assert.match(first.error!.message, /committed correction boundary/)
+      if (crashAt === 'corrected-output') {
+        assert.ok(first.error instanceof NodeInputValidationError)
+        assert.equal(modelCalls, 1, 'Correction must leave the original worker before another inference')
+        const nextAttempt = await executeGraph(workflow, {}, undefined, undefined, { ...options, resume: true })
+        assert.equal(nextAttempt.status, 'failed')
+        assert.match(nextAttempt.error!.message, /committed correction boundary/)
+      } else assert.match(first.error!.message, /committed correction boundary/)
       assert.equal(store.pendingDispatches().length, 1, 'Rejected output cannot dispatch an action')
       store.release(lease)
       store.close()

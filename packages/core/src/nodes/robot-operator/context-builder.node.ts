@@ -1,3 +1,4 @@
+import { serializeContext } from '../../context-serialization.js';
 import { projectDesireAwareness } from '../../agency/lifecycle-policy.js'
 import { withVisualObservationSchema } from '../../visual-observation.js';
 import type {
@@ -10,9 +11,7 @@ import {
   type RobotObserverCycleMetadata,
 } from '../../robot-operator.js';
 import {
-  buildEnvironmentSelectorJsonSchema,
   projectRobotStatusContext,
-  projectRobotCommandDescriptions,
   projectSelectorState,
 } from '../environment/helpers.js';
 import type { NodeSlot } from '../types.js';
@@ -226,22 +225,6 @@ function compactBridgeSummary(value: unknown, sessionId: string): Record<string,
   };
 }
 
-function autonomySelectorSchema(
-  observation: EnvironmentObservation | null,
-  robotObserver: RobotObserverCycleMetadata | null,
-  routingAnalysis: Record<string, boolean>,
-  currentVisionAvailable: boolean,
-): Record<string, unknown> {
-  return buildEnvironmentSelectorJsonSchema({
-    actions: observation?.capabilities.actions ?? [],
-    robotCommands: observation?.capabilities.robotCommands ?? [],
-    actionRouteSelected: routingAnalysis.needsAction === true
-      || (routingAnalysis.needsVision === true && !currentVisionAvailable),
-    requireAction: routingAnalysis.needsAction === true
-      || robotObserver?.requestedBy === 'boredom-movement',
-  });
-}
-
 /**
  * Turn canonical Robot Buffer records into a small, correlated action ledger.
  * This is action evidence; conversation and memories are intentionally absent.
@@ -298,7 +281,7 @@ function verifiedActionHistory(value: unknown): Array<Record<string, unknown>> {
   return [...actions.values()].filter(entry => entry.requested);
 }
 
-type RobotOperatorContextContract = 'environment' | 'delegation' | 'goal_review' | 'autonomy_controller';
+type RobotOperatorContextContract = 'delegation' | 'goal_review' | 'autonomy_controller';
 
 const CONTEXT_OUTPUTS: NodeSlot[] = [
   { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
@@ -333,8 +316,6 @@ const COMMON_CONTEXT_INPUTS: Record<string, NodeSlot> = {
   actionContext: { name: 'actionContext', type: 'object', optional: true, description: 'Work Coordinator action record matched to the returned robot report' },
   sourceObservationAt: { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Timestamp of the bridge observation that started this cycle' },
   currentVisualEvidence: { name: 'currentVisualEvidence', type: 'boolean', optional: true, description: 'Whether Environment Image Input verified the attached frame for this decision' },
-  stimulusInstruction: { name: 'stimulusInstruction', type: 'string', optional: true, description: 'High-level intention delegated to Robot Autonomy Executor' },
-  routingAnalysis: { name: 'routingAnalysis', type: 'object', description: 'Intent Orchestrator route switches for the delegated intention' },
 };
 
 function contextInputs(...names: string[]): NodeSlot[] {
@@ -349,7 +330,6 @@ async function buildRobotOperatorContext(
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
     const instruction = cleanText(inputs.instruction, 8_000);
-    const stimulusInstruction = cleanText(inputs.stimulusInstruction, 4_000);
     const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
     const invalid = (error: string) => ({
       messages: [],
@@ -361,50 +341,25 @@ async function buildRobotOperatorContext(
     });
     if (!instruction) return invalid('Robot Operator context requires instructions from a connected text input node.');
 
-    const routingAnalysis = isRecord(inputs.routingAnalysis)
-      ? Object.fromEntries(Object.entries(inputs.routingAnalysis).filter(([, value]) => typeof value === 'boolean')) as Record<string, boolean>
-      : null;
-    if (outputContract === 'environment' && !routingAnalysis) {
-      return invalid('Robot Autonomy context requires Intent Orchestrator route switches.');
-    }
-    const environmentSelected = outputContract !== 'environment'
-      || routingAnalysis?.needsEnvironment === true
-      || routingAnalysis?.needsVision === true
-      || routingAnalysis?.needsAction === true;
-    const observation = environmentSelected ? suppliedObservation : null;
-    if (environmentSelected && outputContract !== 'autonomy_controller' && !observation?.sessionId) {
+    const observation = suppliedObservation;
+    if (outputContract !== 'autonomy_controller' && !observation?.sessionId) {
       return invalid('Robot Operator context requires a robot observation with a session ID for the selected route.');
     }
 
-    const conversationSelected = outputContract !== 'environment'
-      || routingAnalysis?.needsConversationHistory === true;
-    const memorySelected = outputContract !== 'environment'
-      || routingAnalysis?.needsMemory === true;
-    const robotStatusSelected = outputContract !== 'environment'
-      || routingAnalysis?.needsRobotStatus === true;
-    const actionHistorySelected = outputContract !== 'environment'
-      || routingAnalysis?.needsAction === true;
-    const visionSelected = outputContract !== 'environment'
-      || routingAnalysis?.needsVision === true;
-
-    const innerContext = conversationSelected
-      ? consolidatedInnerHistory(inputs.innerHistory)
-      : [];
-    const availableConversation = (conversationSelected
-      ? consolidatedHistory(inputs.conversationHistory)
-      : [])
+    const innerContext = consolidatedInnerHistory(inputs.innerHistory);
+    const availableConversation = consolidatedHistory(inputs.conversationHistory)
       .filter(entry => innerContext.length === 0 || !(
         isRecord(entry.context) && entry.context.isInnerDialogue === true
       ));
     const recentContext = [...availableConversation, ...innerContext];
-    const allActionHistory = actionHistorySelected ? verifiedActionHistory(inputs.actionHistory) : [];
+    const allActionHistory = verifiedActionHistory(inputs.actionHistory);
     const innerContextCount = recentContext.filter(entry => (
       isRecord(entry.context) && entry.context.isInnerDialogue === true
     )).length;
     const personaText = typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 12_000)
       : '';
-    const suppliedMemories = memorySelected && Array.isArray(inputs.memoryContext)
+    const suppliedMemories = Array.isArray(inputs.memoryContext)
       ? inputs.memoryContext
       : [];
     const delegatedMemories = Array.isArray(inputs.delegatedMemories)
@@ -421,7 +376,7 @@ async function buildRobotOperatorContext(
       seenMemories.add(key);
       return [memory];
     }).slice(0, 5);
-    const selectedEvidence = visionSelected && inputs.currentVisualEvidence === true
+    const selectedEvidence = inputs.currentVisualEvidence === true
       ? selectedImageParts(inputs.images, inputs.frames)
       : [];
     const images = selectedEvidence.map(item => item.image);
@@ -453,7 +408,7 @@ async function buildRobotOperatorContext(
       && !latestActionAlreadyInHistory
       ? latestActionContext
       : null;
-    const projectedRobotStatus = robotStatusSelected && isRecord(inputs.robotStatus)
+    const projectedRobotStatus = isRecord(inputs.robotStatus)
       ? projectRobotStatusContext(inputs.robotStatus)
       : null;
     const robotStatus = projectedRobotStatus
@@ -497,9 +452,6 @@ async function buildRobotOperatorContext(
       : [];
     const visualEvidenceVerified = images.length > 0 && inputs.currentVisualEvidence === true;
     const stimulusReady = visualEvidenceVerified || feedback.length > 0;
-    const robotCommandDescriptions = outputContract === 'environment' && observation
-      ? projectRobotCommandDescriptions(observation.capabilities)
-      : {};
     const baseCapabilities = observation
       ? Object.fromEntries(Object.entries(observation.capabilities).filter(([key]) => key !== 'robotCommandDescriptions'))
       : null;
@@ -512,12 +464,7 @@ async function buildRobotOperatorContext(
             state: outputContract === 'goal_review' ? projectSelectorState(observation.state) : observation.state ?? null,
             location: observation.location ?? null,
             map: observation.map ?? null,
-            capabilities: {
-              ...baseCapabilities,
-              ...(Object.keys(robotCommandDescriptions).length > 0
-                ? { robotCommandDescriptions }
-                : {}),
-            },
+            capabilities: { ...baseCapabilities },
             text: (observation.text ?? []).slice(-8).map(event => ({
               source: event.source,
               sender: event.senderName ?? event.senderId ?? null,
@@ -537,12 +484,11 @@ async function buildRobotOperatorContext(
     const supportingMemoryContext = reflectionTrigger ? [] : memoryContext;
     const contextEnvelope = {
       execution: inputs.execution ?? null,
-      ...(environmentSelected && Array.isArray(inputs.observationHistory) && inputs.observationHistory.length
+      ...(Array.isArray(inputs.observationHistory) && inputs.observationHistory.length
         ? { observationHistory: inputs.observationHistory } : {}),
       ...(availableTasks.length ? { availableTasks } : {}),
       robotOperatorContext: {
         activePersona: personaText || null,
-        ...(routingAnalysis ? { selectedRoutes: routingAnalysis } : {}),
         ...(robotStatus
           ? {
               robotStatus: {
@@ -579,14 +525,10 @@ async function buildRobotOperatorContext(
               },
             }
           : {}),
-        ...(actionHistorySelected
-          ? {
-              verifiedActionHistory: {
-                provenance: 'canonical_robot_buffer',
-                entries: actionHistory,
-              },
-            }
-          : {}),
+        verifiedActionHistory: {
+          provenance: 'canonical_robot_buffer',
+          entries: actionHistory,
+        },
         ...(activeDesires.length > 0
           ? {
               activeDesires: {
@@ -616,11 +558,7 @@ async function buildRobotOperatorContext(
           : {}),
       },
       robotStimulus: stimulus,
-      ...(plannerDecision
-        ? { plannerDecision }
-        : stimulusInstruction
-          ? { autonomyTriggerInstruction: stimulusInstruction }
-          : {}),
+      ...(plannerDecision ? { plannerDecision } : {}),
       ...(reflectionTrigger
         ? {
             reflectionMaterial: {
@@ -631,7 +569,7 @@ async function buildRobotOperatorContext(
           }
         : {}),
     };
-    const envelopeText = JSON.stringify(contextEnvelope);
+    const envelopeText = serializeContext(contextEnvelope);
     const userContent = images.length > 0
       ? [{ type: 'text', text: `Attached robot-camera evidence is described by robotStimulus.visualEvidence.\n${envelopeText}` }, ...images]
       : envelopeText;
@@ -646,17 +584,9 @@ async function buildRobotOperatorContext(
         ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA
           : outputContract === 'goal_review'
             ? buildRobotGoalReviewJsonSchema(inputs.availableTasks)
-            : outputContract === 'autonomy_controller'
-              ? buildRobotAutonomyControllerJsonSchema(inputs.availableTasks)
-            : autonomySelectorSchema(
-                observation,
-                robotObserver,
-                routingAnalysis ?? {},
-                visualEvidenceVerified,
-              ), selectedFrames),
+            : buildRobotAutonomyControllerJsonSchema(inputs.availableTasks), selectedFrames),
       context: {
         instruction,
-        stimulusInstruction,
         stimulus,
         recentContext,
         taskNarrativeCount: taskNarrative.length,
@@ -674,7 +604,6 @@ async function buildRobotOperatorContext(
         plannerDecisionIncluded: Boolean(plannerDecision),
         reflectionMaterialIncluded: reflectionTrigger && memoryContext.length > 0,
         imageCount: images.length,
-        routingAnalysis,
         environmentIncluded: Boolean(observation),
         selectorInvoked: true,
       },
@@ -705,19 +634,6 @@ function fixedContextNode(
     },
   });
 }
-
-export const robotAutonomyExecutorContextNode = fixedContextNode(
-  'robot_autonomy_executor_context',
-  'Robot Autonomy Executor Context',
-  'Builds the routed context and capability-bounded action contract for one delegated physical or sensing intention.',
-  contextInputs(
-    'instruction', 'stimulusInstruction', 'routingAnalysis', 'observation', 'images', 'frames',
-    'conversationHistory', 'innerHistory', 'actionHistory', 'personaText', 'memoryContext',
-    'robotStatus', 'robotObserver', 'plannerDecision', 'delegatedMemories', 'actionContext',
-    'sourceObservationAt', 'currentVisualEvidence',
-  ),
-  'environment',
-);
 
 export const robotAutonomyPlannerContextNode = fixedContextNode(
   'robot_autonomy_planner_context',

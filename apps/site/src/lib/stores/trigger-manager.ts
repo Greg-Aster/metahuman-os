@@ -1,6 +1,5 @@
 import { get, writable } from 'svelte/store';
 import { apiFetch } from '../client/api-config';
-import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../client/connection-pool';
 import type { AutonomyMode } from '../client/active-operator-modes';
 import { isOwner } from '../../stores/security-policy';
 
@@ -86,7 +85,7 @@ export const triggerManagerSnapshot = writable<TriggerManagerSnapshot | null>(nu
 export const triggerManagerConnection = writable<TriggerConnectionState>('idle');
 export const triggerManagerError = writable('');
 
-let streamHandle: ConnectionHandle | null = null;
+let streamHandle: EventSource | null = null;
 let users = 0;
 
 function applySnapshot(snapshot: TriggerManagerSnapshot | undefined): void {
@@ -109,28 +108,21 @@ export async function refreshTriggerManager(): Promise<TriggerManagerSnapshot> {
 function connect(): void {
   if (!get(isOwner) || streamHandle || typeof window === 'undefined') return;
   triggerManagerConnection.set('connecting');
-  streamHandle = connectionPool.request({
-    id: 'trigger-manager-shared-stream',
-    name: 'Trigger Manager shared stream',
-    url: '/api/trigger-manager/stream',
-    priority: ConnectionPriority.MEDIUM,
-    defer: true,
-    onOpen: () => {
-      triggerManagerConnection.set('live');
-      triggerManagerError.set('');
-    },
-    onClose: () => triggerManagerConnection.set('reconnecting'),
-    onError: () => triggerManagerConnection.set('reconnecting'),
-    onMessage: event => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.error) throw new Error(data.error);
-        applySnapshot(data.snapshot);
-      } catch (error) {
-        triggerManagerError.set((error as Error).message);
-      }
-    },
-  });
+  streamHandle = new EventSource('/api/trigger-manager/stream');
+  streamHandle.onopen = () => {
+    triggerManagerConnection.set('live');
+    triggerManagerError.set('');
+  };
+  streamHandle.onmessage = event => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.error) throw new Error(data.error);
+      applySnapshot(data.snapshot);
+    } catch (error) {
+      triggerManagerError.set((error as Error).message);
+    }
+  };
+  streamHandle.onerror = () => triggerManagerConnection.set('reconnecting');
 }
 
 export function useTriggerManager(): () => void {

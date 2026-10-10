@@ -40,7 +40,6 @@ export const ModelRouterNode: NodeDefinition = defineNode({
     ] : suppliedMessages;
 
     const response = await callLLM({
-        modelId: properties?.modelId || undefined,
         role,
         messages,
         userId: username,

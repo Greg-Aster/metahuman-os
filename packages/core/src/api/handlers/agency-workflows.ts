@@ -175,8 +175,10 @@ async function* generatePlanStream(req: UnifiedRequest): AsyncIterable<string> {
 
     const manager = getQueueManager();
     let wake: (() => void) | undefined;
+    let changed = false;
     const listener = (event: QueueEvent) => {
       if (event.taskId !== task.id) return;
+      changed = true;
       wake?.();
       wake = undefined;
     };
@@ -186,16 +188,19 @@ async function* generatePlanStream(req: UnifiedRequest): AsyncIterable<string> {
       if (!current) throw new Error('Queued plan generation is not visible to the coordinator owner');
       while (!['completed', 'failed', 'cancelled', 'expired'].includes(current.state)) {
         if (req.signal?.aborted) {
-          manager.cancel(task.id, 'Plan generation stream closed by requester');
           return;
         }
-        await new Promise<void>(resolve => {
-          const timer = setTimeout(resolve, 1_000);
-          wake = () => {
-            clearTimeout(timer);
+        if (!changed) await new Promise<void>(resolve => {
+          const finish = () => {
+            req.signal?.removeEventListener('abort', finish);
             resolve();
           };
+          wake = finish;
+          req.signal?.addEventListener('abort', finish, { once: true });
+          if (req.signal?.aborted) finish();
         });
+        if (req.signal?.aborted) return;
+        changed = false;
         current = manager.getTask(task.id);
         if (!current) throw new Error('Queued plan generation disappeared before completion');
       }
@@ -323,8 +328,10 @@ async function* runDesireStream(req: UnifiedRequest): AsyncIterable<string> {
     const manager = getQueueManager();
     let outputIndex = 0;
     let wake: (() => void) | undefined;
+    let changed = false;
     const listener = (event: QueueEvent) => {
       if (event.taskId !== task.id) return;
+      changed = true;
       wake?.();
       wake = undefined;
     };
@@ -339,16 +346,19 @@ async function* runDesireStream(req: UnifiedRequest): AsyncIterable<string> {
         for (const chunk of output.slice(outputIndex)) yield chunk;
         outputIndex = output.length;
         if (req.signal?.aborted) {
-          manager.cancel(task.id, 'Desire execution stream closed by requester');
           return;
         }
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, 1_000);
-          wake = () => {
-            clearTimeout(timer);
+        if (!changed) await new Promise<void>(resolve => {
+          const finish = () => {
+            req.signal?.removeEventListener('abort', finish);
             resolve();
           };
+          wake = finish;
+          req.signal?.addEventListener('abort', finish, { once: true });
+          if (req.signal?.aborted) finish();
         });
+        if (req.signal?.aborted) return;
+        changed = false;
         current = manager.getTask(task.id);
         if (!current) throw new Error('Queued desire execution disappeared before completion');
       }
@@ -460,8 +470,10 @@ async function* outcomeReviewStream(req: UnifiedRequest): AsyncIterable<string> 
 
     const manager = getQueueManager();
     let wake: (() => void) | undefined;
+    let changed = false;
     const listener = (event: QueueEvent) => {
       if (event.taskId !== task.id) return;
+      changed = true;
       wake?.();
       wake = undefined;
     };
@@ -471,16 +483,19 @@ async function* outcomeReviewStream(req: UnifiedRequest): AsyncIterable<string> 
       if (!current) throw new Error('Queued outcome review is not visible to the coordinator owner');
       while (!['completed', 'failed', 'cancelled', 'expired'].includes(current.state)) {
         if (req.signal?.aborted) {
-          manager.cancel(task.id, 'Outcome review stream closed by requester');
           return;
         }
-        await new Promise<void>(resolve => {
-          const timer = setTimeout(resolve, 1_000);
-          wake = () => {
-            clearTimeout(timer);
+        if (!changed) await new Promise<void>(resolve => {
+          const finish = () => {
+            req.signal?.removeEventListener('abort', finish);
             resolve();
           };
+          wake = finish;
+          req.signal?.addEventListener('abort', finish, { once: true });
+          if (req.signal?.aborted) finish();
         });
+        if (req.signal?.aborted) return;
+        changed = false;
         current = manager.getTask(task.id);
         if (!current) throw new Error('Queued outcome review disappeared before completion');
       }

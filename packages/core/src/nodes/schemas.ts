@@ -15,6 +15,13 @@ import type {
   PropertySchema,
 } from './types.js';
 import { observationHistorySchema, saveVisualObservationSchema } from './environment/observation.schemas.js';
+import { faceExpressionSchema, expressionFeedbackSchema } from './environment/expression.schemas.js';
+import { environmentTrainingOutputSchema } from './environment/training-output.schema.js';
+import { environmentTrainingReviewInputSchema, environmentTrainingReviewSaveSchema } from './environment/training-review.schemas.js';
+import { freestyleRequestInputSchema, freestyleTrainingOutputSchema } from './environment/freestyle-training.schemas.js';
+import { MODEL_ROLE_OPTIONS } from '../model-roles.js';
+import { modelRouterDefinition } from './llm/model-router.schema.js';
+import { bigBrotherSchema } from './utility/big-brother.schema.js';
 import {
   DEFAULT_ROBOT_AUTONOMY_TASK_IDS,
   ROBOT_AUTONOMY_TASK_OPTIONS,
@@ -143,8 +150,16 @@ function robotContextSchema(
 // ============================================================================
 
 export const nodeSchemas: NodeSchema[] = [
+  defineSchema(bigBrotherSchema),
+  defineSchema(faceExpressionSchema),
+  defineSchema(expressionFeedbackSchema),
   defineSchema(observationHistorySchema),
   defineSchema(saveVisualObservationSchema),
+  defineSchema(environmentTrainingOutputSchema),
+  defineSchema(environmentTrainingReviewInputSchema),
+  defineSchema(environmentTrainingReviewSaveSchema),
+  defineSchema(freestyleRequestInputSchema),
+  defineSchema(freestyleTrainingOutputSchema),
   defineSchema({
     id: 'execution_event_wait', name: 'Wait for Continuation', category: 'utility',
     execution: { eventInput: true },
@@ -1095,6 +1110,8 @@ export const nodeSchemas: NodeSchema[] = [
     "name": "Select Camera Frames for Current Action",
     "category": "environment",
     "inputs": [
+      { name: 'sessionId', type: 'string', optional: true, description: 'Read already received camera evidence for this Bridge session when the node runs.' },
+      { name: 'observation', type: 'object', optional: true, description: 'Returned observation containing camera evidence from the execution owner' },
       {
         "name": "visual",
         "label": "Current camera frame",
@@ -1209,6 +1226,10 @@ export const nodeSchemas: NodeSchema[] = [
     "inputs": [
       { name: 'selectedContext', type: 'object', optional: true, description: 'Already selected evidence package from the task context builder' },
       { name: 'selectedTask', type: 'object', optional: true, description: 'Parsed task selection and its admission result' },
+      { name: 'program', type: 'object', optional: true, description: 'Program admitted by the task parser for execution, or null' },
+      { name: 'taskResult', type: 'object', optional: true, description: 'Returned program progress, evidence and failure from the execution owner' },
+      { name: 'resultImages', type: 'array', optional: true, description: 'Validated camera images returned by the selected program' },
+      { name: 'resultFrames', type: 'array', optional: true, description: 'Recorded identities and times of the returned images' },
     { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions available for steering or cancellation' },
     { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
       {
@@ -1311,12 +1332,12 @@ export const nodeSchemas: NodeSchema[] = [
       {
         "name": "currentInstruction",
         "type": "string",
-        "description": "Current unchanged user instruction"
+        "description": "Current user message or internally authored intention"
       },
       {
         "name": "instructionSource",
         "type": "string",
-        "description": "Instruction provenance for this interactive workflow: user"
+        "description": "Instruction provenance: user or autonomy"
       },
       {
         "name": "location",
@@ -1370,6 +1391,7 @@ export const nodeSchemas: NodeSchema[] = [
     { name: 'userInput', type: 'object', description: 'New instruction returned to existing intent routing' },
     { name: 'taskDecision', type: 'object', description: 'Decision from this execution' },
     { name: 'observation', type: 'object', description: 'Latest observation references' },
+    { name: 'resultObservation', type: 'object', description: 'Returned observation with captured frames resolved from this execution' },
     { name: 'resultContext', type: 'object', description: 'Observed results returned to the existing objective review' }],
   }),
   defineSchema({
@@ -1428,6 +1450,8 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'sessionId', type: 'string', optional: true, description: 'Target environment session' },
     ],
     outputs: [
+      { name: 'modelMessages', type: 'array', description: 'Exact messages supplied to the trajectory model' },
+      { name: 'rawOutput', type: 'string', description: 'Exact trajectory model output before validation' },
       { name: 'action', type: 'object', description: 'One validated robotMotionPlan action, or null' },
       { name: 'actions', type: 'array', description: 'Validated action list for Environment Bridge Out' },
       { name: 'valid', type: 'boolean', description: 'Whether a validated plan was produced' },
@@ -1436,9 +1460,11 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'response', type: 'string', description: 'Visible generation result or rejection' },
       { name: 'planSummary', type: 'object', description: 'Bounded frame and duration summary' },
     ],
-    properties: { role: 'orchestrator', maxTokens: 4096, temperature: 0.2 },
+    properties: { role: 'orchestrator', executionTarget: '', maxTokens: 4096, temperature: 0.2 },
     propertySchemas: {
-      role: { type: 'select', default: 'orchestrator', label: 'Model Role', options: ['orchestrator', 'persona', 'fallback'] },
+      role: { type: 'select', default: 'orchestrator', label: 'Model Role', options: [...MODEL_ROLE_OPTIONS] },
+      executionTarget: { type: 'select', default: '', label: 'Execution Target',
+        options: [{ value: '', label: 'Configured role backend' }, { value: 'remote', label: 'Remote' }] },
       maxTokens: { type: 'number', default: 4096, label: 'Max Tokens', min: 1024, max: 8192, step: 256 },
       temperature: { type: 'slider', default: 0.2, label: 'Temperature', min: 0, max: 0.5, step: 0.05 },
     },
@@ -1577,6 +1603,7 @@ export const nodeSchemas: NodeSchema[] = [
         "stop",
         "captureImage",
         "robotCommand",
+        "faceExpression",
         "robotMotionPlan",
         "inspect",
         "visualApproach",
@@ -1596,6 +1623,7 @@ export const nodeSchemas: NodeSchema[] = [
           "stop",
           "captureImage",
           "robotCommand",
+          "faceExpression",
           "robotMotionPlan",
           "inspect",
           "visualApproach",
@@ -1610,6 +1638,7 @@ export const nodeSchemas: NodeSchema[] = [
           "stop",
           "captureImage",
           "robotCommand",
+          "faceExpression",
           "robotMotionPlan",
           "inspect",
           "visualApproach",
@@ -1793,160 +1822,6 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'available', type: 'boolean', description: 'Whether a valid Robot Operator cycle is present' },
     ],
     description: 'Reads only the Robot Operator handoff supplied with the current Work Coordinator execution.',
-  }),
-  defineSchema({
-    "id": "robot_autonomy_executor_context",
-    "name": "Robot Autonomy Executor Context",
-    "category": "operator",
-    "inputs": [
-      {
-        "name": "execution",
-        "type": "object",
-        "optional": true,
-        "description": "Checkpointed task and ordered events from Current Execution"
-      },
-      {
-        "name": "instruction",
-        "type": "string",
-        "description": "Graph-owned instructions for this one LLM task"
-      },
-      {
-        "name": "stimulusInstruction",
-        "type": "string",
-        "optional": true,
-        "description": "High-level intention delegated to Robot Autonomy Executor"
-      },
-      {
-        "name": "routingAnalysis",
-        "type": "object",
-        "description": "Intent Orchestrator route switches for the delegated intention"
-      },
-      {
-        "name": "observation",
-        "type": "object",
-        "optional": true,
-        "description": "Environment Bridge observation supplied to this workflow"
-      },
-      {
-        "name": "images",
-        "type": "array",
-        "optional": true,
-        "description": "Validated image content parts"
-      },
-      {
-        "name": "frames",
-        "type": "array",
-        "optional": true,
-        "description": "Validated visual frame metadata"
-      },
-      {
-        "name": "conversationHistory",
-        "type": "array",
-        "optional": true,
-        "description": "Conversation entries selected by the connected Buffer History node"
-      },
-      {
-        "name": "innerHistory",
-        "type": "array",
-        "optional": true,
-        "description": "Private reflection entries selected by the connected Buffer History node"
-      },
-      {
-        "name": "actionHistory",
-        "type": "array",
-        "optional": true,
-        "description": "Robot Buffer entries used as verified prior-action evidence"
-      },
-      {
-        "name": "personaText",
-        "type": "string",
-        "optional": true,
-        "description": "Formatted active persona"
-      },
-      {
-        "name": "memoryContext",
-        "type": "array",
-        "optional": true,
-        "description": "Historical memories supplied as inspiration, never current-world evidence"
-      },
-      {
-        "name": "robotStatus",
-        "type": "object",
-        "optional": true,
-        "description": "Canonical Robot Status snapshot"
-      },
-      {
-        "name": "robotObserver",
-        "type": "object",
-        "optional": true,
-        "description": "Current Robot Operator cycle"
-      },
-      {
-        "name": "plannerDecision",
-        "type": "object",
-        "optional": true,
-        "description": "Planner-authored intention delegated to Robot Autonomy Executor"
-      },
-      {
-        "name": "delegatedMemories",
-        "type": "array",
-        "optional": true,
-        "description": "Historical memories delegated with a planner intention"
-      },
-      {
-        "name": "actionContext",
-        "type": "object",
-        "optional": true,
-        "description": "Work Coordinator action record matched to the returned robot report"
-      },
-      {
-        "name": "sourceObservationAt",
-        "type": "string",
-        "optional": true,
-        "description": "Timestamp of the bridge observation that started this cycle"
-      },
-      {
-        "name": "currentVisualEvidence",
-        "type": "boolean",
-        "optional": true,
-        "description": "Whether Environment Image Input verified the attached frame for this decision"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "messages",
-        "type": "array",
-        "description": "Multimodal messages for this workflow LLM"
-      },
-      {
-        "name": "jsonSchema",
-        "type": "object",
-        "description": "Structured output contract for this workflow LLM"
-      },
-      {
-        "name": "context",
-        "type": "object",
-        "description": "Inspectable context summary"
-      },
-      {
-        "name": "stimulusReady",
-        "type": "boolean",
-        "description": "Whether correlated image or action-result evidence is available"
-      },
-      {
-        "name": "valid",
-        "type": "boolean",
-        "description": "Whether context construction succeeded"
-      },
-      {
-        "name": "error",
-        "type": "string",
-        "description": "Visible input error"
-      }
-    ],
-    "properties": {},
-    "propertySchemas": {},
-    "description": "Builds the routed context and capability-bounded action contract for one delegated physical or sensing intention."
   }),
   defineSchema({
     "id": "robot_autonomy_planner_context",
@@ -2665,9 +2540,9 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'orchestratorData', type: 'object', optional: true, description: 'Instructions from orchestrator' },
     ],
     outputs: [{ name: 'response', type: 'string' }],
-    properties: { model: 'fallback', temperature: 0.7 },
+    properties: { role: 'persona', temperature: 0.7 },
     propertySchemas: {
-      model: { type: 'string', default: 'fallback', label: 'Model' },
+      role: { ...modelRouterDefinition.propertySchemas.role, default: 'persona' },
       temperature: { type: 'slider', default: 0.7, label: 'Temperature', min: 0, max: 1, step: 0.1 },
     },
     size: [240, 200],
@@ -2686,6 +2561,10 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
     ],
     outputs: [
+      { name: 'taskContext', type: 'array', description: 'Context entries selected for task decisions' },
+      { name: 'conversationContext', type: 'array', description: 'Context entries selected for conversation' },
+      { name: 'raw', type: 'string', description: 'Exact model output before parsing' },
+      { name: 'modelMessages', type: 'array', description: 'Exact messages supplied to this model call' },
       { name: 'analysis', type: 'object', description: 'Complete typed routing analysis' },
       { name: 'needsResponse', type: 'boolean', description: 'Whether this turn needs a conversational response' },
       { name: 'needsExecutionContext', type: 'boolean', description: 'Whether downstream reasoning needs execution context' },
@@ -2707,7 +2586,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'isFollowUp', type: 'boolean', description: 'Is follow-up to previous' },
       { name: 'emotionalTone', type: 'string', description: 'Detected emotional context' },
     ],
-    properties: { modelId: '',
+    properties: { role: 'orchestrator',
       outputContract: 'general',
       systemPrompt: '',
       userPromptTemplate: 'Analyze this message: "{{userMessage}}"',
@@ -2715,7 +2594,7 @@ export const nodeSchemas: NodeSchema[] = [
       maxTokens: 768,
     },
     propertySchemas: {
-      modelId: { type: 'string', default: '', label: 'Model / LoRA', emptyLabel: 'Use configured role', suggestions: 'models' },
+      role: { ...modelRouterDefinition.propertySchemas.role, default: 'orchestrator' },
       outputContract: {
         type: 'select',
         default: 'general',
@@ -2772,14 +2651,8 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'precomputedResponse', type: 'string', optional: true },
     ],
     outputs: [{ name: 'response', type: 'string' }],
-    properties: { modelId: '', role: 'persona', maxTokens: 2048, temperature: 0.7, format: 'text' },
-    propertySchemas: {
-      modelId: { type: 'string', default: '', label: 'Model / LoRA', emptyLabel: 'Use configured role', suggestions: 'models' },
-      role: { type: 'select', default: 'persona', label: 'Model Role', options: ['persona', 'environmentActionSelector', 'orchestrator', 'fallback', 'coder'] },
-      maxTokens: { type: 'slider', default: 2048, label: 'Max Tokens', min: 256, max: 4096, step: 256 },
-      temperature: { type: 'slider', default: 0.7, label: 'Temperature', min: 0, max: 1, step: 0.1 },
-      format: { type: 'select', default: 'text', label: 'Response Format', options: ['text', 'json'] },
-    },
+    properties: modelRouterDefinition.properties,
+    propertySchemas: modelRouterDefinition.propertySchemas,
     description: 'Routes LLM call based on role',
   }),
 
@@ -3630,10 +3503,12 @@ export const nodeSchemas: NodeSchema[] = [
     id: 'persona_loader',
     name: 'Persona Loader',
     category: 'persona',
-    inputs: [],
+    inputs: [{ name: 'routingAnalysis', type: 'object', optional: true, description: 'Intent-selected persona sections for task and conversation' }],
     outputs: [
       { name: 'persona', type: 'object' },
       { name: 'formatted', type: 'string', description: 'Selected persona sections formatted for model context, when enabled' },
+      { name: 'taskFormatted', type: 'string' },
+      { name: 'conversationFormatted', type: 'string' },
       { name: 'identity', type: 'object' },
       { name: 'personality', type: 'object' },
       { name: 'values', type: 'object' },
@@ -3642,8 +3517,10 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'inactive', type: 'boolean' },
       { name: 'success', type: 'boolean' },
     ],
-    properties: { formatContext: false, includeValues: true, includeGoals: true, includePersonality: true },
+    properties: { formatContext: false, includeIdentity: true, includeBackground: true, includeValues: true, includeGoals: true, includePersonality: true },
     propertySchemas: {
+      includeIdentity: { type: 'toggle', default: true, label: 'Include Identity' },
+      includeBackground: { type: 'toggle', default: true, label: 'Include Background' },
       formatContext: { type: 'toggle', default: false, label: 'Format Model Context', description: 'Produce formatted persona text as well as the full persona object' },
       includeValues: { type: 'toggle', default: true, label: 'Include Values' },
       includeGoals: { type: 'toggle', default: true, label: 'Include Goals' },
@@ -3655,13 +3532,13 @@ export const nodeSchemas: NodeSchema[] = [
     id: 'persona_formatter',
     name: 'Persona Formatter',
     category: 'persona',
-    inputs: [{ name: 'persona', type: 'object' }],
+    inputs: [{ name: 'persona', type: 'object' }, { name: 'sections', type: 'array', optional: true }],
     outputs: [
       { name: 'formatted', type: 'string', description: 'Formatted persona text' },
       { name: 'sectionCount', type: 'number' },
       { name: 'inactive', type: 'boolean' },
     ],
-    properties: { includePersonality: true, includeValues: true, includeGoals: true },
+    properties: { includeIdentity: true, includeBackground: true, includePersonality: true, includeValues: true, includeGoals: true },
     description: 'Formats persona data into system prompt text',
   }),
   defineSchema({
@@ -4298,9 +4175,10 @@ What grounded insights or patterns emerge?`,
       { name: 'orchestratorHints', type: 'object', description: 'LLM-selected memory routing hints from orchestrator' },
       { name: 'userMessage', type: 'string', description: 'User message as fallback query' },
     ],
-    outputs: [{ name: 'memories', type: 'object', description: 'Retrieved memories with searchPerformed flag' }],
-    properties: { topK: 8, threshold: 0.5 },
+    outputs: [{ name: 'memories', type: 'array', description: 'Retrieved memories' }, { name: 'work', type: 'object', description: 'Identified Coordinator memory lookup' }],
+    properties: { dispatch: false, topK: 8, threshold: 0.5 },
     propertySchemas: {
+      dispatch: { type: 'toggle', default: false, label: 'Lookup in Parallel' },
       topK: { type: 'slider', default: 8, label: 'Top K Results', min: 1, max: 20, step: 1 },
       threshold: { type: 'slider', default: 0.5, label: 'Similarity Threshold', min: 0, max: 1, step: 0.05 },
     },
@@ -4430,11 +4308,18 @@ What grounded insights or patterns emerge?`,
 const modelRouterSchema = getNodeSchema('model_router')!;
 const taskParserSchema = getNodeSchema('environment_action_parser')!;
 nodeSchemas.push(
+  defineSchema({ id: 'robot_speech_delivery', name: 'Deliver Prepared Robot Speech', category: 'output', inputs: [],
+    outputs: [{ name: 'actionId', type: 'string', description: 'Durable speech playback action identity' }],
+    description: 'Admits prepared audio through the existing Environment Bridge command owner.' }),
   defineSchema({ ...modelRouterSchema, id: 'environment_conversation', name: 'Generate Environment Conversation', category: 'environment',
-    outputs: [{ name: 'effectId', type: 'string', description: 'Durable conversation work identity' }],
+    inputs: [...modelRouterSchema.inputs,
+      { name: 'metadata', type: 'object', optional: true, description: 'Recorded origin metadata for the assistant response' }],
+    outputs: [{ name: 'effectId', type: 'string', description: 'Durable conversation work identity' },
+      { name: 'work', type: 'object', description: 'Identified conversation work for the existing result wait' }],
     description: 'Queues conversation inference on the Coordinator and delivers it through the conversation workflow.' }),
   defineSchema({ id: 'environment_conversation_result', name: 'Conversation Work Result', category: 'environment', inputs: [],
-    outputs: [{ name: 'response', type: 'string', description: 'Generated conversation text from this finite work item' }],
+    outputs: [{ name: 'response', type: 'string', description: 'Generated conversation text from this finite work item' },
+      { name: 'metadata', type: 'object', description: 'Recorded origin metadata for the assistant response' }],
     description: 'Supplies the completed inference to the existing buffer, memory and speech owners.' }),
   defineSchema({ ...taskParserSchema, id: 'environment_task_planner', name: 'Resolve Task Plan',
     execution: { timeoutOwner: 'children' },
@@ -4447,6 +4332,12 @@ nodeSchemas.push(
     description: 'Resolves optional planning through Model Router, then returns the existing task parser output.' }),
 );
 const environmentContextSchema = getNodeSchema('environment_context_builder')!;
+environmentContextSchema.inputs.push(
+  { name: 'plannerDecision', type: 'object', optional: true, description: 'Internally authored intention with its recorded observation, reason and time' },
+  { name: 'robotObserver', type: 'object', optional: true, description: 'Source and cycle identity of the internally authored intention' },
+  { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Recorded observation time supplied with the planner intention' },
+  { name: 'delegatedMemories', type: 'array', optional: true, description: 'Historical memories supplied with the planner intention' },
+);
 environmentContextSchema.properties = { ...environmentContextSchema.properties, planningDelegation: false };
 environmentContextSchema.propertySchemas = { ...environmentContextSchema.propertySchemas,
   planningDelegation: { type: 'boolean', default: false, label: 'Allow Planning Delegation', description: 'Expose the approved optional larger-model planning output for task-only decisions.' } };

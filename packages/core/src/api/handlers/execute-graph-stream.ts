@@ -5,6 +5,8 @@
  * Lightweight event emission - doesn't affect execution performance.
  */
 
+import type { UnifiedHandler } from '../types.js';
+import { streamResponse } from '../types.js';
 import type { ExecutionEvent } from '../../graph-executor.js';
 import {
   collectNodeOutputs,
@@ -34,7 +36,7 @@ function formatSSE(event: string, data: any): string {
  * - graph_waiting: { response, status, executionId, durationMs }
  * - graph_error: { error }
  */
-export async function handleExecuteGraphStream(
+async function executeGraphWithEvents(
   graph: any,
   sessionId: string,
   userMessage: string | undefined,
@@ -42,11 +44,11 @@ export async function handleExecuteGraphStream(
   onEvent: (chunk: string) => void
 ): Promise<void> {
   const startTime = Date.now();
-  const ttsGeneration = username && userMessage?.trim()
-    ? beginTTSUserTurn(username, 'user-input')?.generation
-    : undefined;
-
   try {
+    const ttsGeneration = username && userMessage?.trim()
+      ? beginTTSUserTurn(username, 'user-input')?.generation
+      : undefined;
+
     if (!graph || !graph.nodes || !graph.edges) {
       onEvent(formatSSE('error', { error: 'Invalid graph structure' }));
       return;
@@ -150,3 +152,35 @@ export async function handleExecuteGraphStream(
     }));
   }
 }
+
+/** Disconnect ends observation; the existing durable graph owner retains admitted work. */
+export const handleExecuteGraphStream: UnifiedHandler = async (req) => {
+  const { graph, sessionId, userMessage } = req.body || {};
+  async function* events(): AsyncGenerator<string> {
+    const pending: string[] = [];
+    let wake: (() => void) | undefined;
+    let closed = false;
+    let completed = false;
+    const close = () => { closed = true; pending.length = 0; wake?.(); wake = undefined; };
+    req.signal?.addEventListener('abort', close, { once: true });
+    try {
+      if (req.signal?.aborted) return;
+      const execution = executeGraphWithEvents(graph, sessionId, userMessage, req.user.username, chunk => {
+        if (closed) return;
+        pending.push(chunk);
+        wake?.();
+        wake = undefined;
+      }).finally(() => { completed = true; wake?.(); wake = undefined; });
+      while (!closed) {
+        while (pending.length && !closed) yield pending.shift()!;
+        if (completed) { await execution; break; }
+        if (!closed) await new Promise<void>(resolve => { wake = resolve; });
+      }
+    } finally {
+      req.signal?.removeEventListener('abort', close);
+      close();
+    }
+  }
+  const response = streamResponse(events());
+  return { ...response, headers: { ...response.headers, 'X-Accel-Buffering': 'no' } };
+};

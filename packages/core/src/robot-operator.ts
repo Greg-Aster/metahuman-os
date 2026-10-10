@@ -327,7 +327,7 @@ export function readRobotOperatorRuntimeState(): RobotOperatorRuntimeState | nul
     const parsed = JSON.parse(fs.readFileSync(ROBOT_OPERATOR_RUNTIME_FILE, 'utf8')) as Record<string, any>
     if (parsed?.version !== 1 || parsed.serviceId !== 'robot-operator') return null
     if (!['reactive', 'semi', 'full'].includes(parsed.mode)) return null
-    if (!['starting', 'armed', 'dormant', 'admitting', 'stopped'].includes(parsed.lifecycle)) return null
+    if (!['starting', 'armed', 'dormant', 'admitting', 'failed', 'stopped'].includes(parsed.lifecycle)) return null
     const childIds: RobotOperatorStimulusAgent[] = [
       'robot-autonomy-controller',
       'robot-status',

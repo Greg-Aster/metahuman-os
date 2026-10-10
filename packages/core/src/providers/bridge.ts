@@ -244,18 +244,19 @@ export async function callProvider(
     };
   }
 
-  // A node's explicit registry selection can coexist with the preferred backend.
-  // Reuse each provider's transport and lifecycle owner, without switching it globally.
-  if (options.explicitModel) {
+  // A registered llama.cpp role retains its serving endpoint and request adapters.
+  // Big Brother routing above remains authoritative when enabled.
+  if (providerName === 'llama-cpp') {
     const backend = loadBackendConfig();
-    if (providerName === 'llama-cpp') {
-      return callLlamaCpp({ ...backend.llamaCpp,
+    return callLlamaCpp({ ...backend.llamaCpp,
         endpoint: options.endpoint ?? backend.llamaCpp.endpoint,
-        model: options.model!,
+        model: options.model ?? backend.llamaCpp.model,
         contextWindow: options.contextWindow ?? backend.llamaCpp.contextWindow,
         capabilities: (options.modelCapabilities?.length ? options.modelCapabilities : backend.llamaCpp.capabilities) as Array<'text' | 'image'>,
-      }, messages, options, onProgress);
-    }
+    }, messages, options, onProgress);
+  }
+  if (options.explicitModel) {
+    const backend = loadBackendConfig();
     if (providerName === 'ollama') return callOllamaProvider(messages, options, onProgress);
     if (providerName === 'vllm') return callVLLMProvider(messages, options, backend.vllm.endpoint, onProgress, options.model);
     if (isCloudProvider(providerName)) {
@@ -286,8 +287,6 @@ export async function callProvider(
 
   // Local providers - check which backend is active
   switch (providerName) {
-    case 'llama-cpp':
-      throw new Error('llama.cpp is not the active backend. Select it in System settings.');
     case 'local':
     case 'ollama': {
       // Use intelligent backend detection for 'local' or 'ollama' provider

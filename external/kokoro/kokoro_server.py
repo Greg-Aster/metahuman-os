@@ -32,6 +32,8 @@ synthesis_lock = Lock()
 voices_dir: Optional[Path] = None
 synthesis_defaults = SynthesisDefaults()
 processing_device = "cpu"
+requested_device = "cpu"
+fallback_reason: Optional[str] = None
 
 
 def load_model(device: str) -> Kokoro:
@@ -56,6 +58,23 @@ def load_model(device: str) -> Kokoro:
         raise RuntimeError(f"Kokoro could not activate the requested {provider}")
     session.disable_fallback()
     return Kokoro.from_session(session, str(voices_path))
+
+
+def load_selected_model(device: str) -> tuple[Kokoro, str, Optional[str]]:
+    if device != "auto":
+        return load_model(device), device, None
+
+    try:
+        return load_model("cuda"), "cuda", None
+    except Exception as error:
+        print(f"[Kokoro Server] CUDA unavailable; using CPU: {error}")
+        cpu_model = load_model("cpu")
+        return cpu_model, "cpu", "cuda_initialization_failed"
+
+
+def is_cuda_runtime_failure(error: Exception) -> bool:
+    message = str(error).lower()
+    return "cuda" in message or "cudnn" in message or "out of memory" in message
 
 
 def load_frontend(lang_code: str) -> KPipeline:
@@ -84,19 +103,19 @@ class SynthesizeRequest(BaseModel):
 @app.on_event("startup")
 async def startup():
     """Initialize one ONNX model and a pronunciation-only frontend."""
-    global pipeline, model, voices_dir, synthesis_defaults, processing_device
+    global pipeline, model, voices_dir, synthesis_defaults, processing_device, requested_device, fallback_reason
     parser = argparse.ArgumentParser()
     parser.add_argument("--lang", help="Default language code override")
     parser.add_argument("--voices-dir", type=Path, help="Custom voices directory")
     parser.add_argument("--port", type=int, default=9882)
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "auto"])
     args, _ = parser.parse_known_args()
 
     voices_dir = args.voices_dir
     synthesis_defaults = load_synthesis_defaults()
-    processing_device = args.device
+    requested_device = args.device
     lang_code = args.lang or synthesis_defaults.lang_code
-    model = load_model(processing_device)
+    model, processing_device, fallback_reason = load_selected_model(requested_device)
     pipeline = load_frontend(lang_code)
     print(f"✓ Kokoro ONNX initialized (lang_code={lang_code}, device={processing_device})")
     print(
@@ -116,6 +135,8 @@ async def health():
         "status": "ok",
         "engine": "onnx",
         "device": processing_device,
+        "requested_device": requested_device,
+        "fallback_reason": fallback_reason,
         "lang": pipeline.lang_code if hasattr(pipeline, 'lang_code') else "unknown",
         "voices_dir": str(voices_dir) if voices_dir else None,
         "defaults": {
@@ -136,7 +157,7 @@ def render_speech(
     custom_voicepack: Optional[str],
     normalize: bool,
 ) -> bytes:
-    global pipeline
+    global pipeline, model, processing_device, fallback_reason
     if pipeline is None or model is None:
         raise HTTPException(status_code=503, detail="Pipeline not initialized")
 
@@ -155,10 +176,23 @@ def render_speech(
         voice_to_use = load_custom_voicepack(custom_voicepack) if custom_voicepack else voice
         audio_chunks = []
         for result in pipeline(text, split_pattern=None):
-            audio, sample_rate = model.create(
-                result.phonemes, voice=voice_to_use, speed=speed,
-                is_phonemes=True, trim=False, sentence_pause=0, clause_pause=0,
-            )
+            try:
+                audio, sample_rate = model.create(
+                    result.phonemes, voice=voice_to_use, speed=speed,
+                    is_phonemes=True, trim=False, sentence_pause=0, clause_pause=0,
+                )
+            except Exception as error:
+                if requested_device != "auto" or processing_device != "cuda" or not is_cuda_runtime_failure(error):
+                    raise
+                print(f"[Kokoro Server] CUDA inference failed; using CPU until restart: {error}")
+                cpu_model = load_model("cpu")
+                model = cpu_model
+                processing_device = "cpu"
+                fallback_reason = "cuda_inference_failed"
+                audio, sample_rate = model.create(
+                    result.phonemes, voice=voice_to_use, speed=speed,
+                    is_phonemes=True, trim=False, sentence_pause=0, clause_pause=0,
+                )
             if sample_rate != 24000 or not len(audio) or not np.isfinite(audio).all():
                 raise ValueError("Kokoro ONNX produced invalid audio")
             audio_chunks.append(audio)
@@ -233,7 +267,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=9882)
     parser.add_argument("--lang")
     parser.add_argument("--voices-dir", type=Path)
-    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
+    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda", "auto"])
     args = parser.parse_args()
 
     uvicorn.run(

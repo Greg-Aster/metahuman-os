@@ -21,13 +21,13 @@ test('rejects invalid system device values before resolving or writing a profile
   }))
 
   assert.equal(response.status, 400)
-  assert.equal(response.error, 'Kokoro device must be cpu or cuda')
+  assert.equal(response.error, 'Kokoro device must be cpu, cuda, or auto')
 })
 
 test('prevents a standard profile user from changing the shared Kokoro device', async () => {
   const current = getVoiceServiceConfig('kokoro').device
   const response = await handleSaveVoiceSettings(request('standard', {
-    kokoro: { device: current === 'cpu' ? 'cuda' : 'cpu' },
+    kokoro: { device: current === 'auto' ? 'cpu' : 'auto' },
   }))
 
   assert.equal(response.status, 403)

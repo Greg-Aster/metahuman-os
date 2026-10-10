@@ -25,6 +25,20 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/** Receipt timing describes delivery, not the identity of captured evidence. */
+export function withoutEnvironmentDeliveryTiming(
+  value: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const metadata = { ...value };
+  delete metadata.actionTiming;
+  delete metadata.actionStageDurations;
+  return Object.keys(metadata).length ? metadata : undefined;
+}
+
+export function immutableEnvironmentVisualFrame(frame: EnvironmentVisualFrame): EnvironmentVisualFrame {
+  return { ...frame, metadata: withoutEnvironmentDeliveryTiming(frame.metadata) };
+}
+
 function iso(value: unknown): string | undefined {
   if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return undefined;
   return new Date(value).toISOString();

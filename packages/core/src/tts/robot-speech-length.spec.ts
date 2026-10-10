@@ -8,7 +8,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-long-speech-'));
 process.env.METAHUMAN_ROOT = root;
 process.env.MH_ENVIRONMENT_SPEECH_SPOOL = path.join(root, 'speech');
 const { claimRobotSpeech, stageRobotSpeech, wavToRobotPcm } = await import('./robot-audio.js');
-const { prepareRobotSpeech } = await import('./robot-speech.js');
+const { prepareRobotSpeechChunks } = await import('./robot-speech.js');
 const { KokoroService } = await import('./providers/kokoro-service.js');
 const { prepareEnvironmentCommand } = await import('../environment-interface/store.js');
 const { getProfilePaths } = await import('../path-builder.js');
@@ -43,15 +43,20 @@ test('a multi-minute reply survives rendering, admission and claiming intact', a
     };
   });
   try {
-    const prepared = await prepareRobotSpeech({ username: 'fixture', sessionId: 'robot', text: 'Complete reply.', requestId: 'long-reply' });
-    assert.equal(prepared.totalChunks, 80); // Former limit: 64 chunks and 3 MiB.
-    assert.equal(prepared.action.speechDurationMs, 160_000);
-    const command = prepareEnvironmentCommand(prepared.action, { allowedActions: ['speak'], source: 'system', username: 'fixture' });
-    const artifact = claimRobotSpeech(prepared.action.speechArtifactId!)!;
-    assert.equal(artifact.pcm.length, 160_000 * 32);
-    assert.equal(command.input.speechDurationMs, 160_000);
-    assert.equal(artifact.pcm.readInt16LE(artifact.pcm.length - 2), wavToRobotPcm(chunk).readInt16LE(63_998));
-    assert.equal(claimRobotSpeech(artifact.id), null);
+    let totalMs = 0;
+    let chunks = 0;
+    for await (const prepared of prepareRobotSpeechChunks({ username: 'fixture', sessionId: 'robot', text: 'Complete reply.', requestId: 'long-reply' })) {
+      assert.equal(prepared.totalChunks, 80);
+      const command = prepareEnvironmentCommand(prepared.action, { allowedActions: ['speak'], source: 'system', username: 'fixture' });
+      const artifact = claimRobotSpeech(prepared.action.speechArtifactId!)!;
+      totalMs += command.input.speechDurationMs;
+      chunks++;
+      assert.equal(artifact.pcm.length, 2_000 * 32);
+      assert.equal(artifact.pcm.readInt16LE(artifact.pcm.length - 2), wavToRobotPcm(chunk).readInt16LE(63_998));
+      assert.equal(claimRobotSpeech(artifact.id), null);
+    }
+    assert.equal(chunks, 80);
+    assert.equal(totalMs, 160_000);
   } finally { synthesis.mock.restore(); }
 });
 
@@ -76,4 +81,25 @@ test('waiting replies survive long playback and orphan audio is still cleaned', 
   for (const reply of replies) assert.deepEqual(claimRobotSpeech(reply.id)?.pcm, reply.pcm);
   assert.equal(claimRobotSpeech(orphan.id), null);
   assert.ok(claimRobotSpeech(next.id));
+});
+
+
+test('first audio is available before later synthesis; abort does not admit a later chunk', async () => {
+  const controller = new AbortController();
+  let secondRequested = false;
+  const synthesis = mock.method(KokoroService.prototype, 'synthesizeStream', async function* () {
+    yield { index: 0, total: 2, audio: wav(1), text: 'first', isFinal: false, synthesisMs: 0, cacheHit: false };
+    secondRequested = true;
+    controller.abort(new DOMException('Explicit cancellation', 'AbortError'));
+    yield { index: 1, total: 2, audio: wav(1), text: 'last', isFinal: true, synthesisMs: 0, cacheHit: false };
+  });
+  try {
+    const iterator = prepareRobotSpeechChunks({ username: 'fixture', sessionId: 'robot', text: 'Complete reply.',
+      requestId: 'early-audio', signal: controller.signal });
+    const first = await iterator.next();
+    assert.equal(first.done, false);
+    assert.equal(secondRequested, false);
+    assert.equal(claimRobotSpeech(first.value!.action.speechArtifactId!)!.durationMs, 1000);
+    await assert.rejects(iterator.next(), { name: 'AbortError' });
+  } finally { synthesis.mock.restore(); }
 });

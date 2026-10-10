@@ -22,6 +22,7 @@ test('normalizes Kokoro configuration through defaults, file values, and environ
     device: 'cpu',
     langCode: 'b',
   })
+  assert.equal(normalizeVoiceServiceConfig('kokoro', { device: 'auto' }, {}).device, 'auto')
 })
 
 test('uses safe Whisper fallbacks and its CUDA compute policy', () => {
@@ -63,6 +64,9 @@ test('updates only the selected service device in the shared configuration docum
   })
   assert.equal(original.servers.kokoro.device, 'cpu')
   assert.deepEqual((updated.servers as Record<string, unknown>).whisper, original.servers.whisper)
+  const automatic = withVoiceServiceDevice(original, 'kokoro', 'auto')
+  assert.equal((automatic.servers as { kokoro: { device: string } }).kokoro.device, 'auto')
+  assert.throws(() => withVoiceServiceDevice(original, 'whisper', 'auto'), /does not support/)
 })
 
 test('rejects a malformed shared configuration document instead of fabricating defaults', () => {

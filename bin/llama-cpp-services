@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+case "${1:-}" in
+  start)
+    systemctl --user start \
+      llama-cpp.service \
+      llama-cpp-environment-intent.service
+    ;;
+  stop)
+    systemctl --user stop \
+      llama-cpp.service \
+      llama-cpp-environment-intent.service \
+      llama-cpp-environment-speck-intent.service
+    ;;
+  *)
+    echo "Usage: $0 start|stop" >&2
+    exit 2
+    ;;
+esac

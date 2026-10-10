@@ -6,6 +6,7 @@ export type EnvironmentActionType =
   | 'stop'
   | 'captureImage'
   | 'robotCommand'
+  | 'faceExpression'
   | 'robotMotionPlan'
   | 'inspect'
   | 'visualApproach'
@@ -168,6 +169,9 @@ export interface EnvironmentMotionPlanFrame {
 
 export interface EnvironmentCapabilities {
   actions: EnvironmentActionType[];
+  /** Display assets advertised by the selected body's existing expression library. */
+  expressionLibrary?: Array<{ name: string; label: string; group?: string }>;
+  expressionFeedback?: boolean;
   robotCommands?: string[];
   /** Adapter-owned physical meaning for each advertised exact robot command. */
   robotCommandDescriptions?: Record<string, string>;
@@ -332,6 +336,12 @@ export interface EnvironmentAction {
   movementUpdate?: { actionId: string; revision: number; controls: Record<string, number> };
 
   command?: string;
+  expression?: string;
+  displayToken?: string;
+  displayIfToken?: string;
+  displayTimeoutMs?: number;
+  displayBackground?: boolean;
+  displayRelease?: boolean;
   units?: number;
   amount?: number;
   durationMs?: number;
@@ -411,6 +421,8 @@ export interface EnvironmentSessionState {
   firstSeenAt: string;
   lastSeenAt: string;
   latestObservation?: EnvironmentObservation;
+  /** Latest received camera evidence; retains its capture time across text/status updates. */
+  latestVisual?: EnvironmentVisualFrame;
   processedTextEventIds?: string[];
 }
 

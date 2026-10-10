@@ -4,6 +4,9 @@ export { environmentActionContextInputNode } from './action-context-input.node.j
 export { environmentImageInputNode } from './image-input.node.js';
 export { observationHistoryNode } from './observation-history.node.js';
 export { saveVisualObservationNode } from './save-visual-observation.node.js';
+export { environmentTrainingOutputNode } from './training-output.node.js';
+export { environmentTrainingReviewInputNode, environmentTrainingReviewSaveNode } from './training-review.node.js';
+export { freestyleRequestInputNode, freestyleTrainingOutputNode } from './freestyle-training.node.js';
 export { environmentFeedbackNode } from './feedback.node.js';
 export { environmentMapInputNode } from './map-input.node.js';
 export { environmentContextBuilderNode } from './context-builder.node.js';
@@ -13,5 +16,6 @@ export { environmentTaskPlannerNode } from './task-planner.node.js';
 export { movementGeneratorNode } from './movement-generator.node.js';
 export { environmentSendActionNode } from './send-action.node.js';
 export { environmentSendTextNode } from './send-text.node.js';
+export { environmentFaceExpressionNode, environmentExpressionFeedbackNode } from './expression.node.js';
 export { environmentResultWaitNode } from './result-wait.node.js';
 export { environmentActiveTaskNode, environmentActiveTaskStepNode, environmentActiveTaskWaitNode } from './active-task.node.js';

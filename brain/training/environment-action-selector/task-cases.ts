@@ -115,8 +115,8 @@ add('direct-planning-request', [
   'Use the current planner to select a bow followed by a sit.', 'Plan bowing then sitting directly; no larger planner is requested.',
 ], task('Bow then sit.', [action('bow'), action('sit')]))
 
-// Frozen, unseen phrasings and compositions; these never enter training or checkpoint selection.
-const heldOut: Array<[string, string[], Record<string, any>]> = [
+// Previously examined evaluation requests: regression only, excluded from training and checkpoint selection.
+const regression: Array<[string, string[], Record<string, any>]> = [
   ['bow', ['Could I see your bow?', 'Show a bow for the audience.'], task('Bow.', [action('bow')])],
   ['wave', ['A little wave, please.', 'Wave to the visitor.'], task('Wave.', [action('wave')])],
   ['pushup', ['One press-up, please.', 'Show a single pushup for us.'], task('One pushup.', [action('pushup')])],
@@ -134,24 +134,24 @@ const heldOut: Array<[string, string[], Record<string, any>]> = [
   ['capture', ['Acquire a fresh shot from the camera.', 'Save one new camera frame.'], task('Capture an image.', [{ kind: 'action', action: { type: 'captureImage' } }])],
   ['nuance', ['Lean backward slowly, keeping your front right leg lifted.', 'With your front right leg raised, lean back slowly.'], task('Lean backward with the front right leg raised.', [{ kind: 'generatedMotion', description: 'Lean backward slowly, keeping the front right leg lifted.' }])],
 ]
-for (const [suite, instructions, expected] of heldOut) add(suite, instructions, expected, movement, {}, 'evaluation')
+for (const [suite, instructions, expected] of regression) add(suite, instructions, expected, movement, {}, 'regression')
 for (const disposition of ['cancel', 'steer']) add('execution', disposition === 'cancel'
   ? ['Terminate execution-72.', 'Cancel the activity with ID execution-72.']
   : ['Adjust execution-72 to go faster.', 'Increase the pace of execution-72.'],
 { ...noTask(), executionDisposition: disposition, targetExecutionId: 'execution-72' }, [...movement, 'needsExecutionContext'],
-{ activeExecutions: [{ executionId: 'execution-16', canSteer: true }, { executionId: 'execution-72', canSteer: true }] }, 'evaluation')
+{ activeExecutions: [{ executionId: 'execution-16', canSteer: true }, { executionId: 'execution-72', canSteer: true }] }, 'regression')
 add('requested-planning', [
   'Pass the planning of two nods followed by standing to the larger model.',
   'Let the larger planner figure out two nods and a stand.',
-], { delegatePlanning: true }, movement, {}, 'evaluation')
+], { delegatePlanning: true }, movement, {}, 'regression')
 add('requested-planning', [
   'Refer the plan for a photo, wave, and bow to the larger model.',
   'I want the larger planner to arrange taking a picture, waving, and bowing in that order.',
-], { delegatePlanning: true }, movement, {}, 'evaluation')
+], { delegatePlanning: true }, movement, {}, 'regression')
 add('planning-discussion', [
   'Define the phrase "delegate planning".', 'Tell me what the larger model contributes to planning.',
-], noTask(), ['needsResponse'], {}, 'evaluation')
+], noTask(), ['needsResponse'], {}, 'regression')
 add('direct-planning-request', [
   'Keep this plan with the current model: nod, then sit.',
   'No delegation for this one; give a nod and sit down afterwards.',
-], task('Nod then sit.', [action('nod'), action('sit')]), movement, {}, 'evaluation')
+], task('Nod then sit.', [action('nod'), action('sit')]), movement, {}, 'regression')

@@ -1,0 +1,45 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Environment Freestyle",
+  "description": "Generates one eight-joint Freestyle trajectory and records the model attempt in its separate training bank.",
+  "cognitiveMode": "environment",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 0
+  },
+  "nodes": [
+    {
+      "id": "request",
+      "type": "environmentNode",
+      "position": { "x": 80, "y": 160 },
+      "data": { "label": "Freestyle Work Input", "nodeType": "environment_freestyle_request_input", "properties": {} }
+    },
+    {
+      "id": "generator",
+      "type": "environmentNode",
+      "position": { "x": 430, "y": 160 },
+      "data": { "label": "Movement Generator", "nodeType": "movement_generator", "properties": { "role": "orchestrator", "executionTarget": "remote", "maxTokens": 4096, "temperature": 0.2 } }
+    },
+    {
+      "id": "save-freestyle-decision",
+      "type": "environmentNode",
+      "position": { "x": 800, "y": 160 },
+      "data": { "label": "Save Freestyle Decision", "nodeType": "environment_freestyle_training_output", "properties": {} }
+    }
+  ],
+  "edges": [
+    { "id": "request-movement", "source": "request", "sourceHandle": "movementRequest", "target": "generator", "targetHandle": "movementRequest", "data": { "type": "object" } },
+    { "id": "request-instruction", "source": "request", "sourceHandle": "instruction", "target": "generator", "targetHandle": "instruction", "data": { "type": "string" } },
+    { "id": "request-observation", "source": "request", "sourceHandle": "observation", "target": "generator", "targetHandle": "observation", "data": { "type": "object" } },
+    { "id": "request-session", "source": "request", "sourceHandle": "sessionId", "target": "generator", "targetHandle": "sessionId", "data": { "type": "string" } },
+    { "id": "save-messages", "source": "generator", "sourceHandle": "modelMessages", "target": "save-freestyle-decision", "targetHandle": "modelMessages", "data": { "type": "array" } },
+    { "id": "save-output", "source": "generator", "sourceHandle": "rawOutput", "target": "save-freestyle-decision", "targetHandle": "rawOutput", "data": { "type": "string" } },
+    { "id": "save-valid", "source": "generator", "sourceHandle": "valid", "target": "save-freestyle-decision", "targetHandle": "valid", "data": { "type": "boolean" } },
+    { "id": "save-error", "source": "generator", "sourceHandle": "error", "target": "save-freestyle-decision", "targetHandle": "error", "data": { "type": "string" } },
+    { "id": "save-action", "source": "generator", "sourceHandle": "action", "target": "save-freestyle-decision", "targetHandle": "action", "data": { "type": "object" } }
+  ]
+}

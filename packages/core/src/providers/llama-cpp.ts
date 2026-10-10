@@ -134,7 +134,9 @@ export async function callLlamaCpp(
       ...(options.repeatPenalty !== undefined ? { repeat_penalty: options.repeatPenalty } : {}),
       ...(options.seed !== undefined ? { seed: options.seed } : {}),
       chat_template_kwargs: { enable_thinking: options.enableThinking ?? config.enableThinking },
-      ...(options.jsonSchema ? { response_format: { type: 'json_schema', json_schema: { name: 'response', schema: options.jsonSchema } } }
+      ...(options.jsonSchema ? { response_format: options.jsonSchemaMode === 'json-object'
+          ? { type: 'json_object' }
+          : { type: 'json_schema', json_schema: { name: 'response', schema: options.jsonSchema } } }
         : options.format === 'json' ? { response_format: { type: 'json_object' } } : {}),
     }),
   }, 120000)

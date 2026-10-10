@@ -29,7 +29,7 @@ import { AGENT_CATALOG_DEFINITIONS } from '../agent-catalog-definitions.js';
 import {
   buildAgentNodePath,
   resolveAgentExecutablePath,
-  resolveTsx,
+  resolveAgentRunner,
 } from '../agent-executable-resolver.js';
 import { agentFailureMessage } from '../agent-process-runner.js';
 import { getUserByUsername, getUsers } from '../users.js';
@@ -166,7 +166,7 @@ export type WorkHandler = (
 
 export interface ExecutionEngineOptions {
   wakeFallbackMs?: number;
-  maintain?: () => Promise<void>;
+  maintain?: (dispatchReady: () => void) => Promise<void>;
   onTaskComplete?: (task: QueuedTask, success: boolean, result: any) => void;
   onError?: (error: Error, task?: QueuedTask) => void;
 }
@@ -223,8 +223,24 @@ export class ExecutionEngine {
   }
 
   private registerDefaultHandlers(): void {
+    this.registerHandler('tts.robot-speech', (task, context) => withTaskUserContext(task, async () => {
+      const { runRobotSpeechWork } = await import('../tts/robot-speech.js');
+      return runRobotSpeechWork(task.input as unknown as Parameters<typeof runRobotSpeechWork>[0], task.username!, context.signal);
+    }));
     // Deadlines use the existing Coordinator's durable notBefore admission.
     this.registerHandler('environment.active-task-deadline', async task => task.input);
+    this.registerHandler('environment.display-feedback', (task, context) => withTaskUserContext(task, async () => {
+      const [{ loadGraphForMode }, { runGraph }] = await Promise.all([
+        import('../graph-streaming.js'), import('../graph-runtime.js'),
+      ]);
+      const loaded = await loadGraphForMode('robot-display-feedback', task.username);
+      const state = await runGraph({ graph: loaded.graph, signal: context.signal,
+        context: { username: task.username, environmentDisplayFeedback: task.input.feedback } });
+      if (state.status === 'failed') throw state.error ?? new Error('Display feedback workflow failed');
+      const result = completedNodeOutput(state, 'environment_face_expression');
+      if (!result?.success) throw new Error(String(result?.message ?? 'Display feedback was not admitted'));
+      return result;
+    }));
     this.registerHandler('environment.conversation', (task, context) => withTaskUserContext(task, async () => {
       const { runEnvironmentConversationWork } = await import('../environment-interface/conversation.js');
       return runEnvironmentConversationWork(task.input as unknown as Parameters<typeof runEnvironmentConversationWork>[0], task.username!, context.signal);
@@ -271,11 +287,22 @@ export class ExecutionEngine {
       return { requested: true };
     });
     this.registerHandler('environment.generate-motion', (task, context) => withTaskUserContext(task, async () => {
-      const { movementGeneratorNode } = await import('../nodes/environment/movement-generator.node.js');
-      const result = await movementGeneratorNode.execute(task.input, { username: task.username, userId: task.username,
-        abortSignal: context.signal }, { executionTarget: 'remote' });
+      const [{ loadGraphForMode }, { runGraph }] = await Promise.all([
+        import('../graph-streaming.js'), import('../graph-runtime.js'),
+      ]);
+      const loaded = await loadGraphForMode('environment-freestyle', task.username);
+      const state = await runGraph({ graph: loaded.graph, signal: context.signal,
+        context: { username: task.username, userId: task.username, environmentMotionRequest: task.input,
+          environmentMotionTrainingIdentity: task.durable ? {
+            executionId: task.durable.executionId, effectId: task.durable.effectId,
+          } : undefined },
+      });
+      if (state.status === 'failed') throw state.error ?? new Error('Freestyle workflow failed');
+      const result = completedNodeOutput(state, 'movement_generator');
+      if (!result) throw new Error('Freestyle workflow returned no movement generator result');
       if (!result.valid) throw new Error(String(result.error || 'Remote motion generation returned no valid plan'));
-      return result;
+      const { modelMessages: _messages, rawOutput: _rawOutput, ...movementResult } = result;
+      return movementResult;
     }));
     this.registerHandler('environment.identify', (task, context) => withTaskUserContext(task, async () => {
       const { identifyActiveTaskImage } = await import('../environment-interface/active-task.js');
@@ -372,6 +399,7 @@ export class ExecutionEngine {
         task.input.query,
         {
           topK: task.input.limit || 10,
+          memoryTypes: task.input.memoryTypes,
           username: task.username,
           reconciliationSource: task.metadata?.producer || 'vector-semantic-search',
         },
@@ -618,7 +646,9 @@ export class ExecutionEngine {
 
   private async runLoop(): Promise<void> {
     while (this.running) {
-      try { await this.options.maintain?.(); this.maintenanceError = undefined; }
+      let dispatched = false;
+      const dispatchReady = () => { dispatched = this.dispatchReady() || dispatched; };
+      try { await this.options.maintain?.(dispatchReady); this.maintenanceError = undefined; }
       catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
         if (this.maintenanceError !== failure.message) {
@@ -629,25 +659,29 @@ export class ExecutionEngine {
         // Admission and accepting owners still validate the affected execution.
         // An inaccessible profile must not stop unrelated Coordinator work.
       }
-      this.queueManager.releaseWaiting();
-      let dispatched = false;
-
-      while (this.running) {
-        const next = this.queueManager.getNextExecutable(task => this.canHandle(task));
-        if (!next) break;
-        const task = this.queueManager.claim(next.id);
-        if (!task) break;
-        dispatched = true;
-        const execution = this.execute(task).finally(() => {
-          this.activeExecutions.delete(task.id);
-          this.abortControllers.delete(task.id);
-          this.wake();
-        });
-        this.activeExecutions.set(task.id, execution);
-      }
+      dispatchReady();
 
       if (!dispatched) await this.waitForWake();
     }
+  }
+
+  private dispatchReady(): boolean {
+    this.queueManager.releaseWaiting();
+    let dispatched = false;
+    while (this.running) {
+      const next = this.queueManager.getNextExecutable(task => this.canHandle(task));
+      if (!next) break;
+      const task = this.queueManager.claim(next.id);
+      if (!task) break;
+      dispatched = true;
+      const execution = this.execute(task).finally(() => {
+        this.activeExecutions.delete(task.id);
+        this.abortControllers.delete(task.id);
+        this.wake();
+      });
+      this.activeExecutions.set(task.id, execution);
+    }
+    return dispatched;
   }
 
   private async execute(task: QueuedTask): Promise<void> {
@@ -800,7 +834,7 @@ export class ExecutionEngine {
       const args = Array.isArray(task.input.args)
         ? task.input.args.filter((value): value is string => typeof value === 'string')
         : [];
-      const child = spawn(resolveTsx(), [fullPath, ...args], {
+      const child = spawn(resolveAgentRunner(fullPath), [fullPath, ...args], {
         cwd: ROOT,
         env: {
           ...process.env,

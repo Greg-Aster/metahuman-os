@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Desire Safety Reviewer Node
  *
@@ -184,9 +185,10 @@ export const DesireSafetyReviewerNode: NodeDefinition = defineNode({
       description: 'LLM temperature for safety review (lower = more conservative)',
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'orchestrator',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     systemPrompt: {
       type: 'text_multiline',

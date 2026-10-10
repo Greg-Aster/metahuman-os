@@ -1,3 +1,4 @@
+import { setImmediate as yieldToIO } from 'node:timers/promises'
 import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite'
 import { WRITES_IDX_MAP, type Checkpoint, type CheckpointListOptions, type CheckpointMetadata, type CheckpointTuple, type PendingWrite } from '@langchain/langgraph-checkpoint'
 import type { CheckpointTransition, ExecutionLease } from './types.js'
@@ -163,6 +164,10 @@ export class ExecutionCheckpointer extends SqliteSaver {
         WHERE execution_id = ?`).run(Date.now(), executionId)
     }).immediate()
     await this.afterCommit?.()
+    // Resolved promises alone keep successive graph writes in the microtask
+    // queue. Let ready feedback, receipts and cancellation run between commits;
+    // never yield inside the ownership/intent transaction.
+    await yieldToIO()
     return { configurable: { ...config.configurable, thread_id: executionId, checkpoint_ns: config.configurable?.checkpoint_ns ?? '', checkpoint_id: checkpoint.id } }
   }
 
@@ -198,6 +203,7 @@ export class ExecutionCheckpointer extends SqliteSaver {
         }
       }
     }).immediate()
+    await yieldToIO()
   }
 
   override async deleteThread(threadId: string): Promise<void> {

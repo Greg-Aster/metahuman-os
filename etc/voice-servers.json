@@ -4,9 +4,9 @@
   "servers": {
     "kokoro": {
       "enabled": true,
-      "startOnSystemBoot": false,
+      "startOnSystemBoot": true,
       "port": 9882,
-      "device": "cpu",
+      "device": "auto",
       "langCode": "a"
     },
     "kitten": {

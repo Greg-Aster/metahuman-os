@@ -1,7 +1,7 @@
 import http from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import { terminalSocket } from './paths.js'
-import { TerminalError, type TerminalState, type TerminalProvider } from './types.js'
+import { TerminalError, type TerminalState, type TerminalProvider, type DiagnosticRequest, type DiagnosticReceipt } from './types.js'
 import type { EscalationOptions } from '../escalation-backend.js'
 import type { BigBrotherSessionResult, ParsedBigBrotherEvent } from './providers/cli.js'
 
@@ -69,13 +69,18 @@ export async function stopTerminalService(): Promise<void> {
 }
 export async function getBigBrotherSessionState() {
   const state = await getTerminalState()
-  const session = state.sessions.find(item => item.kind === 'provider')
+  const session = state.sessions.find(item => item.kind === 'provider' && !item.diagnostic)
   return { sessionOpen: !!session, processRunning: session?.phase === 'running', provider: session?.provider,
     phase: session?.phase || 'stopped', error: session?.error, id: session?.id }
 }
 export async function stopBigBrotherSession(): Promise<void> {
   const state = await getBigBrotherSessionState()
   if (state.id) await terminalCall('/close', { id: state.id })
+}
+
+export async function submitBigBrotherDiagnostic(request: DiagnosticRequest): Promise<DiagnosticReceipt> {
+  await startTerminalService(request.username)
+  return terminalCall('/diagnostic', request)
 }
 
 export async function executeInBigBrotherSession(provider: TerminalProvider, prompt: string,

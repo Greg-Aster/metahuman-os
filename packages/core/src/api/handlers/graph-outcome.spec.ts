@@ -125,7 +125,7 @@ test('editor stream reports failure without a subsequent graph-complete event', 
   const events: string[] = [];
   emitGraphError = true;
   try {
-    await handleExecuteGraphStream(graph, 'fixture-stream', undefined, '', chunk => events.push(chunk));
+    for await (const chunk of (await handleExecuteGraphStream({ body: { graph, sessionId: 'fixture-stream' }, user: { username: '' } } as UnifiedRequest)).stream!) events.push(chunk);
   } finally { emitGraphError = false; }
   assert.ok(events.some(event => event.includes('event: graph_error') && event.includes(failed.error!.message)));
   assert.equal(events.filter(event => event.includes('event: graph_error')).length, 1);
@@ -218,11 +218,11 @@ test('editor waiting response preserves saved execution identity and is not comp
   assert.equal((response.data as any)?.result?.status, 'waiting');
   assert.equal((response.data as any)?.result?.executionId, 'waiting-fixture');
   const events: string[] = [];
-  await handleExecuteGraphStream(graph, 'fixture-stream', undefined, '', chunk => events.push(chunk));
+  for await (const chunk of (await handleExecuteGraphStream({ body: { graph, sessionId: 'fixture-stream' }, user: { username: '' } } as UnifiedRequest)).stream!) events.push(chunk);
   assert.ok(events.some(event => event.includes('event: graph_waiting') && event.includes('waiting-fixture')));
   assert.ok(events.every(event => !event.includes('event: graph_complete') && !event.includes('event: graph_error')));
   const editor = fs.readFileSync(path.join(repo, 'apps/site/src/components/flow-editor/FlowEditorLayout.svelte'), 'utf8');
-  assert.match(editor, /eventType === 'graph_complete' \|\| eventType === 'graph_waiting'/);
+  assert.match(editor, /frame.event === 'graph_complete' \|\| frame.event === 'graph_waiting'/);
   assert.match(editor, /Execution saved and waiting/);
 });
 

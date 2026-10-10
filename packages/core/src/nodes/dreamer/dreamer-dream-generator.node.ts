@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Dreamer Dream Generator Node
  * Generates a surreal dream narrative from memory fragments using LLM
@@ -152,9 +153,10 @@ export const DreamerDreamGeneratorNode: NodeDefinition = defineNode({
       step: 0.1,
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'persona',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     timeout: {
       type: 'number',

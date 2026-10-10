@@ -71,3 +71,19 @@ test('Codex uses the selected profile model and reasoning ahead of stale CLI arg
   try { assert.equal(other.args.includes('sonnet'), false) }
   finally { await fs.rm(other.tempDir, { recursive: true, force: true }) }
 })
+
+test('diagnostic invocation selects full access, high reasoning and the exact resume thread', async () => {
+  const invocation = buildBigBrotherCLIInvocation('codex', 'fixture', {
+    diagnostic: { model: 'fixture-choice', reasoning: true, threadId: 'fixture-thread' },
+  })
+  try {
+    assert.equal(invocation.args[invocation.args.indexOf('--model') + 1], 'fixture-choice')
+    assert.ok(invocation.args.includes('model_reasoning_effort="high"'))
+    assert.ok(invocation.args.includes('--dangerously-bypass-approvals-and-sandbox'))
+    assert.deepEqual(invocation.args.slice(invocation.args.indexOf('resume'), invocation.args.indexOf('resume') + 3), ['resume', 'fixture-thread', '-'])
+    assert.equal(invocation.args.includes('--last'), false)
+    assert.equal(invocation.args.includes('--color'), false)
+    assert.equal(invocation.timeout, 0)
+    assert.equal(parseBigBrotherTerminalEvent('codex', JSON.stringify({ type: 'thread.started', thread_id: 'fixture-thread' })).threadId, 'fixture-thread')
+  } finally { await fs.rm(invocation.tempDir, { recursive: true, force: true }) }
+})

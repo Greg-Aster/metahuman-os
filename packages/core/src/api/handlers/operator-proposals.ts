@@ -359,10 +359,14 @@ export async function handleOperatorProposalsStream(req: UnifiedRequest): Promis
   async function* generateStream(): AsyncIterable<string> {
     let isClosed = false;
     const eventQueue: string[] = [];
+    let wake: (() => void) | undefined;
+    const close = () => { isClosed = true; wake?.(); wake = undefined; };
 
     const queueEvent = (eventType: string, data: object) => {
       if (isClosed) return;
       eventQueue.push(sseEvent(eventType, data));
+      wake?.();
+      wake = undefined;
     };
 
     const sendCurrentState = () => {
@@ -378,6 +382,7 @@ export async function handleOperatorProposalsStream(req: UnifiedRequest): Promis
         });
       } catch (error) {
         console.error('[proposals-stream] Error fetching state:', error);
+        queueEvent('error', { error: (error as Error).message });
       }
     };
 
@@ -412,6 +417,8 @@ export async function handleOperatorProposalsStream(req: UnifiedRequest): Promis
       sendCurrentState();
     };
 
+    req.signal?.addEventListener('abort', close, { once: true });
+    if (req.signal?.aborted) close();
     proposalEvents.on('proposal-created', onProposalCreated);
     proposalEvents.on('proposal-resolved', onProposalResolved);
 
@@ -429,10 +436,11 @@ export async function handleOperatorProposalsStream(req: UnifiedRequest): Promis
           break;
         }
 
-        await new Promise(resolve => setTimeout(resolve, 250));
+        await new Promise<void>(resolve => { wake = resolve; });
       }
     } finally {
-      isClosed = true;
+      req.signal?.removeEventListener('abort', close);
+      close();
       proposalEvents.off('proposal-created', onProposalCreated);
       proposalEvents.off('proposal-resolved', onProposalResolved);
     }

@@ -17,7 +17,7 @@ const { eventBus } = await import('../../infrastructure/event-bus/client.js');
 eventBus.disconnect();
 const { createUser } = await import('../../users.js');
 const { beginAuthenticatedRuntime, createSession, selectAuthenticatedSession } = await import('../../sessions.js');
-const { handleEnvironmentBridgeSpeechSettings } = await import('./environment-bridge.js');
+const { handleEnvironmentBridgeSpeechSettings, handleEnvironmentBridgeBehaviorSettings } = await import('./environment-bridge.js');
 const { handleSaveVoiceSettings } = await import('./voice-settings.js');
 const { getSpeechOutputSettings } = await import('../../tts/robot-speech.js');
 const owner = createUser('speech-owner', 'fixture-password', 'owner');
@@ -63,4 +63,43 @@ test('Body Control and Voice Settings share one saved destination and preserve o
   assert.equal((await handleEnvironmentBridgeSpeechSettings(request())).data.outputTarget, 'robot');
 });
 
-test.after(() => { eventBus.disconnect(); });
+test('robot control persists, cancels its existing execution, and preserves unknown commands and unrelated work', async () => {
+  selectAuthenticatedSession(session.id);
+  assert.equal((await handleEnvironmentBridgeBehaviorSettings(request({}, 'wrong'))).status, 401);
+  assert.equal((await handleEnvironmentBridgeBehaviorSettings(request({ enabled: 'yes' }))).status, 400);
+  const { openExecutionStore } = await import('../../durable-execution/storage.js');
+  const { getQueueSystem } = await import('../../queue/queue-system.js');
+  const { getQueueManager } = await import('../../queue/unified-queue-manager.js');
+  const { readEnvironmentBridgeState } = await import('../../environment-interface/store.js');
+  const store = openExecutionStore(owner.username);
+  try {
+    const definition = { graphId: 'control-fixture', graphHash: 'fixture', runtimeVersion: 'fixture', checkpointSchemaVersion: 1, nodeVersions: {} };
+    const active = store.enter(owner.username, definition, 'robot', { graph: { cognitiveMode: 'environment' } });
+    const unrelated = store.enter(owner.username, definition, 'other', { graph: { cognitiveMode: 'dual' } });
+    const manager = getQueueManager();
+    const command = manager.enqueue({ type: 'environment_command', handler: 'environment.command', username: owner.username,
+      input: { id: 'unknown-command', type: 'robotCommand', command: 'walk', sessionId: 'fixture-robot' } });
+    assert.ok(manager.claim(command.id));
+    manager.wait(command.id, 'outcome_unknown: terminal receipt absent');
+    let response = await handleEnvironmentBridgeBehaviorSettings(request({ enabled: false }));
+    assert.equal(response.status, 200);
+    assert.equal(response.data.enabled, false);
+    assert.equal(readEnvironmentBridgeState().enabled, false);
+    assert.equal(store.get(active.executionId).status, 'cancelled');
+    assert.equal(store.get(unrelated.executionId).status, 'running');
+    assert.ok(manager.getTask(command.id)!.cancellationRequestedAt);
+    assert.equal(manager.getTask(command.id)!.state, 'waiting');
+    assert.ok(response.data.unresolvedActions.some((action: any) => action.id === command.id));
+    response = await handleEnvironmentBridgeBehaviorSettings(request({ enabled: true }));
+    assert.equal(response.status, 200);
+    assert.equal((await handleEnvironmentBridgeBehaviorSettings(request())).data.enabled, true);
+    assert.equal(store.get(active.executionId).status, 'cancelled');
+    assert.throws(() => store.deliverEvent(active.executionId, { eventId: 'late', kind: 'user_steering', payload: {} }), /finished before input admission/);
+    const resumes = store.dispatches(active.executionId).filter(effect => effect.kind === 'graph_resume').length;
+    store.deliverEvent(active.executionId, { eventId: 'late-receipt', kind: 'work_result', payload: { status: 'completed' } });
+    assert.equal(store.dispatches(active.executionId).filter(effect => effect.kind === 'graph_resume').length, resumes);
+    assert.equal(manager.getTask(command.id)!.state, 'waiting');
+  } finally { store.close(); await getQueueSystem().dispose(); }
+});
+
+test.after(() => { eventBus.disconnect(); fs.rmSync(root, { recursive: true, force: true }); });

@@ -50,7 +50,11 @@ echo "Installing Kokoro ONNX ($DEVICE)..."
     'kokoro-onnx==0.6.1' 'onnxruntime==1.30.0' soundfile \
     'fastapi>=0.104.0' 'uvicorn>=0.24.0'
 if [ "$DEVICE" = cuda ]; then
-    ./venv/bin/python3 -m pip install 'onnxruntime-gpu==1.30.0'
+    # PyPI's 1.30 GPU wheel targets CUDA 13; this feed provides the CUDA 12 build.
+    PIP_CONFIG_FILE=/dev/null PIP_EXTRA_INDEX_URL= ./venv/bin/python3 -m pip install \
+        --no-deps --force-reinstall \
+        --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/ \
+        'onnxruntime-gpu==1.29.0'
 fi
 
 # Assets live beside the managed server, outside profiles and version control.

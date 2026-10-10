@@ -123,6 +123,9 @@
         case 'MemoryEditor':
           module = await import('./MemoryEditor.svelte');
           break;
+        case 'EnvironmentTrainingMemory':
+          module = await import('./EnvironmentTrainingMemory.svelte');
+          break;
         case 'PersonaGenerator':
           module = await import('./PersonaGenerator.svelte');
           break;
@@ -216,7 +219,7 @@ let currentPage = 1
 const itemsPerPage = 50
 
 let personaTab: 'editor' | 'memory' | 'generator' = 'editor'
-let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' = 'episodic'
+let memoryTab: 'episodic' | 'reflections' | 'tasks' | 'curated' | 'ai-ingestor' | 'audio' | 'dreams' | 'curiosity' | 'functions' | 'environment-training' = 'episodic'
 let voiceTab: 'training' | 'settings' = 'training'
 let trainingTab: 'wizard' | 'automatic' | 'datasets' | 'monitor' = 'wizard'
 let currentVoiceProvider: 'piper' | 'sovits' | 'rvc' = 'rvc'
@@ -783,10 +786,11 @@ async function loadMemoryContent(relPath: string) {
             <button class="tab-button {memoryTab==='dreams' ? 'active' : ''}" on:click={() => memoryTab='dreams'}>Dreams 💭</button>
             <button class="tab-button {memoryTab==='curiosity' ? 'active' : ''}" on:click={() => memoryTab='curiosity'}>Curiosity ❓</button>
             <button class="tab-button {memoryTab==='functions' ? 'active' : ''}" on:click={() => memoryTab='functions'}>Functions 🔧</button>
+            <button class="tab-button {memoryTab==='environment-training' ? 'active' : ''}" on:click={() => memoryTab='environment-training'}>Environment Training</button>
           </div>
 
           <!-- Search and Pagination Controls -->
-          {#if !['tasks', 'curated', 'curiosity', 'functions'].includes(memoryTab)}
+          {#if !['tasks', 'curated', 'curiosity', 'functions', 'environment-training'].includes(memoryTab)}
             <div class="flex justify-between items-center gap-4 mb-4 p-3 bg-black/[0.02] dark:bg-white/[0.03] rounded-lg border border-black/[0.06] dark:border-white/[0.08]">
               <div class="relative flex-1 max-w-[400px]">
                 <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -848,7 +852,13 @@ async function loadMemoryContent(relPath: string) {
             {/if}
           {/if}
 
-          {#if loadingEvents}
+          {#if memoryTab==='environment-training'}
+            {#await loadComponent('EnvironmentTrainingMemory')}
+              <div class="loading-state">Loading environment decisions...</div>
+            {:then Component}
+              <svelte:component this={Component} />
+            {/await}
+          {:else if loadingEvents}
           <div class="loading-state">Loading memories...</div>
         {:else if eventsError}
           <div class="empty-state">

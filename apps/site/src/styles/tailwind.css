@@ -1758,10 +1758,6 @@
     @apply text-gray-500 dark:text-gray-400 font-medium min-w-[75px] capitalize;
   }
 
-  .role-name.agent-subrole {
-    @apply pl-2 text-[0.72rem];
-  }
-
   .role-arrow {
     @apply text-gray-400 dark:text-gray-500 text-[0.7rem];
   }
@@ -2178,24 +2174,6 @@
   .approval-badge {
     @apply inline-block ml-2 py-0.5 px-1.5 rounded-full text-[0.7rem] font-semibold
            bg-red-500 dark:bg-red-400 text-white dark:text-gray-900;
-  }
-
-  /* ==========================================================================
-     VLLM MODEL INFO
-     Display for currently loaded vLLM model
-     ========================================================================== */
-
-  .vllm-model-info {
-    @apply py-0.5 px-2 mb-1;
-  }
-
-  .local-model-name {
-    @apply font-mono text-[0.7rem] text-gray-600 dark:text-gray-400
-           overflow-hidden text-ellipsis whitespace-nowrap max-w-[140px];
-  }
-
-  .loaded-indicator {
-    @apply inline-block text-[0.6rem] ml-1 text-green-500 dark:text-green-400 font-bold;
   }
 
 }

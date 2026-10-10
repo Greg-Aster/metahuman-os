@@ -29,7 +29,7 @@ Identity and profiles:
 
 Agents and models:
   agent <command>     List, run, stop, or inspect managed agents
-  terminal <cmd>     Start, stop, or inspect the Terminal agent
+  terminal <cmd>     Start, stop, inspect, or view a Terminal agent session
   big-brother <cmd>   Inspect or stop the Big Brother session
   ollama <command>    Manage the Ollama backend
   vllm <command>      Manage the vLLM backend

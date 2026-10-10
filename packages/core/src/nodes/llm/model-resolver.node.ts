@@ -4,6 +4,7 @@
  * Resolves which model to use for a given role
  */
 
+import { modelRouterDefinition } from './model-router.schema.js';
 import { defineNode, type NodeDefinition } from '../types.js';
 import { loadModelRegistry, resolveModel, resolveModelForCognitiveMode, isModelRole } from '../../model-resolver.js';
 import { getUserContext } from '../../context.js';
@@ -27,8 +28,10 @@ export const ModelResolverNode: NodeDefinition = defineNode({
   ],
   description: 'Resolves which model to use for a given role',
 
-  execute: async (inputs, context) => {
-    const role = inputs.role ?? context.role ?? 'persona';
+  properties: { role: 'persona' },
+  propertySchemas: { role: modelRouterDefinition.propertySchemas.role },
+  execute: async (inputs, context, properties) => {
+    const role = inputs.role ?? context.role ?? properties?.role ?? 'persona';
 
     try {
       if (!isModelRole(role)) throw new Error('Unknown model role: ' + role);

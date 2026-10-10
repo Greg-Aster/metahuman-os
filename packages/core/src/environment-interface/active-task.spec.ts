@@ -28,7 +28,7 @@ mock.module(new URL('../providers/bridge.ts', import.meta.url).href, { namedExpo
     assert.ok(replies.length, 'Every model call needs an explicit fixture response')
     const reply = replies.shift()
     const result = typeof reply === 'function' ? await reply() : reply
-    return { provider, model: options.model, content: JSON.stringify(result) }
+    return { provider, model: options.model, content: typeof result === 'string' ? result : JSON.stringify(result) }
   } } })
 const voice = await import('../tts/robot-speech.js')
 let speechDisabled = true
@@ -58,6 +58,13 @@ fs.writeFileSync(path.join(profile.persona, 'core.json'), JSON.stringify({ ident
   personality: { traits: [] }, values: [], goals: [], preferences: {}, communication: {} }))
 fs.mkdirSync(path.join(root, 'etc'), { recursive: true })
 fs.cpSync(path.join(repo, 'etc/cognitive-graphs'), path.join(root, 'etc/cognitive-graphs'), { recursive: true })
+// Product model selections must not escape this test's simulated provider.
+const environmentGraphPath = path.join(root, 'etc/cognitive-graphs/environment-mode.json')
+const environmentGraph = JSON.parse(fs.readFileSync(environmentGraphPath, 'utf8'))
+for (const node of environmentGraph.nodes) {
+  if (node.data.properties?.modelId) node.data.properties.modelId = 'fixture'
+}
+fs.writeFileSync(environmentGraphPath, JSON.stringify(environmentGraph))
 fs.copyFileSync(path.join(repo, 'etc/agents.json'), path.join(root, 'etc/agents.json'))
 fs.copyFileSync(path.join(repo, 'etc/services.json'), path.join(root, 'etc/services.json'))
 fs.writeFileSync(path.join(root, 'etc/llm-backend.json'), JSON.stringify({ activeBackend: 'ollama',
@@ -121,8 +128,7 @@ const behavior = { kind: 'behavior', target: 'the distinctive object described b
   motion: { type: 'move', direction: 'forward', continuous: true, durationMs: 1000, speed: 60, forward: 80, turn: 20 },
   candidateLabels: ['cup'], identifyEveryFrames: 3, steering: { label: 'cup', gain: 100 } }
 const program = { steps: [behavior, { kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] }
-const route = { needsResponse: false, needsConversationHistory: false, needsMemory: false, needsRobotStatus: false,
-  needsEnvironment: true, needsVision: true, needsAction: true, needsExecutionContext: false, needsPersona: false }
+const route = {"needsResponse": false, "needsAction": true, "taskContext": ["environment", "vision"], "conversationContext": []}
 
 function fixture(sessionId: string, automaticInterpretation = true, suppliedObservation?: EnvironmentObservation) {
   const timestamp = new Date().toISOString()
@@ -195,12 +201,107 @@ test('complete programs are generic and the retired selector routes are rejected
   assert.equal(validateEnvironmentSelectorOutput(JSON.stringify({ response: '', actions: [], movementRequest: null, localTask: {}, taskDecision: decision })).valid, false)
 })
 
+test('saved Environment workflow executes a selected expression through the timed display owner without motion', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const sessionId = 'expression-program-body'
+    const timestamp = new Date().toISOString()
+    const f = fixture(sessionId, true, { adapter: 'ainekio-gateway', environmentId: 'fixture', sessionId, timestamp,
+      capabilities: { actions: ['faceExpression'], expressionFeedback: true,
+        expressionLibrary: [{ name: 'thinking', label: 'Thinking' }, { name: 'bow', label: 'Bow' }] },
+      state: { body: { authenticated: true } } })
+    const before = calls.length
+    const delivered: EnvironmentCommandWork[] = []
+    try {
+      replies.push({ ...route, taskContext: ['environment'] }, { taskDecision: { ...decision, objective: 'Show the bow face.',
+        completionCriteria: 'The bow expression is applied.' }, program: { steps: [{ kind: 'action', action: { type: 'faceExpression', expression: 'bow' } }] } })
+      let result = await f.run()
+      for (let pass = 0; result.status !== 'completed' && pass < 8; pass++) {
+        const pending = [...f.received.splice(0), ...core.dispatchEnvironmentActions(sessionId, 10)]
+        for (const action of pending) { delivered.push(action); f.complete(action) }
+        result = await f.run(result.executionId)
+      }
+      assert.equal(result.status, 'completed')
+      assert.equal(calls.length, before + 2, 'Only the existing Intent and Task models select the program')
+      assert.equal(delivered.length, 3, 'A skipped response branch must not replace the selected expression with thinking')
+      assert.ok(delivered.every(action => action.type === 'faceExpression' && !action.command))
+      const selected = delivered.find(action => action.expression === 'bow')!
+      assert.ok(selected)
+      assert.equal(selected.displayTimeoutMs, 60000)
+      assert.equal(selected.bodyLease?.channel, 'display')
+      const thinking = delivered.find(action => action.expression === 'thinking')!
+      const release = delivered.find(action => action.displayRelease)!
+      assert.equal(release.displayToken, thinking.displayToken)
+      assert.notEqual(release.displayToken, selected.displayToken, 'Request cleanup cannot erase the model-selected replacement')
+      assert.equal(result.nodes.get('response-thinking')?.status, 'skipped')
+      assert.equal(result.nodes.get('response-thinking-out')?.status, 'skipped')
+    } finally { f.unsubscribe() }
+  })
+})
+
+test('saved Environment workflow releases review feedback before waiting for requested input', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const sessionId = 'expression-review-body'
+    const f = fixture(sessionId, true, { adapter: 'ainekio-gateway', environmentId: 'fixture', sessionId,
+      timestamp: new Date().toISOString(), capabilities: { actions: ['faceExpression'], expressionFeedback: true,
+        expressionLibrary: [{ name: 'thinking', label: 'Thinking' }] }, state: { body: { authenticated: true } } })
+    const before = calls.length
+    try {
+      replies.push({ ...route, taskContext: ['environment'], needsAction: false }, {
+        program: null, taskDecision: { ...decision, outcome: 'continue', objective: 'Understand the requested subject.',
+          requiredCompletionBasis: 'environment_state' },
+      }, { response: '', outcome: 'request_user', taskId: 'none', instruction: '', completionEvidence: '',
+        requiredCompletionBasis: 'user_input', observationSummary: 'The subject has not been specified.',
+        reason: 'The requested subject needs clarification.' })
+      const result = await f.run()
+      assert.equal(result.status, 'waiting')
+      assert.equal(calls.length, before + 3)
+      const delivered: EnvironmentCommandWork[] = []
+      for (let pass = 0; pass < 8; pass++) {
+        const pending = [...f.received.splice(0), ...core.dispatchEnvironmentActions(sessionId, 10)]
+        if (!pending.length) break
+        for (const action of pending) { delivered.push(action); f.complete(action) }
+      }
+      assert.equal(delivered.length, 4, 'Request and review each set and release their own expression')
+      assert.ok(delivered.every(action => action.type === 'faceExpression'))
+      const sets = delivered.filter(action => !action.displayRelease)
+      const releases = delivered.filter(action => action.displayRelease)
+      assert.equal(sets.length, 2)
+      assert.notEqual(sets[0].displayToken, sets[1].displayToken)
+      assert.deepEqual(releases.map(action => action.displayToken), sets.map(action => action.displayToken))
+      assert.equal((await f.run(result.executionId)).status, 'waiting')
+      assert.equal(calls.length, before + 3, 'Waiting cannot rerun review or its feedback')
+      assert.equal(f.received.length, 0)
+    } finally { f.unsubscribe() }
+  })
+})
+
 test('conversation completes without any physical work', async () => {
   await withUserContext({ username, userId: username, role: 'owner' }, async () => {
     const f = fixture('greeting-body'); const before = calls.length
     try {
-      replies.push({ ...route, needsResponse: true, needsVision: false, needsAction: false }, { response: 'Hello.', program: null, taskDecision: null })
-      assert.equal((await f.run()).status, 'completed'); assert.equal(f.received.length, 0); assert.equal(calls.length, before + 2)
+      const message = 'Say hello without moving.'
+      replies.push({ needsResponse: true, needsAction: false, taskContext: [], conversationContext: ['environment'] },
+        { program: null, taskDecision: null })
+      const started = await f.run(undefined, { userMessage: message })
+      assert.equal(started.status, 'waiting', 'Conversation is finite asynchronous Coordinator work')
+      assert.equal(f.received.length, 0)
+      assert.equal(calls.length, before + 2)
+      const work = manager.getAllTasks().find(task => task.handler === 'environment.conversation'
+        && task.durable?.executionId === started.executionId)!
+      assert.ok(work)
+      replies.push('Hello.')
+      await executeWork(work)
+      assert.equal(manager.getTask(work.id)?.state, 'completed')
+      assert.ok(JSON.stringify(calls.at(-1).messages).includes(message), 'The response belongs to the original user turn')
+      assert.equal((await f.run(started.executionId)).status, 'completed')
+      assert.equal(calls.length, before + 3)
+      const { loadBufferForUser } = await import('../conversation-buffer.js')
+      const delivered = () => loadBufferForUser(username, 'conversation').messages.filter(item => item.role === 'assistant' && item.content === 'Hello.')
+      assert.equal(delivered().length, 1)
+      await f.run(started.executionId)
+      assert.equal(calls.length, before + 3, 'Re-entry must not regenerate the response')
+      assert.equal(delivered().length, 1)
+      assert.equal(f.received.length, 0)
     } finally { f.unsubscribe() }
   })
 })
@@ -226,6 +327,48 @@ test('turn then dance executes locally with no model decision between movements'
       assert.equal(status.lastBodyAction?.actionId, dance.id)
       assert.equal(status.lastAction?.sessionId, f.observation.sessionId)
     } finally { f.unsubscribe() }
+  })
+})
+
+test('a queued wave ignores camera wake-ups and still resumes on its physical result', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const sessionId = 'queued-wave-body'
+    const f = fixture(sessionId)
+    const stopId = randomUUID()
+    const stop = manager.enqueue({ type: 'environment_command', handler: 'environment.command',
+      resource: `environment-stop:${sessionId}`, username, source: 'user', maxAttempts: 1,
+      input: { id: stopId, type: 'stop', sessionId } })
+    assert.ok(manager.claim(stop.id))
+    manager.wait(stop.id, 'outcome_unknown: fixture reconnect')
+    const before = calls.length
+    const store = openExecutionStore(username)
+    try {
+      replies.push(route, { taskDecision: { ...decision, objective: 'Please wave.' },
+        program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] } })
+      const started = await f.run()
+      const executionId = started.executionId!
+      assert.equal(started.status, 'waiting')
+      assert.equal(f.received.length, 0, 'The simulated unresolved Stop still owns the body')
+      const eventsBefore = store.events(executionId)
+      for (let frame = 1; frame <= 5; frame++) await f.perception(frame, .4)
+      assert.deepEqual(store.events(executionId), eventsBefore, 'Camera frames cannot wake this receipt-only wait')
+      assert.equal(manager.getAllTasks().filter(task => task.handler === 'graph.resume'
+        && task.durable?.executionId === executionId).length, 0)
+      assert.equal(calls.length, before + 2)
+      assert.equal(core.getEnvironmentPerception(sessionId)?.frameCounter, 5, 'Current sensor context still updates')
+
+      core.recordEnvironmentActionResult({ id: randomUUID(), actionId: stopId, type: 'completed',
+        timestamp: new Date().toISOString(), message: 'Simulated correlated Stop acknowledgement' })
+      await new Promise(resolve => setImmediate(resolve))
+      const [wave] = f.received.splice(0)
+      assert.equal(wave.command, 'wave')
+      f.complete(wave)
+      assert.equal((await f.run(executionId)).status, 'completed')
+      assert.equal(calls.length, before + 2, 'An action receipt advances the existing program without more inference')
+    } finally {
+      store.close(); f.unsubscribe()
+      manager.complete(stop.id, true, { simulatedCleanup: true })
+    }
   })
 })
 
@@ -297,7 +440,7 @@ test('new instructions steer the same active movement and conversation preserves
           payload: { userMessage: message, sessionId: f.observation.sessionId } }) } finally { store.close() }
       }
       input('Hello.')
-      replies.push({ ...route, needsVision: false, needsAction: false }, { response: 'Hello.', program: null, taskDecision: null })
+      replies.push({"needsResponse": false, "needsAction": false, "taskContext": ["environment"], "conversationContext": []}, { response: 'Hello.', program: null, taskDecision: null })
       assert.equal((await f.run(id)).status, 'waiting')
       assert.equal(f.received.length, 0, 'Conversation cannot restart the gait or duplicate its snapshot')
       const revised = { steps: [{ ...behavior, motion: { ...behavior.motion, turn: -30 } }] }
@@ -380,19 +523,78 @@ test('ongoing named gaits retain their adapter defaults and accept speed changes
   })
 })
 
+test('timed capture reaches final conversation with its image and completed receipt exactly once', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const f = fixture('timed-capture-response')
+    const instruction = 'Can you take a picture for me and tell you what you see?'
+    try {
+      replies.push({"needsResponse": true, "needsAction": true, "taskContext": ["environment", "vision"], "conversationContext": ["environment", "vision"]}, { taskDecision: { ...decision,
+        objective: 'Capture one fresh image.', completionCriteria: 'The selected program receives correlated completion results.',
+        continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
+        program: { steps: [{ kind: 'action', action: { type: 'captureImage' } }] } })
+      const started = await f.run(undefined, { userMessage: instruction }); const id = started.executionId!
+      const [capture] = f.received.splice(0)
+      assert.equal(capture.type, 'captureImage')
+      f.complete(capture)
+      const captured = { ...f.observation, id: 'timed-camera-result', metadata: { actionId: capture.id },
+        visual: { ...f.observation.visual!, id: 'timed-camera-frame', timestamp: new Date().toISOString(),
+          metadata: { actionId: capture.id, correlationId: id } } }
+      core.publishEnvironmentObservation(core.attachEnvironmentObservationTiming(captured, {
+        coreObservationReceivedAt: new Date().toISOString(),
+      }), { username, sourceObservation: captured })
+      assert.equal((await f.run(id)).status, 'waiting')
+      const work = manager.getAllTasks().find(task => task.handler === 'environment.conversation'
+        && task.durable?.executionId === id)!
+      assert.ok(work, 'Completed capture must reach the conversation worker')
+      const description = 'The simulated returned picture contains a cup.'
+      replies.push(description)
+      assert.ok(manager.claim(work.id))
+      await (engine as unknown as { execute(task: typeof work): Promise<void> }).execute(work)
+      assert.equal(manager.getTask(work.id)?.state, 'completed', JSON.stringify(manager.getTask(work.id)?.error))
+      const finalCall = calls.at(-1)
+      const context = JSON.stringify(finalCall.messages)
+      assert.ok(context.includes(instruction), 'The original request reaches the final model unchanged')
+      assert.ok(context.includes(capture.id), 'The response receives the correlated action result')
+      assert.ok(context.includes('timed-camera-frame'))
+      assert.ok(finalCall.messages.some((message: any) => Array.isArray(message.content)
+        && message.content.some((part: any) => part.type === 'image_url' && part.image_url.url === captured.visual.dataUrl)),
+      'The final model receives the captured image bytes')
+      replies.push({ response: '', outcome: 'complete', taskId: 'none', instruction: '',
+        requiredCompletionBasis: 'action_result', observationSummary: description,
+        completionEvidence: 'The capture completed and the description was delivered.', reason: 'The requested result was delivered.' })
+      assert.equal((await f.run(id)).status, 'completed')
+      assert.ok(JSON.stringify(calls.at(-1).messages).includes(description), 'Objective review sees the delivered description')
+      const { loadBufferForUser } = await import('../conversation-buffer.js')
+      const responses = () => loadBufferForUser(username, 'conversation').messages
+        .filter(message => message.role === 'assistant' && message.content === description)
+      assert.equal(responses().length, 1)
+      const count = calls.length
+      await f.run(id)
+      assert.equal(calls.length, count)
+      assert.equal(responses().length, 1)
+      assert.equal(f.received.length, 0, 'Response delivery cannot dispatch another capture')
+    } finally { f.unsubscribe() }
+  })
+})
+
 test('capture then gesture advances from the capture receipt and image before objective review', async () => {
   await withUserContext({ username, userId: username, role: 'owner' }, async () => {
     const f = fixture('capture-then-wave')
     try {
-      replies.push(route, { response: '', taskDecision: { ...decision, objective: 'Take a picture then wave',
+      replies.push(route, { taskDecision: { ...decision, objective: 'Take a picture then wave',
         completionCriteria: 'The picture is captured and the wave completes', requiredCompletionBasis: 'action_result' },
         program: { steps: [{ kind: 'action', action: { type: 'captureImage' } },
           { kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] } })
       const started = await f.run(); const id = started.executionId!
       const [capture] = f.received.splice(0); assert.equal(capture.type, 'captureImage')
       f.complete(capture)
-      core.publishEnvironmentObservation({ ...f.observation, metadata: { actionId: capture.id },
-        visual: { ...f.observation.visual!, id: 'before-wave', timestamp: new Date().toISOString(), metadata: { actionId: capture.id } } }, { username })
+      const captured = { ...f.observation, metadata: { actionId: capture.id },
+        visual: { ...f.observation.visual!, id: 'before-wave', timestamp: new Date().toISOString(), metadata: { actionId: capture.id } } }
+      // The HTTP ingress adds delivery diagnostics to the Bridge snapshot;
+      // its correlated durable event carries the unchanged camera evidence.
+      core.publishEnvironmentObservation(core.attachEnvironmentObservationTiming(captured, {
+        coreObservationReceivedAt: new Date().toISOString(),
+      }), { username, sourceObservation: captured })
       const before = calls.length
       assert.equal((await f.run(id)).status, 'waiting')
       const [wave] = f.received.splice(0); assert.equal(wave.command, 'wave')
@@ -541,7 +743,7 @@ test('one photo clarification waits durably until new user input, without anothe
   await withUserContext({ username, userId: username, role: 'owner' }, async () => {
     const f = fixture('clarification-body'); const before = calls.length;
     try {
-      replies.push({ ...route, needsResponse: true, needsVision: false, needsAction: false }, {
+      replies.push({"needsResponse": true, "needsAction": false, "taskContext": ["environment"], "conversationContext": ["environment"]}, {
         response: 'What would you like photographed?', program: null,
         taskDecision: { ...decision, objective: 'Take a picture', outcome: 'wait',
           continuationPolicy: 'none', requiredCompletionBasis: 'user_input', reason: 'Await the user’s chosen subject.' },
@@ -556,7 +758,7 @@ test('one photo clarification waits durably until new user input, without anothe
       try { store.deliverEvent(started.executionId!, { eventId: randomUUID(), kind: 'user_steering',
         payload: { userMessage: 'Just tell me whether the camera is available instead.', sessionId: f.observation.sessionId } }); }
       finally { store.close(); }
-      replies.push({ ...route, needsResponse: true, needsVision: false, needsAction: false }, {
+      replies.push({"needsResponse": true, "needsAction": false, "taskContext": ["environment"], "conversationContext": ["environment"]}, {
         response: 'The camera is available.', program: null, taskDecision: { ...decision, objective: 'Report camera availability', outcome: 'complete',
           continuationPolicy: 'none', requiredCompletionBasis: 'user_input', reason: 'Answered the revised question using camera readiness.' },
       });
@@ -583,7 +785,7 @@ test('a second user turn preserves the objective and history while replacing spe
     speechDisabled = false
     try {
       const firstGeneration = beginTTSUserTurn(username)!.generation
-      replies.push({ ...route, needsResponse: true, needsConversationHistory: true, needsVision: false, needsAction: false },
+      replies.push({"needsResponse": true, "needsAction": false, "taskContext": ["conversationHistory", "environment"], "conversationContext": ["conversationHistory", "environment"]},
         { response: firstResponse, program: null, taskDecision: initial })
       const started = await f.run(undefined, { userMessage: firstMessage, conversationInput: firstMessage,
         memoryTimestamp: firstTime, ttsGeneration: firstGeneration, replyToContent: 'old-reply-context',
@@ -593,7 +795,7 @@ test('a second user turn preserves the objective and history while replacing spe
       const objectiveId = store.task(started.executionId!)!.objectiveId
       store.close()
       const secondGeneration = beginTTSUserTurn(username)!.generation
-      replies.push({ ...route, needsResponse: true, needsVision: false, needsAction: true, needsExecutionContext: true },
+      replies.push({"needsResponse": true, "needsAction": true, "taskContext": ["environment", "executionContext"], "conversationContext": ["environment", "executionContext"]},
         { response: '', program: null, taskDecision: null, executionDisposition: 'steer', targetExecutionId: started.executionId })
       const admission = await f.run(undefined, { userMessage: secondMessage, conversationInput: secondMessage,
         memoryTimestamp: secondTime, ttsGeneration: secondGeneration, idempotencyKey: 'second-turn' })
@@ -606,7 +808,7 @@ test('a second user turn preserves the objective and history while replacing spe
       assert.equal((event.payload as any).memoryTimestamp, secondTime)
       assert.equal((event.payload as any).conversationInput, secondMessage)
       assert.equal((event.payload as any).replyToContent, null)
-      replies.push({ ...route, needsResponse: true, needsConversationHistory: true, needsVision: false },
+      replies.push({"needsResponse": true, "needsAction": true, "taskContext": ["conversationHistory", "environment"], "conversationContext": ["conversationHistory", "environment"]},
         { response: secondResponse, program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] },
           taskDecision: { ...decision, objective: initial.objective } })
       const resumed = await f.run(started.executionId)
@@ -717,7 +919,7 @@ for (const termination of ['finish', 'cancel'] as const) {
         input('Now tell me, then look for the doorway.', 3)
         replies.push(() => {
           assert.equal(f.received.length, 0, 'Pending user input must route before another body command')
-          return { ...route, needsResponse: true, needsVision: false }
+          return {"needsResponse": true, "needsAction": true, "taskContext": ["environment"], "conversationContext": ["environment"]}
         }, () => {
           const content = calls.at(-1).messages.at(-1).content
           const envelope = JSON.parse(typeof content === 'string' ? content : content.find((part: any) => part.type === 'text').text)
@@ -822,7 +1024,7 @@ test('delayed interpretation keeps steering live, combines superseded turns, and
       // The simulated provider ignores abort; its late result must still be discarded.
       await worker
       assert.equal(manager.getTask(old.id)?.state, 'cancelled', 'Coordinator releases its slot while the provider is still pending')
-      replies.push({ ...route, needsResponse: true, needsConversationHistory: true, needsVision: false },
+      replies.push({"needsResponse": true, "needsAction": true, "taskContext": ["conversationHistory", "environment"], "conversationContext": ["conversationHistory", "environment"]},
         { response: 'I see an object and am still searching.', program: null, taskDecision: null })
       await executeWork(latest)
       await f.run(id)

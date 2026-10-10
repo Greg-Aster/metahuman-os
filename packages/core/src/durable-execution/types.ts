@@ -15,6 +15,16 @@ export interface ExecutionObjective extends RobotStatusTask {
   objectiveId: string
   executionId: string
   completionCriteria: string
+  /** Read-only operator projection; the active checkpoint remains authoritative. */
+  personResume?: {
+    sessionId: string
+    candidateFrame?: string
+    observedAt?: string
+    frameExpiresAt?: string
+    windowExpiresAt: string
+    terminationConfirmed: boolean
+    rejection?: string
+  }
   desireId?: string
   desirePlanId?: string
   desirePlanVersion?: number

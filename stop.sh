@@ -228,6 +228,10 @@ kill_repo_process_pattern "brain/agents" "Background Agents"
 # Stop vLLM before voice/web cleanup so GPU memory is released promptly.
 stop_vllm
 
+if ! run_with_timeout 15 "$REPO_ROOT/bin/llama-cpp-services" stop; then
+    print_warning "llama.cpp user services did not stop cleanly"
+fi
+
 # Stop voice services through their lifecycle owners.
 if [ -x "$REPO_ROOT/bin/mh" ]; then
     run_with_timeout 20 "$REPO_ROOT/bin/mh" voice-server stop --all 2>/dev/null || print_warning "Shared voice services did not stop cleanly"

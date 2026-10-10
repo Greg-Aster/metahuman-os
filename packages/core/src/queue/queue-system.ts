@@ -33,6 +33,7 @@ import {
 } from './queue-persister.js';
 import { isWorkCoordinatorOwner } from './work-coordinator-ownership.js';
 import { recoverDurableExecutions } from '../durable-execution/recovery.js';
+import { relayExecutionOutbox } from '../durable-execution/coordinator-outbox.js';
 import { openExecutionStore } from '../durable-execution/storage.js';
 import { resolvePath } from '../storage-client.js';
 import { getAuthenticatedRuntimeId, getCurrentlyActiveUser } from '../sessions.js';
@@ -127,7 +128,7 @@ export class QueueSystem extends EventEmitter {
   private initialized = false;
   private proactiveScheduling = false;
   private lastError?: string;
-  private immediateSave?: () => void;
+  private immediateSave?: (changedTaskIds?: ReadonlySet<string>) => void;
   private startPromise: Promise<boolean> | null = null;
   private readonly unsubscribeTriggerConfig: () => void;
   private readonly unsubscribeEventBus: () => void;
@@ -143,7 +144,8 @@ export class QueueSystem extends EventEmitter {
       return user && user.role !== 'guest' ? user.username : null;
     });
     this.executionEngine = new ExecutionEngine({ wakeFallbackMs: 1_000,
-      maintain: () => recoverDurableExecutions(this.queueManager, this.queueConfig?.execution?.terminalExecutionRetentionDays ?? 30),
+      maintain: dispatchReady => recoverDurableExecutions(this.queueManager,
+        this.queueConfig?.execution?.terminalExecutionRetentionDays ?? 30, dispatchReady),
     }, this.queueManager);
     this.triggerManager = new TriggerManager(this.queueManager);
     this.remoteDispatcher = new RemoteDispatcher(this.queueManager);
@@ -256,9 +258,9 @@ export class QueueSystem extends EventEmitter {
       reconcileSleepRuntime(this.queueManager.getAllTasks());
 
       this.immediateSave = createImmediateSaver(() => this.queueManager.exportState());
-      this.queueManager.setOnQueueChange(() => {
+      this.queueManager.setOnQueueChange(changedTaskIds => {
         try {
-          this.immediateSave!();
+          this.immediateSave!(changedTaskIds);
         } catch (error) {
           this.setLifecycle('degraded', (error as Error).message);
           throw error;
@@ -447,8 +449,29 @@ export class QueueSystem extends EventEmitter {
       return store.list(username).map(record => ({
         executionId: record.executionId, graph: record.definition.graphId, status: record.status,
         waitingReason: record.waitingReason, updatedAt: new Date(record.updatedAt).toISOString(),
+        personResume: store.task(record.executionId)?.personResume,
         liveWriter: Boolean(record.owner && (record.leaseUntil ?? 0) > Date.now()),
       }));
+    } finally { store.close(); }
+  }
+
+  /** Deliver explicit operator selection to the existing owner; never dispatch a body action here. */
+  async confirmPersonCandidate(username: string, executionId: string, input: { sessionId: string; candidateFrame: string }) {
+    const store = openExecutionStore(username);
+    try {
+      const record = store.get(executionId);
+      if (record.username !== username || !['running', 'waiting'].includes(record.status)) {
+        throw new Error('Execution is no longer active');
+      }
+      const selection = store.task(executionId)?.personResume;
+      if (!selection || selection.sessionId !== input.sessionId) throw new Error('Execution has no candidate selection for this session');
+      const event = store.deliverEvent(executionId, {
+        eventId: `single-person-resume:${input.sessionId}:${input.candidateFrame}`,
+        kind: 'single_person_resume',
+        payload: { executionId, sessionId: input.sessionId, candidateFrame: input.candidateFrame, confirmCandidate: true, resume: true },
+      });
+      await relayExecutionOutbox(store, executionId, async work => this.enqueue(work));
+      return { eventId: event.eventId, status: 'requested' as const };
     } finally { store.close(); }
   }
 

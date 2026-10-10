@@ -397,6 +397,7 @@ cleanup() {
     kill_pattern_fast "src/entry.ts vllm start"
     kill_pattern_fast "mh backend start"
     kill_pattern_fast "src/entry.ts backend start"
+    run_with_timeout 15 "$REPO_ROOT/bin/llama-cpp-services" stop || print_warning "llama.cpp user services did not stop cleanly"
     run_with_timeout 5 "$REPO_ROOT/bin/stop-local-models"
     run_with_timeout 5 "$REPO_ROOT/bin/stop-voice-server"
     run_with_timeout 3 "$REPO_ROOT/bin/stop-event-bus"

@@ -20,9 +20,8 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
   const rawPersona = Object.prototype.hasOwnProperty.call(inputs, 'persona')
     ? inputs.persona
     : inputs[0];
-  const includeValues = properties?.includeValues ?? true;
-  const includeGoals = properties?.includeGoals ?? true;
-  const includePersonality = properties?.includePersonality ?? true;
+  const selected = Array.isArray(inputs.sections) ? inputs.sections : null;
+  const include = (section: string) => selected ? selected.includes(section) : (properties?.[`include${section[0].toUpperCase()}${section.slice(1)}`] ?? true);
 
   // Null persona means inactive/LoRA-only mode - return empty string (no error)
   if (rawPersona === null) {
@@ -44,12 +43,12 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
   // Format identity
   const role = nonEmptyString(persona.identity?.role);
   const purpose = nonEmptyString(persona.identity?.purpose);
-  sections.push(`## Identity\n- Name: ${name}${role ? `\n- Role: ${role}` : ''}${purpose ? `\n- Purpose: ${purpose}` : ''}`);
+  if (include('identity')) sections.push(`## Identity\n- Name: ${name}${role ? `\n- Role: ${role}` : ''}${purpose ? `\n- Purpose: ${purpose}` : ''}`);
   const background = getPersonaBackground(persona);
-  if (background) sections.push(`## Background\n${background}`);
+  if (include('background') && background) sections.push(`## Background\n${background}`);
 
   // Format personality
-  if (includePersonality) {
+  if (include('personality')) {
     const style = persona.personality?.communicationStyle;
     const writing = persona.writingStyle as Record<string, unknown> | undefined;
     const descriptions = Object.entries({
@@ -72,13 +71,13 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
   }
 
   // Format values
-  if (includeValues) {
+  if (include('values')) {
     const values = getPersonaValueDescriptions(persona);
     if (values.length > 0) sections.push(`## Core Values\n${values.map(value => `- ${value}`).join('\n')}`);
   }
 
   // Format goals
-  if (includeGoals) {
+  if (include('goals')) {
     const goals = getActivePersonaGoals(persona).slice(0, 7);
     if (goals.length > 0) sections.push(`## Active Goals\n${goals.map(goal => `- ${goal}`).join('\n')}`);
   }
@@ -96,6 +95,7 @@ export const PersonaFormatterNode: NodeDefinition = defineNode({
   category: 'persona',
   inputs: [
     { name: 'persona', type: 'object', description: 'Persona object to format' },
+    { name: 'sections', type: 'array', optional: true, description: 'Selected persona section names; overrides static section switches' },
   ],
   outputs: [
     { name: 'formatted', type: 'string', description: 'Formatted persona text (empty if inactive)' },
@@ -103,11 +103,14 @@ export const PersonaFormatterNode: NodeDefinition = defineNode({
     { name: 'inactive', type: 'boolean', description: 'True if persona is inactive (LoRA-only mode)' },
   ],
   properties: {
+    includeIdentity: true, includeBackground: true,
     includeValues: true,
     includeGoals: true,
     includePersonality: true,
   },
   propertySchemas: {
+    includeIdentity: { type: 'toggle', default: true, label: 'Include Identity' },
+    includeBackground: { type: 'toggle', default: true, label: 'Include Background' },
     includeValues: {
       type: 'toggle',
       default: true,

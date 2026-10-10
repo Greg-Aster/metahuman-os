@@ -5,6 +5,7 @@ import node from '@astrojs/node';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sourceExecutableHash } from '@metahuman/core/executable-version';
+import { compiledAgents } from './compiled-agents.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
@@ -36,7 +37,7 @@ function externalizeMetahumanCoreForClient() {
         if (id.includes('/nodes/schemas')
           || id.includes('/nodes/types')
           || id.includes('/cognitive-graph-contract')
-          || id.includes('/training-schema')) {
+          || id.includes('/training-schema') || id.includes('/model-roles')) {
           return null; // Let Vite bundle this normally
         }
         // Return external with empty module to prevent bundling
@@ -73,7 +74,7 @@ export default defineConfig({
   output: 'server',
   vite: {
     define: { __METAHUMAN_EXECUTABLE_HASH__: JSON.stringify(sourceExecutableHash(repoRoot)) },
-    plugins: [externalizeMetahumanCoreForClient(), compiledRuntimeCheck()],
+    plugins: [externalizeMetahumanCoreForClient(), compiledRuntimeCheck(), compiledAgents(repoRoot)],
     logLevel: 'warn', // Show warnings and errors, allow console.log from API handlers
     clearScreen: false, // Don't clear terminal on restart
     resolve: {

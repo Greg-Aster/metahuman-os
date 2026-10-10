@@ -54,7 +54,7 @@ function externalizeMetahumanCoreForClient() {
       // Only externalize for non-SSR (client) builds
       if (!options?.ssr && (id.startsWith('@metahuman/core') || id.startsWith('@metahuman/'))) {
         // ALLOW browser-safe schemas to be bundled for client
-        if (id.includes('/nodes/schemas') || id.includes('/nodes/types') || id.includes('/training-schema')) {
+        if (id.includes('/nodes/schemas') || id.includes('/nodes/types') || id.includes('/training-schema') || id.includes('/model-roles')) {
           return null; // Let Vite bundle this normally
         }
         // Return external with empty module to prevent bundling

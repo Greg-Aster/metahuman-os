@@ -107,6 +107,30 @@ test('V2 named gait composition survives the provider schema and parser', async 
   }
 })
 
+test('move generation requires the same direction or vector as the existing action parser', async () => {
+  for (const actions of [['move'], ['move', 'robotCommand', 'captureImage', 'faceExpression']]) {
+    const schema = buildEnvironmentSelectorJsonSchema({ actions, robotCommands: ['stand'], expressions: ['thinking'] }) as any
+    const activity = schema.anyOf.find((route: any) => route.properties.program.type === 'object')
+    const item = activity.properties.program.properties.steps.items
+    const actionStep = (item.anyOf ?? [item]).find((step: any) => step.properties.kind.const === 'action')
+    const choices = actionStep.properties.action.anyOf ?? [actionStep.properties.action]
+    const moves = choices.filter((choice: any) => choice.properties.type.enum.includes('move'))
+    assert.ok(moves.length)
+    assert.ok(moves.every((choice: any) => choice.required.includes('direction') || choice.required.includes('vector')),
+      'The observed {type:move, forward:100} response must not satisfy a generation branch')
+    for (const fields of [{ direction: 'forward', forward: 100 }, { vector: { x: 1, y: 0 } },
+      { direction: 'forward', vector: { x: 1, y: 0 }, forward: 100 }]) {
+      assert.ok(moves.some((choice: any) => choice.required.every((key: string) => key === 'type' || key in fields)))
+      const result = await parse({ response: '', taskDecision,
+        program: { steps: [{ kind: 'action', action: { type: 'move', ...fields } }] } })
+      assert.equal(result.valid, true)
+      for (const [key, value] of Object.entries(fields)) assert.deepEqual(result.program.steps[0].action[key], value)
+    }
+  }
+  await assert.rejects(parse({ response: '', taskDecision,
+    program: { steps: [{ kind: 'action', action: { type: 'move', forward: 100 } }] } }), /typed semantic action/)
+})
+
 test('switching robot catalogs retains V1 gestures and exposes V2 commands without V1 joint generation', async () => {
   for (const [commands, actions] of [
     [['#1', '#2', 'walk_slow', 'crab'], ['robotCommand', 'robotMotionPlan']],

@@ -1,5 +1,10 @@
-import { addCase } from './development-cases.js'
-const add = (suite: string, text: string[], selected: string[], query?: string) => addCase('intent', suite, text, selected, null, {}, 'development', query)
+import { addCase, allowResponseChoice, cases, intentOutput as output } from './development-cases.js'
+const personaSections: Record<string, string[]> = {
+  identity: ['identity', 'personality'], values: ['values'], goals: ['goals'],
+  'autonomous-choice': ['personality', 'values', 'goals'], 'self-choice': ['values', 'goals'],
+}
+const add = (suite: string, text: string[], selected: string[], query?: string) =>
+  addCase('intent', suite, text, selected, null, {}, 'development', query, personaSections[suite])
 const speaking = ['needsResponse', 'needsPersona']
 const movement = ['needsAction', 'needsEnvironment']
 add('greeting', ['Hello.', 'Good morning.', 'Hi there.', 'Greetings.'], speaking)
@@ -50,8 +55,8 @@ add('response-no-persona', ['Return only the number 17.', 'Output the letters AB
 add('memory-query-travel', ['Search saved memories for our mountain trip.', 'Retrieve records about the mountain trip.', 'Find stored notes describing the mountain trip.', 'Recall your memories of the mountain trip.'], ['needsResponse', 'needsMemory'], 'mountain trip')
 add('execution-specific', ['Cancel the search execution, but leave the other task alone.', 'Forward this correction to the task that is already running.', 'Stop the unfinished exercise routine.', 'Continue the active camera-inspection task.'], ['needsExecutionContext', ...movement])
 add('observation-reference', ['What did the last camera observation show?', 'Describe what you saw on the previous scan.', 'Which object did you identify earlier?', 'Compare the current view with your recorded previous observation.'], ['needsResponse', 'needsEnvironment', 'needsVision', 'needsRobotStatus', 'needsExecutionContext'])
-// Separate source families are never expanded into development training.
-const heldOut: Array<[string, string[], string[]]> = [
+// Previously examined evaluation requests remain outside training as regression cases.
+const regression: Array<[string, string[], string[]]> = [
  ['greeting', ['Good evening, friend.', 'Hello there, are you around?'], speaking],
  ['identity', ['What should I call you?', 'Describe your own character.'], speaking],
  ['wellbeing', ['Has today been treating you well?', 'How has everything been going since we last spoke?'], [...speaking,'needsConversationHistory','needsRobotStatus']],
@@ -73,4 +78,62 @@ const heldOut: Array<[string, string[], string[]]> = [
  ['task-report', ['Has the movement I requested reached completion?', 'What became of the earlier task?'], ['needsResponse','needsConversationHistory','needsExecutionContext','needsRobotStatus']],
  ['self-choice', ['Select a body expression that suits your values.', 'Pick what you want to do based on your goals.'], ['needsPersona',...movement]],
 ]
-for (const [suite, text, selected] of heldOut) addCase('intent', suite, text, selected, null, {}, 'evaluation')
+for (const [suite, text, selected] of regression) addCase('intent', suite, text, selected, null, {}, 'regression', undefined, personaSections[suite])
+
+// Each family explicitly annotates the consumer and section; these are data,
+// never runtime keyword routing or examples injected into the intent prompt.
+addCase('intent', 'persona-background', ['Tell me about your background.', 'Describe your personal backstory.', 'What is your recorded origin?', 'Explain the background stored in your persona.'],
+  ['needsResponse', 'needsPersona'], null, {}, 'development', undefined, ['background'])
+addCase('intent', 'identity-only', ['Report only your persona name and role.', 'Read your identity name and purpose.', 'What name and role are in your identity?', 'State your identity fields without any extra commentary.'],
+  ['needsResponse', 'needsPersona'], null, {}, 'development', undefined, ['identity'])
+addCase('intent', 'task-persona-values', ['Choose a movement consistent with your values.', 'Select a body expression based on your principles.', 'Use your values to decide what gesture to make.', 'Let your stated principles guide your next movement.'],
+  ['needsAction', 'needsPersona', 'needsEnvironment'], null, {}, 'development', undefined, ['values'])
+addCase('intent', 'task-persona-goals', ['Choose your next activity based on your persona goals.', 'Select a task that advances your recorded ambitions.', 'Use your persona goals to decide what to do.', 'Pick your next activity according to your stated goals.'],
+  ['needsAction', 'needsPersona', 'needsEnvironment'], null, {}, 'development', undefined, ['goals'])
+addCase('intent', 'independent-consumers', ['Bow once and tell me what you remember about our mountain trip.', 'Wave, then recall the mountain trip in your response.', 'Sit down and describe your memories of our mountain trip.', 'Stand up and talk about what you remember from our mountain trip.'], [],
+  { needsResponse: true, needsAction: true, taskContext: ['environment'], conversationContext: ['memory', 'persona.personality'], memoryQuery: 'mountain trip' })
+addCase('intent', 'both-consumers-memory', ['Perform our saved greeting and tell me what you recalled.', 'Recall the stored exercise routine, do it, and describe the recalled routine.', 'Use the remembered dance sequence for movement and explain what the memory said.', 'Carry out the saved routine and quote the memory you used.'], [],
+  { needsResponse: true, needsAction: true, taskContext: ['memory', 'environment'], conversationContext: ['memory'] })
+addCase('intent', 'separate-persona-sections', ['Choose a movement based on your values and greet me in your usual style.', 'Use your principles to pick a gesture, then speak with your personality.', 'Select a values-guided activity and give a response in your customary voice.', 'Let your values determine the movement and your personality shape the greeting.'], [],
+  { needsResponse: true, needsAction: true, taskContext: ['persona.values', 'environment'], conversationContext: ['persona.personality'] })
+addCase('intent', 'background-evaluation', ['What personal history is recorded in your persona?', 'Describe the origin story in your profile.'],
+  ['needsResponse', 'needsPersona'], null, {}, 'regression', undefined, ['background'])
+addCase('intent', 'independent-consumers-evaluation', ['Nod twice, then tell me what you remember of the garden project.', 'Give a wave and recall our saved notes about the garden project.'], [],
+  { needsResponse: true, needsAction: true, taskContext: ['environment'], conversationContext: ['memory', 'persona.personality'], memoryQuery: 'garden project' }, {}, 'regression')
+
+const P = 'persona.personality', E = 'environment', H = 'conversationHistory', M = 'memory'
+// These requests select actions without requiring either speech or silence.
+// Explicit speech/silence families retain their original single choice.
+const optionalResponseSuites = new Set([
+  'fresh-image', 'movement-wave', 'movement-bow', 'movement-pushup', 'movement-posture',
+  'movement-direction', 'movement-sequence', 'movement-novel', 'execution-stop', 'execution-steer',
+  'repeat-reference', 'visual-motion', 'current-conditional', 'autonomous-choice', 'history-and-motion',
+  'memory-and-motion', 'execution-specific', 'task-persona-values', 'task-persona-goals',
+  'motion', 'novel-motion', 'stop', 'steer', 'repeat', 'self-choice',
+])
+// Correct request-level annotations instead of applying one persona bundle to a suite.
+for (const item of cases.filter(item => item.specialist === 'intent')) {
+  if (optionalResponseSuites.has(item.suite)) allowResponseChoice(item)
+  if (item.suite === 'identity') {
+    item.expected = output([], ['persona.identity'])
+    if (item.split === 'regression') item.targets = { 1: output([], [P]) }
+  }
+  if (item.suite === 'self-choice') item.targets = {
+    0: output([E, 'persona.values'], [], false, true),
+    1: output([E, 'persona.goals'], [], false, true),
+  }
+  if (item.suite === 'autonomous-choice') item.targets = {
+    0: output([E, P], [], false, true), 1: output([E, 'persona.goals'], [], false, true),
+    2: output([E, P], [], false, true), 3: output([E, P, 'persona.goals'], [], false, true),
+  }
+  if (['greeting', 'thanks', 'self-expression', 'negated-action', 'no-execution'].includes(item.suite)) {
+    item.contextRequirements = { conversationContext: { required: [], optional: [P] } }
+  }
+  if (item.suite === 'personal-recall') item.contextRequirements = {
+    conversationContext: { required: [], optional: [H, M, P], anyOf: [[H, M]] },
+  }
+  if (['episodic-recall', 'past-experience'].includes(item.suite)) {
+    item.expected = output([], [M])
+    item.contextRequirements = { conversationContext: { required: [M], optional: [H, P] } }
+  }
+}

@@ -24,6 +24,7 @@ const nodeIds = {
   reflector_llm: 'model-editable-id',
   reflection_buffer: 'reflection-buffer-editable-id',
   reasoning_buffer: 'reasoning-buffer-editable-id',
+  reflection_memory: 'reflection-memory-editable-id',
   tts: 'tts-editable-id',
 } as const
 
@@ -35,13 +36,18 @@ const graph = {
   scheduler: { ...DEFAULT_GRAPH_SCHEDULER },
   nodes: [
     ...Object.entries(nodeIds)
-      .filter(([name]) => name !== 'reflection_buffer' && name !== 'reasoning_buffer')
+      .filter(([name]) => !['reflection_buffer', 'reasoning_buffer', 'reflection_memory'].includes(name))
       .map(([nodeType, id]) => ({
         id,
         type: 'cognitiveNode',
         position: { x: 0, y: 0 },
         data: { label: nodeType, nodeType, properties: {} },
       })),
+    {
+      id: nodeIds.reflection_memory,
+      type: 'cognitiveNode', position: { x: 0, y: 0 },
+      data: { label: 'reflection-memory', nodeType: 'inner_dialogue_saver', properties: { roles: ['reflection'] } },
+    },
     {
       id: nodeIds.reflection_buffer,
       type: 'cognitiveNode',
@@ -71,6 +77,9 @@ const successfulOutputs: Record<string, Record<string, any>> = {
     saved: true,
     persisted: true,
     text: 'A new reflection.',
+  },
+  [nodeIds.reflection_memory]: {
+    saved: true,
     eventId: 'evt-reflection',
     eventPath: 'memory/episodic/reflection.json',
   },
@@ -134,7 +143,7 @@ test('Reflector evaluates editable node types and requires durable memory persis
 
   assert.throws(
     () => evaluateReflectorGraph(graph, graphState({
-      [nodeIds.reflection_buffer]: { saved: true, persisted: true, text: 'Not captured.' },
+      [nodeIds.reflection_memory]: { saved: false },
     }), { username: 'test-user', executionId: 'task-1' }),
     /did not confirm long-term memory capture/,
   )

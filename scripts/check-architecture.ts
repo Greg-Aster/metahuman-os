@@ -231,6 +231,8 @@ function isAllowedClientCoreImport(specifier: string, typeOnly: boolean): boolea
   if (specifier === '@metahuman/core/cognitive-graph-contract') return true;
   // Serializable training settings and messages, with dependency-free validation.
   if (specifier === '@metahuman/core/training-schema') return true;
+  // Dependency-free model role names shared by the sidebar and node editors.
+  if (specifier === '@metahuman/core/model-roles') return true;
   // This explicit public subpath contains only serializable schema contracts
   // and their dependency-free value validator. The site bundler maintains the
   // matching browser-safe allowlist.
@@ -248,8 +250,7 @@ function isCoreImportFromSiteClient(file: string, specifier: string, typeOnly: b
 
 function hasApiAdapterPattern(content: string): boolean {
   return content.includes('astroHandler')
-    || content.includes('routeRequest')
-    || content.includes('handleExecuteGraphStream');
+    || content.includes('routeRequest');
 }
 
 function resolveImportPath(file: string, specifier: string): string | null {

@@ -59,7 +59,7 @@ test('queued chat completion ends tracking even when the graph hands off without
       const errors: string[] = [];
       const stream = { closed: false, close() { this.closed = true; }, onmessage: (_event: { data: string }) => {} };
       const state: any = {
-        loading: path === 'foreground', active: path === 'foreground', restored: 0,
+        loading: path === 'foreground', active: path === 'foreground',
         activeChatTaskId: path === 'foreground' ? 'current-task' : null,
         chatResponseStream: stream, queuedChatStreams: new Map(), reasoningStages: [],
         connectionEstablished: false, connectionFallbackTimer: null, connectionTimer: null,
@@ -68,7 +68,6 @@ test('queued chat completion ends tracking even when the graph hands off without
         apiEventSource: () => stream, pushComposedInput() {},
         pushGeneratedResponse: (response: string) => answers.push(response),
         messagesApi: { pushMessage: (_role: string, message: string) => errors.push(message) },
-        restorePassiveChatStreams: () => { state.restored++; },
         thinkingTraceApi: {
           setActive: (active: boolean) => { state.active = active; },
           stop: () => { state.active = false; },
@@ -95,7 +94,6 @@ test('queued chat completion ends tracking even when the graph hands off without
       assert.equal(state.activeChatTaskId, null);
       assert.equal(stream.closed, true);
       assert.equal(state.queuedChatStreams.size, 0);
-      assert.equal(state.restored, 1);
       assert.deepEqual(answers, outcome === 'answer' ? ['Model-generated answer'] : []);
       assert.equal(errors.length, outcome === 'error' ? 1 : 0);
     }

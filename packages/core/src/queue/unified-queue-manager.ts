@@ -34,6 +34,9 @@ import {
 
 const RESOURCE_LANES: ResourceLaneId[] = ['local-llm', 'vector-index', 'remote-llm'];
 const TERMINAL_STATES = new Set<WorkState>(['completed', 'failed', 'cancelled', 'expired']);
+function bodyOwnerKey(bodyId: string, channel?: BodyLease['channel']): string {
+  return channel ? JSON.stringify([bodyId, channel]) : bodyId;
+}
 const DESIRE_AGENT_HANDLER = 'agent.desire-generator';
 const DESIRE_AGENT_INTERNAL_HANDLERS = new Map<string, TaskType>([
   ['agent.desire-planner', 'generic'],
@@ -113,6 +116,17 @@ export interface QueueManagerOptions extends Partial<QueueConfig> {
   outputReplayLimit?: number;
 }
 
+interface CoordinatorSnapshot {
+  tasks: Map<string, QueuedTask>;
+  terminalOrder: string[];
+  idempotency: Array<[string, string]>;
+  resources: Array<[WorkResource, ResourceLane]>;
+  bodyOwners: Array<[string, BodyLease]>;
+  inFlightRemote: Array<[string, RemoteTaskHandle]>;
+  config: QueueConfig | null;
+  paused: boolean;
+}
+
 export class UnifiedQueueManager {
   private runtimeId: string = randomUUID();
   private recoveryUser?: () => string | null;
@@ -127,8 +141,9 @@ export class UnifiedQueueManager {
   private paused = false;
   private historyLimit: number;
   private outputReplayLimit: number;
-  private onQueueChange?: () => void;
-  private committed!: ReturnType<UnifiedQueueManager['snapshot']>;
+  private onQueueChange?: (changedTaskIds: ReadonlySet<string>) => void;
+  private readonly changedTaskIds = new Set<string>();
+  private committed!: CoordinatorSnapshot;
   private committedIdentity = '';
   private unconfirmedCommit = false;
 
@@ -137,7 +152,7 @@ export class UnifiedQueueManager {
     this.outputReplayLimit = Math.max(1, options.outputReplayLimit ?? 1_000);
     this.initializeResources();
     this.committed = this.snapshot();
-    this.committedIdentity = canonicalJSON(this.committed);
+    this.committedIdentity = this.snapshotIdentity(this.committed);
     if (options.lanes || options.enabled !== undefined) {
       this.configure(options as QueueConfig);
     }
@@ -183,7 +198,7 @@ export class UnifiedQueueManager {
     this.notifyChange();
   }
 
-  setOnQueueChange(callback: () => void): void {
+  setOnQueueChange(callback: (changedTaskIds: ReadonlySet<string>) => void): void {
     this.onQueueChange = callback;
   }
 
@@ -314,6 +329,7 @@ export class UnifiedQueueManager {
 
     protectAdmission(task);
     this.tasks.set(task.id, task);
+    this.changedTaskIds.add(task.id);
     if (scope) this.idempotency.set(scope, task.id);
     const cancellationEvents: Omit<QueueEvent, 'timestamp'>[] = [];
     if (cancellationReason !== undefined) this.addTerminal(task);
@@ -353,10 +369,11 @@ export class UnifiedQueueManager {
   }
 
   private sortTasks(tasks: QueuedTask[]): QueuedTask[] {
+    // Stable sort retains durable admission order for equal timestamps. Random
+    // work IDs must not place a display release before the expression it clears.
     return tasks.sort((left, right) =>
       PRIORITY_VALUES[left.priority] - PRIORITY_VALUES[right.priority]
-      || new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime()
-      || left.id.localeCompare(right.id));
+      || new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
   }
 
   private capacityFor(task: QueuedTask): ResourceLane {
@@ -376,9 +393,10 @@ export class UnifiedQueueManager {
     if (resource.currentRunning >= resource.config.maxConcurrent) return false;
     if (task.type === 'environment_command' && task.input?.type !== 'stop') {
       const bodyId = task.input?.sessionId;
+      const channel = task.input?.type === 'speak' ? 'speech' : task.input?.type === 'faceExpression' ? 'display' : undefined;
       const sharesBodyOwner = task.input?.type === 'captureImage' || Boolean(task.input?.movementUpdate);
       if ([...this.tasks.values()].some(other => other.id !== task.id && !TERMINAL_STATES.has(other.state)
-        && ((other.bodyLease?.bodyId === bodyId && !(sharesBodyOwner && task.durable
+        && ((other.bodyLease?.bodyId === bodyId && other.bodyLease?.channel === channel && !(sharesBodyOwner && task.durable
           && other.bodyLease?.executionId === task.durable.executionId))
           || (other.type === 'environment_command' && other.input?.sessionId === bodyId && other.input?.type === 'stop'
             && this.recoveryEligible(other))))) return false;
@@ -425,17 +443,20 @@ export class UnifiedQueueManager {
     }
     if (!this.isResourceAvailable(task, now)) return null;
 
+    this.changedTaskIds.add(task.id);
     task.state = 'leased';
     task.leaseOwner = leaseOwner;
     task.startedAt = new Date(now).toISOString();
     if (task.type === 'environment_command') {
       const bodyId = String(task.input.sessionId);
-      const current = this.bodyOwners.get(bodyId);
+      const channel = task.input.type === 'speak' ? 'speech' : task.input.type === 'faceExpression' ? 'display' : undefined;
+      const ownerKey = bodyOwnerKey(bodyId, channel);
+      const current = this.bodyOwners.get(ownerKey);
       const sharedBodyOwner = (task.input.type === 'captureImage' || task.input.movementUpdate) && current
         && task.durable?.executionId === current.executionId;
       task.bodyLease = sharedBodyOwner ? current : Object.freeze({ bodyId, executionId: task.durable?.executionId ?? task.id,
-        generation: (current?.generation ?? 0) + 1 });
-      this.bodyOwners.set(bodyId, task.bodyLease);
+        generation: (current?.generation ?? 0) + 1, ...(channel ? { channel } : {}) });
+      this.bodyOwners.set(ownerKey, task.bodyLease);
     }
     this.capacityFor(task).currentRunning += 1;
     this.notifyChange();
@@ -451,7 +472,7 @@ export class UnifiedQueueManager {
   hasCurrentBodyLease(taskId: string): boolean {
     const task = this.tasks.get(taskId);
     const lease = task?.bodyLease;
-    const current = lease && this.bodyOwners.get(lease.bodyId);
+    const current = lease && this.bodyOwners.get(bodyOwnerKey(lease.bodyId, lease.channel));
     return !this.unconfirmedCommit && Boolean(lease && current
       && lease.generation === current.generation && lease.executionId === current.executionId);
   }
@@ -481,7 +502,10 @@ export class UnifiedQueueManager {
     const scope = this.idempotencyScope(task);
     if (!task.durable && scope && this.idempotency.get(scope) === task.id) this.idempotency.delete(scope);
     while (this.terminalOrder.length > this.historyLimit) {
-      const removedId = this.terminalOrder.pop();
+      let index = this.terminalOrder.length - 1;
+      while (index >= 0 && this.tasks.get(this.terminalOrder[index])?.failureNoticePending) index -= 1;
+      if (index < 0) break;
+      const [removedId] = this.terminalOrder.splice(index, 1);
       if (removedId && !this.tasks.get(removedId)?.durable) this.tasks.delete(removedId);
     }
   }
@@ -493,6 +517,7 @@ export class UnifiedQueueManager {
   ): void {
     const task = this.tasks.get(taskId);
     if (!task || !['leased', 'waiting'].includes(task.state)) return;
+    this.changedTaskIds.add(task.id);
     if (task.state === 'leased') this.releaseCapacity(task);
     task.state = success ? 'completed' : 'failed';
     task.completedAt = new Date().toISOString();
@@ -501,6 +526,7 @@ export class UnifiedQueueManager {
       task.error = undefined;
     } else if (!success) {
       task.error = this.normalizeError(resultOrError as string | WorkError | undefined, 'execution_failed');
+      task.failureNoticePending = true;
     }
     this.addTerminal(task);
     this.notifyChange();
@@ -515,6 +541,7 @@ export class UnifiedQueueManager {
   requeue(task: QueuedTask, error?: string | WorkError): boolean {
     const current = this.tasks.get(task.id);
     if (!current || current.state !== 'leased') return false;
+    this.changedTaskIds.add(current.id);
     const failure = this.normalizeError(error, 'execution_failed', true);
     if (current.bodyLease || failure?.code === 'outcome_unknown') {
       current.error = failure?.code === 'outcome_unknown' ? failure
@@ -546,6 +573,7 @@ export class UnifiedQueueManager {
       current.completedAt = new Date().toISOString();
       const exhausted = this.normalizeError(error || 'Maximum attempts exhausted', 'attempts_exhausted');
       current.error = exhausted && { ...exhausted, retryable: false };
+      current.failureNoticePending = true;
       this.addTerminal(current);
       this.emit({ type: 'task_failed', taskId: current.id, lane: this.laneFor(current.resource, current.type), details: { error: current.error } });
       this.notifyChange();
@@ -568,6 +596,7 @@ export class UnifiedQueueManager {
   wait(taskId: string, reason: string, wakeAt?: string): QueuedTask | null {
     const task = this.tasks.get(taskId);
     if (!task || (task.state !== 'queued' && task.state !== 'leased')) return null;
+    this.changedTaskIds.add(task.id);
     if (task.state === 'leased') this.releaseCapacity(task);
     task.state = 'waiting';
     task.waitingReason = reason;
@@ -582,6 +611,7 @@ export class UnifiedQueueManager {
     let released = 0;
     for (const task of this.tasks.values()) {
       if (task.bodyLease || task.state !== 'waiting' || !task.wakeAt || new Date(task.wakeAt).getTime() > now) continue;
+      this.changedTaskIds.add(task.id);
       task.state = 'queued';
       task.waitingReason = undefined;
       task.wakeAt = undefined;
@@ -606,10 +636,12 @@ export class UnifiedQueueManager {
   private applyCancellation(task: QueuedTask, reason: string): Omit<QueueEvent, 'timestamp'> | null {
     if (task.state === 'leased' || (task.state === 'waiting' && task.bodyLease)) {
       if (task.cancellationRequestedAt) return null;
+      this.changedTaskIds.add(task.id);
       task.cancellationRequestedAt = new Date().toISOString();
       task.cancellationReason = reason;
       return { type: 'task_cancel_requested', taskId: task.id, lane: this.laneFor(task.resource, task.type), details: { reason } };
     }
+    this.changedTaskIds.add(task.id);
     task.state = 'cancelled';
     task.cancellationReason = reason;
     task.completedAt = new Date().toISOString();
@@ -620,6 +652,7 @@ export class UnifiedQueueManager {
   acknowledgeCancellation(taskId: string, result?: Record<string, any>): QueuedTask | null {
     const task = this.tasks.get(taskId);
     if (!task || !['leased', 'waiting'].includes(task.state) || !task.cancellationRequestedAt) return null;
+    this.changedTaskIds.add(task.id);
     if (task.state === 'leased') this.releaseCapacity(task);
     task.state = 'cancelled';
     if (result) task.result = result;
@@ -633,6 +666,7 @@ export class UnifiedQueueManager {
   expire(taskId: string): QueuedTask | null {
     const task = this.tasks.get(taskId);
     if (!task || task.bodyLease || (task.state !== 'queued' && task.state !== 'waiting')) return null;
+    this.changedTaskIds.add(task.id);
     task.state = 'expired';
     task.completedAt = new Date().toISOString();
     task.error = { code: 'deadline_expired', message: 'Work deadline expired before execution', retryable: false };
@@ -645,6 +679,7 @@ export class UnifiedQueueManager {
   appendOutput(taskId: string, chunk: string): void {
     const task = this.tasks.get(taskId);
     if (!task) return;
+    this.changedTaskIds.add(task.id);
     task.output ||= [];
     task.output.push(chunk);
     if (task.output.length > this.outputReplayLimit) {
@@ -676,6 +711,7 @@ export class UnifiedQueueManager {
   attachExecution(taskId: string, executionId: string): void {
     const task = this.tasks.get(taskId);
     if (!task || task.state !== 'leased') throw new Error('Only leased work can enter a graph execution');
+    this.changedTaskIds.add(task.id);
     task.graphExecutions ??= [];
     if (!task.graphExecutions.includes(executionId)) task.graphExecutions.push(executionId);
     this.notifyChange();
@@ -687,6 +723,15 @@ export class UnifiedQueueManager {
 
   getHistory(): QueuedTask[] {
     return this.terminalOrder.map(id => this.tasks.get(id)).filter((task): task is QueuedTask => Boolean(task));
+  }
+
+  acknowledgeFailureNotice(taskId: string): void {
+    const task = this.tasks.get(taskId);
+    if (!task?.failureNoticePending) return;
+    this.changedTaskIds.add(task.id);
+    task.failureNoticePending = false;
+    this.addTerminal(task);
+    this.notifyChange();
   }
 
   pause(): void {
@@ -789,16 +834,17 @@ export class UnifiedQueueManager {
   importState(state: QueueState): void {
     this.clear(false);
     this.bodyOwners.clear();
-    for (const [bodyId, lease] of Object.entries(state.bodyOwners ?? {})) {
-      if (lease.bodyId !== bodyId || !lease.executionId || !Number.isSafeInteger(lease.generation) || lease.generation < 1) {
+    for (const [ownerKey, lease] of Object.entries(state.bodyOwners ?? {})) {
+      if (bodyOwnerKey(lease.bodyId, lease.channel) !== ownerKey || !lease.executionId || !Number.isSafeInteger(lease.generation) || lease.generation < 1) {
         throw new Error('Invalid persisted body ownership');
       }
-      this.bodyOwners.set(bodyId, Object.freeze({ ...lease }));
+      this.bodyOwners.set(ownerKey, Object.freeze({ ...lease }));
     }
     for (const rawTask of state.durableReceipts || []) {
       if (!rawTask.durable || !TERMINAL_STATES.has(rawTask.state)) throw new Error('Invalid durable admission receipt');
       const task = protectAdmission({ ...rawTask });
       this.tasks.set(task.id, task);
+      this.changedTaskIds.add(task.id);
       this.idempotency.set(this.idempotencyScope(task)!, task.id);
     }
     // Terminal history is canonical newest-first. Normalize timestamps to
@@ -814,6 +860,7 @@ export class UnifiedQueueManager {
     for (const rawTask of restoredHistory.reverse()) {
       const task = protectAdmission({ ...rawTask });
       this.tasks.set(task.id, task);
+      this.changedTaskIds.add(task.id);
       this.addTerminal(task);
       if (task.durable) this.idempotency.set(this.idempotencyScope(task)!, task.id);
     }
@@ -842,6 +889,7 @@ export class UnifiedQueueManager {
           retryable: false,
         };
         this.tasks.set(task.id, task);
+        this.changedTaskIds.add(task.id);
         this.addTerminal(task);
         continue;
       }
@@ -873,6 +921,7 @@ export class UnifiedQueueManager {
         }
       }
       this.tasks.set(task.id, task);
+      this.changedTaskIds.add(task.id);
       if (TERMINAL_STATES.has(task.state)) this.addTerminal(task);
       const scope = this.idempotencyScope(task);
       if (scope && (task.durable || !TERMINAL_STATES.has(task.state))) this.idempotency.set(scope, task.id);
@@ -883,6 +932,7 @@ export class UnifiedQueueManager {
 
   clear(notify = true): void {
     this.tasks.clear();
+    this.changedTaskIds.clear();
     this.terminalOrder.length = 0;
     this.idempotency.clear();
     this.inFlightRemote.clear();
@@ -928,16 +978,17 @@ export class UnifiedQueueManager {
 
   private notifyChange(): void {
     const candidate = this.snapshot();
-    const identity = canonicalJSON(candidate);
-    if (identity === this.committedIdentity && !this.unconfirmedCommit) return;
+    const identity = this.snapshotIdentity(candidate);
+    if (!this.changedTaskIds.size && identity === this.committedIdentity && !this.unconfirmedCommit) return;
     try {
-      this.onQueueChange?.();
+      this.onQueueChange?.(this.changedTaskIds);
       this.committed = candidate;
       this.committedIdentity = identity;
       this.unconfirmedCommit = false;
+      this.changedTaskIds.clear();
     } catch (error) {
       if (error instanceof WorkCommitUncertainError) {
-        // Rename already published this identity. Do not manufacture an older
+        // The commit may have published this identity. Do not manufacture an older
         // ledger in RAM or a different work ID on retry. No dispatch proceeds
         // until this exact candidate is durably confirmed.
         this.committed = candidate;
@@ -947,7 +998,8 @@ export class UnifiedQueueManager {
       }
       const previous = this.committed;
       this.tasks.clear();
-      previous.tasks.forEach(task => this.tasks.set(task.id, protectAdmission({ ...task })));
+      previous.tasks.forEach(task => this.tasks.set(task.id, protectAdmission(structuredClone(task))));
+      this.changedTaskIds.clear();
       this.terminalOrder.splice(0, this.terminalOrder.length, ...previous.terminalOrder);
       this.idempotency.clear();
       previous.idempotency.forEach(([key, id]) => this.idempotency.set(key, id));
@@ -963,9 +1015,20 @@ export class UnifiedQueueManager {
     }
   }
 
-  private snapshot() {
+  private snapshotIdentity(snapshot: CoordinatorSnapshot): string {
+    return canonicalJSON({ ...snapshot, tasks: [...snapshot.tasks.keys()] });
+  }
+
+  private snapshot(): CoordinatorSnapshot {
     return {
-      tasks: structuredClone([...this.tasks.values()]),
+      tasks: new Map([...this.tasks].map(([id, task]) => {
+        const saved = this.committed?.tasks.get(id);
+        if (saved && !this.changedTaskIds.has(id)) return [id, saved];
+        // Admission payloads are already deeply immutable. Only lifecycle state
+        // needs a new rollback snapshot when this work record changes.
+        const { input, metadata, durable, admissionIdentity, admittedRuntimeId, ...state } = task;
+        return [id, { ...structuredClone(state), input, metadata, durable, admissionIdentity, admittedRuntimeId }];
+      })),
       terminalOrder: [...this.terminalOrder],
       idempotency: [...this.idempotency],
       resources: structuredClone([...this.resources]),

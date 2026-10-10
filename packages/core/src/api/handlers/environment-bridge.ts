@@ -16,6 +16,7 @@ import {
   attachEnvironmentObservationTiming,
   getEnvironmentBridgeDiagnosticMedia,
   getEnvironmentBridgeDiagnosticsSnapshot,
+  getLatestEnvironmentObservation,
   publishEnvironmentObservation,
   readEnvironmentBridgeState,
   recordEnvironmentObservation,
@@ -42,6 +43,7 @@ import { getCurrentlyActiveUser } from '../../sessions.js';
 import { openExecutionStore } from '../../durable-execution/storage.js';
 import { relayExecutionOutbox } from '../../durable-execution/coordinator-outbox.js';
 import { beginTTSUserTurn, getTTSQueueState } from '../../tts/delivery-queue.js';
+import { getQueueSystem } from '../../queue/queue-system.js';
 
 const STREAM_HEARTBEAT_MS = 15_000;
 const BRIDGE_TOKEN_ENV = 'MH_ENVIRONMENT_BRIDGE_TOKEN';
@@ -161,6 +163,11 @@ export function environmentBridgeSessionOptions(summary: EnvironmentBridgeSummar
 
 export async function handleEnvironmentBridgeStatus(req: UnifiedRequest): Promise<UnifiedResponse> {
   const summary = summarizeEnvironmentBridgeState();
+  if (req.query?.view === 'expression-options') {
+    const observation = getLatestEnvironmentObservation();
+    return successResponse({ sessionId: observation?.sessionId,
+      expressionLibrary: observation?.capabilities.expressionLibrary ?? [] });
+  }
   return successResponse(
     req.query?.view === 'session-options'
       ? environmentBridgeSessionOptions(summary)
@@ -190,6 +197,46 @@ export async function handleEnvironmentBridgeSpeechSettings(req: UnifiedRequest)
   } catch (error) {
     return errorResponse(`Unable to access speech settings: ${(error as Error).message}`, 500);
   }
+}
+
+/** Body Control uses the existing bridge setting and Coordinator cancellation owner. */
+export async function handleEnvironmentBridgeBehaviorSettings(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authorizationFailure = bridgeAuthorizationFailure(req);
+  if (authorizationFailure) return authorizationFailure;
+  const username = resolveEnvironmentObservationUser();
+  if (!username) return errorResponse('Sign in to MetaHuman as the owner to control robot behavior', 409);
+  const { enabled } = bodyRecord(req);
+  if (enabled !== undefined && typeof enabled !== 'boolean') return badRequestResponse('enabled must be boolean');
+  const system = getQueueSystem();
+  const store = openExecutionStore(username);
+  try {
+    const executions = store.list(username).filter(record => {
+      if (!['running', 'waiting'].includes(record.status)) return false;
+      if (store.task(record.executionId)) return true;
+      const entry = store.entry(record.executionId);
+      return entry?.graph?.cognitiveMode === 'environment' || entry?.context?.cognitiveMode === 'environment';
+    });
+    if (enabled === false) {
+      // Stop admission first. Cancellation receipts still flow through the disabled bridge.
+      setEnvironmentBridgeEnabled(false);
+      for (const record of executions) system.cancelExecution(username, record.executionId, 'Robot control switched off in Body Control');
+      for (const task of system.getAllTasks()) {
+        if (task.username === username && task.type === 'environment_command') {
+          system.cancelTask(task.id, 'Robot control switched off in Body Control');
+        }
+      }
+    } else if (enabled === true) {
+      setEnvironmentBridgeEnabled(true);
+    }
+    return successResponse({ enabled: readEnvironmentBridgeState().enabled, username,
+      executions: executions.map(record => ({ executionId: record.executionId,
+        status: store.get(record.executionId).status, objective: store.task(record.executionId)?.objective ?? record.definition.graphId })),
+      unresolvedActions: system.getAllTasks().filter(task => task.username === username && task.type === 'environment_command')
+        .map(task => ({ id: task.id, state: task.state, cancellationRequested: Boolean(task.cancellationRequestedAt) })),
+    });
+  } catch (error) {
+    return errorResponse(`Unable to change robot control: ${(error as Error).message}`, 500);
+  } finally { store.close(); }
 }
 
 export async function handleEnvironmentBridgeObservation(
@@ -265,6 +312,24 @@ export async function handleEnvironmentBridgeTelemetry(req: UnifiedRequest): Pro
       )
     : undefined;
   try {
+    if (body.displayLifecycle !== undefined) {
+      const update = body.displayLifecycle as { utteranceId?: string; stage?: string };
+      if (typeof update?.utteranceId !== 'string' || !update.utteranceId
+        || !['processing', 'ignored', 'failed'].includes(update.stage ?? '')) {
+        return badRequestResponse('Display lifecycle requires an utterance identity and stage');
+      }
+      const username = resolveEnvironmentObservationUser();
+      if (!username) return badRequestResponse('Display lifecycle requires an active owner');
+      const { displayFeedbackToken, submitDisplayFeedback } = await import('../../environment-interface/display-feedback.js');
+      const token = displayFeedbackToken(`${body.sessionId}:${update.utteranceId}`);
+      const work = await submitDisplayFeedback(username, {
+        sessionId: body.sessionId, token,
+        operation: update.stage === 'ignored' ? 'release' : 'set',
+        stage: update.stage === 'failed' ? 'error' : 'processing',
+        ...(update.stage === 'failed' ? { ifToken: token } : {}),
+      }, `${token}:${update.stage}`);
+      return successResponse({ success: true, workId: work.id });
+    }
     if (body.perception !== undefined) {
       return successResponse({ success: true,
         perceptionAccepted: await recordEnvironmentPerception(body.sessionId, body.perception) });

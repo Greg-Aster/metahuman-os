@@ -1,6 +1,11 @@
 import { spawn } from 'node:child_process'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
+import {
+  getProfilePaths, listUsers, readEnvironmentTrainingBank, readEnvironmentTrainingReviews,
+  validateEnvironmentSelectorOutput,
+} from '@metahuman/core'
+import { isPlanningDelegation, parseEnvironmentIntentRouting } from '@metahuman/core/nodes'
 
 import {
   ACTION_SELECTOR_DIRECTORY,
@@ -17,7 +22,7 @@ import {
   validateDevelopmentRecords,
   type ActionSelectorTrainingRecord,
 } from './generate-training-data.js'
-import { DEVELOPMENT_CASES } from './generate-training-data.js'
+import { DEVELOPMENT_CASES, EVALUATION_CASES } from './generate-training-data.js'
 import type { Specialist } from './development-cases.js'
 
 const CONFIG_PATH = resolve(ACTION_SELECTOR_DIRECTORY, 'training-qwen3.5-0.8b.json')
@@ -32,6 +37,7 @@ interface TrainingOptions {
   finalFromPath?: string
   selectionReportPath?: string
   dryRun: boolean
+  reviewedDataPath?: string
 }
 
 interface TrainingConfig {
@@ -48,7 +54,7 @@ interface DevelopmentSelectionReport {
   owner?: string
   specialist?: Specialist
   split?: string
-  checkpointPolicy?: 'best-loss' | 'epoch-2' | 'final-epoch'
+  checkpointPolicy?: 'best-loss' | 'epoch-1' | 'epoch-2' | 'final-epoch'
   priorHeldOutUsed?: boolean
   aggregate?: {
     total?: number
@@ -96,6 +102,9 @@ function parseOptions(arguments_: string[]): TrainingOptions {
     } else if (argument === '--selection-report' && value) {
       options.selectionReportPath = resolve(value)
       index += 1
+    } else if (argument === '--reviewed-data' && value) {
+      options.reviewedDataPath = resolve(value)
+      index += 1
     } else if (argument === '--fold' && value) {
       const fold = Number.parseInt(value, 10)
       if (!Number.isInteger(fold) || fold < 0 || fold >= DEVELOPMENT_FOLD_COUNT) {
@@ -108,14 +117,110 @@ function parseOptions(arguments_: string[]): TrainingOptions {
       throw new Error(`Unknown or incomplete argument: ${argument}`)
     }
   }
-  options.outputPath ||= resolve(OUTPUT_ROOT, `${options.specialist}-cv-001`)
+  options.outputPath ||= resolve(OUTPUT_ROOT, `${options.specialist}-${options.reviewedDataPath ? 'reviewed' : 'cv'}-001`)
   if (Boolean(options.finalFromPath) !== Boolean(options.selectionReportPath)) {
     throw new Error('--final-from and --selection-report are required together')
   }
   if (options.finalFromPath && selectedFold) {
     throw new Error('--final-from and --fold cannot be combined')
   }
+  if (options.reviewedDataPath && (options.finalFromPath || selectedFold)) {
+    throw new Error('--reviewed-data cannot be combined with --final-from or --fold')
+  }
   return options
+}
+
+interface ReviewedTrainingRecord {
+  system: string
+  user: string
+  output: string
+  metadata: {
+    recordId: string
+    sourceCaseId: string
+    specialist: Specialist
+    sourceSplit: string
+    sourceDigest: string
+    reviewedAt: string
+    reviewDecision: string
+  }
+}
+
+async function trainReviewedAdapter(options: TrainingOptions, config: TrainingConfig): Promise<void> {
+  const owner = listUsers().find(user => options.reviewedDataPath === resolve(getProfilePaths(user.username).out,
+    'environment-action-selector', 'reviewed', `${options.specialist}.jsonl`))
+  if (!owner) throw new Error('Reviewed data must be an intent/task export from a registered profile')
+  const candidates = new Map(readEnvironmentTrainingBank(owner.username).candidates.map(candidate => [candidate.id, candidate]))
+  const reviews = new Map(readEnvironmentTrainingReviews(owner.username).reviews.map(review => [review.candidateId, review]))
+  const content = await readFile(options.reviewedDataPath!, 'utf8')
+  const records = content.trim().split('\n').filter(Boolean)
+    .map((line, index) => {
+      try { return JSON.parse(line) as ReviewedTrainingRecord }
+      catch (error) { throw new Error(`Reviewed data line ${index + 1}: ${String(error)}`) }
+    })
+  if (!records.length) throw new Error('Reviewed training data is empty')
+  const { lock } = await loadPriorEvaluationEvidence()
+  const seen = new Set<string>()
+  for (const [index, record] of records.entries()) {
+    const label = `Reviewed data line ${index + 1}`
+    const metadata = record.metadata
+    if (!record.system?.trim() || !record.user?.trim() || !record.output?.trim()
+      || !metadata || !/^[a-f0-9]{32}$/.test(metadata.recordId)
+      || !/^[a-f0-9]{64}$/.test(metadata.sourceDigest)
+      || !metadata.sourceCaseId?.trim() || !metadata.reviewedAt?.trim()
+      || metadata.specialist !== options.specialist || metadata.sourceSplit !== 'development'
+      || !['accept', 'correct'].includes(metadata.reviewDecision)) {
+      throw new Error(`${label}: incomplete or mismatched approved-review record`)
+    }
+    if (seen.has(metadata.recordId)) throw new Error(`${label}: duplicate candidate`)
+    seen.add(metadata.recordId)
+    const candidate = candidates.get(metadata.recordId)
+    const review = reviews.get(metadata.recordId)
+    if (!candidate || !review || candidate.specialist !== options.specialist
+      || candidate.sourceDigest !== metadata.sourceDigest || review.sourceDigest !== metadata.sourceDigest
+      || review.decision !== metadata.reviewDecision || review.reviewedAt !== metadata.reviewedAt
+      || record.system !== candidate.system || record.user !== candidate.user
+      || metadata.sourceCaseId !== candidate.executionId
+      || record.output !== (review.decision === 'correct' ? review.correctedOutput : candidate.observedOutput)) {
+      throw new Error(`${label}: record does not match its saved candidate and human review`)
+    }
+    if (lock.caseIds.includes(metadata.sourceCaseId)
+      || EVALUATION_CASES.some(source => source.id === metadata.sourceCaseId)) {
+      throw new Error(`${label}: frozen evaluation source`)
+    }
+    if (options.specialist === 'intent') {
+      try { parseEnvironmentIntentRouting(record.output) }
+      catch (error) { throw new Error(`${label}: invalid intent output: ${String(error)}`) }
+    } else {
+      const parsed = JSON.parse(record.output)
+      if (!isPlanningDelegation(parsed)) {
+        const envelope = JSON.parse(record.user)
+        const result = validateEnvironmentSelectorOutput(record.output,
+          envelope.currentEnvironment?.sessionId, envelope.activeExecutions ?? [], false)
+        if (!result.valid) throw new Error(`${label}: invalid task output: ${result.errors.join('; ')}`)
+      }
+    }
+  }
+  const runRoot = resolve(options.outputPath, 'reviewed')
+  const trainingPath = resolve(runRoot, 'training.jsonl')
+  const configPath = resolve(runRoot, 'training-config.json')
+  const adapterPath = resolve(runRoot, 'adapter')
+  console.log(`Reviewed ${options.specialist} adapter: ${records.length} approved records`)
+  console.log(`Frozen evaluation content not loaded; one-shot digest ${lock.digest}`)
+  if (options.dryRun) return
+  await mkdir(runRoot, { recursive: true })
+  await Promise.all([
+    writeFile(trainingPath, `${records.map(record => JSON.stringify(record)).join('\n')}\n`),
+    writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`),
+    writeFile(resolve(runRoot, 'run-provenance.json'), `${JSON.stringify({
+      version: 1, owner: 'environment-action-selector', mode: 'reviewed-training',
+      specialist: options.specialist, baseModel: config.base_model,
+      trainingRecords: records.length, trainingSourceCases: new Set(records.map(record => record.metadata.sourceCaseId)).size,
+      reviewedDataDigest: sha256(records), priorHeldOutDigest: lock.digest, priorHeldOutUsed: false,
+      sourcePath: options.reviewedDataPath,
+    }, null, 2)}\n`),
+  ])
+  await runTrainer('reviewed adapter', trainingPath, undefined, configPath, adapterPath)
+  console.log(`Reviewed action-selector adapter complete under ${runRoot}`)
 }
 
 async function readJson<T>(path: string): Promise<T> {
@@ -159,6 +264,7 @@ async function runTrainer(
 
 function selectedEpochCount(policy: DevelopmentSelectionReport['checkpointPolicy']): number {
   if (policy === 'best-loss') return 1
+  if (policy === 'epoch-1') return 1
   if (policy === 'epoch-2') return 2
   if (policy === 'final-epoch') return 3
   throw new Error('Selection report has no supported checkpoint policy')
@@ -294,6 +400,10 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
 
   if (options.finalFromPath) {
     await trainFinalAdapter(options, config)
+    return
+  }
+  if (options.reviewedDataPath) {
+    await trainReviewedAdapter(options, config)
     return
   }
 

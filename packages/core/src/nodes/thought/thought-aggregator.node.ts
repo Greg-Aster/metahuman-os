@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Thought Aggregator Node
  * Combines all thoughts into a coherent reasoning chain
@@ -160,9 +161,10 @@ export const ThoughtAggregatorNode: NodeDefinition = defineNode({
       label: 'Temperature',
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'persona',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     timeout: {
       type: 'number',

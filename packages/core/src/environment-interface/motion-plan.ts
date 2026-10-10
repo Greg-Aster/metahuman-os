@@ -86,7 +86,7 @@ export function commandedPoseAfterCompletedAction(
   updatedAt: string,
   bodyEpoch?: string,
 ): EnvironmentCommandedPoseState | null | undefined {
-  if (action.type === 'captureImage' || action.type === 'sendText' || action.type === 'speak') {
+  if (action.type === 'captureImage' || action.type === 'sendText' || action.type === 'speak' || action.type === 'faceExpression') {
     return undefined;
   }
   const base = commandedPoseBase(action, updatedAt, bodyEpoch);

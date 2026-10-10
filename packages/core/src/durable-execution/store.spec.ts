@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { Annotation, Command, END, START, StateGraph, interrupt } from '@langchain/langgraph'
-import { ExecutionStore } from './store.js'
+import { contentHash, ExecutionStore } from './store.js'
 import { ExecutionCheckpointer, type CheckpointConfig } from './checkpointer.js'
 import { type CheckpointTransition, type ExecutionDefinition } from './types.js'
 import type { VisualObservationRecord } from '../visual-observation.js'
@@ -31,6 +31,48 @@ async function checkpoint(f: ReturnType<typeof fixture>, transition?: Checkpoint
     v: 4, id: randomUUID(), ts: new Date().toISOString(),
     channel_values: transition ? { executionTransition: transition } : {}, channel_versions: {}, versions_seen: {},
   }, { source: 'loop', step: 0, parents: {} })
+}
+
+for (const firstDelivery of ['timed', 'untimed', 'legacy'] as const) {
+  test(`camera evidence remains identical across delivery timing changes (${firstDelivery})`, async () => {
+    const f = fixture()
+    try {
+      const frame = { id: 'captured', timestamp: '2026-01-01T00:00:01.000Z', source: 'robot-camera',
+        mimeType: 'image/jpeg', dataUrl: 'data:image/jpeg;base64,/9j/2gAA/9k=',
+        metadata: { actionId: 'capture-1', correlationId: 'turn-1', robotId: 'body-1' } }
+      const timed = { ...frame, metadata: { ...frame.metadata,
+        actionTiming: { version: 1, coreObservationReceivedAt: '2026-01-01T00:00:02.000Z' }, actionStageDurations: {} } }
+      let config = await checkpoint(f, { transitionId: 'initial-camera', frames: [firstDelivery === 'untimed' ? frame : timed] })
+      assert.deepEqual(f.store.frame(f.execution.executionId, frame.id), frame)
+      if (firstDelivery === 'legacy') {
+        // Reproduce a frame committed before timing and evidence were separated.
+        f.store.db.prepare('UPDATE execution_frames SET identity=?, frame=? WHERE execution_id=? AND frame_id=?')
+          .run(contentHash(timed), f.store.encodeDocument(f.execution.executionId, timed), f.execution.executionId, frame.id)
+      }
+      const savedBytes = () => f.store.db.prepare('SELECT frame FROM execution_frames WHERE execution_id=? AND frame_id=?')
+        .get(f.execution.executionId, frame.id)
+      const original = savedBytes()
+      for (const repeated of [frame, timed, { ...timed, metadata: { ...timed.metadata,
+        actionTiming: { version: 1, coreObservationReceivedAt: '2026-01-01T00:01:02.000Z' } } }]) {
+        config = await checkpoint(f, { transitionId: randomUUID(), frames: [repeated] }, config)
+        assert.deepEqual(savedBytes(), original, 'Delivery diagnostics cannot replace already committed camera evidence')
+      }
+      for (const changed of [
+        { ...frame, dataUrl: 'data:image/jpeg;base64,different' },
+        { ...frame, timestamp: '2026-01-01T00:00:03.000Z' },
+        { ...frame, source: 'another-camera' },
+        { ...frame, mimeType: 'image/png' },
+        { ...frame, metadata: { ...frame.metadata, actionId: 'another-action' } },
+        { ...frame, metadata: { ...frame.metadata, correlationId: 'another-turn' } },
+        { ...frame, metadata: { ...frame.metadata, robotId: 'another-body' } },
+      ]) {
+        await assert.rejects(checkpoint(f, { transitionId: randomUUID(), frames: [changed] }, config),
+          /Frame identity reused with different evidence/)
+        assert.deepEqual(savedBytes(), original)
+      }
+      assert.equal(f.store.dispatches(f.execution.executionId).length, 0)
+    } finally { f.store.close(); fs.rmSync(f.directory, { recursive: true, force: true }) }
+  })
 }
 
 test('LangGraph checkpoint commits dispatch intent and resumes the saved pending review', async () => {
@@ -110,6 +152,9 @@ test('terminal work receipts retain their committed graph-return snapshot across
       f.store.acknowledgeAdmission('specialist', 'specialist-job')
       const receipt = { state: 'failed', result: null, error: { message: 'Provider failed' } }
       const first = f.store.deliverWorkResult('specialist', 'specialist-job', receipt, originalGraphs)
+      assert.equal(f.store.hasWorkResultReceipt('specialist', 'specialist-job', receipt), true)
+      assert.equal(f.store.hasWorkResultReceipt('specialist', 'another-job', receipt), false)
+      assert.equal(f.store.hasWorkResultReceipt('specialist', 'specialist-job', { ...receipt, state: 'completed' }), false)
       const replay = f.store.deliverWorkResult('specialist', 'specialist-job', receipt,
         [{ graph: 'specialist', status: 'failed', output: null, projectionVersion: 2 }])
       assert.deepEqual(replay, first)
@@ -656,6 +701,27 @@ test('evidence is referenced once, rejected writes add no blobs, and retention p
   f.store.close()
 })
 
+test('staging repeated evidence avoids duplicate encoding without caching later mutations', () => {
+  const evidence = 'camera evidence '.repeat(1_000)
+  let encodes = 0
+  const store = new ExecutionStore(':memory:', {
+    encode(value) { if (value === evidence) encodes++; return JSON.stringify(value) },
+    decode: JSON.parse,
+  })
+  try {
+    const execution = store.create('test-user', definition)
+    const observation = { evidence, timestamp: '2026-01-01T00:00:00.000Z' }
+    const value = { first: observation, second: observation, other: { evidence } }
+    const first = store.encodeDocument(execution.executionId, value)
+    assert.equal(encodes, 1, 'The same large evidence is encoded once per document')
+    observation.timestamp = '2026-01-01T00:00:01.000Z'
+    const next = store.encodeDocument(execution.executionId, value)
+    assert.equal(store.decodeDocument(first).first.timestamp, '2026-01-01T00:00:00.000Z')
+    assert.deepEqual(store.decodeDocument(next), value, 'A later checkpoint must see the changed observation')
+    assert.equal(encodes, 2, 'Memoization must not survive a staging call')
+  } finally { store.close() }
+})
+
 test('structured node outputs are shared across checkpoints without losing active execution evidence', async () => {
   const f = fixture()
   const output = { records: Array.from({ length: 24 }, (_, index) => ({ index, detail: 'verified detail '.repeat(30) })) }
@@ -743,3 +809,29 @@ test('visual history retains correlated evidence across executions, restart, rep
   reopened.close()
   fs.rmSync(f.directory, { recursive: true, force: true })
 })
+
+for (const boundary of ['checkpoint', 'pending writes'] as const) {
+  test(`${boundary} commit admits ready feedback before continuing graph work`, async () => {
+    const f = fixture()
+    try {
+      const config = await checkpoint(f)
+      let feedbackTurn: { inTransaction: boolean; committed: boolean } | undefined
+      setImmediate(() => {
+        feedbackTurn = { inTransaction: f.store.db.inTransaction, committed: boundary === 'checkpoint'
+          ? f.store.dispatches(f.execution.executionId).some(item => item.effectId === 'owned-action')
+          : !!f.store.db.prepare('SELECT 1 FROM writes WHERE task_id = ?').get('completed-node') }
+      })
+      if (boundary === 'checkpoint') {
+        await checkpoint(f, { transitionId: 'owned-transition', dispatches: [
+          { effectId: 'owned-action', kind: 'coordinator_work', payload: { handler: 'fixture' } },
+        ] }, config)
+      } else await f.saver.putWrites(config, [['result', { actionId: 'original', status: 'completed' }]], 'completed-node')
+      assert.deepEqual(feedbackTurn, { inTransaction: false, committed: true },
+        'Ready feedback must get an event-loop turn after atomic commit, before the next graph continuation')
+    } finally {
+      // Drain the test callback even on the pre-fix failing implementation.
+      await new Promise(resolve => setImmediate(resolve))
+      f.store.close(); fs.rmSync(f.directory, { recursive: true, force: true })
+    }
+  })
+}

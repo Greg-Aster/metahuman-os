@@ -78,6 +78,34 @@
       ],
       "startupPolicy": "skip"
     },
+    "environment-training-curator": {
+      "id": "environment-training-curator",
+      "enabled": true,
+      "type": "manual",
+      "priority": "normal",
+      "agentPath": "environment-training-curator/cli.ts",
+      "usesLLM": true,
+      "maxRetries": 1,
+      "comment": "Manual review proposals for Environment intent, task, and Freestyle training records. Human review owns training admission.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.environment-training-curator",
+      "allowedModes": ["reactive", "semi", "full"],
+      "startupPolicy": "skip"
+    },
+    "environment-training-trainer": {
+      "id": "environment-training-trainer",
+      "enabled": true,
+      "type": "manual",
+      "priority": "normal",
+      "agentPath": "environment-training-trainer/cli.ts",
+      "usesLLM": false,
+      "maxRetries": 0,
+      "comment": "Manually triggered reviewed-data fit, frozen evaluation, and GGUF LoRA export.",
+      "lifecycle": "scheduled-work",
+      "handler": "agent.environment-training-trainer",
+      "allowedModes": ["reactive", "semi", "full"],
+      "startupPolicy": "skip"
+    },
     "sleep-workflow": {
       "id": "sleep-workflow",
       "enabled": true,

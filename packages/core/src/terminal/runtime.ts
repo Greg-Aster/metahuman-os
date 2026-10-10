@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
+import { spawn } from 'node:child_process'
 import path from 'node:path'
 import * as pty from 'node-pty'
 import { ROOT, systemPaths } from '../path-builder.js'
@@ -9,7 +10,8 @@ import { eventBus } from '../infrastructure/event-bus/client.js'
 import { EventTypes } from '../infrastructure/event-bus/schema.js'
 import { TerminalScreen } from './screen.js'
 import { TerminalProcess } from './process.js'
-import { TerminalError, dimensions, type TerminalEvent, type TerminalSession, type TerminalState, type TerminalProvider } from './types.js'
+import { TerminalError, dimensions, type TerminalEvent, type TerminalSession, type TerminalState, type TerminalProvider, type DiagnosticRequest, type DiagnosticReceipt } from './types.js'
+import { appendDiagnosticLog, bigBrotherRepairLog } from './diagnostics.js'
 import { runProvider } from './providers/session.js'
 import type { BigBrotherSessionResult, ParsedBigBrotherEvent } from './providers/cli.js'
 
@@ -20,6 +22,15 @@ interface OwnedSession {
   input?: (data: string) => void
   resize?: (cols: number, rows: number) => void
   closing?: Promise<void>
+  ready?: Promise<void>
+  diagnostic?: {
+    username?: string
+    request: DiagnosticRequest
+    pending: Array<{ id: string; receivedAt: string; request: DiagnosticRequest }>
+    abort: AbortController
+    finished?: Promise<void>
+    cleanup?: () => Promise<void>
+  }
 }
 
 /** Service-local owner. Construction starts no shells, timers, listeners, or providers. */
@@ -132,7 +143,7 @@ export class TerminalRuntime extends EventEmitter {
     const combined = AbortSignal.any([signal, cancellation.signal])
     let session: OwnedSession | undefined
     try {
-      for (const old of this.sessions.values()) if (old.info.kind === 'provider') await this.close(old.info.id)
+      for (const old of this.sessions.values()) if (old.info.kind === 'provider' && !old.diagnostic) await this.close(old.info.id)
       combined.throwIfAborted()
       if (this.status !== 'running') throw new TerminalError('Terminal agent is stopping', 409)
       const id = randomUUID()
@@ -164,7 +175,128 @@ export class TerminalRuntime extends EventEmitter {
     } catch (error) {
       if (session) { session.info.phase = 'failed'; session.info.error = (error as Error).message }
       throw error
-    } finally { this.providerActive = false; this.changed() }
+    } finally { this.providerActive = false; this.changed(); this.pumpDiagnostics() }
+  }
+
+  async submitDiagnostic(request: DiagnosticRequest): Promise<DiagnosticReceipt> {
+    let session = [...this.sessions.values()].find(item => item.diagnostic?.username === request.username && item.diagnostic)
+    if (!session) {
+      this.admit()
+      const id = randomUUID()
+      const diagnostic: NonNullable<OwnedSession['diagnostic']> = {
+        username: request.username, request, pending: [], abort: new AbortController(),
+      }
+      session = {
+        info: { id, kind: 'provider', provider: 'codex', title: 'Big Brother Diagnostics', phase: 'completed',
+          cols: 100, rows: 30, diagnostic: { pending: 0, repairLog: bigBrotherRepairLog } },
+        screen: new TerminalScreen(100, 30), diagnostic, close: async () => {},
+      }
+      const current = session
+      this.sessions.set(id, current)
+      let desktop: TerminalProcess | undefined
+      current.close = async () => {
+        diagnostic.abort.abort(new Error('Big Brother diagnostic terminal closed'))
+        // Finish admission before releasing the desktop process acquired by it.
+        if (current.ready) await Promise.allSettled([current.ready])
+        await diagnostic.finished
+        await diagnostic.cleanup?.()
+        await desktop?.stop()
+        for (const pending of diagnostic.pending.splice(0)) appendDiagnosticLog(pending.id, 'cancelled', 'Terminal closed before this submission ran.')
+      }
+      current.ready = (async () => {
+        // The desktop window is a view of this owner, not another provider process.
+        const child = spawn('x-terminal-emulator', ['-T', 'MetaHuman Big Brother', '-e',
+          path.join(ROOT, 'bin', 'mh'), 'terminal', 'view', id], {
+          cwd: ROOT, detached: true, env: process.env, stdio: ['ignore', 'ignore', 'pipe'],
+        })
+        let stderr = ''
+        child.stderr.setEncoding('utf8')
+        child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-8192) })
+        await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject) })
+        desktop = TerminalProcess.record(child.pid!, this.receipts)
+        child.once('close', code => {
+          if (current.closing || !this.sessions.has(id)) return
+          if (code !== 0) {
+            current.info.error = stderr.trim() || `Desktop terminal exited with code ${code}`
+            try { appendDiagnosticLog(id, 'desktop failed', current.info.error) }
+            catch (error) { console.error('[big-brother-diagnostic] Cannot record desktop failure:', error) }
+          }
+          void this.close(id).catch(error => { current.info.error = error.message; this.changed() })
+        })
+      })()
+    }
+    try { await session.ready }
+    catch (error) {
+      if (this.sessions.has(session.info.id)) await this.close(session.info.id)
+      throw error
+    }
+    if (session.closing || !this.sessions.has(session.info.id) || this.status !== 'running') throw new TerminalError('Terminal session is closed or stopping', 409)
+    const id = randomUUID()
+    const diagnostic = session.diagnostic!
+    appendDiagnosticLog(id, 'submitted', JSON.stringify({ username: request.username, source: request.source, data: request.data }, null, 2))
+    diagnostic.pending.push({ id, receivedAt: new Date().toISOString(), request })
+    diagnostic.request = request
+    session.info.diagnostic!.pending = diagnostic.pending.length
+    this.changed()
+    this.pumpDiagnostics()
+    return { sessionId: session.info.id, submissionId: id, status: 'submitted' }
+  }
+
+  async diagnosticInput(id: string, message: string): Promise<DiagnosticReceipt> {
+    const session = this.get(id)
+    if (!session.diagnostic) throw new TerminalError('Not a diagnostic session', 400)
+    return this.submitDiagnostic({ ...session.diagnostic.request, data: message, source: { terminalSessionId: id, speaker: 'operator' } })
+  }
+
+  private pumpDiagnostics(): void {
+    if (this.providerActive || this.status !== 'running') return
+    const session = [...this.sessions.values()].find(item => item.diagnostic?.pending.length && !item.closing)
+    if (!session) return
+    const diagnostic = session.diagnostic!
+    const submission = diagnostic.pending.shift()!
+    const state = session.info.diagnostic!
+    state.pending = diagnostic.pending.length
+    state.submissionId = submission.id
+    session.info.phase = 'running'
+    session.info.error = undefined
+    this.providerActive = true
+    this.changed()
+    diagnostic.finished = (async () => {
+      try {
+        await diagnostic.cleanup?.()
+        diagnostic.cleanup = undefined
+        const request = submission.request
+        const prompt = `${request.prompt}\n\n${JSON.stringify({
+          repairLog: bigBrotherRepairLog, submissionId: submission.id,
+          receivedAt: submission.receivedAt, source: request.source, data: request.data,
+        }, null, 2)}`
+        await this.write(session, `\r\nDiagnostic ${submission.id}\r\n`)
+        const result = await runProvider('codex', prompt, {
+          username: request.username,
+          diagnostic: { model: request.model, reasoning: request.reasoning, threadId: state.threadId },
+        }, this.receipts, diagnostic.abort.signal, data => this.write(session, data), event => {
+          if (event.threadId) { state.threadId = event.threadId; this.changed() }
+        }, cleanup => { diagnostic.cleanup = cleanup })
+        diagnostic.cleanup = undefined
+        session.info.phase = result.success ? 'completed' : 'failed'
+        session.info.error = result.error
+        appendDiagnosticLog(submission.id, result.success ? 'agent turn completed' : 'agent turn failed',
+          [result.output, result.error].filter(Boolean).join('\n\n'))
+        await this.write(session, `\r\n${result.success ? 'Agent turn completed.' : result.error}\r\n`)
+      } catch (error) {
+        session.info.phase = 'failed'
+        session.info.error = (error as Error).message
+        console.error('[big-brother-diagnostic]', error)
+        await this.write(session, `\r\n${session.info.error}\r\n`)
+      } finally {
+        this.providerActive = false
+        this.changed()
+      }
+    })()
+    void diagnostic.finished.then(() => {
+      // Do not lose a process receipt if the existing cleanup owner reports failure.
+      if (!diagnostic.cleanup) this.pumpDiagnostics()
+    }, error => { console.error('[big-brother-diagnostic] Terminal output failed:', error) })
   }
   async stop(): Promise<void> {
     this.status = 'stopping'; this.changed()

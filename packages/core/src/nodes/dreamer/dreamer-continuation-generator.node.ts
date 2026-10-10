@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Dreamer Continuation Generator Node
  * Generates continuation dreams that build on previous dream narrative
@@ -288,9 +289,10 @@ export const DreamerContinuationGeneratorNode: NodeDefinition = defineNode({
       step: 1,
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'persona',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     timeout: {
       type: 'number',

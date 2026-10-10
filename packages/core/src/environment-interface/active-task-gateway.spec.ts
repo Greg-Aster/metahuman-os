@@ -47,28 +47,28 @@ async function simulatedBody() {
   }
 }
 
-const physicalRoute = { ...route, needsVision: false, needsResponse: false }
+const physicalRoute = {"needsResponse": false, "needsAction": true, "taskContext": ["environment"], "conversationContext": []}
 const wave = { kind: 'action', action: { type: 'robotCommand', command: 'wave' } }
 
 // The input enters the actual Environment routing graph twice, then the current
 // owner combines both turns in its finite interpreter and adopts the new program.
 async function interpretedProgram(body: Awaited<ReturnType<typeof simulatedBody>>, next: object) {
   const f = fixture(body.snapshot.observation.sessionId, false, body.snapshot.observation)
-  replies.push(physicalRoute, { response: '', program: { steps: [wave] }, taskDecision: decision })
+  replies.push(physicalRoute, { program: { steps: [wave] }, taskDecision: decision })
   const initial = await f.run()
   const id = initial.executionId!
   const bootstrap = f.received.shift()!
   await body.request('action', { action: bootstrap })
   await body.request('complete', { actionId: bootstrap.id })
   for (const userMessage of ['Wave again.', 'Then carry out the second instruction.']) {
-    replies.push({ ...physicalRoute, needsExecutionContext: true }, { response: '', program: null, taskDecision: null,
+    replies.push({"needsResponse": false, "needsAction": true, "taskContext": ["environment", "executionContext"], "conversationContext": []}, { program: null, taskDecision: null,
       executionDisposition: 'steer', targetExecutionId: id })
     assert.equal((await f.run(undefined, { userMessage })).status, 'completed')
   }
   await f.run(id)
   const work = queuedInterpretation(id)
   assert.deepEqual(work.input.turns.map((turn: any) => turn.userMessage), ['Wave again.', 'Then carry out the second instruction.'])
-  replies.push(physicalRoute, { response: '', program: { steps: [wave, { kind: 'action', action: next }] }, taskDecision: decision })
+  replies.push(physicalRoute, { program: { steps: [wave, { kind: 'action', action: next }] }, taskDecision: decision })
   await executeWork(work)
   await f.run(id)
   const command = f.received.shift()!
@@ -129,14 +129,14 @@ for (const disposition of ['cancel', 'steer'] as const) {
         const { recoverDurableExecutions } = await import('../durable-execution/recovery.js')
         beginAuthenticatedRuntime()
         selectAuthenticatedSession(createSession(getUserByUsername(username)!.id, 'owner').id)
-        replies.push(physicalRoute, { response: '', program: { steps: [{ kind: 'action',
+        replies.push(physicalRoute, { program: { steps: [{ kind: 'action',
           action: { type: 'robotCommand', command: 'run', continuous: true } }] }, taskDecision: decision })
         const initial = await f.run(); const id = initial.executionId!
         const motion = f.received.shift()!
         await body.request('action', { action: motion })
         await body.request('complete', { actionId: motion.id, kind: 'ack' })
         await f.run(id)
-        replies.push({ ...physicalRoute, needsExecutionContext: true }, { response: '', program: null, taskDecision: null,
+        replies.push({"needsResponse": false, "needsAction": true, "taskContext": ["environment", "executionContext"], "conversationContext": []}, { program: null, taskDecision: null,
           executionDisposition: disposition, targetExecutionId: id })
         await f.run(undefined, { userMessage: 'Stop what you are doing' })
         const owned = manager.findTask(task => task.type === 'environment_command' && task.input.id === motion.id)!
@@ -161,7 +161,7 @@ for (const disposition of ['cancel', 'steer'] as const) {
           await f.run(id)
           const pending = queuedInterpretation(id)
           assert.equal(pending.input.turns[0].userMessage, 'Stop what you are doing')
-          replies.push(physicalRoute, { response: '', program: { steps: [{ kind: 'action', action: { type: 'stop' } }] },
+          replies.push(physicalRoute, { program: { steps: [{ kind: 'action', action: { type: 'stop' } }] },
             taskDecision: { ...decision, objective: 'Stop the current motion', completionCriteria: 'Stop command completes' } })
           await executeWork(pending); await f.run(id)
           const stop = f.received.shift()!
@@ -200,13 +200,13 @@ test('paired manual takeover invalidates a still-pending provider and its late S
     let worker: Promise<void> | undefined
     let returned = false
     try {
-      replies.push(physicalRoute, { response: '', program: { steps: [{ kind: 'action',
+      replies.push(physicalRoute, { program: { steps: [{ kind: 'action',
         action: { type: 'robotCommand', command: 'run', continuous: true } }] }, taskDecision: decision })
       const started = await f.run(); const id = started.executionId!
       const motion = f.received.shift()!
       await body.request('action', { action: motion })
       await body.request('complete', { actionId: motion.id, kind: 'ack' }); await f.run(id)
-      replies.push({ ...physicalRoute, needsExecutionContext: true }, { response: '', program: null, taskDecision: null,
+      replies.push({"needsResponse": false, "needsAction": true, "taskContext": ["environment", "executionContext"], "conversationContext": []}, { program: null, taskDecision: null,
         executionDisposition: 'steer', targetExecutionId: id })
       await f.run(undefined, { userMessage: 'Stop what you are doing' })
       await f.run(id)
@@ -224,7 +224,7 @@ test('paired manual takeover invalidates a still-pending provider and its late S
       try {
         store.deliverEvent(id, { eventId: randomUUID(), kind: 'work_result', payload: {
           effectId: pending.durable!.effectId, result: { state: 'completed', result: { ...pending.input.identity,
-            route: physicalRoute, response: JSON.stringify({ response: '', program: { steps: [{ kind: 'action', action: { type: 'stop' } }] }, taskDecision: decision }) } },
+            route: physicalRoute, response: JSON.stringify({ program: { steps: [{ kind: 'action', action: { type: 'stop' } }] }, taskDecision: decision }) } },
         } })
       } finally { store.close() }
       release(); await new Promise(resolve => setImmediate(resolve))

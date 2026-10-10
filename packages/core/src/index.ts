@@ -15,6 +15,15 @@ export * from './paths';  // Path utilities (systemPaths, getProfilePaths, ROOT)
 export * from './deployment';  // Deployment mode configuration (local vs server)
 export * from './identity';
 export * from './memory';
+export {
+  readEnvironmentTrainingBank, readEnvironmentTrainingReviews,
+  readFreestyleTrainingBank, readFreestyleTrainingReviews,
+  reviewEnvironmentTrainingCandidate, reviewFreestyleTrainingCandidate,
+  readEnvironmentTrainingProposal, saveEnvironmentTrainingProposal,
+  readEnvironmentTrainingEvidenceForProfile,
+} from './environment-training-bank';
+export type { EnvironmentTrainingCandidate, FreestyleTrainingCandidate,
+  EnvironmentTrainingReview, EnvironmentTrainingProposal } from './environment-training-bank';
 export * from './memory-content-filter';  // Content mode filtering for agent reflections
 export * from './persona-learning';
 export * from './persona-insights';
@@ -47,6 +56,8 @@ export * from './ollama-lora';
 export * from './llm-backend';
 export * from './local-model-service-manager';
 export * from './model-resolver';
+export { promoteEnvironmentSpecialist } from './api/handlers/model-registry';
+export { compareEnvironmentSpecialistReports } from './environment-training-promotion';
 export * from './model-artifacts';
 export * from './model-router';
 export * from './agent-monitor';
@@ -292,7 +303,6 @@ export * from './safe-file';  // Atomic file writes with backup for data safety
 export * from './robot-status.js';
 // users.ts exported at top of file (must load before path-builder)
 export * from './sessions';
-export * from './window-session';  // Multi-window support
 export * from './buffer-locks';     // Conversation buffer locking
 export * from './profile';
 export * from './profile-sync';

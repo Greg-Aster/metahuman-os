@@ -1,21 +1,9 @@
 /**
  * Thinking Trace Composable
- * Handles live audit stream visualization during LLM processing
+ * Displays progress and reasoning supplied by the active task stream
  */
 
 import { writable, derived, get } from 'svelte/store';
-import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../connection-pool';
-import { isOwner } from '../../../stores/security-policy';
-
-// Types
-interface AuditStreamEvent {
-  timestamp: string;
-  level: 'info' | 'warn' | 'error' | 'critical' | string;
-  category: string;
-  event: string;
-  actor: string;
-  details?: Record<string, any>;
-}
 
 interface UseThinkingTraceOptions {
   /**
@@ -29,34 +17,22 @@ interface UseThinkingTraceOptions {
   getReasoningDepth: () => number;
 
   /**
-   * Callback to get current conversation session ID
-   */
-  getConversationSessionId: () => string;
-
-  /**
    * Callback to get current reasoning stages count (for conditional display)
    */
   getReasoningStagesCount: () => number;
 }
-
-// Constants
-const THINKING_TRACE_LIMIT = 40;
 
 /**
  * Thinking Trace Composable
  * Provides reactive state and methods for thinking trace visualization
  */
 export function useThinkingTrace(options: UseThinkingTraceOptions) {
-  const { getCurrentMode, getReasoningDepth, getConversationSessionId, getReasoningStagesCount } = options;
-
-  // State
-  let auditHandle: ConnectionHandle | null = null;
+  const { getCurrentMode, getReasoningDepth, getReasoningStagesCount } = options;
 
   // Svelte stores for reactive state
   const trace = writable<string[]>([]);
   const statusLabel = writable<string>('🤔 Thinking…');
   const active = writable<boolean>(false);
-  const placeholderActive = writable<boolean>(false);
 
   // Derived stores for computed values
   const steps = derived(trace, $trace => $trace.join('\n\n'));
@@ -64,155 +40,6 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
     [active, trace],
     ([$active, $trace]) => $active && getReasoningStagesCount() === 0 && $trace.length > 0
   );
-
-  /**
-   * Ensure audit stream is connected
-   */
-  function ensureAuditStream(): void {
-    if (!get(isOwner)) return;
-    if (auditHandle && auditHandle.getStatus() !== 'closed') {
-      return;
-    }
-
-    auditHandle = connectionPool.request({
-      id: 'thinking-trace-stream',
-      name: 'Thinking Trace Stream',
-      url: '/api/monitor/stream',
-      priority: ConnectionPriority.LOW,
-      viewDependency: 'chat',
-      defer: true,
-      onMessage: (event) => {
-        try {
-          const parsed = JSON.parse(event.data) as AuditStreamEvent;
-          handleAuditTrace(parsed);
-        } catch (err) {
-          console.warn('[thinking-trace] Failed to parse audit event', err);
-        }
-      },
-      onError: (err) => {
-        console.warn('[thinking-trace] Audit stream disconnected', err);
-      },
-    });
-  }
-
-  function pauseTelemetry(): void {
-    auditHandle?.close();
-    auditHandle = null;
-  }
-
-  /**
-   * Handle incoming audit trace event
-   */
-  function handleAuditTrace(event: AuditStreamEvent): void {
-    if (!get(active)) return;
-
-    const sessionId = getConversationSessionId();
-    const sessionMatches =
-      event.details?.sessionId === sessionId ||
-      event.details?.conversationId === sessionId ||
-      event.details?.taskId === sessionId;
-    if (!sessionMatches) return;
-
-    const formatted = formatAuditTrace(event);
-    const base = get(placeholderActive) ? [] : get(trace);
-    placeholderActive.set(false);
-    trace.set([...base, formatted].slice(-THINKING_TRACE_LIMIT));
-  }
-
-  /**
-   * Format audit trace event for display
-   */
-  function formatAuditTrace(event: AuditStreamEvent): string {
-    // Special formatting for Big Brother reasoning steps
-    if (event.event === 'big_brother_reasoning_step') {
-      const details = event.details || {};
-      const stepType = details.stepType || 'thought';
-      const toolName = details.toolName;
-      const content = details.content || '';
-
-      // Format based on step type
-      if (stepType === 'tool_use' && toolName) {
-        return `🔧 ${toolName}: ${content}`;
-      } else if (stepType === 'thought') {
-        return `💭 ${content}`;
-      } else {
-        return `🤖 ${content}`;
-      }
-    }
-
-    const eventLabel = humanizeEventName(event.event);
-    const detailsText = summarizeDetails(event.details || {});
-    return detailsText ? `${eventLabel} ${detailsText}` : eventLabel;
-  }
-
-  /**
-   * Convert event name to human-readable format
-   */
-  function humanizeEventName(name: string): string {
-    return name
-      .replace(/_/g, ' ')
-      .replace(/\b\w/g, l => l.toUpperCase());
-  }
-
-  /**
-   * Summarize event details for display
-   */
-  function summarizeDetails(details: Record<string, any>): string {
-    const preferredKeys = [
-      'goal',
-      'action',
-      'skill',
-      'iteration',
-      'reason',
-      'summary',
-      'model',
-      'modelId',
-      'provider',
-      'latencyMs',
-      'tokens',
-      'path',
-      'inputs',
-      'outputs',
-      'message',
-      'status',
-      // Big Brother reasoning keys
-      'content',
-      'stepType',
-      'toolName',
-    ];
-
-    const lines: string[] = [];
-
-    for (const key of preferredKeys) {
-      if (!(key in details)) continue;
-      const value = details[key];
-      if (value == null) continue;
-      if (typeof value === 'object') {
-        const compact = JSON.stringify(value, null, 2);
-        lines.push(`${key}: ${truncateText(compact)}`);
-      } else {
-        lines.push(`${key}: ${truncateText(String(value))}`);
-      }
-    }
-
-    // Fallback: if nothing matched, stringify small scalar entries
-    if (lines.length === 0) {
-      const fallback = Object.entries(details)
-        .filter(([, value]) => typeof value !== 'object' || value === null)
-        .map(([key, value]) => `${key}: ${truncateText(String(value ?? ''))}`);
-      lines.push(...fallback);
-    }
-
-    return lines.join(' · ');
-  }
-
-  /**
-   * Truncate text to limit
-   */
-  function truncateText(value: string, limit = 320): string {
-    if (value.length <= limit) return value;
-    return `${value.slice(0, limit)}…`;
-  }
 
   /**
    * Start thinking trace (called when LLM processing begins)
@@ -231,8 +58,6 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
     }
 
     active.set(true);
-    placeholderActive.set(true);
-    ensureAuditStream();
   }
 
   /**
@@ -240,9 +65,7 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
    */
   function stop(): void {
     active.set(false);
-    placeholderActive.set(false);
     trace.set([]);
-    pauseTelemetry();
   }
 
   /**
@@ -280,13 +103,6 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
     return get(trace);
   }
 
-  /**
-   * Cleanup function to call on component unmount
-   */
-  function cleanup(): void {
-    pauseTelemetry();
-  }
-
   return {
     // Stores
     trace,
@@ -303,7 +119,5 @@ export function useThinkingTrace(options: UseThinkingTraceOptions) {
     setActive,
     appendTrace,
     getTrace,
-    pauseTelemetry,
-    cleanup,
   };
 }

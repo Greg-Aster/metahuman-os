@@ -9,6 +9,20 @@ export interface TerminalSession {
   cols: number
   rows: number
   error?: string
+  diagnostic?: { pending: number; submissionId?: string; threadId?: string; repairLog: string }
+}
+export interface DiagnosticRequest {
+  prompt: string
+  data: unknown
+  model?: string
+  reasoning: boolean
+  username?: string
+  source?: Record<string, unknown>
+}
+export interface DiagnosticReceipt {
+  sessionId: string
+  submissionId: string
+  status: 'submitted'
 }
 export interface TerminalState {
   status: 'running' | 'stopping' | 'stopped'

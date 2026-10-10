@@ -2,15 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { UnifiedHandler } from '../types.js';
 import { badRequestResponse, streamResponse } from '../types.js';
-import {
-  getBufferNotificationPath,
-  getBufferPathForUser,
-  loadBufferForUser,
-} from '../../conversation-buffer.js';
+import { getBufferNotificationPath, loadBufferForUser } from '../../conversation-buffer.js';
 
 type BufferMode = 'conversation' | 'inner' | 'system' | 'robot';
 
-function isBufferMode(value: string | undefined): value is BufferMode {
+function isBufferMode(value: string): value is BufferMode {
   return value === 'conversation' || value === 'inner' || value === 'system' || value === 'robot';
 }
 
@@ -19,110 +15,81 @@ function sse(data: Record<string, unknown>): string {
 }
 
 export const handleBufferStream: UnifiedHandler = async (req) => {
-  const mode = req.query?.mode;
-  if (!isBufferMode(mode)) {
-    return badRequestResponse('mode query param required (conversation|inner|system|robot)');
+  const modes = [...new Set(req.query?.mode?.split(',') ?? [])];
+  if (!modes.length || !modes.every(isBufferMode)) {
+    return badRequestResponse('mode query param required (conversation|inner|system|robot, comma-separated)');
   }
-
   if (!req.user.isAuthenticated) {
     return streamResponse((async function* () {
       yield sse({ type: 'error', error: 'Not authenticated. Please refresh the page and log in.' });
     })());
   }
-
-  const bufferPath = getBufferPathForUser(req.user.username, mode);
-  const notifyPath = getBufferNotificationPath(req.user.username, mode);
-  const response = streamResponse(streamBufferUpdates(req.signal, req.user.username, mode, bufferPath, notifyPath));
-  return {
-    ...response,
-    headers: {
-      ...response.headers,
-      'X-Accel-Buffering': 'no',
-    },
-  };
+  const response = streamResponse(streamBufferUpdates(req.signal, req.user.username, modes));
+  return { ...response, headers: { ...response.headers, 'X-Accel-Buffering': 'no' } };
 };
 
 async function* streamBufferUpdates(
   signal: AbortSignal | undefined,
   username: string,
-  mode: BufferMode,
-  bufferPath: string,
-  notifyPath: string,
+  modes: BufferMode[],
 ): AsyncGenerator<string> {
   const queue: string[] = [];
+  const watchers: fs.FSWatcher[] = [];
+  const timers = new Map<BufferMode, NodeJS.Timeout>();
   let wake: (() => void) | undefined;
   let closed = false;
-  let watcher: fs.FSWatcher | undefined;
-  let debounceTimer: NodeJS.Timeout | undefined;
-
-  const push = (chunk: string) => {
+  const push = (data: Record<string, unknown>) => {
     if (closed) return;
-    queue.push(chunk);
+    queue.push(sse(data));
     wake?.();
     wake = undefined;
   };
-
   const close = () => {
     closed = true;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    watcher?.close();
+    for (const timer of timers.values()) clearTimeout(timer);
+    timers.clear();
+    for (const watcher of watchers) watcher.close();
+    watchers.length = 0;
     wake?.();
     wake = undefined;
   };
-
-  const sendBufferUpdate = () => {
+  const report = (mode: BufferMode, error: unknown) => {
+    console.error(`[buffer-stream] ${mode}:`, error);
+    push({ type: 'error', mode, error: (error as Error).message });
+  };
+  const sendUpdate = (mode: BufferMode) => {
     if (closed) return;
     try {
       const buffer = loadBufferForUser(username, mode);
       const messages = (buffer.messages || [])
         .filter((msg: any) => !msg.meta?.summaryMarker)
-        .map((msg: any) => ({
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.timestamp || Date.now(),
-          meta: msg.meta,
-        }));
-
-      push(sse({ type: 'update', messages, mode, lastUpdated: buffer.lastUpdated }));
-    } catch (error) {
-      console.error(`[buffer-stream] Error reading ${mode} buffer:`, error);
-    }
+        .map((msg: any) => ({ role: msg.role, content: msg.content,
+          timestamp: msg.timestamp || Date.now(), meta: msg.meta }));
+      push({ type: 'update', mode, messages, lastUpdated: buffer.lastUpdated });
+    } catch (error) { report(mode, error); }
   };
 
-  try {
-    push(sse({ type: 'connected', mode, bufferPath }));
-    sendBufferUpdate();
-
-    const notifyDir = path.dirname(notifyPath);
-    if (!fs.existsSync(notifyDir)) fs.mkdirSync(notifyDir, { recursive: true });
-    if (!fs.existsSync(notifyPath)) fs.writeFileSync(notifyPath, new Date().toISOString());
-
-    watcher = fs.watch(notifyPath, (eventType) => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        console.log(`[buffer-stream] ${mode} notification received (${eventType}), reading buffer`);
-        sendBufferUpdate();
-      }, 100);
-    });
-
-    watcher.on('error', (error) => {
-      console.error(`[buffer-stream] Watcher error for ${mode}:`, error);
-    });
-  } catch (error) {
-    console.error(`[buffer-stream] Failed to setup watcher for ${mode}:`, error);
-  }
-
   signal?.addEventListener('abort', close, { once: true });
-
   try {
-    while (!closed || queue.length > 0) {
-      if (queue.length === 0) {
-        await new Promise<void>((resolve) => {
-          wake = resolve;
+    if (signal?.aborted) return;
+    for (const mode of modes) {
+      try {
+        const notifyPath = getBufferNotificationPath(username, mode);
+        fs.mkdirSync(path.dirname(notifyPath), { recursive: true });
+        if (!fs.existsSync(notifyPath)) fs.writeFileSync(notifyPath, new Date().toISOString());
+        const watcher = fs.watch(notifyPath, () => {
+          clearTimeout(timers.get(mode));
+          timers.set(mode, setTimeout(() => { timers.delete(mode); sendUpdate(mode); }, 100));
         });
-        continue;
-      }
-      yield queue.shift()!;
+        watchers.push(watcher);
+        watcher.on('error', error => report(mode, error));
+        push({ type: 'connected', mode });
+        sendUpdate(mode);
+      } catch (error) { report(mode, error); }
+    }
+    while (!closed) {
+      while (queue.length && !closed) yield queue.shift()!;
+      if (!closed) await new Promise<void>(resolve => { wake = resolve; });
     }
   } finally {
     signal?.removeEventListener('abort', close);

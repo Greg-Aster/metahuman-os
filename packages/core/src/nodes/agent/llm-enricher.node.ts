@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * LLM Enricher Node
  *
@@ -239,9 +240,10 @@ export const LLMEnricherNode: NodeDefinition = defineNode({
       rows: 10,
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'curator',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     temperature: {
       type: 'number',

@@ -19,7 +19,7 @@ import {
 } from '../../active-operator/index.js';
 import { getQueueManager } from '../../queue/index.js';
 import type { AutonomyMode } from '../../queue/types.js';
-import { readRobotOperatorRuntimeState } from '../../robot-operator.js';
+import { isRobotAutonomyWorkItem, readRobotOperatorRuntimeState } from '../../robot-operator.js';
 
 type ControlAction = 'start' | 'stop' | 'set-mode' | 'emergency-stop' | 'reset';
 
@@ -46,26 +46,18 @@ export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> 
     const modeStatus = controller.getStatus();
     const manager = getQueueManager();
     const activeWork = manager.getAllTasks();
-    const boredomHandlers = new Set([
-      'workflow.boredom-observer',
-      'workflow.boredom-movement',
-      'workflow.boredom-reflection',
-    ]);
     const allWork = [...activeWork, ...manager.getHistory()];
-    const boredomEpisodes = allWork
-      .filter(task => boredomHandlers.has(task.handler))
+    const autonomyEpisodes = allWork
+      .filter(task => task.handler.startsWith('workflow.') && isRobotAutonomyWorkItem(task))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .slice(0, 12)
       .map(task => {
-        const reportedChild = task.metadata?.childAgent || task.input?.agentId;
-        const child = reportedChild === 'boredom-movement' || reportedChild === 'boredom-reflection'
-          ? reportedChild
-          : 'boredom-observer';
+        const child = task.metadata?.childAgent || task.input?.agentId || task.handler.slice('workflow.'.length);
         const cycleId = typeof task.result?.cycle?.cycleId === 'string'
           ? task.result.cycle.cycleId
           : typeof task.input?.cycleId === 'string'
             ? task.input.cycleId
-            : undefined;
+            : task.correlationId;
         const related = allWork
           .filter(candidate => candidate.id !== task.id && (
             candidate.parentTaskId === task.id
@@ -107,7 +99,7 @@ export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> 
         healthMessage: modeStatus.healthMessage,
         robotOperator: {
           runtime: readRobotOperatorRuntimeState(),
-          episodes: boredomEpisodes,
+          episodes: autonomyEpisodes,
         },
         queue: {
           length: activeWork.length,

@@ -24,7 +24,13 @@ export interface BigBrotherSessionResult {
 export interface ParsedBigBrotherEvent {
   displayLines: string[]
   finalText?: string
+  threadId?: string
   reasoningSteps: ReasoningStep[]
+}
+
+/** Per-invocation settings; ordinary chat escalation keeps its configured defaults. */
+export interface TerminalProviderOptions extends EscalationOptions {
+  diagnostic?: { model?: string; reasoning: boolean; threadId?: string }
 }
 
 export interface BigBrotherCLIInvocation {
@@ -182,7 +188,8 @@ export function parseBigBrotherTerminalEvent(
   }
 
   if (event.type === 'thread.started') {
-    return { displayLines: [`[Codex] Thread ${event.thread_id || 'started'}`], reasoningSteps: [] }
+    return { displayLines: [`[Codex] Thread ${event.thread_id || 'started'}`],
+      threadId: typeof event.thread_id === 'string' ? event.thread_id : undefined, reasoningSteps: [] }
   }
   if (event.type === 'turn.started') return { displayLines: ['[Codex] Working…'], reasoningSteps: [] }
   if (event.type === 'turn.completed') return { displayLines: ['[Codex] Completed'], reasoningSteps: [] }
@@ -265,7 +272,7 @@ function materializeCodexImages(tempDir: string, options: EscalationOptions): st
 export function buildBigBrotherCLIInvocation(
   provider: TerminalBigBrotherProvider,
   prompt: string,
-  options: EscalationOptions,
+  options: TerminalProviderOptions,
   jobRoot = os.tmpdir(),
 ): BigBrotherCLIInvocation {
   const config = loadToolExecutorConfig(options.username)
@@ -277,7 +284,7 @@ export function buildBigBrotherCLIInvocation(
   const bigBrother = options.username
     ? loadFreshOperatorConfig(options.username).bigBrotherMode
     : undefined
-  const model = bigBrother?.provider === provider ? bigBrother.model : undefined
+  const model = options.diagnostic?.model || (bigBrother?.provider === provider ? bigBrother.model : undefined)
 
   const tempDir = fs.mkdtempSync(path.join(jobRoot, 'metahuman-big-brother-cli-'))
   const args = [...(backend.args || [])]
@@ -300,16 +307,22 @@ export function buildBigBrotherCLIInvocation(
   }
 
   if (args.length === 0 || (args[0] !== 'exec' && args[0] !== 'e')) args.unshift('exec')
+  // Resume the exact diagnostic thread, never whichever CLI session was last used.
+  if (options.diagnostic?.threadId) args.push('resume', options.diagnostic.threadId, '-')
   ensureArg(args, '--json')
   if (model) setModelArg(args, model)
-  ensureConfigOverride(args, 'model_reasoning_effort', (bigBrother?.provider === provider ? bigBrother.reasoningEffort : undefined) || backend.reasoningEffort || 'low')
+  const reasoning = options.diagnostic?.reasoning ? 'high'
+    : (bigBrother?.provider === provider ? bigBrother.reasoningEffort : undefined) || backend.reasoningEffort
+  if (reasoning || !options.diagnostic) ensureConfigOverride(args, 'model_reasoning_effort', reasoning || 'low')
   const colorIndex = args.indexOf('--color')
   if (colorIndex >= 0 && colorIndex + 1 < args.length) args[colorIndex + 1] = 'never'
-  else args.push('--color', 'never')
+  else if (!options.diagnostic?.threadId) args.push('--color', 'never')
+  // --color belongs to exec, not exec resume.
+  if (options.diagnostic?.threadId && colorIndex >= 0) args.splice(colorIndex, 2)
 
   const resultFile = path.join(tempDir, 'last-message.txt')
   ensureArg(args, '--output-last-message', resultFile)
-  if (backend.dangerouslySkipPermissions) ensureArg(args, '--dangerously-bypass-approvals-and-sandbox')
+  if (options.diagnostic || backend.dangerouslySkipPermissions) ensureArg(args, '--dangerously-bypass-approvals-and-sandbox')
 
   try {
     const imagePaths = materializeCodexImages(tempDir, options)
@@ -326,6 +339,6 @@ export function buildBigBrotherCLIInvocation(
     stdin: prompt,
     resultFile,
     tempDir,
-    timeout: options.timeout || backend.timeout || 300000,
+    timeout: options.diagnostic ? 0 : options.timeout || backend.timeout || 300000,
   }
 }

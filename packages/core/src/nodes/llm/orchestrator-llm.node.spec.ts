@@ -8,14 +8,9 @@ import {
 
 test('Environment intent selects context and routes without owning the later objective decision', () => {
   const routing = parseEnvironmentIntentRouting(JSON.stringify({
-    needsResponse: true,
-    needsConversationHistory: true, needsExecutionContext: false,
-    needsMemory: false,
-    needsRobotStatus: true,
-    needsEnvironment: true,
-    needsVision: true,
-    needsAction: true,
-    needsPersona: false,
+    needsResponse: true, needsAction: true,
+    taskContext: ['environment', 'vision'],
+    conversationContext: ['conversationHistory', 'robotStatus'],
   }));
   assert.equal(routing.needsAction, true);
   assert.deepEqual(ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA.required, Object.keys(routing));
@@ -50,11 +45,12 @@ test('explicit Environment action decisions remain available as advisory hints',
 });
 
 test('Environment routing preserves model-selected recall query and record types', () => {
-  const input = { needsResponse: true, needsConversationHistory: true, needsExecutionContext: false, needsPersona: true, needsMemory: true,
-    needsRobotStatus: false, needsEnvironment: false, needsVision: false, needsAction: false,
+  const input = { needsResponse: true, needsAction: false, taskContext: [],
+    conversationContext: ['persona.personality', 'memory', 'conversationHistory'],
     memoryQuery: 'Most recent recorded dream, with its date', memoryTypes: ['dream'] };
   assert.deepEqual(parseEnvironmentIntentRouting(JSON.stringify(input)), input);
-  const { needsPersona: _persona, ...missingPersona } = input;
-  assert.throws(() => parseEnvironmentIntentRouting(JSON.stringify(missingPersona)), /requires boolean needsPersona/);
+  const { taskContext: _task, ...missing } = input;
+  assert.throws(() => parseEnvironmentIntentRouting(JSON.stringify(missing)), /valid context entries in taskContext/);
+  assert.throws(() => parseEnvironmentIntentRouting(JSON.stringify({ ...input, taskContext: ['unknown'] })), /valid context entries/);
   assert.throws(() => parseEnvironmentIntentRouting(JSON.stringify({ ...input, memoryTypes: [123] })), /Invalid memory types/);
 });

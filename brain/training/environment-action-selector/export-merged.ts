@@ -17,17 +17,22 @@ interface FinalProvenance {
   baseModel?: string
   priorHeldOutUsed?: boolean
   selectionEvidence?: { digest?: string; checkpointPolicy?: string }
+  reviewedDataDigest?: string
 }
 
-function parseRoot(arguments_: string[]): string {
+function parseOptions(arguments_: string[]): { root: string; loraOnly: boolean } {
+  let root = ''
+  let loraOnly = false
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
     const value = arguments_[index + 1]
     if (argument === '--') continue
-    if (argument === '--root' && value) return resolve(value)
-    throw new Error(`Unknown or incomplete argument: ${argument}`)
+    if (argument === '--root' && value) { root = resolve(value); index += 1 }
+    else if (argument === '--lora-only') loraOnly = true
+    else throw new Error(`Unknown or incomplete argument: ${argument}`)
   }
-  throw new Error('Usage: --root out/environment-action-selector/training/<final-run>')
+  if (!root) throw new Error('Usage: --root out/environment-action-selector/training/<run> [--lora-only]')
+  return { root, loraOnly }
 }
 
 async function fileDigest(path: string): Promise<string> {
@@ -37,11 +42,12 @@ async function fileDigest(path: string): Promise<string> {
   return hash.digest('hex')
 }
 
-async function runExporter(adapterPath: string, outputPath: string): Promise<void> {
+async function runExporter(adapterPath: string, outputPath: string, loraOnly = false): Promise<void> {
   const child = spawn(PYTHON_PATH, [
     EXPORTER_PATH,
     '--adapter', adapterPath,
     '--output', outputPath,
+    ...(loraOnly ? ['--lora-only'] : []),
   ], {
     cwd: REPOSITORY_ROOT,
     env: process.env,
@@ -55,28 +61,45 @@ async function runExporter(adapterPath: string, outputPath: string): Promise<voi
 }
 
 export async function main(arguments_: string[] = process.argv.slice(2)): Promise<void> {
-  const root = parseRoot(arguments_)
+  const { root, loraOnly } = parseOptions(arguments_)
   if (!root.startsWith(`${OUTPUT_ROOT}${sep}`)) {
     throw new Error(`Export root must remain under ${OUTPUT_ROOT}`)
   }
-  const finalPath = resolve(root, 'final')
+  const finalPath = resolve(root, loraOnly ? 'reviewed' : 'final')
   const adapterPath = resolve(finalPath, 'adapter')
   const outputPath = resolve(finalPath, 'merged-gguf')
   const trainingConfig = JSON.parse(await readFile(resolve(finalPath, 'training-config.json'), 'utf8'))
   const provenance = JSON.parse(await readFile(resolve(finalPath, 'run-provenance.json'), 'utf8')) as FinalProvenance
   if (
     provenance.owner !== 'environment-action-selector'
-    || provenance.mode !== 'final-development-training'
+    || provenance.mode !== (loraOnly ? 'reviewed-training' : 'final-development-training')
     || provenance.baseModel !== 'unsloth/Qwen3.5-0.8B'
     || provenance.priorHeldOutUsed !== false
-    || !provenance.selectionEvidence?.digest
+    || (!loraOnly && !provenance.selectionEvidence?.digest)
+    || (loraOnly && !provenance.reviewedDataDigest)
   ) throw new Error('Final action-selector provenance is invalid')
   await Promise.all([
     access(resolve(adapterPath, 'adapter_model.safetensors')),
     access(PYTHON_PATH),
     access(EXPORTER_PATH),
   ])
-  await runExporter(adapterPath, outputPath)
+  await runExporter(adapterPath, outputPath, loraOnly)
+
+  if (loraOnly) {
+    const loraDirectory = resolve(outputPath, 'adapter-gguf')
+    const loraFiles = (await readdir(loraDirectory)).filter(name => name.endsWith('.gguf'))
+    if (loraFiles.length !== 1) throw new Error('Expected one GGUF LoRA export')
+    const loraPath = resolve(loraDirectory, loraFiles[0]!)
+    await writeFile(resolve(outputPath, 'export-provenance.json'), `${JSON.stringify({
+      version: 1, owner: 'environment-action-selector', purpose: 'reviewed-runtime-lora',
+      specialist: provenance.specialist, baseModel: provenance.baseModel,
+      reviewedDataDigest: provenance.reviewedDataDigest,
+      loraArtifact: `adapter-gguf/${loraFiles[0]}`,
+      loraSha256: await fileDigest(loraPath), exportedAt: new Date().toISOString(),
+    }, null, 2)}\n`)
+    console.log(`Reviewed action-selector GGUF LoRA: ${loraPath}`)
+    return
+  }
 
   const outputs = (await readdir(outputPath)).filter(name => name.endsWith('.gguf')).sort()
   const deployable = outputs.filter(name => name.toLowerCase().includes('no-mtp')

@@ -22,7 +22,8 @@
     "planner": "default.planner",
     "summarizer": "default.summarizer",
     "psychotherapist": "default.psychotherapist",
-    "embedder": "default.embedder"
+    "embedder": "default.embedder",
+    "environmentIntent": "default.orchestrator"
   },
   "models": {
     "default.orchestrator": {
@@ -37,7 +38,8 @@
         "curator",
         "psychotherapist",
         "summarizer",
-        "environmentActionSelector"
+        "environmentActionSelector",
+        "environmentIntent"
       ],
       "capabilities": [
         "text",
@@ -392,6 +394,9 @@
     ],
     "embedder": [
       "default.embedder"
+    ],
+    "environmentIntent": [
+      "default.orchestrator"
     ]
   },
   "cognitiveModeMappings": {

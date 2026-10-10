@@ -20,7 +20,7 @@ const stopLauncher = read('bin/stop-voice-server')
 
 for (const id of ['kokoro', 'whisper', 'kitten']) {
   assert.equal(voiceConfig[id]?.enabled, true, `${id} must be enabled in the voice server configuration`)
-  assert.equal(voiceConfig[id]?.startOnSystemBoot, id !== 'kokoro', `${id} must respect the selected Kitten boot configuration`)
+  assert.equal(voiceConfig[id]?.startOnSystemBoot, true, `${id} must start through the configured voice owner`)
   assert.equal(agentServices[id], undefined, `${id} must never be registered as an Agent Monitor service`)
 }
 

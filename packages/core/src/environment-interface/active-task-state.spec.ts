@@ -589,3 +589,323 @@ test('unrelated, reordered and reconnected receipts cannot advance interpreted p
   assert.equal(unknown.feedback?.type, 'outcome_unknown')
   assert.equal(unknown.stepIndex, 0, 'Owned dispatch evidence is never terminal motion evidence')
 })
+
+// Restricted demo tests exercise the existing step/wait owner. Observations and
+// receipts here are synthetic; the separate paired replay runs the real detector.
+async function singlePersonFixture(run: (f: any) => Promise<void>) {
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  const { interpretationBody } = await import('./interpretation.js')
+  const { personFrameKey } = await import('./active-task.js')
+  const f = fixture({ steps: [{ ...search.steps[0], target: 'candidate person',
+    candidateLabels: ['person'], steering: { label: 'person', gain: 100 } } as any] })
+  const { setEnvironmentBridgeEnabled, subscribeEnvironmentActions } = await import('./store.js')
+  setEnvironmentBridgeEnabled(true)
+  const unsubscribe = subscribeEnvironmentActions(observation.sessionId, () => {})
+  const frame = (counter: number, count: number, offset = 0, ttl = 1000, x = .2) => {
+    const at = clock + offset
+    const perception = { version: 1, timeBasis: 'gateway_receipt', robotId: 'p4', epoch: 1, gatewayInstance: 'gateway',
+      frameCounter: counter, observedAt: new Date(at).toISOString(), expiresAt: new Date(at + ttl).toISOString(),
+      backend: 'synthetic', model: 'count-only', summary: 'Candidate persons, identity unknown',
+      objects: Array.from({ length: count }, () => ({ label: 'person', box: { x, y: .2, width: .2, height: .4 } })), uncertainties: [] }
+    recordEnvironmentObservation({ ...observation, state: { ...observation.state,
+      body: { authenticated: true, cameraReady: true, robotId: 'p4' },
+      gateway: { robots: { p4: { epoch: 1, connection_state: 'online' } } }, perception } })
+    return personFrameKey(perception as any)
+  }
+  frame(1, 1)
+  let state: ActiveTaskState = { ...f.state, snapshotId: 'pending-capture',
+    interpretationFence: interpretationBody(observation) }
+  const advance = async () => { state = await f.advance(state); return state }
+  const terminal = async (type = 'cancelled') => { state = await f.receive(state, 'motion', type as any); return advance() }
+  const resume = async (candidateFrame = state.personLoss?.candidateFrame, extra = {}) => {
+    state = (await wait.execute({ state: { ...state, pendingEvents: [{ kind: 'single_person_resume', payload: {
+      executionId: 'execution', sessionId: observation.sessionId, confirmCandidate: true, resume: true, candidateFrame, ...extra },
+    }] } }, f.context, {})).state
+    return state
+  }
+  try { await run({ ...f, frame, advance, terminal, resume, state: () => state,
+    tick: (ms: number) => { clock += ms }, replace: (value: ActiveTaskState) => { state = value }, now: () => clock }) }
+  finally { Date.now = realNow; unsubscribe(); recordEnvironmentObservation(observation) }
+}
+
+for (const count of [0, 2]) test(`single-person behavior cancels on first fresh ${count}-person observation without steering`, async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, count)
+    const state = await f.advance()
+    assert.equal(state.personLoss.startedAt, f.now())
+    assert.equal(state.personLoss.expiresAt, f.now() + 3000)
+    assert.equal(state.cancellationRequestedAt, f.now())
+    assert.equal(state.objectiveComplete, false)
+    assert.equal(f.dispatches.filter((d: any) => d.payload.handler === 'environment.cancel-owned-work' && d.payload.input.actionId === 'motion').length, 1)
+    assert.equal(f.dispatches.some((d: any) => d.payload.input.movementUpdate), false)
+    await f.advance()
+    assert.equal(f.dispatches.filter((d: any) => d.payload.handler === 'environment.cancel-owned-work' && d.payload.input.actionId === 'motion').length, 1)
+  })
+})
+
+test('restricted reacquisition counts three distinct successive fresh frames spanning one second', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance(); await f.terminal()
+    f.tick(100); f.frame(3, 1); await f.advance()
+    f.tick(600); await f.advance(); await f.advance()
+    assert.equal(f.state().personLoss.consecutive, 1, 'Repeated reads of the same frame do not count')
+    f.frame(4, 1); await f.advance()
+    assert.equal(f.state().personLoss.candidateFrame, undefined)
+    f.tick(500); const candidate = f.frame(5, 1); await f.advance()
+    assert.equal(f.state().personLoss.consecutive, 3)
+    assert.equal(f.state().personLoss.candidateFrame, candidate)
+    assert.equal(f.state().motionId, undefined, 'Reappearance never resumes movement')
+    await f.resume('old-frame')
+    assert.ok(f.state().personLoss.resumeRejection)
+    await f.resume(candidate, { resume: false })
+    assert.ok(f.state().personLoss)
+    await f.resume(candidate)
+    assert.equal(f.state().personLoss, undefined)
+    assert.equal(f.state().completedActionId, 'motion')
+    const resumed = await f.advance()
+    assert.ok(resumed.motionId)
+    assert.notEqual(resumed.motionId, 'motion')
+    assert.equal(f.dispatches.filter((d: any) => d.payload.input.type === 'move' && !d.payload.input.movementUpdate).length, 1)
+    await assert.rejects(() => f.resume(candidate), /WAIT/)
+    assert.equal(f.dispatches.filter((d: any) => d.payload.input.type === 'move' && !d.payload.input.movementUpdate).length, 1)
+  })
+})
+
+test('stale frames and a new ambiguous frame break the candidate streak without extending its window', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance(); await f.terminal()
+    const end = f.state().personLoss.expiresAt
+    f.tick(100); f.frame(3, 1); await f.advance()
+    f.tick(600); f.frame(4, 1, -2000); await f.advance()
+    assert.equal(f.state().personLoss.consecutive, 0)
+    assert.equal(f.state().personLoss.candidateFrame, undefined)
+    f.frame(5, 1); await f.advance()
+    f.tick(500); f.frame(6, 2); await f.advance()
+    assert.equal(f.state().personLoss.consecutive, 0)
+    assert.equal(f.state().personLoss.expiresAt, end)
+    f.tick(2000); f.frame(7, 1); await f.advance()
+    assert.equal(f.state().personLoss.windowExpired, true)
+    assert.equal(f.state().personLoss.candidateFrame, undefined)
+    assert.equal(f.state().objectiveComplete, false)
+  })
+})
+
+test('missing original terminal survives window expiry and later receipt reconciliation; Stop ACK cannot resume', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance()
+    for (const [counter, delay] of [[3, 100], [4, 600], [5, 500]]) {
+      f.tick(delay); f.frame(counter, 1); await f.advance()
+    }
+    const candidate = f.state().personLoss.candidateFrame
+    assert.ok(candidate)
+    await assert.rejects(() => f.receive(f.state(), 'stop-command', 'completed'), /WAIT/)
+    await f.resume(candidate)
+    assert.equal(f.state().motionId, 'motion')
+    f.tick(1900); f.frame(6, 1); await f.advance()
+    assert.equal(f.state().personLoss.windowExpired, true)
+    assert.equal(f.state().feedback.type, 'outcome_unknown')
+    assert.equal(f.state().motionId, 'motion')
+    assert.equal(f.state().done, undefined)
+    await f.resume(candidate)
+    assert.ok(f.state().personLoss)
+    await f.terminal()
+    assert.equal(f.state().completedActionId, 'motion')
+    assert.equal(f.state().motionId, undefined)
+    assert.equal(f.state().feedback.type, 'cancelled')
+    assert.equal(f.state().personLoss.windowExpired, true)
+    assert.equal(f.dispatches.some((d: any) => d.payload.input.type === 'move'), false)
+  })
+})
+
+for (const change of ['manual', 'reconnect']) test(`candidate resume cannot reclaim ownership after ${change}`, async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance(); await f.terminal()
+    for (const [counter, delay] of [[3, 100], [4, 600], [5, 500]]) {
+      f.tick(delay); f.frame(counter, 1); await f.advance()
+    }
+    const { getLatestEnvironmentObservation } = await import('./store.js')
+    const current = getLatestEnvironmentObservation(observation.sessionId)!
+    if (change === 'manual') (current.state!.gateway as any).robots.p4.body_command_sequence = 999
+    else (current.state!.activeMovementUpdates as any).epoch = 2
+    recordEnvironmentObservation(current)
+    await f.resume()
+    assert.ok(f.state().personLoss.resumeRejection)
+    assert.equal(f.state().motionId, undefined)
+  })
+})
+
+test('checkpoint recovery preserves the loss window and unknown receipt identity', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance()
+    const saved = JSON.parse(JSON.stringify(f.state()))
+    f.tick(3100); f.replace(saved); await f.advance()
+    assert.equal(f.state().personLoss.startedAt, saved.personLoss.startedAt)
+    assert.equal(f.state().motionId, saved.motionId)
+    assert.equal(f.state().feedback.type, 'outcome_unknown')
+    await f.terminal()
+    assert.equal(f.state().feedback.actionId, saved.motionId)
+    assert.equal(f.state().objectiveComplete, false)
+  })
+})
+
+test('IDENTITY LIMITATION: one person replacing another evades the count-only rule', async () => {
+  await singlePersonFixture(async f => {
+    const first = await f.advance()
+    f.tick(100); f.frame(2, 1, 0, 1000, .7)
+    f.replace(await f.receive(first, first.pendingControls.commandId, 'completed'))
+    const replaced = await f.advance()
+    assert.equal(replaced.personLoss, undefined)
+    assert.equal(replaced.cancellationRequestedAt, undefined)
+    assert.notEqual(replaced.desiredControls, first.desiredControls)
+    // This explicitly demonstrates a limitation, not stable-target qualification.
+    assert.equal(replaced.motionId, first.motionId)
+  })
+})
+
+test('owned cancellation advances the resume fence only from its correlated terminal receipt', async () => {
+  await singlePersonFixture(async f => {
+    f.frame(2, 0); await f.advance()
+    const { getLatestEnvironmentObservation } = await import('./store.js')
+    const { interpretationBody } = await import('./interpretation.js')
+    const current = getLatestEnvironmentObservation(observation.sessionId)!
+    ;(current.state!.gateway as any).robots.p4.body_command_sequence = 1
+    recordEnvironmentObservation(current)
+    const fence = JSON.parse(interpretationBody(current))
+    f.replace(await f.receive(f.state(), 'motion', 'cancelled', { interpretationBody: fence, cancellationBody: fence }))
+    await f.advance()
+    for (const [counter, delay] of [[3, 100], [4, 600], [5, 500]]) {
+      f.tick(delay); f.frame(counter, 1)
+      const next = getLatestEnvironmentObservation(observation.sessionId)!
+      ;(next.state!.gateway as any).robots.p4.body_command_sequence = 1
+      recordEnvironmentObservation(next)
+      await f.advance()
+    }
+    assert.equal(f.state().interpretationFence, JSON.stringify(fence))
+    await f.resume()
+    assert.equal(f.state().personLoss, undefined)
+    const resumed = await f.advance()
+    assert.notEqual(resumed.motionId, 'motion')
+    const command = f.dispatches.find((d: any) => d.payload.input.id === resumed.motionId)
+    assert.deepEqual(command.payload.input.metadata.interpretationBody, fence)
+  })
+})
+
+test('restricted loss cannot advance to a later phase or apply an interpreted replacement', async () => {
+  await singlePersonFixture(async f => {
+    ;(f.context as any).activeProgram.steps.push({ kind: 'action', action: { type: 'robotCommand', command: 'wave' } })
+    f.frame(2, 2); await f.advance(); await f.terminal()
+    f.tick(3100); await f.advance()
+    assert.equal(f.state().stepIndex, 0)
+    assert.equal(f.state().objectiveComplete, false)
+    assert.equal(f.dispatches.some((d: any) => d.payload.input.command === 'wave'), false)
+    const { environmentActiveTaskNode } = await import('../nodes/environment/active-task.node.js')
+    await assert.rejects(() => environmentActiveTaskNode.execute({ program }, {
+      ...(f.context as any), activeTaskContinuation: { program, state: f.state(), decision },
+    }, {}), /operator selection and termination reconciliation/)
+  })
+})
+
+
+test('person steering waits for initial feedback on the existing perception subscription', async () => {
+  const f = fixture({ steps: [{ ...search.steps[0], steering: { label: 'person', gain: 100 } } as any] })
+  const initial: ActiveTaskState = { stepIndex: 0, evidence: [], updateRevision: 0 }
+  const state = await f.advance(initial)
+  assert.equal(state.motionId, undefined, 'No movement is admitted before a fresh candidate')
+  const deadline = f.dispatches.find(effect => effect.payload.handler === 'environment.active-task-deadline')
+  assert.equal(deadline.payload.input.sessionId, observation.sessionId,
+    'The existing perception owner can discover this execution before its first body command')
+  let reason: string | undefined
+  ;(f.context as any).graphExecution.waitForEvent = (value: string) => { reason = value; throw new Error('WAIT') }
+  await assert.rejects(wait.execute({ state }, f.context, {}), /WAIT/)
+  assert.equal(reason, `active_task:${observation.sessionId}:perception`)
+  assert.equal(f.dispatches.some(effect => effect.payload.type === 'environment_command'), false)
+})
+
+for (const outcome of ['resume', 'unknown', 'manual', 'reconnect', 'expired', 'stale'] as const) {
+  test(`operator candidate HTTP request reaches existing owner: ${outcome}`, async () => {
+    const { openExecutionStore } = await import('../durable-execution/storage.js')
+    const { getQueueSystem } = await import('../queue/queue-system.js')
+    const { handleHttpRequest } = await import('../api/adapters/http.js')
+    const { handleConfirmQueueCandidate } = await import('../api/handlers/unified-queue.js')
+    const { beginAuthenticatedRuntime, getAuthenticatedRuntimeId } = await import('../sessions.js')
+    if (!getAuthenticatedRuntimeId()) beginAuthenticatedRuntime()
+    fs.mkdirSync(path.join(root, 'etc'), { recursive: true })
+    fs.copyFileSync(new URL('../../../../etc/queue.json', import.meta.url), path.join(root, 'etc/queue.json'))
+    const system = getQueueSystem()
+    await singlePersonFixture(async f => {
+      const store = openExecutionStore('fixture')
+      try {
+        const definition = { graphId: 'operator-candidate-fixture', graphHash: 'test', runtimeVersion: 'test', checkpointSchemaVersion: 1, nodeVersions: {} }
+        const execution = store.create('fixture', definition)
+        f.context.graphExecution.executionId = execution.executionId
+        const lease = store.claim(execution.executionId, definition)
+        store.settle(lease, 'waiting', `active_task:${observation.sessionId}:perception`); store.release(lease)
+        f.frame(2, 0); await f.advance()
+        if (outcome === 'unknown') await f.terminal('outcome_unknown')
+        else await f.terminal()
+        f.tick(100); f.frame(3, 1); await f.advance()
+        f.tick(500); f.frame(4, 1); await f.advance()
+        f.tick(500); f.frame(5, 1); await f.advance()
+        const projected = f.task()
+        assert.ok(projected.personResume.candidateFrame)
+        assert.equal(projected.personResume.terminationConfirmed, outcome !== 'unknown')
+        store.db.transaction(() => store.commitTransition(execution.executionId, 'candidate-checkpoint', {
+          transitionId: 'candidate-projection', task: projected,
+        }))()
+        // The existing queue view reads the committed projection, not a UI state store.
+        assert.deepEqual(system.getExecutions('fixture').find(item => item.executionId === execution.executionId)?.personResume, JSON.parse(JSON.stringify(projected.personResume)))
+        const body = { action: 'confirm_person_candidate', sessionId: observation.sessionId,
+          candidateFrame: projected.personResume.candidateFrame, confirmCandidate: true, resume: true }
+        const user = { userId: 'fixture', username: 'fixture', role: 'owner' as const, isAuthenticated: true }
+        const request = { path: `/api/unified-queue/executions/${execution.executionId}`, method: 'POST' as const,
+          params: { id: execution.executionId }, user, body }
+        assert.equal((await handleConfirmQueueCandidate({ ...request, user: { ...user, isAuthenticated: false } })).status, 401)
+        assert.equal((await handleConfirmQueueCandidate({ ...request, user: { ...user, role: 'standard' } })).status, 403)
+        assert.equal((await handleConfirmQueueCandidate({ ...request, user: { ...user, username: 'other-profile' } })).status, 404)
+        assert.equal((await handleConfirmQueueCandidate({ ...request, body: { ...body, resume: false } })).status, 400)
+        const response = await handleHttpRequest({ path: request.path, method: 'POST', body,
+          headers: { host: '127.0.0.1:4321' }, resolvedUser: user, userContextEstablished: true })
+        assert.equal(response.status, 202, String(response.body))
+        const admitted = JSON.parse(String(response.body))
+        assert.equal(admitted.status, 'requested', 'Admission does not claim resumed movement')
+        const event = store.event(execution.executionId, admitted.eventId)
+        assert.equal(event.kind, 'single_person_resume')
+        const wakes = () => system.getAllTasks().filter(work => work.handler === 'graph.resume'
+          && work.input.executionId === execution.executionId)
+        assert.equal(wakes().length, 1, 'The existing Coordinator owns the wake')
+        assert.equal((await handleConfirmQueueCandidate(request)).status, 202)
+        assert.equal(wakes().length, 1, 'Repeated confirmation cannot enqueue another resume')
+        assert.equal(f.dispatches.filter((d: any) => d.payload.input.type === 'move').length, 0)
+        if (outcome === 'expired') f.tick(3000)
+        if (outcome === 'stale') { f.tick(1); f.frame(6, 1) }
+        if (outcome === 'manual' || outcome === 'reconnect') {
+          const { getLatestEnvironmentObservation } = await import('./store.js')
+          const current = getLatestEnvironmentObservation(observation.sessionId)!
+          recordEnvironmentObservation({ ...current, state: { ...current.state,
+            gateway: { robots: { p4: { body_command_sequence: 99 } } },
+            ...(outcome === 'reconnect' ? { activeMovementUpdates: { ...current.state?.activeMovementUpdates as object, epoch: 2 } } : {}) } })
+        }
+        // Recovered state consumes the exact durable HTTP event through the real
+        // active-task wait/step owners. No motion can be sent by the HTTP handler.
+        const received = await wait.execute({ state: { ...JSON.parse(JSON.stringify(f.state())), pendingEvents: [event] } }, f.context, {})
+        f.replace(received.state); await f.advance()
+        const motions = () => f.dispatches.filter((d: any) => d.payload.input.type === 'move' && !d.payload.input.movementUpdate)
+        assert.equal(motions().length, outcome === 'resume' ? 1 : 0)
+        if (outcome === 'resume') {
+          assert.notEqual(f.state().motionId, 'motion')
+          assert.equal(f.task().personResume, undefined)
+          await assert.rejects(() => wait.execute({ state: { ...f.state(), pendingEvents: [event] } }, f.context, {}), /WAIT/)
+          assert.equal(motions().length, 1)
+        } else {
+          assert.ok(f.state().personLoss.resumeRejection)
+          if (outcome === 'unknown') assert.equal(f.state().feedback.type, 'outcome_unknown')
+        }
+        system.cancelExecution('fixture', execution.executionId, 'Isolated test complete')
+        assert.equal((await handleConfirmQueueCandidate(request)).status, 409)
+      } finally { store.close() }
+    })
+    await system.dispose()
+  })
+}

@@ -35,10 +35,10 @@ export function parseEnvironmentSessionSuggestions(payload: unknown): PropertySu
 export async function loadPropertySuggestions(
   source: NonNullable<PropertySchema['suggestions']>,
 ): Promise<PropertySuggestion[]> {
-  if (source === 'models') {
-    const response = await apiFetch('/api/model-registry?view=node')
-    if (!response.ok) throw new Error(`Model registry is unavailable (${response.status})`)
-    return parseModelSuggestions(await response.json())
+  if (source === 'environment-expressions') {
+    const response = await apiFetch('/api/environment-bridge/status?view=expression-options')
+    if (!response.ok) throw new Error(`Expression library is unavailable (${response.status})`)
+    return parseExpressionSuggestions(await response.json())
   }
   if (source !== 'environment-sessions') return []
 
@@ -49,24 +49,9 @@ export async function loadPropertySuggestions(
   return parseEnvironmentSessionSuggestions(await response.json())
 }
 
-export function parseModelSuggestions(payload: any): PropertySuggestion[] {
-  const models = Array.isArray(payload?.nodeModels) ? payload.nodeModels : []
-  const loras = Array.isArray(payload?.modelCategories?.lora) ? payload.modelCategories.lora : []
-  return [...models.map((model: any) => ({
-    value: model.id,
-    label: `${model.provider}: ${model.model}${model.adapters?.length ? ` + ${model.description}` : ''}`,
-  })), ...loras.filter((lora: any) => lora.valid).map((lora: any) => ({
-    value: lora.id, label: `vllm: ${lora.name}${lora.loaded ? '' : ' (requires server reload)'}`,
-  }))]
-}
-
-export async function registerSelectedModel(modelId: string): Promise<void> {
-  if (!modelId) return
-  const response = await apiFetch('/api/model-registry', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ modelId, registerOnly: true }),
-  })
-  const result = await response.json()
-  if (!response.ok || !result.success) throw new Error(result.error || 'Unable to register selected model')
-  if (result.needsRestart) throw new Error('Adapter enabled. Reload the vLLM server, then select it again.')
+export function parseExpressionSuggestions(payload: unknown): PropertySuggestion[] {
+  const library = (payload as { expressionLibrary?: unknown } | null)?.expressionLibrary
+  if (!Array.isArray(library)) return []
+  return library.flatMap(entry => typeof entry?.name === 'string' && typeof entry?.label === 'string'
+    ? [{ value: entry.name, label: entry.label }] : [])
 }

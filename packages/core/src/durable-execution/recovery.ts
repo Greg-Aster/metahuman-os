@@ -9,9 +9,11 @@ import { deliverDurableWorkReceipt } from './work-results.js'
 import { ExecutionCheckpointer } from './checkpointer.js'
 import { retireBufferAdmissions } from '../conversation-buffer.js'
 import { isLocked, profileMemoryResetLockName } from '../locks.js'
+import { deliverWorkFailureNotice } from '../queue/failure-notices.js'
 
 /** Coordinator maintenance for the one authenticated, storage-ready profile. */
-export async function recoverDurableExecutions(manager: UnifiedQueueManager, retentionDays: number): Promise<void> {
+export async function recoverDurableExecutions(manager: UnifiedQueueManager, retentionDays: number,
+  dispatchReady: () => void = () => {}): Promise<void> {
   const user = getCurrentlyActiveUser()
   if (!user || user.role === 'guest') return
   const { username, userId } = user
@@ -24,6 +26,15 @@ export async function recoverDurableExecutions(manager: UnifiedQueueManager, ret
     .filter(task => task.username === username)
   const failures: Error[] = []
   await yieldToIO()
+  dispatchReady()
+  if (!stillActive()) return
+  for (const task of tasks.filter(task => task.failureNoticePending)) {
+    if (!stillActive()) break
+    try { await deliverWorkFailureNotice(task, manager) }
+    catch (error) { failures.push(new Error(`Failure notice delivery failed for ${task.id}`, { cause: error })) }
+    await yieldToIO()
+    dispatchReady()
+  }
   if (!stillActive()) return
   recovery: try {
     const resolved = resolvePath({ username, category: 'state', subcategory: 'sessions', relativePath: 'executions.sqlite' })
@@ -31,6 +42,7 @@ export async function recoverDurableExecutions(manager: UnifiedQueueManager, ret
     const profileTasks = tasks.filter(task => task.durable)
     if (!fs.existsSync(resolved.path)) {
       if (profileTasks.length) throw new Error('Durable work exists but its execution storage is missing')
+      if (failures.length) throw new AggregateError(failures, 'Failure notice delivery failed')
       return
     }
     const store = openExecutionStore(username)
@@ -46,14 +58,21 @@ export async function recoverDurableExecutions(manager: UnifiedQueueManager, ret
             // Accepted runners remain unresolved until their invocation settles.
             manager.cancel(task.id, 'Resume event already processed by its execution')
           }
-          await deliverDurableWorkReceipt(manager.getTask(task.id) ?? task, enqueue, store, stillActive)
+          const current = manager.getTask(task.id) ?? task
+          if (!store.hasWorkResultReceipt(task.durable!.effectId, task.id, {
+            state: current.state, result: current.result ?? null, error: current.error ?? null,
+          })) await deliverDurableWorkReceipt(current, enqueue, store, stillActive)
         }
         catch (error) { failures.push(new Error(`Receipt recovery failed for ${task.id}`, { cause: error })) }
         // A microtask-only recovery sweep can starve authentication, heartbeats
         // and acknowledgements. Yield to pending I/O, without a timed cooldown.
         await yieldToIO()
+        dispatchReady()
       }
       const retire = async (id: string) => {
+        // Keep the existing receipt until its failure is visible in the System Buffer.
+        if (tasks.some(task => task.durable?.executionId === id
+          && manager.getTask(task.id)?.failureNoticePending)) return
         try {
           manager.retireExecutionReceipts(id)
           await retireBufferAdmissions(username, id)
@@ -94,6 +113,7 @@ export async function recoverDurableExecutions(manager: UnifiedQueueManager, ret
           }
         } catch (error) { failures.push(new Error(`Execution recovery failed for ${username}/${execution.executionId}`, { cause: error })) }
         await yieldToIO()
+        dispatchReady()
       }
       if (!stillActive()) break recovery
       const before = Date.now() - retentionDays * 86_400_000
@@ -101,7 +121,8 @@ export async function recoverDurableExecutions(manager: UnifiedQueueManager, ret
         && record.updatedAt < before).map(record => record.executionId)
       const saver = new ExecutionCheckpointer(store, { executionId: '', owner: 'retention', generation: 0 })
       await saver.pruneTerminal(before, new Set(tasks.filter(task => task.durable
-        && !['completed', 'failed', 'cancelled', 'expired'].includes(task.state)).map(task => task.durable!.executionId)))
+        && (!['completed', 'failed', 'cancelled', 'expired'].includes(task.state)
+          || manager.getTask(task.id)?.failureNoticePending)).map(task => task.durable!.executionId)))
       const remaining = new Set(store.list().map(record => record.executionId))
       for (const id of terminalIds) if (!remaining.has(id)) await retire(id)
     } finally { store.close() }

@@ -32,7 +32,17 @@ export function interpretationGraph(graph: SvelteFlowGraph): SvelteFlowGraph {
   const selector = graph.nodes.find(node => ['environment_action_parser', 'environment_task_planner'].includes(node.data.nodeType))
   if (!selector) throw new Error('Environment interpretation requires its configured selector')
   const bypass = new Set(graph.nodes.filter(node => ['conversation_buffer', 'memory_capture'].includes(node.data.nodeType)).map(node => node.id))
-  const edges = graph.edges.filter(edge => !bypass.has(edge.target)).map(edge => {
+  const display = new Set(graph.nodes.filter(node => ['environment_expression_feedback', 'environment_face_expression'].includes(node.data.nodeType)).map(node => node.id))
+  const withoutDisplay = graph.edges.filter(edge => !display.has(edge.target)).map(edge => {
+    let source = edge
+    while (display.has(source.source)) {
+      const control = graph.edges.find(input => input.target === source.source && input.targetHandle === 'control')
+      if (!control) throw new Error('Interpretation display pass-through requires its control input')
+      source = control
+    }
+    return { ...edge, source: source.source, sourceHandle: source.sourceHandle }
+  })
+  const edges = withoutDisplay.filter(edge => !bypass.has(edge.target)).map(edge => {
     if (!bypass.has(edge.source)) return edge
     const source = graph.nodes.find(node => node.data.nodeType === 'user_input')!
     return { ...edge, source: source.id, sourceHandle: 'message' }
@@ -45,7 +55,11 @@ export function interpretationGraph(graph: SvelteFlowGraph): SvelteFlowGraph {
   return { ...graph, name: `${graph.name} interpretation`, scheduler: { ...graph.scheduler, eventInputNodeId: undefined },
     nodes: graph.nodes.filter(node => included.has(node.id)).map(node => node.data.nodeType === 'user_input'
       ? { ...node, data: { ...node.data, properties: { ...node.data.properties, saveToBuffer: false, saveToLongTermMemory: false } } }
-      : node), edges: edges.filter(edge => included.has(edge.source) && included.has(edge.target)) }
+      : node.data.nodeType === 'memory_router'
+        // This finite interpreter already runs beside the active program and has
+        // a read-only execution view. Recall completes within its existing job.
+        ? { ...node, data: { ...node.data, properties: { ...node.data.properties, dispatch: false } } }
+        : node), edges: edges.filter(edge => included.has(edge.source) && included.has(edge.target)) }
 }
 
 /** Finite Coordinator work: no execution lease, command, speech or task mutation. */

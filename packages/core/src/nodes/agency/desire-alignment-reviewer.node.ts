@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Desire Alignment Reviewer Node
  *
@@ -165,9 +166,10 @@ export const DesireAlignmentReviewerNode: NodeDefinition = defineNode({
       description: 'LLM temperature for alignment review',
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'persona',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     systemPrompt: {
       type: 'text_multiline',

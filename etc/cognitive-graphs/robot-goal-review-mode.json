@@ -580,6 +580,87 @@
           ]
         }
       }
+    },
+    {
+      "id": "thinking-on",
+      "type": "environmentNode",
+      "position": {
+        "x": 1000,
+        "y": -900
+      },
+      "data": {
+        "label": "Review Thinking On",
+        "nodeType": "environment_expression_feedback",
+        "properties": {
+          "expression": "thinking",
+          "timeoutMs": 60000
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "control"
+          ]
+        }
+      }
+    },
+    {
+      "id": "thinking-on-out",
+      "type": "environmentNode",
+      "position": {
+        "x": 1460,
+        "y": -900
+      },
+      "data": {
+        "label": "Face Expression Out",
+        "nodeType": "environment_face_expression",
+        "properties": {},
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "feedback"
+          ]
+        }
+      }
+    },
+    {
+      "id": "thinking-off",
+      "type": "environmentNode",
+      "position": {
+        "x": 1920,
+        "y": -900
+      },
+      "data": {
+        "label": "Review Thinking Off",
+        "nodeType": "environment_expression_feedback",
+        "properties": {
+          "operation": "release"
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "control"
+          ]
+        }
+      }
+    },
+    {
+      "id": "thinking-off-out",
+      "type": "environmentNode",
+      "position": {
+        "x": 2380,
+        "y": -900
+      },
+      "data": {
+        "label": "Release Review Expression",
+        "nodeType": "environment_face_expression",
+        "properties": {},
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "feedback"
+          ]
+        }
+      }
     }
   ],
   "edges": [
@@ -816,9 +897,9 @@
     {
       "id": "e-context-llm",
       "source": "context",
-      "target": "llm",
+      "target": "thinking-on",
       "sourceHandle": "messages",
-      "targetHandle": "messages",
+      "targetHandle": "control",
       "type": "default",
       "data": {
         "type": "array"
@@ -860,9 +941,9 @@
     {
       "id": "e-decision-status",
       "source": "parser",
-      "target": "status-out",
+      "target": "thinking-off",
       "sourceHandle": "taskDecision",
-      "targetHandle": "taskDecision",
+      "targetHandle": "control",
       "type": "default",
       "data": {
         "type": "object"
@@ -1354,6 +1435,96 @@
           "output": "invocation",
           "truthy": true
         }
+      }
+    },
+    {
+      "id": "thinking-on-control-thinking-on-out-control",
+      "source": "thinking-on",
+      "sourceHandle": "control",
+      "target": "thinking-on-out",
+      "targetHandle": "control",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "thinking-on-feedback-thinking-on-out-feedback",
+      "source": "thinking-on",
+      "sourceHandle": "feedback",
+      "target": "thinking-on-out",
+      "targetHandle": "feedback",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "thinking-on-out-control-llm-messages",
+      "source": "thinking-on-out",
+      "sourceHandle": "control",
+      "target": "llm",
+      "targetHandle": "messages",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "observation-sessionId-thinking-on-out-sessionId",
+      "source": "observation",
+      "sourceHandle": "sessionId",
+      "target": "thinking-on-out",
+      "targetHandle": "sessionId",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "thinking-on-token-thinking-off-token",
+      "source": "thinking-on",
+      "sourceHandle": "token",
+      "target": "thinking-off",
+      "targetHandle": "token",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "thinking-off-feedback-thinking-off-out-feedback",
+      "source": "thinking-off",
+      "sourceHandle": "feedback",
+      "target": "thinking-off-out",
+      "targetHandle": "feedback",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "thinking-off-control-thinking-off-out-control",
+      "source": "thinking-off",
+      "sourceHandle": "control",
+      "target": "thinking-off-out",
+      "targetHandle": "control",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "thinking-off-out-control-status-out-taskDecision",
+      "source": "thinking-off-out",
+      "sourceHandle": "control",
+      "target": "status-out",
+      "targetHandle": "taskDecision",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "observation-sessionId-thinking-off-out-sessionId",
+      "source": "observation",
+      "sourceHandle": "sessionId",
+      "target": "thinking-off-out",
+      "targetHandle": "sessionId",
+      "data": {
+        "type": "string"
       }
     }
   ],

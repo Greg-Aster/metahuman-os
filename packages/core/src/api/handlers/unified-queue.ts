@@ -224,6 +224,24 @@ export async function handleCancelQueueExecution(req: UnifiedRequest): Promise<U
   } catch (error) { return failure((error as Error).message); }
 }
 
+export async function handleConfirmQueueCandidate(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authError = requireUser(req.user);
+  if (authError) return authError;
+  if (req.user.role !== 'owner') return failure('Owner confirmation required', 403);
+  const executionId = req.params?.id;
+  const body = req.body;
+  if (!executionId || body?.action !== 'confirm_person_candidate' || body.confirmCandidate !== true
+    || body.resume !== true || typeof body.sessionId !== 'string' || !body.sessionId
+    || typeof body.candidateFrame !== 'string' || !body.candidateFrame) return failure('Explicit candidate and resume confirmation required', 400);
+  const system = getQueueSystem();
+  if (!system.getExecutions(req.user.username).some(record => record.executionId === executionId)) return failure('Execution not found', 404);
+  try {
+    const result = await system.confirmPersonCandidate(req.user.username, executionId, body);
+    system.recordActivity(req.user.username);
+    return success({ success: true, ...result, snapshot: queueSnapshot(req.user) }, 202);
+  } catch (error) { return failure((error as Error).message, 409); }
+}
+
 export async function handleGetQueueTask(req: UnifiedRequest): Promise<UnifiedResponse> {
   const authError = requireUser(req.user);
   if (authError) return authError;
@@ -249,7 +267,7 @@ export async function handleTriggerAgent(req: UnifiedRequest): Promise<UnifiedRe
   if (authError) return authError;
   const agentId = req.params?.agentId || req.params?.id || req.body?.agentId;
   if (!agentId) return failure('Missing agentId', 400);
-  if (req.user.role !== 'owner' && agentId !== 'profile-sync') {
+  if (req.user.role !== 'owner' && agentId !== 'profile-sync' && agentId !== 'environment-training-trainer') {
     return failure('Only the owner may trigger this agent', 403);
   }
   const args = Array.isArray(req.body?.args)
@@ -321,9 +339,15 @@ export async function handleQueueStream(req: UnifiedRequest): Promise<UnifiedRes
         while (pending.length > 0) yield pending.shift()!;
         if (readFailed) return;
         await new Promise<void>(resolve => {
-          const timer = setTimeout(resolve, 15_000);
-          wake = () => { clearTimeout(timer); resolve(); };
-          req.signal?.addEventListener('abort', wake, { once: true });
+          const finish = () => {
+            clearTimeout(timer);
+            req.signal?.removeEventListener('abort', finish);
+            resolve();
+          };
+          const timer = setTimeout(finish, 15_000);
+          wake = finish;
+          req.signal?.addEventListener('abort', finish, { once: true });
+          if (req.signal?.aborted) finish();
         });
         if (pending.length === 0 && !req.signal?.aborted) yield ': heartbeat\n\n';
       }
@@ -384,9 +408,15 @@ export async function handleQueueTaskStream(req: UnifiedRequest): Promise<Unifie
         task = manager.getTask(streamTaskId);
         if (!task || taskStatus(task) === 'completed' || taskStatus(task) === 'failed') return;
         await new Promise<void>(resolve => {
-          const timer = setTimeout(resolve, 15_000);
-          wake = () => { clearTimeout(timer); resolve(); };
-          req.signal?.addEventListener('abort', wake, { once: true });
+          const finish = () => {
+            clearTimeout(timer);
+            req.signal?.removeEventListener('abort', finish);
+            resolve();
+          };
+          const timer = setTimeout(finish, 15_000);
+          wake = finish;
+          req.signal?.addEventListener('abort', finish, { once: true });
+          if (req.signal?.aborted) finish();
         });
         if (pending.length === 0 && !req.signal?.aborted) yield ': heartbeat\n\n';
       }

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
-  import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
   import { get } from 'svelte/store';
   import { isOwner } from '../stores/security-policy';
   import BodyConnectionSelector from './BodyConnectionSelector.svelte';
@@ -103,7 +102,7 @@
   }
 
   let connected = false;
-  let eventSourceHandle: ConnectionHandle | null = null;
+  let eventSourceHandle: EventSource | null = null;
   let runningAgents: AgentCard[] = [];
   let recentCompletions: AgentCard[] = [];
   let recentFailures: AgentCard[] = [];
@@ -408,36 +407,28 @@
   onMount(async () => {
     if (!get(isOwner)) return;
 
-    eventSourceHandle = connectionPool.request({
-      id: 'agent-monitor-stream',
-      name: 'Agent Monitor Stream',
-      url: '/api/monitor/stream',
-      priority: ConnectionPriority.MEDIUM,
-      viewDependency: 'chat',
-      defer: true,
-      onOpen: () => {
-        connected = true;
-      },
-      onClose: () => {
-        connected = false;
-      },
-      onMessage: (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'connected') {
-            connected = true;
-          } else if (data.type === 'snapshot' || data.type === 'metrics') {
-            applyPayload(data);
-          }
-        } catch (err) {
-          console.error('[AgentMonitor] Failed to parse SSE event:', err, 'Event data:', event.data);
+    eventSourceHandle = new EventSource('/api/monitor/stream');
+    eventSourceHandle.onopen = () => {
+      connected = true;
+    };
+    eventSourceHandle.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'error') {
+          showFeedback('error', data.error);
+        } else if (data.type === 'connected') {
+          connected = true;
+        } else if (data.type === 'snapshot' || data.type === 'metrics') {
+          applyPayload(data);
         }
-      },
-      onError: () => {
-        connected = false;
-        void refreshSnapshot().catch(() => {});
-      },
-    });
+      } catch (err) {
+        console.error('[AgentMonitor] Failed to parse SSE event:', err, 'Event data:', event.data);
+      }
+    };
+    eventSourceHandle.onerror = () => {
+      connected = false;
+      void refreshSnapshot().catch(() => {});
+    };
 
     try {
       await refreshSnapshot();

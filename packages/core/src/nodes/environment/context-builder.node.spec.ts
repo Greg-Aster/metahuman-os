@@ -326,7 +326,7 @@ test('program steps remain restricted to advertised commands, generation and fee
     assert.deepEqual(steps.map((step: any) => step.properties.kind.const), expectedKinds, JSON.stringify(actions))
     const action = steps.find((step: any) => step.properties.kind.const === 'action')?.properties.action
     const choices = action ? action.anyOf ?? [action] : []
-    assert.deepEqual(choices.flatMap((choice: any) => choice.properties.type.enum).sort(), [...expectedActions].sort())
+    assert.deepEqual([...new Set(choices.flatMap((choice: any) => choice.properties.type.enum))].sort(), [...expectedActions].sort())
     for (const choice of choices) {
       assert.equal(choice.additionalProperties, false)
       if (choice.properties.command) assert.deepEqual(choice.properties.command.enum, robotCommands)
@@ -400,3 +400,47 @@ test('idle selected body has unknown posture unless posture evidence is supplied
   assert.equal(envelope.currentEnvironment.state.gateway.selectedRobot.posture, null);
   assert.equal(envelope.currentEnvironment.state.gateway.selectedRobot.activeWalk, null);
 });
+
+test('selected Robot Status retains bounded history, summaries, and source times', async () => {
+  const status = { ...robotStatus, sourceUpdatedAt: { telemetry: '2026-09-02T11:59:00Z', robotHistory: '2026-09-02T11:58:00Z' },
+    history: [{ updatedAt: '2026-09-02T11:58:00Z', situationalSummary: 'Previously reported situation', lastActionStatus: 'completed' }],
+    situation: { ...robotStatus.situation, situationalSummary: 'Reported situation', environmentDescription: 'Earlier description' } }
+  const result = await environmentContextBuilderNode.execute({ userInstruction: 'Current request', robotStatus: status,
+    routingAnalysis: { needsResponse: true, needsAction: false, taskContext: ['robotStatus'], conversationContext: [] },
+  }, {}, { purpose: 'task' })
+  const selected = JSON.parse(result.message).robotStatus
+  assert.deepEqual(selected.history, status.history)
+  assert.deepEqual(selected.sourceUpdatedAt, status.sourceUpdatedAt)
+  assert.equal(selected.situation.situationalSummary, 'Reported situation')
+  assert.equal(selected.situation.environmentDescription, 'Earlier description')
+})
+
+test('conversation excludes images selected only for task reasoning', async () => {
+  const result = await environmentContextBuilderNode.execute({ userInstruction: 'Current request', sourceObservation: observation(),
+    images: [{ type: 'image_url', image_url: { url: TEST_JPEG } }], frames: [observation().visual],
+    routingAnalysis: { needsResponse: true, needsAction: false, taskContext: ['vision'], conversationContext: [] },
+    selectedTask: { program: null, taskDecision: null },
+  }, {}, { purpose: 'conversation' })
+  assert.equal(typeof result.messages[1].content, 'string')
+  assert.deepEqual(JSON.parse(result.message).currentEnvironment.visualFrames, [])
+})
+
+test('an interrupted program hands off before joining conversation recall', async () => {
+  const result = await environmentContextBuilderNode.execute({ program: { steps: [] }, taskResult: { done: false },
+    memoryWork: { effectId: 'pending' }, routingAnalysis: { needsResponse: true, needsAction: true, taskContext: [], conversationContext: ['memory'] },
+  }, {}, { purpose: 'conversation' })
+  assert.deepEqual(result, {})
+})
+
+test('recall receipts already consumed by task execution can be reused without another event wait', async () => {
+  const result = await environmentContextBuilderNode.execute({ userInstruction: 'Current request', sourceObservation: observation(),
+    memoryWork: { effectId: 'recall-effect', threshold: .65 },
+    routingAnalysis: { needsResponse: true, needsAction: false, taskContext: [], conversationContext: ['memory'] },
+    selectedTask: { program: null, taskDecision: null },
+  }, { graphExecution: {
+    events: () => [{ eventId: 'receipt', kind: 'work_result', payload: { effectId: 'recall-effect', result: {
+      state: 'completed', result: [{ score: .9, item: { id: 'memory', text: 'Earlier receipt', memoryType: 'conversation' } }],
+    } } }], pendingEvents: () => [], waitForEvent: () => { throw new Error('Receipt must be reused') },
+  } }, { purpose: 'conversation' })
+  assert.equal(JSON.parse(result.message).memories[0].content, 'Earlier receipt')
+})

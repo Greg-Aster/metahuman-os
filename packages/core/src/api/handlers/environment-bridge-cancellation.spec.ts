@@ -370,7 +370,7 @@ test('interrupted speech cancels through the adapter before releasing ownership 
       store.acknowledgeAdmission(effectId, task.id);
       assert.ok(manager.claim(task.id));
       const next = manager.enqueue({ type: 'environment_command', handler: 'environment.command', username,
-        resource: `environment:${sessionId}`, input: { id: randomUUID(), sessionId, type: 'speak' } });
+        resource: `environment:${sessionId}`, input: { id: randomUUID(), sessionId, type: kind } });
       const feedback = { id: randomUUID(), actionId: input.id, timestamp: new Date().toISOString(),
         type: 'outcome_unknown' as const, message: 'Adapter disconnected before acceptance',
         data: { producer: 'environment-bridge', delivery: { stage: 'acceptance', outcome: 'unknown' } } };
@@ -379,7 +379,7 @@ test('interrupted speech cancels through the adapter before releasing ownership 
       assert.equal(manager.getTask(task.id)?.state, 'waiting');
       assert.equal(Boolean(manager.getTask(task.id)?.cancellationRequestedAt), kind === 'speak');
       assert.equal(manager.getNextExecutable(candidate => candidate.id === next.id), null,
-        'An uncertain delivery is not permission to release body ownership');
+        'An uncertain delivery is not permission to release ownership of the same physical channel');
       assert.equal(store.dispatch(effectId).status, 'outcome_unknown');
       manager.importState(loadQueueState()!);
       assert.equal(bridge.pendingEnvironmentCancellations(sessionId).length, kind === 'speak' ? 1 : 0);

@@ -119,7 +119,7 @@ export interface PropertySchema {
   /** Semantic text shown when an empty value has useful behavior. */
   emptyLabel?: string;
   /** Optional editor-owned suggestion provider for string settings. */
-  suggestions?: 'environment-sessions' | 'models';
+  suggestions?: 'environment-sessions' | 'environment-expressions';
   min?: number;
   max?: number;
   step?: number;

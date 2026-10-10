@@ -162,9 +162,11 @@ export interface BodyLease {
   bodyId: string;
   executionId: string;
   generation: number;
+  /** Speaker and display ownership are independent from movement ownership. */
+  channel?: 'speech' | 'display';
 }
 
-/** The file was atomically published, but its durability could not be confirmed. */
+/** The ledger commit may be published, but its durability could not be confirmed. */
 export class WorkCommitUncertainError extends Error {
   constructor(message: string) { super(message); this.name = 'WorkCommitUncertainError'; }
 }
@@ -223,6 +225,8 @@ export interface QueuedTask {
   input: Record<string, any>;
   result?: Record<string, any>;
   error?: WorkError;
+  /** Terminal failure still awaiting durable delivery to the profile's System Buffer. */
+  failureNoticePending?: boolean;
   waitingReason?: string;
   wakeAt?: string;
   leaseOwner?: string;

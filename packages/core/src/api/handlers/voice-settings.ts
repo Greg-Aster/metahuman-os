@@ -660,6 +660,8 @@ export async function handleGetVoiceSettings(req: UnifiedRequest): Promise<Unifi
           canConfigureDevices: user.role === 'owner',
           kokoroDeviceLockedByEnvironment: isVoiceServiceDeviceEnvironmentControlled('kokoro'),
           whisperDeviceLockedByEnvironment: isVoiceServiceDeviceEnvironmentControlled('whisper'),
+          kokoroActiveDevice: kokoroStatus.health?.device ?? null,
+          kokoroFallbackReason: kokoroStatus.health?.fallback_reason ?? null,
         },
         provider: providerForUI,
         outputTarget: config.tts.outputTarget,
@@ -750,8 +752,8 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
 
     const requestedKokoroDevice = kokoro?.device;
     const requestedWhisperDevice = stt?.device;
-    if (requestedKokoroDevice !== undefined && requestedKokoroDevice !== 'cpu' && requestedKokoroDevice !== 'cuda') {
-      return errorResponse('Kokoro device must be cpu or cuda', 400);
+    if (requestedKokoroDevice !== undefined && requestedKokoroDevice !== 'cpu' && requestedKokoroDevice !== 'cuda' && requestedKokoroDevice !== 'auto') {
+      return errorResponse('Kokoro device must be cpu, cuda, or auto', 400);
     }
     if (requestedWhisperDevice !== undefined && requestedWhisperDevice !== 'cpu' && requestedWhisperDevice !== 'cuda') {
       return errorResponse('Whisper device must be cpu or cuda', 400);
@@ -980,14 +982,17 @@ export async function handleSaveVoiceSettings(req: UnifiedRequest): Promise<Unif
         whisperRestarted ? 'Whisper' : undefined,
       ].filter(Boolean);
       const deviceMessage = restartedServices.length > 0
-        ? ` ${restartedServices.join(' and ')} restarted on the selected processing device.`
+        ? ` ${restartedServices.join(' and ')} restarted with the selected processing device setting.`
         : '';
       const appliedKokoroConfig = getVoiceServiceConfig('kokoro');
       const appliedWhisperConfig = getVoiceServiceConfig('whisper');
+      const appliedKokoroStatus = await getVoiceServiceStatus('kokoro');
       return successResponse({
           success: true,
           provider: responseProvider,
           kokoroDevice: appliedKokoroConfig.device,
+          kokoroActiveDevice: appliedKokoroStatus.health?.device ?? null,
+          kokoroFallbackReason: appliedKokoroStatus.health?.fallback_reason ?? null,
           whisperDevice: appliedWhisperConfig.device,
           whisperComputeType: appliedWhisperConfig.computeType,
           message: responseProvider === 'sovits'

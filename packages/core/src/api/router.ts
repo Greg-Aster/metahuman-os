@@ -160,6 +160,7 @@ import {
   handleClearQueueTasks,
   handleDeleteQueueTask,
   handleCancelQueueExecution,
+  handleConfirmQueueCandidate,
   handleEnqueueTask,
   handleSubmitCoordinatorWork,
   handleGetQueueStatus,
@@ -190,6 +191,7 @@ import { handleGetCognitiveGraph, handleCreateCognitiveGraph, handleDeleteCognit
 import { handleListCognitiveGraphs } from './handlers/cognitive-graphs.js';
 import { handleGetGraphTraces } from './handlers/graph-traces.js';
 import { handleExecuteGraph } from './handlers/execute-graph.js';
+import { handleExecuteGraphStream } from './handlers/execute-graph-stream.js';
 import { handleGetNodeSchemas } from './handlers/node-schemas.js';
 import { handleGetPersonaCoreManage, handleUpdatePersonaCoreManage } from './handlers/persona-core-manage.js';
 import { handleGetPersonaFacetsManage, handleUpdatePersonaFacetsManage } from './handlers/persona-facets-manage.js';
@@ -234,6 +236,7 @@ import {
   handleEnvironmentBridgeObservation,
   handleEnvironmentBridgeStatus,
   handleEnvironmentBridgeSpeechSettings,
+  handleEnvironmentBridgeBehaviorSettings,
   handleEnvironmentBridgeStream,
   handleEnvironmentBridgeTelemetry,
 } from './handlers/environment-bridge.js';
@@ -241,6 +244,7 @@ import { handleGetChatHistory } from './handlers/chat-history.js';
 import { handleGetSimpleBuffer } from './handlers/buffer.js';
 import { handleTtsGenerate, handleTtsStatus } from './handlers/tts.js';
 import { handleGetAllMemories } from './handlers/memories-all.js';
+import { handleGetEnvironmentTraining, handleReviewEnvironmentTraining } from './handlers/environment-training.js';
 import { handleGetIndex, handleBuildIndex } from './handlers/vector-index.js';
 import { handleFileOperation, handleFileOperationsStatus } from './handlers/file-operations.js';
 import { handleGetModelRegistry, handleAssignModelRole, handleUpdateModelSettings } from './handlers/model-registry.js';
@@ -428,17 +432,6 @@ import {
   handleRespondToOperatorProposal,
   handleReviewOperatorProposal,
 } from './handlers/operator-proposals.js';
-import {
-  handleCreateWindowSession,
-  handleGetWindowSessionIndex,
-  handleValidateWindowSession,
-  handleWindowHeartbeat,
-  handlePatchWindowSession,
-  handleCloseWindowSession,
-  handleListWindows,
-  handleWindowStats,
-} from './handlers/window-session.js';
-import { handleWindowSessionStream } from './handlers/window-session-stream.js';
 import { handleGetServerInfo } from './handlers/server-info.js';
 import { handleGetPauseState, handleUpdatePauseState } from './handlers/pause-state.js';
 
@@ -497,18 +490,6 @@ const routes: RouteDefinition[] = [
   { method: 'DELETE', pattern: '/api/profile-sync/config', handler: handleDeleteProfileSyncConfig, requiresAuth: true },
   { method: 'GET', pattern: /^\/api\/memory\/sync\/([^\/]+)$/, handler: handleGetMemorySyncItem, requiresAuth: true },
   { method: 'DELETE', pattern: /^\/api\/memory\/sync\/([^\/]+)$/, handler: handleDeleteMemorySyncItem, requiresAuth: true },
-
-  // Window Sessions (Multi-window support)
-  { method: 'POST', pattern: '/api/window-session', handler: handleCreateWindowSession, requiresAuth: true },
-  { method: 'GET', pattern: '/api/window-session', handler: handleGetWindowSessionIndex, requiresAuth: true },
-  { method: 'DELETE', pattern: '/api/window-session', handler: handleCloseWindowSession, requiresAuth: true },
-  { method: 'GET', pattern: '/api/window-session/stream', handler: handleWindowSessionStream, requiresAuth: true },
-  { method: 'GET', pattern: /^\/api\/window-session\/list$/, handler: handleListWindows, requiresAuth: true },
-  { method: 'GET', pattern: /^\/api\/window-session\/stats$/, handler: handleWindowStats, requiresAuth: true },
-  { method: 'GET', pattern: /^\/api\/window-session\/([^/]+)$/, handler: handleValidateWindowSession, requiresAuth: true },
-  { method: 'PATCH', pattern: /^\/api\/window-session\/([^/]+)$/, handler: handlePatchWindowSession, requiresAuth: true },
-  { method: 'POST', pattern: /^\/api\/window-session\/([^/]+)\/heartbeat$/, handler: handleWindowHeartbeat, requiresAuth: true },
-  { method: 'DELETE', pattern: /^\/api\/window-session\/([^/]+)$/, handler: handleCloseWindowSession, requiresAuth: true },
 
   // Memories
   { method: 'POST', pattern: '/api/capture', handler: handleCapture, requiresAuth: true },
@@ -609,6 +590,7 @@ const routes: RouteDefinition[] = [
 
   // Environment bridge
   { method: 'POST', pattern: '/api/environment-bridge/speech-settings', handler: handleEnvironmentBridgeSpeechSettings, public: true, publicReason: 'service-token authenticated speech destination preferences for the active owner' },
+  { method: 'POST', pattern: '/api/environment-bridge/behavior-settings', handler: handleEnvironmentBridgeBehaviorSettings, public: true, publicReason: 'service-token authenticated robot control for the active owner' },
   { method: 'GET', pattern: '/api/environment-bridge/status', handler: handleEnvironmentBridgeStatus, requiresAuth: true },
   { method: 'GET', pattern: '/api/environment-bridge/diagnostics', handler: handleEnvironmentBridgeDiagnostics, requiresAuth: true, guard: 'owner' },
   { method: 'GET', pattern: '/api/environment-bridge/diagnostics/media', handler: handleEnvironmentBridgeDiagnosticMedia, requiresAuth: true, guard: 'owner' },
@@ -845,6 +827,7 @@ const routes: RouteDefinition[] = [
   { method: 'GET', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)$/, handler: handleGetQueueTask, requiresAuth: true },
   { method: 'DELETE', pattern: /^\/api\/unified-queue\/tasks\/([^\/]+)$/, handler: handleDeleteQueueTask, requiresAuth: true },
   { method: 'DELETE', pattern: /^\/api\/unified-queue\/executions\/([^\/]+)$/, handler: handleCancelQueueExecution, requiresAuth: true },
+  { method: 'POST', pattern: /^\/api\/unified-queue\/executions\/([^\/]+)$/, handler: handleConfirmQueueCandidate, requiresAuth: true },
   { method: 'GET', pattern: '/api/queue-stream', handler: handleQueueStream, requiresAuth: true },
 
   // RunPod
@@ -905,6 +888,7 @@ const routes: RouteDefinition[] = [
   // Graph Execution
   { method: 'GET', pattern: '/api/graph-traces', handler: handleGetGraphTraces, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/execute-graph', handler: handleExecuteGraph, requiresAuth: true, guard: 'owner' },
+  { method: 'POST', pattern: '/api/execute-graph-stream', handler: handleExecuteGraphStream },
 
   // Node Schemas
   { method: 'GET', pattern: '/api/node-schemas', handler: handleGetNodeSchemas },
@@ -1030,6 +1014,8 @@ const routes: RouteDefinition[] = [
 
   // Memories All (memory browser)
   { method: 'GET', pattern: '/api/memories_all', handler: handleGetAllMemories, requiresAuth: true },
+  { method: 'GET', pattern: '/api/environment-training', handler: handleGetEnvironmentTraining, requiresAuth: true },
+  { method: 'POST', pattern: '/api/environment-training/review', handler: handleReviewEnvironmentTraining, requiresAuth: true },
 
   // Vector Index
   { method: 'GET', pattern: '/api/index', handler: handleGetIndex, requiresAuth: true },
@@ -1161,11 +1147,6 @@ function extractPathParams(path: string, pattern: string | RegExp): Record<strin
     const segments = path.split('/').filter(Boolean);
     if (segments[0] === 'api' && segments[1] === 'agency' && segments[2] === 'desires' && segments.length >= 4) {
       params.id = segments[3];
-      return params;
-    }
-    if (segments[0] === 'api' && segments[1] === 'window-session' && segments.length >= 3) {
-      params.windowId = segments[2];
-      params.id = segments[2];
       return params;
     }
     if (segments[0] === 'api' && segments[1] === 'unified-queue' && segments[2] === 'tasks' && segments.length >= 4) {

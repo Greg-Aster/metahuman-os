@@ -1,5 +1,10 @@
 import type { EnvironmentObservation, EnvironmentNormalizedBox } from './types.js';
 
+export type PersonIdentityEstimate =
+  | { trackId: string; state: 'unknown' }
+  | { trackId: string; state: 'face_match'; personId: string; name: string; faceAgeMs: number; similarity: number }
+  | { trackId: string; state: 'tracked'; personId: string; name: string; faceAgeMs: number };
+
 /** Recognition estimates tied to one host-received frame, not physical proof. */
 export interface EnvironmentPerception {
   version: 1;
@@ -13,7 +18,7 @@ export interface EnvironmentPerception {
   backend: string;
   model: string;
   summary: string;
-  objects: Array<{ label: string; score?: number; box?: EnvironmentNormalizedBox }>;
+  objects: Array<{ label: string; score?: number; box?: EnvironmentNormalizedBox; identity?: PersonIdentityEstimate }>;
   uncertainties: string[];
 }
 
@@ -43,6 +48,29 @@ function unit(value: unknown): number {
   return value;
 }
 
+function personIdentity(value: unknown): PersonIdentityEstimate {
+  const item = record(value, 'person identity');
+  const state = item.state;
+  if (!['unknown', 'face_match', 'tracked'].includes(state as string)) throw new Error('unsupported identity estimate state');
+  const fields = state === 'unknown' ? ['trackId', 'state'] : ['trackId', 'state', 'personId', 'name', 'faceAgeMs'];
+  if (state === 'face_match') fields.push('similarity');
+  if (Object.keys(item).length !== fields.length || Object.keys(item).some(key => !fields.includes(key))) {
+    throw new Error('identity fields do not match its evidence state');
+  }
+  const trackId = text(item.trackId, 'track id', 80);
+  if (state === 'unknown') return { trackId, state };
+  const faceAgeMs = item.faceAgeMs;
+  if (typeof faceAgeMs !== 'number' || !Number.isFinite(faceAgeMs) || faceAgeMs < 0 || faceAgeMs > 3000
+      || (state === 'face_match' && faceAgeMs !== 0)) throw new Error('invalid face evidence age');
+  const common = { trackId, personId: text(item.personId, 'person id', 80), name: text(item.name, 'person name', 80), faceAgeMs };
+  if (state === 'tracked') return { ...common, state };
+  const similarity = item.similarity;
+  if (typeof similarity !== 'number' || !Number.isFinite(similarity) || similarity < -1 || similarity > 1) {
+    throw new Error('invalid face cosine similarity');
+  }
+  return { ...common, state: 'face_match', similarity };
+}
+
 export function normalizeEnvironmentPerception(value: unknown): EnvironmentPerception {
   const item = record(value, 'perception');
   const fields = ['version', 'robotId', 'epoch', 'gatewayInstance', 'frameCounter', 'timeBasis',
@@ -63,7 +91,7 @@ export function normalizeEnvironmentPerception(value: unknown): EnvironmentPerce
   }
   const objects = item.objects.map(value => {
     const object = record(value, 'recognized object');
-    if (Object.keys(object).some(key => !['label', 'score', 'box'].includes(key))) {
+    if (Object.keys(object).some(key => !['label', 'score', 'box', 'identity'].includes(key))) {
       throw new Error('recognized object contains unsupported fields');
     }
     const label = text(object.label, 'object label', 80);
@@ -78,7 +106,10 @@ export function normalizeEnvironmentPerception(value: unknown): EnvironmentPerce
         throw new Error('object box must have visible area within the frame');
       }
     }
-    return { label, ...(object.score !== undefined ? { score: unit(object.score) } : {}), ...(box ? { box } : {}) };
+    const identity = object.identity === undefined ? undefined : personIdentity(object.identity);
+    if (identity && (label !== 'person' || !box)) throw new Error('identity requires a localized person');
+    return { label, ...(object.score !== undefined ? { score: unit(object.score) } : {}), ...(box ? { box } : {}),
+      ...(identity ? { identity } : {}) };
   });
   return {
     version: 1, timeBasis: 'gateway_receipt', robotId: text(item.robotId, 'robotId', 160),

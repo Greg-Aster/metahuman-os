@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Curator LLM Node
  * Generates conversational exchanges from raw memories
@@ -370,9 +371,10 @@ export const CuratorLLMNode: NodeDefinition = defineNode({
       step: 1000,
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'curator',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     systemPromptTemplate: {
       type: 'text_multiline',

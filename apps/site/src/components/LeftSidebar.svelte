@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get } from 'svelte/store';
-  import { activeView, statusStore, statusRefreshTrigger, yoloModeStore } from '../stores/navigation';
+  import { activeView, statusStore, statusRefreshTrigger, yoloModeStore, graphEditorHref } from '../stores/navigation';
   import { currentMode, isOwner } from '../stores/security-policy';
   import { pendingCount, loadApprovals } from '../stores/approvals';
   import { apiFetch } from '../lib/client/api-config';
   import SyncStatus from './SyncStatus.svelte';
+  import { MODEL_ROLE_OPTIONS } from '@metahuman/core/model-roles';
+  import { buildModelRoleSections, type ModelRolePresentation, type WorkflowModelSummary } from '../lib/client/model-role-presentation';
 
   interface MenuItem {
     id: string;
@@ -81,6 +82,8 @@
 
   let modelInfo: ModelStatus = null;
   let modelRoles: Record<string, ModelRoleInfo> = {};
+  let resolvedRoleModels: Record<string, ModelRoleInfo> = {};
+  let workflowModels: WorkflowModelSummary[] = [];
   let hasModelRegistry = false;
   let taskTotals = { active: 0, inProgress: 0 };
 
@@ -138,10 +141,6 @@
           inProgress: data?.tasks?.byStatus?.in_progress ?? 0,
         };
         modelInfo = data?.model || null;
-        if (!modelRegistryReady) {
-          modelRoles = data?.modelRoles || {};
-          hasModelRegistry = Object.keys(modelRoles).length > 0;
-        }
         loading = false;
 
         // Populate cloud models from unified status endpoint (works on mobile too)
@@ -420,27 +419,8 @@
     bigBrother: AvailableModel[];
   }
 
-  interface LocalModelInfo {
-    id: string;
-    name: string;
-    provider: 'llama-cpp' | 'ollama' | 'vllm' | 'remote';
-    locked: boolean;
-  }
-
   type BackendType = 'llama-cpp' | 'ollama' | 'vllm' | 'remote' | 'auto';
   type ModelConfigurationMode = 'dual' | 'agent' | 'emulation' | 'environment';
-
-  type ModelRolePresentation = {
-    role: string;
-    label: string;
-    description: string;
-  };
-
-  type ModelRoleSection = {
-    label?: string;
-    description: string;
-    roles: ModelRolePresentation[];
-  };
 
   const MODEL_CONFIGURATION_MODES: Array<{
     id: ModelConfigurationMode;
@@ -452,60 +432,15 @@
     { id: 'environment', label: 'Environment' },
   ];
 
-  // Presentation groups only: each control still reads and writes its existing
-  // runtime role, so this status UI does not redefine model routing.
-  const MODEL_ROLE_SECTIONS: ModelRoleSection[] = [
-    {
-      label: 'Agent',
-      description: 'Higher-accuracy model work for reasoning, organization, and human-context analysis.',
-      roles: [
-        {
-          role: 'curator',
-          label: 'Reasoning',
-          description: 'Accurate analysis, organization, summarization, and knowledge curation.',
-        },
-        {
-          role: 'psychotherapist',
-          label: 'Human insight',
-          description: 'Mood, psychological context, and interpersonal interpretation.',
-        },
-      ],
-    },
-    {
-      description: 'Conversation and personality-based decisions, optionally using a LoRA or merged persona model.',
-      roles: [{
-        role: 'persona',
-        label: 'Persona',
-        description: 'Conversation and personality-based decisions, optionally using a LoRA or merged persona model.',
-      }],
-    },
-    {
-      description: 'Fast bounded decisions such as choosing an environment reply or action.',
-      roles: [{
-        role: 'environmentActionSelector',
-        label: 'Fast decisions',
-        description: 'Fast bounded decisions such as choosing an environment reply or action.',
-      }],
-    },
-    {
-      description: 'Coordinates routing, structured plans, commands, and multi-step work.',
-      roles: [{
-        role: 'orchestrator',
-        label: 'Orchestrator',
-        description: 'Coordinates routing, structured plans, commands, and multi-step work.',
-      }],
-    },
-  ];
-  const CONFIGURABLE_MODEL_ROLES = MODEL_ROLE_SECTIONS.flatMap(section => (
-    section.roles.map(role => role.role)
-  ));
+  const CONFIGURABLE_MODEL_ROLES = MODEL_ROLE_OPTIONS.map(option => option.value);
+  $: modelRoleSections = buildModelRoleSections(workflowModels, modelConfigurationMode);
 
   function isModelConfigurationMode(value: string): value is ModelConfigurationMode {
     return MODEL_CONFIGURATION_MODES.some(mode => mode.id === value);
   }
 
   function modelRolePresentation(role: string): ModelRolePresentation | undefined {
-    return MODEL_ROLE_SECTIONS
+    return modelRoleSections
       .flatMap(section => section.roles)
       .find(presentation => presentation.role === role);
   }
@@ -533,6 +468,7 @@
 
   function modelRoleTooltip(role: string, info: ModelRoleInfo): string {
     const lines = [modelRoleDescription(role), '', `Model: ${modelDisplayName(role, info)}`];
+    if (info.modelId) lines.push(`Assignment: ${info.modelId}`);
     const adapters = modelAdapterNames(role, info);
     if (adapters.length > 0) lines.push(`LoRA: ${adapters.join(', ')}`);
     lines.push('', 'Click to change this assignment.');
@@ -544,7 +480,6 @@
   let roleAssignments: Record<string, string> = {};
   let modelDropdownOpen: Record<string, boolean> = {};
   let loadingModelRegistry = false;
-  let modelRegistryReady = false;
   let modelRegistryRequestId = 0;
   let modelConfigurationMode: ModelConfigurationMode = 'dual';
   let modelConfigurationError = '';
@@ -557,7 +492,6 @@
   let restartInProgress = false;
 
   let activeBackend: BackendType = 'ollama';
-  let localModel: LocalModelInfo | null = null;
 
   let modelCategories: ModelCategories = {
     local: [],
@@ -643,6 +577,10 @@
     const next: Record<string, ModelRoleInfo> = {};
     for (const role of CONFIGURABLE_MODEL_ROLES) {
       const modelId = assignments[role];
+      if (resolvedRoleModels[role]) {
+        next[role] = { ...resolvedRoleModels[role], modelId };
+        continue;
+      }
       if (!modelId) {
         next[role] = {
           needsConfig: true,
@@ -685,6 +623,8 @@
     const requestId = ++modelRegistryRequestId;
     loadingModelRegistry = true;
     modelConfigurationError = '';
+    workflowModels = [];
+    modelRoles = {};
 
     try {
       const queryParams = `?cognitiveMode=${encodeURIComponent(mode)}&_t=${Date.now()}`;
@@ -695,9 +635,10 @@
 
       if (response.ok && data.success) {
         availableModels = data.availableModels || [];
+        resolvedRoleModels = data.resolvedRoles || {};
+        workflowModels = data.workflowModels || [];
         roleAssignments = { ...(data.roleAssignments || {}) };
         activeBackend = data.activeBackend || activeBackend;
-        localModel = data.localModel || null;
 
         if (data.modelCategories) {
           modelCategories = {
@@ -710,12 +651,11 @@
 
         const seen = new Map<string, AvailableModel>();
         for (const model of availableModels) {
-          const key = `${model.provider}\u0000${model.model}`;
+          const key = JSON.stringify([model.provider, model.model, model.options?.endpoint, model.adapters, model.options?.lora]);
           if (!seen.has(key)) seen.set(key, model);
         }
         uniqueModels = Array.from(seen.values());
         syncModelRoleDisplay(roleAssignments);
-        modelRegistryReady = true;
       } else {
         throw new Error(data.error || `Failed to load ${mode}-mode model assignments`);
       }
@@ -736,26 +676,6 @@
     modelConfigurationNotice = '';
     closeAllModelDropdowns();
     void loadModelRegistry(mode);
-  }
-
-  function updateModelRoleLocally(role: string, modelId: string) {
-    const selectedModel = findAssignedModel(modelId);
-    if (!selectedModel) {
-      return;
-    }
-
-    modelRoles = {
-      ...modelRoles,
-      [role]: {
-        modelId: selectedModel.id,
-        provider: selectedModel.provider,
-        model: selectedModel.model,
-        capabilities: selectedModel.capabilities ?? [],
-        adapters: selectedModel.adapters ?? [],
-        baseModel: selectedModel.baseModel ?? null,
-        temperature: selectedModel.options?.temperature,
-      },
-    };
   }
 
   async function refreshStatus(reason = 'manual') {
@@ -799,13 +719,11 @@
       const result = await response.json();
 
       if (response.ok && result.success) {
-        roleAssignments = { ...roleAssignments, [role]: modelId };
         modelDropdownOpen[role] = false;
         modelDropdownOpen = { ...modelDropdownOpen };
-        updateModelRoleLocally(role, modelId);
         modelConfigurationNotice = `${modelRoleLabel(role)} saved for ${MODEL_CONFIGURATION_MODES.find(item => item.id === mode)?.label || mode}.`;
         void refreshStatus('model assignment');
-        await loadModelRegistry(mode);
+        await loadModelRegistry();
 
         if (result.needsRestart && modelId.startsWith('vllm-lora.')) {
           pendingLoraName = modelId.replace('vllm-lora.', '');
@@ -925,13 +843,19 @@
   }
 
   onMount(() => {
-    const activeMode = get(currentMode);
-    if (isModelConfigurationMode(activeMode)) modelConfigurationMode = activeMode;
     void fetchCurrentUser();
     loadStatus();
     loadFacets();
     loadTrustOptions();
-    void loadModelRegistry(modelConfigurationMode);
+    let lastActiveMode: string | undefined;
+    const modeUnsubscribe = currentMode.subscribe(activeMode => {
+      if (!isModelConfigurationMode(activeMode) || activeMode === lastActiveMode) return;
+      lastActiveMode = activeMode;
+      modelConfigurationMode = activeMode;
+      modelConfigurationNotice = '';
+      closeAllModelDropdowns();
+      void loadModelRegistry(activeMode);
+    });
     loadApprovals();
 
     const ownerUnsubscribe = isOwner.subscribe(() => {
@@ -943,11 +867,13 @@
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         loadApprovals();
+        void loadModelRegistry();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
+      modeUnsubscribe();
       ownerUnsubscribe();
       if (statusSubscription) {
         statusSubscription();
@@ -1065,24 +991,12 @@
           {/if}
         </div>
 
-        <!-- vLLM Model Name -->
-        {#if localModel && (backendAvailability.vllm.active || backendAvailability.llamaCpp?.active)}
-          <div class="vllm-model-info">
-            <span class="local-model-name">
-              {localModel.name}
-              {#if localModel.locked}
-                <span class="loaded-indicator" title="Currently loaded">✓</span>
-              {/if}
-            </span>
-          </div>
-        {/if}
-
-        {#if hasModelRegistry}
+        {#if hasModelRegistry || loadingModelRegistry || modelConfigurationError}
           <div class="mt-1 rounded border border-white/10 bg-black/20 px-2 py-2">
             <label
               for="model-configuration-mode"
               class="flex items-center justify-between gap-2 text-[0.6875rem] text-gray-400"
-              title="Choose which workflow model assignments to view or edit."
+              title="View configured workflow nodes and edit their role defaults."
             >
               <span>LLM routing profile</span>
               <select
@@ -1110,7 +1024,10 @@
               {modelConfigurationNotice}
             </div>
           {/if}
-          {#each MODEL_ROLE_SECTIONS as section}
+          {#if backendAvailability.bigBrother.enabled}
+            <div class="px-2 py-1 text-[0.6875rem] text-gray-400">Big Brother is enabled; eligible calls follow its configured delegation.</div>
+          {/if}
+          {#each modelRoleSections as section}
             <div class="model-role-section">
               {#if section.label}
                 <div class="model-role-section-heading" title={section.description}>
@@ -1126,7 +1043,7 @@
                     <span class="activity-indicator">
                       <span class="activity-dot"></span>
                     </span>
-                    <span class:agent-subrole={Boolean(section.label)} class="role-name" title={presentation.description}>{presentation.label}</span>
+                    <span class="role-name" title={presentation.description}>{presentation.label}</span>
                     <span class="role-arrow">→</span>
                     {#if info.needsConfig}
                 <button
@@ -1139,7 +1056,9 @@
                   <span class="dropdown-arrow">▼</span>
                 </button>
                     {:else if info.error}
-                <span class="role-model error" title={info.error}>error</span>
+                <button class="role-model error clickable" title={info.error}
+                  on:click|stopPropagation={() => toggleModelDropdown(role)}
+                  disabled={loadingModelRegistry || savingModelRole === role}>select ▼</button>
                     {:else}
                 <button
                   class="role-model clickable"
@@ -1191,6 +1110,9 @@
                               <span class="vllm-badge">image</span>
                             {/if}
                           </span>
+                          {#if model.adapters?.length}
+                            <span class="model-desc" title={model.adapters.join('\n')}>LoRA · {model.id}</span>
+                          {/if}
                         </button>
                       {/each}
                     </div>
@@ -1305,6 +1227,20 @@
                 {/if}
               {/each}
             </div>
+          {/each}
+          <div class="flex items-center justify-between px-2 py-1 text-[0.6875rem] text-gray-400">
+            <a href={graphEditorHref()} target="_blank" rel="noopener noreferrer" class="underline">Inspect workflow roles</a>
+            <button on:click={() => loadModelRegistry()} disabled={loadingModelRegistry}>Refresh</button>
+          </div>
+          {#each workflowModels as workflow (workflow.key)}
+            {#if workflow.error}
+              <div class="px-2 py-1 text-[0.6875rem] text-red-300" role="alert">{workflow.name}: {workflow.error}</div>
+            {/if}
+            {#each workflow.models.filter(binding => binding.error || binding.selection === 'runtime-role') as binding (binding.nodeId)}
+              <div class="px-2 py-1 text-[0.6875rem] text-gray-400" class:text-red-300={Boolean(binding.error)}>
+                {workflow.name} · {binding.label}: {binding.error || 'role supplied at runtime'}
+              </div>
+            {/each}
           {/each}
         {/if}
 

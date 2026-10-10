@@ -366,6 +366,31 @@ function input(overrides: Record<string, unknown> = {}) {
   await engine.stop();
 }
 
+{
+  const manager = new UnifiedQueueManager();
+  let recoveryFinished = false;
+  let releaseRecovery!: () => void;
+  const recovery = new Promise<void>(resolve => { releaseRecovery = resolve; });
+  const engine = new ExecutionEngine({ maintain: async dispatchReady => {
+    dispatchReady();
+    await recovery;
+    recoveryFinished = true;
+  } }, manager);
+  engine.registerHandler('test.echo', async () => {
+    assert.equal(recoveryFinished, false, 'Ready work must run before unrelated recovery completes');
+    return { replied: true };
+  });
+  const task = manager.enqueue(input({ resource: 'environment-conversation' }));
+  engine.start();
+  try {
+    await waitFor(() => manager.getTask(task.id)?.state === 'completed');
+    assert.deepEqual(manager.getTask(task.id)?.result, { replied: true });
+  } finally {
+    releaseRecovery();
+    await engine.stop();
+  }
+}
+
 console.log('work coordinator contract passed');
 eventBus.disconnect();
 fs.rmSync(sleepRuntimeFile, { force: true });

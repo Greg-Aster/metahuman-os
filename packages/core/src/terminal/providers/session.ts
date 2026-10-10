@@ -2,19 +2,19 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import { StringDecoder } from 'node:string_decoder'
 import { ROOT } from '../../path-builder.js'
-import type { EscalationOptions } from '../../escalation-backend.js'
 import { TerminalProcess } from '../process.js'
 import { terminalJobs } from '../paths.js'
 import {
   buildBigBrotherCLIInvocation, parseBigBrotherTerminalEvent, providerLabel,
   type BigBrotherSessionResult, type ParsedBigBrotherEvent, type TerminalBigBrotherProvider,
+  type TerminalProviderOptions,
 } from './cli.js'
 
 const MAX_RESULT = 4 * 1024 * 1024
 
 /** Runs the one provider invocation inside the Terminal agent; no worker or file polling. */
 export async function runProvider(
-  provider: TerminalBigBrotherProvider, prompt: string, options: EscalationOptions,
+  provider: TerminalBigBrotherProvider, prompt: string, options: TerminalProviderOptions,
   receipts: string, signal: AbortSignal,
   display: (data: string) => Promise<void>, observe: (event: ParsedBigBrotherEvent) => void,
   onOwned: (cleanup: () => Promise<void>) => void,
@@ -63,7 +63,7 @@ export async function runProvider(
     if (signal.aborted) cancel()
     child.stdin.on('error', error => { failure ||= error.message; cancel() })
     child.stdin.end(invocation.stdin)
-    timer = setTimeout(() => { failure = `Timed out after ${invocation.timeout}ms`; cancel() }, invocation.timeout)
+    if (invocation.timeout > 0) timer = setTimeout(() => { failure = `Timed out after ${invocation.timeout}ms`; cancel() }, invocation.timeout)
 
     const consume = async (line: string) => {
       const parsed = parseBigBrotherTerminalEvent(provider, line)

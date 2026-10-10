@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Robot Display Feedback",
+  "description": "Display-only lifecycle feedback through the same expression output and Coordinator. No model calls or body motion.",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 0
+  },
+  "nodes": [
+    {
+      "id": "feedback",
+      "type": "environmentNode",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "Request Display Stage",
+        "nodeType": "environment_expression_feedback",
+        "properties": {}
+      }
+    },
+    {
+      "id": "display",
+      "type": "environmentNode",
+      "position": {
+        "x": 300,
+        "y": 0
+      },
+      "data": {
+        "label": "Face Expression Out",
+        "nodeType": "environment_face_expression",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "feedback-display",
+      "source": "feedback",
+      "sourceHandle": "feedback",
+      "target": "display",
+      "targetHandle": "feedback",
+      "data": {
+        "kind": "data"
+      }
+    }
+  ]
+}

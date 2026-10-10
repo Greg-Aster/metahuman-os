@@ -112,7 +112,7 @@ export class ModeController extends EventEmitter {
     const currentTask = manager.getAllTasks().find(task => robotAutonomyWork(task) && task.state === 'leased');
     const runtime = readRobotOperatorRuntimeState();
     const fullRuntimeHealthy = this.currentMode !== 'full'
-      || Boolean(runtime && runtime.mode === 'full' && runtime.lifecycle !== 'stopped');
+      || Boolean(runtime && runtime.mode === 'full' && !['failed', 'stopped'].includes(runtime.lifecycle));
     return {
       mode: this.currentMode,
       isExecuting: Boolean(currentTask),
@@ -121,7 +121,9 @@ export class ModeController extends EventEmitter {
       lastActivityAt: manager.getHistory()[0]?.completedAt || new Date().toISOString(),
       health: fullRuntimeHealthy ? 'healthy' as const : 'degraded' as const,
       healthMessage: !fullRuntimeHealthy
-        ? 'Full autonomy is selected, but Robot Operator has not published an active Full-mode runtime state'
+        ? runtime?.mode === 'full' && runtime.lifecycle === 'failed'
+          ? runtime.reason
+          : 'Full autonomy is selected, but Robot Operator has not published an active Full-mode runtime state'
         : undefined,
     };
   }

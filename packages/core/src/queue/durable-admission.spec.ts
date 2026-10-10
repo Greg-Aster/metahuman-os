@@ -11,6 +11,98 @@ const action = (): TaskInput => ({
   durable: { executionId: 'execution', effectId: 'effect', recovery: 'reconcile' },
 })
 
+test('display commands preserve concurrent movement and speech ownership across restart', () => {
+  const manager = new UnifiedQueueManager()
+  const motion = manager.enqueue(action())
+  const speech = manager.enqueue({ ...action(), resource: 'environment-speech:test-body',
+    input: { sessionId: 'test-body', type: 'speak' },
+    durable: { executionId: 'conversation', effectId: 'speech', recovery: 'reconcile' } })
+  const displayInput: TaskInput = { ...action(), resource: 'environment-display:test-body',
+    input: { sessionId: 'test-body', type: 'faceExpression', expression: 'happy' },
+    durable: { executionId: 'expression', effectId: 'face', recovery: 'reconcile' } }
+  const display = manager.enqueue(displayInput)
+  for (const work of [motion, speech, display]) assert.ok(manager.claim(work.id))
+  assert.equal(manager.assertBodyLease(display.id).channel, 'display')
+  const next = manager.enqueue({ ...displayInput, durable: { ...displayInput.durable!, effectId: 'next' } })
+  assert.equal(manager.claim(next.id), null, 'Display commands keep their wire order')
+  const recovered = new UnifiedQueueManager()
+  recovered.importState(JSON.parse(JSON.stringify(manager.exportState())))
+  for (const work of [motion, speech, display]) {
+    assert.equal(recovered.getTask(work.id)?.state, 'waiting')
+    assert.ok(recovered.hasCurrentBodyLease(work.id))
+  }
+  recovered.complete(display.id, true)
+  assert.ok(recovered.claim(next.id))
+  assert.ok(recovered.hasCurrentBodyLease(motion.id))
+  assert.ok(recovered.hasCurrentBodyLease(speech.id))
+})
+
+test('display replacement and release retain admission order when timestamps tie, including restart', () => {
+  const manager = new UnifiedQueueManager()
+  for (const effectId of ['set', 'release']) manager.enqueue({ ...action(),
+    resource: 'environment-display:test-body',
+    input: { sessionId: 'test-body', type: 'faceExpression', displayRelease: effectId === 'release' },
+    durable: { ...action().durable!, effectId } })
+  const saved = manager.exportState()
+  const tasks = saved.items
+  assert.ok(tasks)
+  tasks[0]!.id = 'z-set'
+  tasks[1]!.id = 'a-release'
+  tasks[1]!.createdAt = tasks[0]!.createdAt
+  const restored = new UnifiedQueueManager()
+  restored.importState(saved)
+  assert.equal(restored.getNextExecutable()!.id, 'z-set')
+  assert.ok(restored.claim('z-set'))
+  restored.complete('z-set', true)
+  assert.equal(restored.getNextExecutable()!.id, 'a-release')
+})
+
+for (const speechFirst of [true, false]) {
+  test(`speech and movement retain independent ownership and receipts (speech first: ${speechFirst})`, () => {
+    const manager = new UnifiedQueueManager()
+    const movement = manager.enqueue(action())
+    const speechInput: TaskInput = { ...action(), resource: 'environment-speech:test-body',
+      input: { sessionId: 'test-body', type: 'speak' },
+      durable: { executionId: 'conversation', effectId: 'speech', recovery: 'reconcile' } }
+    const speech = manager.enqueue(speechInput)
+    const first = speechFirst ? speech : movement
+    const second = speechFirst ? movement : speech
+    assert.ok(manager.claim(first.id))
+    assert.ok(manager.claim(second.id), 'Audio and motion may run concurrently across executions')
+    const movementLease = manager.assertBodyLease(movement.id)
+    const speechLease = manager.assertBodyLease(speech.id)
+    assert.equal(movementLease.channel, undefined)
+    assert.equal(speechLease.channel, 'speech')
+    assert.equal(speechLease.bodyId, movementLease.bodyId)
+    const nextMovement = manager.enqueue({ ...action(), durable: { ...action().durable!, effectId: 'move-next' } })
+    const nextSpeech = manager.enqueue({ ...speechInput, durable: { ...speechInput.durable!, effectId: 'speech-next' } })
+    assert.equal(manager.claim(nextMovement.id), null)
+    assert.equal(manager.claim(nextSpeech.id), null, 'Separate channels do not overlap two speaker playbacks')
+    const restored = new UnifiedQueueManager()
+    restored.importState(JSON.parse(JSON.stringify(manager.exportState())))
+    assert.equal(restored.getTask(speech.id)?.state, 'waiting')
+    assert.equal(restored.getTask(movement.id)?.state, 'waiting')
+    assert.deepEqual(restored.assertBodyLease(speech.id), speechLease)
+    assert.deepEqual(restored.assertBodyLease(movement.id), movementLease)
+    assert.equal(restored.getNextExecutable(), null, 'Restart cannot replay either unknown physical result')
+    restored.complete(movement.id, true, { completed: true })
+    assert.ok(restored.claim(nextMovement.id), 'Speech playback cannot hold the next movement')
+    assert.deepEqual(restored.assertBodyLease(speech.id), speechLease, 'A new motion cannot fence out a speech receipt')
+    restored.cancel(speech.id, 'Explicit speech cancellation')
+    assert.equal(restored.claim(nextSpeech.id), null, 'Cancellation must retain speaker ownership until acknowledged')
+    restored.acknowledgeCancellation(speech.id)
+    assert.ok(restored.claim(nextSpeech.id))
+    assert.ok(restored.hasCurrentBodyLease(nextMovement.id))
+    assert.ok(restored.hasCurrentBodyLease(nextSpeech.id))
+    assert.equal(restored.hasCurrentBodyLease(speech.id), false)
+    const stop = restored.enqueue({ ...action(), resource: 'environment-stop:test-body',
+      input: { sessionId: 'test-body', type: 'stop' }, durable: { ...action().durable!, effectId: 'stop' } })
+    assert.ok(restored.claim(stop.id))
+    assert.equal(restored.hasCurrentBodyLease(nextMovement.id), false, 'Stop still fences movement')
+    assert.ok(restored.hasCurrentBodyLease(nextSpeech.id), 'A movement stop does not invalidate concurrent speech receipts')
+  })
+}
+
 test('configured model capacity becomes available on completion without a timed post-job pause', () => {
   const config = JSON.parse(fs.readFileSync(new URL('../../../../etc/queue.json', import.meta.url), 'utf8'))
   const manager = new UnifiedQueueManager(config)
@@ -111,6 +203,24 @@ test('each lifecycle mutation commits once before its event', () => {
   manager.complete(task.id, true)
   assert.equal(commits, 3)
   assert.deepEqual(observed, [1, 2, 3])
+})
+
+test('lifecycle commits identify changed work without revisiting immutable historical payloads', () => {
+  const manager = new UnifiedQueueManager()
+  const first = manager.enqueue({ ...action(), input: { ...action().input, context: 'retained evidence '.repeat(2000) } })
+  manager.claim(first.id)
+  manager.complete(first.id, true, { receipt: 'completed' })
+  Object.defineProperty(first, 'result', { enumerable: true,
+    get() { throw new Error('Untouched history was read during another task update') } })
+  const changes: string[][] = []
+  manager.setOnQueueChange(ids => { changes.push([...ids]) })
+  const second = manager.enqueue({ ...action(), durable: { ...action().durable!, effectId: 'second' } })
+  manager.claim(second.id)
+  manager.appendOutput(second.id, 'selected action')
+  manager.attachExecution(second.id, 'parent-execution')
+  manager.complete(second.id, true, { receipt: 'second completed' })
+  assert.equal(changes.length, 5)
+  assert.ok(changes.every(ids => ids.length === 1 && ids[0] === second.id))
 })
 
 test('an uncertain published commit preserves its identity and cannot dispatch until confirmed', () => {

@@ -10,6 +10,7 @@ export { DataTransformNode } from './data-transform.node.js';
 export { CacheNode } from './cache.node.js';
 export { GraphNoteNode } from './graph-note.node.js';
 export { OutputViewerNode } from './output-viewer.node.js';
+export { bigBrotherNode } from './big-brother.node.js';
 export { workflowCallNode } from './workflow-call.node.js';
 export { executionContextNode } from './execution-context.node.js';
 export { workResultWaitNode } from './work-result-wait.node.js';

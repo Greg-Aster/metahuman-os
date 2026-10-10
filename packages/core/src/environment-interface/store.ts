@@ -21,7 +21,9 @@ import type {
   EnvironmentObservation,
   EnvironmentSessionState,
   EnvironmentTextEvent,
+  EnvironmentVisualFrame,
 } from './types.js';
+import { validEnvironmentJpegDataUrl } from './visual-correlation.js';
 import {
   commandedPoseAfterCompletedAction,
   assertBoundedMotionPlanEncoding,
@@ -32,6 +34,8 @@ import {
   attachEnvironmentObservationTiming,
   environmentActionStageDurations,
   mergeEnvironmentActionTiming,
+  immutableEnvironmentVisualFrame,
+  withoutEnvironmentDeliveryTiming,
 } from './timing.js';
 import {
   normalizeEnvironmentVisualInspectionTarget,
@@ -46,7 +50,7 @@ const MAX_PROCESSED_TEXT_EVENTS = 1_000;
 const MAX_ORIGINATING_INSTRUCTION_CHARS = 4_000;
 const DEFAULT_MAX_ACTION_DURATION_MS = 1_500;
 const ACTION_TYPES = new Set<EnvironmentActionType>([
-  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'robotMotionPlan', 'inspect', 'visualApproach', 'speak', 'sendText',
+  'move', 'look', 'jump', 'interact', 'stop', 'captureImage', 'robotCommand', 'faceExpression', 'robotMotionPlan', 'inspect', 'visualApproach', 'speak', 'sendText',
 ]);
 
 type ActionSubscriber = () => void;
@@ -97,7 +101,7 @@ function updateCommandedPoseFromFeedback(
   const sessionId = action.sessionId ?? '';
   const session = sessionId ? state.sessions[sessionId] : undefined;
   if (!session?.latestObservation) return;
-  const nonMotion = action.type === 'captureImage' || action.type === 'sendText' || action.type === 'speak';
+  const nonMotion = action.type === 'captureImage' || action.type === 'sendText' || action.type === 'speak' || action.type === 'faceExpression';
   const next = feedback.type === 'completed'
     ? commandedPoseAfterCompletedAction(
         action,
@@ -274,22 +278,15 @@ function environmentBridgeObservation(
   return { ...observation, metadata };
 }
 
-function withoutDeliveryTiming(value: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  const metadata = { ...value };
-  delete metadata.actionTiming;
-  delete metadata.actionStageDurations;
-  return Object.keys(metadata).length ? metadata : undefined;
-}
-
 /** Observation evidence is immutable; transport diagnostics change on delivery. */
 function immutableObservation(observation: EnvironmentObservation): EnvironmentObservation {
   const source = environmentBridgeObservation(observation);
   return {
     ...source,
-    metadata: withoutDeliveryTiming(source.metadata),
-    ...(source.visual ? { visual: { ...source.visual, metadata: withoutDeliveryTiming(source.visual.metadata) } } : {}),
-    ...(source.visuals ? { visuals: source.visuals.map(frame => ({ ...frame, metadata: withoutDeliveryTiming(frame.metadata) })) } : {}),
-    ...(source.feedback ? { feedback: source.feedback.map(feedback => ({ ...feedback, data: withoutDeliveryTiming(feedback.data) })) } : {}),
+    metadata: withoutEnvironmentDeliveryTiming(source.metadata),
+    ...(source.visual ? { visual: immutableEnvironmentVisualFrame(source.visual) } : {}),
+    ...(source.visuals ? { visuals: source.visuals.map(immutableEnvironmentVisualFrame) } : {}),
+    ...(source.feedback ? { feedback: source.feedback.map(feedback => ({ ...feedback, data: withoutEnvironmentDeliveryTiming(feedback.data) })) } : {}),
   };
 }
 
@@ -370,6 +367,17 @@ function persistEnvironmentObservation(
     existing?.latestObservation,
   );
   const now = nowIso();
+  const sameVisualSource = existing?.environmentId === poseAwareObservation.environmentId
+    && existing.adapter === poseAwareObservation.adapter
+    && environmentBodyEpoch(existing.latestObservation) === environmentBodyEpoch(poseAwareObservation)
+    && (existing.latestObservation?.state?.body as Record<string, unknown> | undefined)?.robotId
+      === (poseAwareObservation.state?.body as Record<string, unknown> | undefined)?.robotId;
+  const latestVisual = [
+    ...(sameVisualSource && existing.latestVisual ? [existing.latestVisual] : []),
+    ...(poseAwareObservation.visual ? [poseAwareObservation.visual] : []),
+    ...(poseAwareObservation.visuals ?? []),
+  ].filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl))
+    .sort((a, b) => (b.timestamp ?? '').localeCompare(a.timestamp ?? ''))[0];
   state.sessions[poseAwareObservation.sessionId] = {
     sessionId: poseAwareObservation.sessionId,
     environmentId: poseAwareObservation.environmentId,
@@ -378,6 +386,7 @@ function persistEnvironmentObservation(
     firstSeenAt: existing?.firstSeenAt ?? poseAwareObservation.timestamp ?? now,
     lastSeenAt: poseAwareObservation.timestamp ?? now,
     latestObservation: poseAwareObservation,
+    latestVisual,
     processedTextEventIds: existing?.processedTextEventIds ?? [],
   };
   if (poseAwareObservation.feedback?.length) {
@@ -489,15 +498,20 @@ export async function recordEnvironmentPerception(sessionId: string, value: unkn
   session.latestObservation = { ...observation!, state: { ...(observation!.state ?? {}), perception } };
   // Recognition cannot renew the control session's heartbeat or erase a still.
   writeEnvironmentBridgeState(state);
-  // Sensor updates wake only the already-admitted local behavior for this body.
+  // Sensor updates wake only phases subscribed to perception. A finite action
+  // waiting for its receipt cannot make progress from another camera frame.
   // The execution ledger/outbox remains the single continuation owner.
   const owners = getQueueManager().getAllTasks().filter(task => task.input.sessionId === sessionId && task.durable);
   for (const username of new Set(owners.map(task => task.username))) {
     const executions = openExecutionStore(username);
     try {
       for (const execution of executions.list(username).filter(record => record.status === 'waiting'
-        && record.waitingReason === `active_task:${sessionId}`)) {
-        executions.deliverEvent(execution.executionId, {
+        && record.waitingReason === `active_task:${sessionId}:perception`)) {
+        // A wake means "read the latest observation", not "replay this frame".
+        // Keep one outstanding signal while the owner is busy. Its immutable
+        // evidence remains intact; the latest-frame projection above still advances.
+        if (!executions.events(execution.executionId, execution.lastProcessedSequence)
+          .some(event => event.kind === 'perception_received')) executions.deliverEvent(execution.executionId, {
           eventId: `perception:${perception.gatewayInstance}:${perception.epoch}:${perception.frameCounter}`,
           kind: 'perception_received', payload: { sessionId, perception },
         });
@@ -628,6 +642,10 @@ export function getLatestEnvironmentObservation(sessionId?: string): Environment
   return observation ? projectCurrentEnvironmentPerception(observation) : undefined;
 }
 
+export function getLatestEnvironmentVisual(sessionId: string): EnvironmentVisualFrame | undefined {
+  return readEnvironmentBridgeState().sessions[sessionId]?.latestVisual;
+}
+
 export function getEnvironmentFeedback(options: { actionId?: string; limit?: number } = {}): EnvironmentFeedback[] {
   const state = readEnvironmentBridgeState();
   const limit = Number.isFinite(options.limit) ? Math.max(1, Math.floor(options.limit!)) : 20;
@@ -660,6 +678,17 @@ function normalizeAction(
   }
   if (action.type === 'sendText' && !action.text?.trim()) throw new Error('Environment sendText action requires text');
   if (action.type === 'robotCommand' && !action.command?.trim()) throw new Error('Environment robotCommand action requires a semantic command');
+  if (action.type === 'faceExpression') {
+    if (action.displayRelease !== true && !action.expression?.trim()) throw new Error('Environment faceExpression action requires an expression identifier');
+    if ((action.displayRelease === true || action.displayToken !== undefined)
+      && !/^[a-z0-9_]{1,32}$/.test(action.displayToken ?? '')) throw new Error('Invalid display expression token');
+    if (action.displayIfToken !== undefined && !/^[a-z0-9_]{1,32}$/.test(action.displayIfToken)) throw new Error('Invalid conditional expression token');
+    if (action.displayTimeoutMs !== undefined && (!Number.isInteger(action.displayTimeoutMs)
+      || action.displayTimeoutMs < 0 || action.displayTimeoutMs > 0xffffffff)) throw new Error('Invalid display expression timeout');
+    for (const key of ['displayBackground', 'displayRelease'] as const) {
+      if (action[key] !== undefined && typeof action[key] !== 'boolean') throw new Error(`Invalid ${key}`);
+    }
+  }
   if (action.type !== 'robotCommand' && action.command?.trim()) {
     throw new Error(`Environment ${action.type} action cannot contain a robot command`);
   }
@@ -706,6 +735,11 @@ function normalizeAction(
     vector: action.vector,
     direction: action.direction,
     command: type === 'robotCommand' ? command : undefined,
+    expression: type === 'faceExpression' ? action.expression?.trim() : undefined,
+    ...(type === 'faceExpression' ? {
+      displayToken: action.displayToken, displayIfToken: action.displayIfToken, displayTimeoutMs: action.displayTimeoutMs,
+      displayBackground: action.displayBackground, displayRelease: action.displayRelease,
+    } : {}),
     units: typeof action.units === 'number' ? Math.max(0, Math.floor(action.units)) : undefined,
     amount: typeof action.amount === 'number' ? Math.max(0, Math.min(1, action.amount)) : undefined,
     durationMs,
@@ -733,7 +767,9 @@ export function prepareEnvironmentCommand(
     type: 'environment_command',
     handler: 'environment.command',
     resource: normalized.type === 'stop' ? `environment-stop:${sessionId}`
-      : normalized.type === 'captureImage' ? `environment-camera:${sessionId}` : `environment:${sessionId}`,
+      : normalized.type === 'captureImage' ? `environment-camera:${sessionId}`
+      : normalized.type === 'speak' ? `environment-speech:${sessionId}`
+      : normalized.type === 'faceExpression' ? `environment-display:${sessionId}` : `environment:${sessionId}`,
     source: options.source || 'system',
     priority: normalized.type === 'stop' ? 'critical' : 'normal',
     input: { ...normalized, id: action.id || randomUUID() },

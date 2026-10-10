@@ -29,6 +29,8 @@
       canConfigureDevices: boolean;
       kokoroDeviceLockedByEnvironment: boolean;
       whisperDeviceLockedByEnvironment: boolean;
+      kokoroActiveDevice?: 'cpu' | 'cuda' | null;
+      kokoroFallbackReason?: string | null;
     };
     provider: 'piper' | 'sovits' | 'rvc' | 'kokoro' | 'kitten';
     outputTarget: 'local' | 'robot';
@@ -65,7 +67,7 @@
       useCustomVoicepack: boolean;
       normalizeCustomVoicepacks?: boolean;
       voices?: KokoroVoice[];
-      device?: 'cuda' | 'cpu';
+      device?: 'cuda' | 'cpu' | 'auto';
     };
     stt?: {
       model: string;
@@ -225,8 +227,16 @@
         throw new Error(result.error || 'Failed to save settings');
       }
 
-      if (config?.kokoro && (result.kokoroDevice === 'cpu' || result.kokoroDevice === 'cuda')) {
+      if (config?.kokoro && (result.kokoroDevice === 'cpu' || result.kokoroDevice === 'cuda' || result.kokoroDevice === 'auto')) {
         config.kokoro.device = result.kokoroDevice;
+      }
+      if (config?.systemVoiceControl) {
+        config.systemVoiceControl.kokoroActiveDevice = result.kokoroActiveDevice === 'cpu' || result.kokoroActiveDevice === 'cuda'
+          ? result.kokoroActiveDevice
+          : null;
+        config.systemVoiceControl.kokoroFallbackReason = typeof result.kokoroFallbackReason === 'string'
+          ? result.kokoroFallbackReason
+          : null;
       }
       if (config?.stt && (result.whisperDevice === 'cpu' || result.whisperDevice === 'cuda')) {
         config.stt.device = result.whisperDevice;
@@ -903,7 +913,16 @@
           >
             <option value="cpu">CPU - Fast & no GPU conflicts</option>
             <option value="cuda">GPU (CUDA) - Faster (requires GPU)</option>
+            <option value="auto">Auto - Prefer GPU, use CPU if unavailable</option>
           </select>
+          {#if config.systemVoiceControl?.kokoroActiveDevice}
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              Currently using {config.systemVoiceControl.kokoroActiveDevice === 'cuda' ? 'GPU' : 'CPU'}.
+              {#if config.systemVoiceControl.kokoroFallbackReason}
+                CUDA became unavailable; Kokoro will use CPU until its next restart.
+              {/if}
+            </p>
+          {/if}
           <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
             {#if config.systemVoiceControl?.kokoroDeviceLockedByEnvironment}
               Locked by the MH_KOKORO_DEVICE environment setting.

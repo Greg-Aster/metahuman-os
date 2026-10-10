@@ -11,6 +11,7 @@ import {
 } from './robot-audio.js';
 import { createKokoroTTSService } from '../tts.js';
 import type { EnvironmentAction } from '../environment-interface/types.js';
+import type { SvelteFlowGraph } from '../cognitive-graph-schema.js';
 
 export interface SpeechOutputSettings {
   provider: string;
@@ -96,65 +97,64 @@ export function normalizeRobotSpeechText(text: string): string {
     .trim();
 }
 
-async function collectKokoroWavChunks(
-  service: ReturnType<typeof createKokoroTTSService>,
-  text: string,
+/** Each synthesized chunk is admitted while subsequent audio is still rendering. */
+export async function* prepareRobotSpeechChunks(
   options: KokoroRobotSpeechOptions,
-): Promise<Buffer[]> {
-  const wavChunks: Buffer[] = [];
-
-  for await (const chunk of service.synthesizeStream(text, {
-    signal: options.signal,
-    voice: options.voiceId || options.voice,
-    speakingRate: options.speed,
-    langCode: options.langCode,
-    requestId: options.requestId,
-  })) {
-    wavChunks.push(chunk.audio);
-  }
-
-  if (wavChunks.length === 0) throw new Error('Kokoro returned no robot audio');
-  return wavChunks;
-}
-
-/** Rendering creates an audio artifact, not a physical send. */
-export async function prepareRobotSpeech(
-  options: KokoroRobotSpeechOptions,
-): Promise<{ action: Partial<EnvironmentAction>; totalChunks: number }> {
+): AsyncGenerator<{ action: Partial<EnvironmentAction>; index: number; totalChunks: number }> {
   const text = normalizeRobotSpeechText(options.text);
   if (!text) throw new Error('Robot speech contains no speakable text');
   const sessionId = options.sessionId || getRobotSpeakerSession();
   if (!sessionId) throw new Error('The Environment Bridge robot speaker is not ready');
-
   const service = createKokoroTTSService(options.username);
   const robotVolumePercent = getRobotVolumePercent(options.username);
+  let count = 0;
+  for await (const chunk of service.synthesizeStream(text, {
+    signal: options.signal, voice: options.voiceId || options.voice,
+    speakingRate: options.speed, langCode: options.langCode, requestId: options.requestId,
+  })) {
+    options.signal?.throwIfAborted();
+    const artifact = stageRobotSpeech(combineRobotSpeechWavChunks([chunk.audio], robotVolumePercent));
+    count++;
+    yield { action: { type: 'speak', sessionId, speechArtifactId: artifact.id,
+      speechDurationMs: artifact.durationMs, metadata: { owner: 'tts-out',
+        speechRequestId: options.requestId, speechChunkIndex: chunk.index, speechChunkCount: chunk.total } },
+      index: chunk.index, totalChunks: chunk.total };
+  }
+  if (!count) throw new Error('Kokoro returned no robot audio');
+}
 
-  const wavChunks = await collectKokoroWavChunks(service, text, options);
-  const artifact = stageRobotSpeech(combineRobotSpeechWavChunks(wavChunks, robotVolumePercent));
-  return { action: { type: 'speak', sessionId, speechArtifactId: artifact.id,
-    speechDurationMs: artifact.durationMs, metadata: { owner: 'tts-out' } }, totalChunks: wavChunks.length };
+/** Finite Coordinator work; each chunk uses the same checkpointed playback owner. */
+export async function runRobotSpeechWork(
+  input: KokoroRobotSpeechOptions & { graph: SvelteFlowGraph; generation?: number },
+  username: string,
+  signal: AbortSignal,
+): Promise<{ actionId: string; actionIds: string[] }> {
+  const { runGraph, requireGraphNodeOutput } = await import('../graph-runtime.js');
+  const actionIds: string[] = [];
+  for await (const prepared of prepareRobotSpeechChunks({ ...input, username, signal })) {
+    const result = await runGraph({ graph: input.graph, signal,
+      context: { username, userId: username, preparedRobotSpeech: prepared, ttsGeneration: input.generation } });
+    if (result.status !== 'completed') throw result.error ?? new Error('Robot speech admission did not complete');
+    actionIds.push(requireGraphNodeOutput(result, 'robot_speech_delivery').actionId);
+  }
+  return { actionId: actionIds[0]!, actionIds };
 }
 
 export async function renderRobotSpeech(options: KokoroRobotSpeechOptions): Promise<RobotSpeechDelivery> {
-  const prepared = await prepareRobotSpeech(options);
-  try {
-    const action = enqueueEnvironmentAction(
-      prepared.action,
-      {
-        allowedActions: ['speak'],
-        username: options.username,
-        source: 'system',
-        correlationId: options.requestId,
-        idempotencyKey: `tts-render:${options.requestId}`,
-      },
-    );
-    return {
-      actionId: action.id,
-      requestId: options.requestId,
-      totalChunks: prepared.totalChunks,
-    };
-  } catch (error) {
-    if (prepared.action.speechArtifactId) discardRobotSpeech(prepared.action.speechArtifactId);
-    throw error;
+  let actionId = '';
+  let totalChunks = 0;
+  for await (const prepared of prepareRobotSpeechChunks(options)) {
+    try {
+      const action = enqueueEnvironmentAction(prepared.action, {
+        allowedActions: ['speak'], username: options.username, source: 'system',
+        correlationId: options.requestId, idempotencyKey: `tts-render:${options.requestId}:${prepared.index}`,
+      });
+      actionId ||= action.id;
+      totalChunks = prepared.totalChunks;
+    } catch (error) {
+      if (prepared.action.speechArtifactId) discardRobotSpeech(prepared.action.speechArtifactId);
+      throw error;
+    }
   }
+  return { actionId, requestId: options.requestId, totalChunks };
 }

@@ -11,6 +11,7 @@ import {
   claimNextTTS,
   getTTSNotificationPath,
   getTTSQueueState,
+  peekTTSQueue,
   interruptTTSQueue,
   TTS_DELIVERY_LEASE_MS,
   updateTTSDelivery,
@@ -60,7 +61,7 @@ async function* ttsQueueEvents(
   const chunks: string[] = [];
   const streamKey = Symbol(`tts-queue:${username}:${consumerId}`);
   let watcher: fs.FSWatcher | null = null;
-  let debounceTimer: NodeJS.Timeout | null = null;
+  let debounceTimer: NodeJS.Immediate | null = null;
   let leaseTimer: NodeJS.Timeout | null = null;
   let heartbeatTimer: NodeJS.Timeout | null = null;
   let wake: (() => void) | null = null;
@@ -68,6 +69,7 @@ async function* ttsQueueEvents(
   let registered = false;
   let unregister = (): void => {};
   let observedInterruptionRevision = getTTSQueueState(username).interruptionRevision;
+  let preparedItems = '';
 
   const push = (chunk: string): void => {
     if (closed) return;
@@ -79,7 +81,7 @@ async function* ttsQueueEvents(
   };
 
   const clearTimers = (): void => {
-    if (debounceTimer) clearTimeout(debounceTimer);
+    if (debounceTimer) clearImmediate(debounceTimer);
     if (leaseTimer) clearTimeout(leaseTimer);
     if (heartbeatTimer) clearTimeout(heartbeatTimer);
     debounceTimer = null;
@@ -125,6 +127,14 @@ async function* ttsQueueEvents(
         }));
       }
       const claim = claimNextTTS(username, consumerId);
+      // Preparing audio confers no playback lease. Publish queued text to the
+      // active consumer while the one current utterance keeps its lease.
+      const items = peekTTSQueue(username).map(({ id, text, mode, source, generation }) => ({ id, text, mode, source, generation }));
+      const identity = JSON.stringify(items);
+      if (identity !== preparedItems) {
+        preparedItems = identity;
+        push(data('prepare', { items }));
+      }
       if (claim.item) {
         push(data('tts', { item: claim.item }));
         console.log(`[tts-queue-stream] Leased ${claim.item.id} to ${username}/${consumerId}`);
@@ -178,8 +188,10 @@ async function* ttsQueueEvents(
     fs.mkdirSync(notifyDir, { recursive: true });
     watcher = fs.watch(notifyDir, (_eventType, filename) => {
       if (filename !== notifyFilename || !isActiveOwner()) return;
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(checkQueue, 100);
+      if (!debounceTimer) debounceTimer = setImmediate(() => {
+        debounceTimer = null;
+        checkQueue();
+      });
     });
     watcher.on('error', (error) => {
       console.error('[tts-queue-stream] Watcher error:', error);

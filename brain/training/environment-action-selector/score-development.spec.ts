@@ -36,7 +36,7 @@ test('intent scoring distinguishes missing action context from unnecessary histo
   const expected = routes(['needsAction', 'needsEnvironment'])
   const result = score([prediction(expected, routes(['needsConversationHistory']), 'intent')])
   assert.equal(result.routeErrors.needsAction!.missed, 1)
-  assert.equal(result.routeErrors.needsConversationHistory!.extra, 1)
+  assert.equal(result.routeErrors['taskContext.conversationHistory']!.extra, 1)
   assert.equal(result.typedDecisionMatch.count, 0)
 })
 
@@ -117,4 +117,92 @@ test('CLI cannot write a perfect report from a partial prediction set', async ()
     assert.equal(result.aggregate.semanticReview.confirmedCorrect, 0)
     assert.equal(result.aggregate.semanticReview.unreviewed, 2)
   } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+
+test('intent context scoring ignores order but identifies incorrect consumers', () => {
+  const expected = { needsResponse: true, needsAction: false, taskContext: [], conversationContext: ['memory', 'persona.values'] }
+  const reordered = { ...expected, conversationContext: ['persona.values', 'memory'] }
+  assert.equal(score([prediction(expected, reordered, 'intent')]).exactRouting.count, 1)
+  const misplaced = { ...expected, taskContext: ['memory'], conversationContext: ['persona.values'] }
+  const result = score([prediction(expected, misplaced, 'intent')])
+  assert.equal(result.routeErrors['taskContext.memory']!.extra, 1)
+  assert.equal(result.routeErrors['conversationContext.memory']!.missed, 1)
+})
+
+test('required and optional context never mask a dropped request or wrong consumer', () => {
+  const expected = { needsResponse: true, needsAction: true, taskContext: ['environment'], conversationContext: ['memory'] }
+  const makeRecord = (sample: ReturnType<typeof prediction>) => ({ system: '', user: sample.user, output: JSON.stringify(expected), jsonSchema: {}, metadata: {
+    recordId: sample.recordId, sourceCaseId: sample.sourceCaseId, specialist: 'intent', sourceSplit: 'development',
+    developmentFold: 0, suite: sample.suite, risk: sample.risk, instructionIndex: 0, contextVariation: 'clean', systemOwned: true,
+    contextRequirements: { conversationContext: { required: ['memory'], optional: ['persona.personality'] } },
+  } } as ActionSelectorTrainingRecord)
+  const optional = prediction(expected, { ...expected, conversationContext: ['memory', 'persona.personality'] }, 'intent')
+  const result = score([optional], [], [makeRecord(optional)])
+  assert.equal(result.exactRouting.count, 0)
+  assert.equal(result.acceptableRouting.count, 1)
+  for (const patch of [ { needsAction: false }, { needsResponse: false }, { conversationContext: [] },
+    { conversationContext: ['memory', 'robotStatus'] }, { taskContext: ['environment','memory'], conversationContext: [] } ]) {
+    const sample = prediction(expected, { ...expected, ...patch }, 'intent')
+    assert.equal(score([sample], [], [makeRecord(sample)]).acceptableRouting.count, 0)
+  }
+})
+
+test('reviewed response choices accept speech or silence while retaining action and context requirements', () => {
+  const expected = { needsResponse: false, needsAction: true, taskContext: ['environment'], conversationContext: [] }
+  const makeRecord = (sample: ReturnType<typeof prediction>, optional = true) => ({ system: '', user: sample.user,
+    output: JSON.stringify(expected), jsonSchema: {}, metadata: {
+      recordId: sample.recordId, sourceCaseId: sample.sourceCaseId, specialist: 'intent', sourceSplit: 'development',
+      developmentFold: 0, suite: sample.suite, risk: sample.risk, instructionIndex: 0, contextVariation: 'clean', systemOwned: true,
+      ...(optional ? { responseOptional: true } : {}),
+      contextRequirements: { conversationContext: { required: [], optional: ['persona.personality'] } },
+    } } as ActionSelectorTrainingRecord)
+  for (const needsResponse of [false, true]) {
+    const sample = prediction(expected, { ...expected, needsResponse,
+      conversationContext: needsResponse ? ['persona.personality'] : [] }, 'intent')
+    const result = score([sample], [], [makeRecord(sample)])
+    assert.equal(result.acceptableRouting.count, 1)
+    assert.equal(result.exactRouting.count, needsResponse ? 0 : 1, 'Exact agreement remains separate from an acceptable alternative')
+    assert.equal(result.routeErrors.needsResponse, undefined)
+    if (needsResponse) assert.equal(score([sample], [], [makeRecord(sample, false)]).acceptableRouting.count, 0,
+      'An explicit request for silence cannot be waived')
+  }
+  for (const patch of [{ needsAction: false }, { taskContext: [] }, { taskContext: ['memory'] },
+    { conversationContext: ['memory'] }, { needsResponse: 'true' }]) {
+    const sample = prediction(expected, { ...expected, ...patch }, 'intent')
+    assert.equal(score([sample], [], [makeRecord(sample)]).acceptableRouting.count, 0)
+  }
+  const required = { ...expected, needsResponse: true }
+  const missingReply = prediction(required, expected, 'intent')
+  const record = makeRecord(missingReply, false)
+  record.output = JSON.stringify(required)
+  assert.equal(score([missingReply], [], [record]).acceptableRouting.count, 0, 'An explicit spoken response remains required')
+  assert.equal(score([missingReply], [], [record]).routeErrors.needsResponse?.missed, 1)
+})
+
+test('alternative recall sources require at least one annotated source', () => {
+  const expected = { needsResponse: true, needsAction: false, taskContext: [], conversationContext: ['memory'] }
+  const sample = prediction(expected, { ...expected, conversationContext: ['conversationHistory'] }, 'intent')
+  const record = { system: '', user: sample.user, output: JSON.stringify(expected), jsonSchema: {}, metadata: {
+    recordId: sample.recordId, sourceCaseId: sample.sourceCaseId, specialist: 'intent', sourceSplit: 'development',
+    developmentFold: 0, suite: sample.suite, risk: sample.risk, instructionIndex: 0, contextVariation: 'clean', systemOwned: true,
+    contextRequirements: { conversationContext: { required: [], optional: ['persona.personality'], anyOf: [['memory','conversationHistory']] } },
+  } } as ActionSelectorTrainingRecord
+  assert.equal(score([sample], [], [record]).acceptableRouting.count, 1)
+  const missing = { ...sample, rawResponse: JSON.stringify({ ...expected, conversationContext: ['persona.personality'] }) }
+  assert.equal(score([missing], [], [record]).contextSelection.requestsMissingRequired, 1)
+  assert.equal(score([missing], [], [record]).acceptableRouting.count, 0)
+})
+
+
+test('a reviewed equivalent generated motion can pass semantics without an exact program match', () => {
+  const expected = task('Lean left and recover.', [{ kind: 'generatedMotion', description: 'Lean slowly left and return to center.' }])
+  const actual = task('Lean left and recover.', [{ kind: 'generatedMotion', description: 'Slowly tilt the body to the left, then center it again.' }])
+  const sample = prediction(expected, actual)
+  const review = { recordId: sample.recordId, predictionDigest: sha256(sample), semantic: 'pass' as const,
+    grounding: 'pass' as const, reason: 'Both descriptions specify the same direction, pace, and return to center.' }
+  const result = score([sample], [review])
+  assert.equal(result.exactRouting.count, 0)
+  assert.equal(result.semanticReview.confirmedCorrect, 1)
+  assert.equal(score([sample]).semanticReview.confirmedCorrect, 0)
 })

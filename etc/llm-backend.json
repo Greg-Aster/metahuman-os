@@ -3,7 +3,7 @@
   "llamaCpp": {
     "endpoint": "http://127.0.0.1:8080",
     "model": "qwen3.5:9b",
-    "contextWindow": 8192,
+    "contextWindow": 123392,
     "maxTokens": 2048,
     "temperature": 0.7,
     "topP": 0.9,

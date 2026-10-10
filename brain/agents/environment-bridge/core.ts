@@ -25,7 +25,6 @@ import {
   type AudioUtteranceMetadata,
   type ParsedAudioUtterance,
 } from './audio-transport.js';
-import { AudioVisualObservationJoin } from './audio-visual-join.js';
 import {
   createCoalescedTaskRunner,
   createSerialTaskQueue,
@@ -351,22 +350,6 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       audioBytes: 0,
       events: [],
     };
-    const audioVisualJoin = new AudioVisualObservationJoin({
-      maxPending: MAX_PENDING_AUDIO_UTTERANCES,
-      publish: async observation => {
-        await postJson(
-          config,
-          '/api/environment-bridge/observation',
-          observation as unknown as Record<string, unknown>,
-        );
-        latestObservation = observation;
-        if (observation.id) sendMessage({ type: 'environment.observation.ack', observationId: observation.id, admitted: true });
-      },
-      onError: error => {
-        console.error(`${LOG_PREFIX} audio/visual join failed: ${error.message}`);
-        websocket.close(1011, 'audio/visual join failed');
-      },
-    });
 
     const diagnosticEvent = (event: DiagnosticEvent) => {
       diagnostics.events.push(event);
@@ -654,6 +637,25 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
         return;
       }
       diagnosticSessionId = utterance.metadata.sessionId;
+      const displayEnabled = latestObservation?.capabilities.expressionFeedback === true;
+      const displayUpdate = async (stage: 'processing' | 'ignored' | 'failed') => {
+        if (!displayEnabled) return;
+        try {
+          await postJson(config, '/api/environment-bridge/telemetry', {
+            sessionId: utterance.metadata.sessionId,
+            displayLifecycle: { utteranceId: utterance.metadata.utteranceId, stage },
+          }, localAbort.signal);
+        } catch (error) {
+          console.error(`${LOG_PREFIX} display feedback ${stage} was not admitted: ${(error as Error).message}`);
+        }
+      };
+      // Display admission and transcription proceed in parallel. Only this
+      // utterance's terminal indication follows its own start admission.
+      const displayStarted = displayUpdate('processing');
+      const finishAudio = (status: 'completed' | 'ignored' | 'failed', message: string) => {
+        sendAudioResult(utterance.metadata, status, message);
+        if (status !== 'completed') void displayStarted.then(() => displayUpdate(status));
+      };
       diagnostics.robotId = utterance.metadata.robotId;
       diagnostics.audioUtterances += 1;
       diagnostics.audioBytes += raw.length;
@@ -675,29 +677,14 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       mediaUploads.add(mediaUpload);
       void mediaUpload.finally(() => mediaUploads.delete(mediaUpload));
       if (!latestObservation) {
-        sendAudioResult(utterance.metadata, 'failed', 'Environment observation is not ready');
+        finishAudio('failed', 'Environment observation is not ready');
         return;
       }
       if (pendingAudioUtterances >= MAX_PENDING_AUDIO_UTTERANCES) {
-        sendAudioResult(utterance.metadata, 'failed', 'Transcription queue is full');
+        finishAudio('failed', 'Transcription queue is full');
         return;
       }
-      if (!audioVisualJoin.register(utterance.metadata)) {
-        sendAudioResult(utterance.metadata, 'failed', 'Perception join queue is full');
-        return;
-      }
-
       const sourceObservation = latestObservation;
-      const visualExpected = (
-        sourceObservation.capabilities.visual === true
-        && sourceObservation.capabilities.actions.includes('captureImage')
-      );
-      if (!visualExpected) {
-        void audioVisualJoin.expire(utterance.metadata.utteranceId).catch(error => {
-          console.error(`${LOG_PREFIX} audio/visual join failed: ${(error as Error).message}`);
-          websocket.close(1011, 'audio/visual join failed');
-        });
-      }
       pendingAudioUtterances += 1;
       const processUtterance = async () => {
         try {
@@ -710,14 +697,15 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           );
           if (!observation) {
             diagnostics.transcriptionStatus = 'ignored';
-            audioVisualJoin.drop(utterance.metadata.utteranceId);
-            sendAudioResult(utterance.metadata, 'ignored', 'No speech was transcribed');
+            finishAudio('ignored', 'No speech was transcribed');
             return;
           }
           if (localAbort.signal.aborted) return;
-          await audioVisualJoin.submitTranscript(
-            utterance.metadata.utteranceId,
-            observation,
+          await postJson(
+            config,
+            '/api/environment-bridge/observation',
+            observation as unknown as Record<string, unknown>,
+            localAbort.signal,
           );
           diagnostics.transcriptionStatus = 'completed';
           diagnostics.transcript = observation.text?.[0]?.text;
@@ -727,14 +715,13 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
             status: 'completed',
             message: diagnostics.transcript,
           });
-          sendAudioResult(utterance.metadata, 'completed', 'Utterance transcribed');
+          finishAudio('completed', 'Utterance transcribed');
           console.log(
             `${LOG_PREFIX} transcribed utterance=${utterance.metadata.utteranceId}`
             + ` durationMs=${utterance.metadata.durationMs}`,
           );
         } catch (error) {
           const message = (error as Error).message;
-          audioVisualJoin.drop(utterance.metadata.utteranceId);
           diagnostics.transcriptionStatus = 'failed';
           diagnosticEvent({
             timestamp: new Date().toISOString(),
@@ -745,7 +732,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           console.error(
             `${LOG_PREFIX} transcription failed utterance=${utterance.metadata.utteranceId}: ${message}`,
           );
-          sendAudioResult(utterance.metadata, 'failed', message);
+          finishAudio('failed', message);
         } finally {
           pendingAudioUtterances -= 1;
         }
@@ -755,6 +742,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
 
     let connectionFailure: unknown;
     let inboundMessages: SerialTaskQueue | undefined;
+    let connectionReady: Promise<void> | undefined;
     await new Promise<void>((resolve, reject) => {
       inboundMessages = createSerialTaskQueue(reject, MAX_PENDING_ADAPTER_MESSAGES);
       websocket.on('message', (raw: RawData | string, isBinary?: boolean) => {
@@ -766,6 +754,9 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           return;
         }
         let message: Record<string, unknown>;
+        let correlatedObservation: EnvironmentObservation | undefined;
+        let orderingKey: string | undefined;
+        let dependency: Promise<void> | undefined;
         try {
           if (incoming.length > MAX_MESSAGE_BYTES) throw new Error('Environment adapter message exceeds its size limit');
           message = JSON.parse(incoming.toString()) as Record<string, unknown>;
@@ -787,20 +778,43 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
             }
             return;
           }
+          const feedback = message.type === 'environment.feedback'
+            && message.feedback && typeof message.feedback === 'object'
+            ? message.feedback as unknown as EnvironmentFeedback : undefined;
+          if (feedback) pendingFeedback = structuredClone(feedback);
+          const receiptActionId = feedback?.actionId
+            ?? (message.type === 'environment.action.update.result' ? message.actionId : undefined);
+          orderingKey = typeof receiptActionId === 'string' ? `action:${receiptActionId}` : undefined;
+          const observation = message.type === 'environment.observation' ? environmentObservation(message.observation) : undefined;
+          correlatedObservation = observation && pendingFeedback
+            ? attachCorrelatedFeedback(observation, pendingFeedback) : observation;
+          if (pendingFeedback && correlatedObservation?.feedback?.some(item => item.id === pendingFeedback?.id)) {
+            pendingFeedback = undefined;
+          }
+          const observationActionId = correlatedObservation?.metadata?.actionId ?? correlatedObservation?.visual?.metadata?.actionId
+            ?? correlatedObservation?.feedback?.find(item => item.actionId)?.actionId;
+          // One connection queue, ordered per action for receipts and in receive
+          // order for observations. A result's observation follows its receipts;
+          // unrelated observations and face results cannot hold admission ACKs.
+          dependency = orderingKey ? connectionReady
+            : typeof observationActionId === 'string' ? inboundMessages?.pending(`action:${observationActionId}`) : undefined;
         } catch (error) {
           inboundMessages?.enqueue(async () => { throw error; });
           return;
         }
-        inboundMessages?.enqueue(async () => {
-          if (message.type === 'speech.settings') {
+        const queued = inboundMessages?.enqueue(async () => {
+          if (message.type === 'speech.settings' || message.type === 'behavior.settings') {
             const requestId = message.requestId;
+            const behavior = message.type === 'behavior.settings';
+            const resultType = `${message.type}.result`;
             try {
-              const settings = await postJson(config, '/api/environment-bridge/speech-settings',
-                message.outputTarget === undefined ? {} : { outputTarget: message.outputTarget },
+              const settings = await postJson(config, behavior ? '/api/environment-bridge/behavior-settings' : '/api/environment-bridge/speech-settings',
+                behavior ? (message.enabled === undefined ? {} : { enabled: message.enabled })
+                  : message.outputTarget === undefined ? {} : { outputTarget: message.outputTarget },
                 AbortSignal.any([localAbort.signal, AbortSignal.timeout(4000)]));
-              sendMessage({ ...settings, type: 'speech.settings.result', version: PROTOCOL_VERSION, requestId });
+              sendMessage({ ...settings, type: resultType, version: PROTOCOL_VERSION, requestId });
             } catch (error) {
-              if (!localAbort.signal.aborted) sendMessage({ type: 'speech.settings.result',
+              if (!localAbort.signal.aborted) sendMessage({ type: resultType,
                 version: PROTOCOL_VERSION, requestId, error: (error as Error).message });
             }
             return;
@@ -832,8 +846,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
             return;
           }
           if (message.type === 'environment.observation') {
-            const observation = message.observation;
-            const receivedObservation = environmentObservation(observation);
+            const receivedObservation = correlatedObservation;
             if (receivedObservation) {
               const bridgeFrameReceivedAt = new Date().toISOString();
               const observationActionId = typeof receivedObservation.metadata?.actionId === 'string'
@@ -857,24 +870,15 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
               diagnosticSessionId = receivedObservation.sessionId;
               recordVisual(timedObservation);
               recordFreestyleMovement(timedObservation);
-              let enriched = { ...receivedObservation };
-              if (pendingFeedback) {
-                const pendingFeedbackId = pendingFeedback.id;
-                enriched = attachCorrelatedFeedback(enriched, pendingFeedback);
-                if (enriched.feedback?.some(item => item.id === pendingFeedbackId)) {
-                  pendingFeedback = undefined;
-                }
-              }
+              const enriched = { ...receivedObservation };
               latestObservation = enriched;
-              const joined = await audioVisualJoin.submitVisual(enriched);
-              if (!joined) {
-                await postJson(
-                  config,
-                  '/api/environment-bridge/observation',
-                  enriched as unknown as Record<string, unknown>,
-                );
-              }
-              if (!joined) sendMessage({ type: 'environment.observation.ack', observationId: receivedObservation.id, admitted: true });
+              await postJson(
+                config,
+                '/api/environment-bridge/observation',
+                enriched as unknown as Record<string, unknown>,
+                localAbort.signal,
+              );
+              sendMessage({ type: 'environment.observation.ack', observationId: receivedObservation.id, admitted: true });
             }
             return;
           }
@@ -890,7 +894,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
                 id: `update:${pending.requestId}:${message.status}`, timestamp: message.timestamp,
                 type: message.status === 'acknowledged' ? 'completed' : message.status === 'outcome_unknown' ? 'outcome_unknown' : 'rejected',
                 actionId: pending.requestId, message: message.message, data: { movementUpdate: message },
-              });
+              }, localAbort.signal);
             } else if (pending) {
               await uncertainUpdate(pending, 'Invalid or mismatched steering v1 reply; delivery remains uncertain');
             }
@@ -978,7 +982,6 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
                   terminalActionsAwaitingObservation.add(receivedFeedback.actionId);
                 }
               }
-              pendingFeedback = structuredClone(feedback) as unknown as EnvironmentFeedback;
               if (receivedFeedback.actionId) {
                 awaitingAdapterAcceptance.delete(receivedFeedback.actionId);
               }
@@ -992,6 +995,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
                 config,
                 '/api/environment-bridge/action-result',
                 feedback as Record<string, unknown>,
+                localAbort.signal,
               );
               sendMessage({
                 type: 'environment.feedback.ack',
@@ -1002,7 +1006,8 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
               });
             }
           }
-        });
+        }, orderingKey, dependency);
+        if (message.type === 'bridge.ready') connectionReady = queued;
       });
       websocket.once('close', () => resolve());
       websocket.once('error', reject);
@@ -1021,7 +1026,6 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
     await Promise.all([...movementUpdates.values()].map(pending => uncertainUpdate(pending,
       'Environment adapter disconnected before steering acknowledgement; reconcile delivery before another update')));
     movementUpdates.clear();
-    audioVisualJoin.close();
     if (diagnosticTimer) clearInterval(diagnosticTimer);
     await audioQueue;
     await Promise.allSettled(mediaUploads);

@@ -37,7 +37,7 @@ for (const queueField of ['maxConcurrentAgents', 'maxConcurrentLLMAgents', 'paus
 }
 
 const store = read('apps/site/src/lib/stores/trigger-manager.ts');
-assert.equal((store.match(/connectionPool\.request\(/g) || []).length, 1, 'shared Trigger Manager store must own exactly one SSE request');
+assert.equal((store.match(/new EventSource\(/g) || []).length, 1, 'shared Trigger Manager store must own exactly one SSE request');
 for (const mutation of ['setTriggerAdmissionPaused', 'reloadTriggerConfig', 'runTriggerNow', 'patchTriggerConfig', 'setActiveOperatorMode']) {
   assert.ok(store.includes(`function ${mutation}`), `shared Trigger Manager store is missing ${mutation}`);
 }

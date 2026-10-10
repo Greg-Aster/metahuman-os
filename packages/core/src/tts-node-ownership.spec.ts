@@ -88,7 +88,7 @@ assert.ok(
 );
 assert.match(
   queueConsumer,
-  /apiEventSource\([\s\S]*?\/api\/tts-queue-stream\?consumerId=/,
+  /new EventSource\(`\/api\/tts-queue-stream\?consumerId=\$\{encodeURIComponent\(consumerId\)\}/,
   'the app-level consumer must identify itself to the node-owned local TTS queue',
 );
 assert.match(
@@ -113,7 +113,7 @@ assert.match(
 );
 assert.doesNotMatch(
   queueConsumer,
-  /viewDependency|document\.hidden|connectionPool/,
+  /viewDependency|document\.hidden/,
   'automatic playback must not stop when Chat unmounts, the tab hides, or passive Chat streams suspend',
 );
 assert.match(

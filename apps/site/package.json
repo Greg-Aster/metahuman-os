@@ -7,6 +7,7 @@
     "dev": "../../bin/run-site astro dev",
     "dev:no-hmr": "DISABLE_HMR=true ../../bin/run-site astro dev",
     "build": "astro build",
+    "test:compiled-agents": "node --test compiled-agents.spec.mjs",
     "preview": "../../bin/run-site astro preview"
   },
   "dependencies": {

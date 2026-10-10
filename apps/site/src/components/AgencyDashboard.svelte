@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { readServerEvents } from '../lib/client/sse';
   import { slide } from 'svelte/transition';
   import { isOwner } from '../stores/security-policy';
   import { apiFetch } from '../lib/client/api-config';
@@ -308,6 +309,7 @@
   let streamingOutput = '';
   let streamingSteps = 0;
   let streamEventSource: EventSource | null = null;
+  const streamObservation = new AbortController();
 
   // Cheeky loading messages for different operations
   const PLANNING_MESSAGES = [
@@ -1114,6 +1116,7 @@
       // Read coordinator progress from the transport-only SSE route.
       const response = await apiFetch(`/api/agency/desires/${id}/generate-plan-stream`, {
         method: 'POST',
+        signal: streamObservation.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(critique ? { critique } : {}),
       });
@@ -1122,45 +1125,8 @@
         throw new Error('Failed to start plan generation stream');
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response body');
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Parse SSE events from buffer
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-        let eventType = '';
-        let eventData = '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7);
-          } else if (line.startsWith('data: ')) {
-            eventData = line.slice(6);
-
-            if (eventType && eventData) {
-              try {
-                const data = JSON.parse(eventData);
-                handleStreamEvent(eventType, data, id);
-              } catch (e) {
-                console.warn('[AgencyDashboard] Failed to parse SSE data:', e);
-              }
-              eventType = '';
-              eventData = '';
-            }
-          }
-        }
+      for await (const frame of readServerEvents(response, streamObservation.signal)) {
+        handleStreamEvent(frame.event, JSON.parse(frame.data), id);
       }
 
       // Clear any critique text after successful generation
@@ -1226,46 +1192,15 @@
       // (EventSource is GET-only, so we use fetch with manual SSE parsing)
       const res = await apiFetch(`/api/agency/desires/${id}/run-stream`, {
         method: 'POST',
+        signal: streamObservation.signal,
       });
 
       if (!res.body) {
         throw new Error('No response body');
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Parse SSE events from buffer
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-        let currentEvent = '';
-        let currentData = '';
-
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7);
-          } else if (line.startsWith('data: ')) {
-            currentData = line.slice(6);
-          } else if (line === '' && currentEvent && currentData) {
-            // Complete event received
-            try {
-              const data = JSON.parse(currentData);
-              handleExecutionEvent(currentEvent, data);
-            } catch (parseError) {
-              console.warn('[AgencyDashboard] Failed to parse SSE data:', parseError);
-            }
-            currentEvent = '';
-            currentData = '';
-          }
-        }
+      for await (const frame of readServerEvents(res, streamObservation.signal)) {
+        handleExecutionEvent(frame.event, JSON.parse(frame.data));
       }
 
       await loadAll(true, true);
@@ -1512,6 +1447,7 @@
   });
 
   onDestroy(() => {
+    streamObservation.abort();
     document.removeEventListener('visibilitychange', handleVisibilityChange);
     stopLoadingMessages(); // Clean up interval on destroy
   });

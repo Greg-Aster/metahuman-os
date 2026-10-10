@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { readServerEvents } from '../../lib/client/sse';
+
+  const streamObservation = new AbortController();
+  onDestroy(() => streamObservation.abort());
   import FlowEditor from './FlowEditor.svelte';
   import NodePalette from '../NodePalette.svelte';
   import PropertyInspector from './PropertyInspector.svelte';
@@ -325,6 +329,7 @@
       // Use streaming endpoint for real-time node status
       const res = await apiFetch('/api/execute-graph-stream', {
         method: 'POST',
+        signal: streamObservation.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           graph,
@@ -337,51 +342,19 @@
         throw new Error(data.error || 'Execution failed');
       }
 
-      // Read SSE stream and update nodes in real-time
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response stream');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
       let finalResponse = '';
       let nodeOutputs: Record<string, any> | undefined;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Parse SSE events from buffer
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-        let eventType = '';
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7);
-          } else if (line.startsWith('data: ') && eventType) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              handleStreamEvent(eventType, data);
-
-              // Capture final response and node outputs
-              if (eventType === 'graph_complete' || eventType === 'graph_waiting') {
-                if (data.response) {
-                  finalResponse = data.response;
-                }
-                if (data.nodeOutputs) {
-                  nodeOutputs = data.nodeOutputs;
-                  lastNodeOutputs = data.nodeOutputs;
-                  flowEditorRef.updateNodeOutputs(data.nodeOutputs);
-                }
-                lastRunDurationMs = typeof data.durationMs === 'number' ? data.durationMs : null;
-              }
-            } catch {
-              // Ignore parse errors
-            }
-            eventType = '';
+      for await (const frame of readServerEvents(res, streamObservation.signal)) {
+        const data = JSON.parse(frame.data);
+        handleStreamEvent(frame.event, data);
+        if (frame.event === 'graph_complete' || frame.event === 'graph_waiting') {
+          if (data.response) finalResponse = data.response;
+          if (data.nodeOutputs) {
+            nodeOutputs = data.nodeOutputs;
+            lastNodeOutputs = data.nodeOutputs;
+            flowEditorRef.updateNodeOutputs(data.nodeOutputs);
           }
+          lastRunDurationMs = typeof data.durationMs === 'number' ? data.durationMs : null;
         }
       }
 

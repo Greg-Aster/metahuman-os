@@ -21,7 +21,7 @@ export interface VoiceServiceConfig {
   enabled: boolean
   startOnSystemBoot: boolean
   port: number
-  device: 'cpu' | 'cuda'
+  device: 'cpu' | 'cuda' | 'auto'
   model?: string
   computeType?: 'int8' | 'float16' | 'float32'
   langCode?: string
@@ -113,9 +113,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function withVoiceServiceDevice(
   document: unknown,
   id: VoiceServiceId,
-  device: 'cpu' | 'cuda',
+  device: 'cpu' | 'cuda' | 'auto',
 ): Record<string, unknown> {
   if (id === 'kitten' && device !== 'cpu') throw new Error('Kitten supports CPU only')
+  if (id === 'whisper' && device === 'auto') throw new Error('Whisper does not support automatic device selection')
   if (!isRecord(document) || !isRecord(document.servers)) {
     throw new Error(`etc/${CONFIG_FILE} must contain a servers object`)
   }
@@ -204,7 +205,7 @@ export function normalizeVoiceServiceConfig(
   if (id === 'kitten' && requestedDevice !== undefined && requestedDevice !== 'cpu') {
     throw new Error('Kitten supports CPU only')
   }
-  const device = requestedDevice === 'cuda' ? 'cuda' : 'cpu'
+  const device = requestedDevice === 'cuda' ? 'cuda' : id === 'kokoro' && requestedDevice === 'auto' ? 'auto' : 'cpu'
   const port = positivePort(environment[`${envPrefix}_PORT`] ?? entry.port, defaults.port)
   const shared: Pick<VoiceServiceConfig, 'enabled' | 'startOnSystemBoot' | 'port' | 'device'> = {
     enabled: typeof entry.enabled === 'boolean' ? entry.enabled : defaults.enabled,
@@ -362,7 +363,7 @@ export async function ensureVoiceServiceRunning(id: VoiceServiceId): Promise<Voi
 
 async function ensureVoiceServiceRunningUnlocked(id: VoiceServiceId): Promise<VoiceServiceStatus> {
   const current = await getVoiceServiceStatus(id)
-  if (current.running) return id === 'kitten' && !current.healthy ? waitForVoiceServiceReady(id) : current
+  if (current.running) return !current.healthy ? waitForVoiceServiceReady(id) : current
 
   const spec = getVoiceServiceSpec(id)
   if (!spec.config.enabled) throw new Error(`${id} service is disabled in etc/${CONFIG_FILE}`)
@@ -392,7 +393,7 @@ async function ensureVoiceServiceRunningUnlocked(id: VoiceServiceId): Promise<Vo
     fs.rmSync(spec.pidFile, { force: true })
     throw new Error(`${id} server exited during startup; check ${spec.logFile}`)
   }
-  return id === 'kitten' && !status.healthy ? waitForVoiceServiceReady(id) : status
+  return !status.healthy ? waitForVoiceServiceReady(id) : status
 }
 
 function signalManagedProcess(pid: number, signal: NodeJS.Signals): void {
@@ -433,7 +434,7 @@ async function waitForVoiceServiceReady(id: VoiceServiceId): Promise<VoiceServic
   let status = await getVoiceServiceStatus(id)
   while (!status.healthy && Date.now() < deadline) {
     if (!status.running || status.readiness === 'error') {
-      throw new Error(`${id} server failed while applying its device setting`)
+      throw new Error(`${id} server failed while waiting for readiness`)
     }
     await new Promise(resolve => setTimeout(resolve, READY_POLL_MS))
     status = await getVoiceServiceStatus(id)
@@ -446,9 +447,10 @@ async function waitForVoiceServiceReady(id: VoiceServiceId): Promise<VoiceServic
 
 export async function updateVoiceServiceDevice(
   id: VoiceServiceId,
-  device: 'cpu' | 'cuda',
+  device: 'cpu' | 'cuda' | 'auto',
 ): Promise<VoiceServiceDeviceUpdate> {
   if (id === 'kitten' && device !== 'cpu') throw new Error('Kitten supports CPU only')
+  if (id === 'whisper' && device === 'auto') throw new Error('Whisper does not support automatic device selection')
   return withServiceMutation(id, async () => {
     const override = environmentDeviceSetting(id)
     if (override && override.value !== device) {
@@ -463,7 +465,9 @@ export async function updateVoiceServiceDevice(
     const currentEntry = document.servers[id]
     const statusBefore = await getVoiceServiceStatus(id)
     const reportedDevice = statusBefore.health?.device
-    const runtimeMatches = !statusBefore.running || reportedDevice === device
+    const runtimeMatches = !statusBefore.running || (device === 'auto'
+      ? statusBefore.health?.requested_device === 'auto'
+      : reportedDevice === device)
     if (currentEntry.device === device && runtimeMatches) {
       return {
         changed: false,

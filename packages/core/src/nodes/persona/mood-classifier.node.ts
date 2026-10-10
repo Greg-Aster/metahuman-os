@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 import { callLLM } from '../../model-router.js';
 import { parseThinkingBlocks } from '../output/thinking-stripper.node.js';
 import { defineNode, type NodeDefinition } from '../types.js';
@@ -34,7 +35,8 @@ export const MoodClassifierNode: NodeDefinition = defineNode({
     systemPrompt: DEFAULT_PROMPT,
   },
   propertySchemas: {
-    role: { type: 'string', default: 'psychotherapist', label: 'LLM role' },
+    role: { type: 'select', default: 'psychotherapist', label: 'LLM role',
+      options: [...MODEL_ROLE_OPTIONS], },
     temperature: { type: 'slider', default: 0.2, label: 'Temperature', min: 0, max: 1, step: 0.05 },
     maxTokens: { type: 'number', default: 500, label: 'Maximum output tokens', min: 100, max: 2000, step: 50 },
     systemPrompt: { type: 'text_multiline', default: DEFAULT_PROMPT, label: 'Classifier instructions', rows: 10 },

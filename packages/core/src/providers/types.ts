@@ -195,6 +195,8 @@ export interface ProviderOptions {
   format?: 'text' | 'json';
   /** Provider-native structured-output schema. JSON mode remains the fallback. */
   jsonSchema?: Record<string, unknown>;
+  /** Select JSON-object output for a llama.cpp model whose server cannot apply the supplied schema. */
+  jsonSchemaMode?: 'json-schema' | 'json-object';
   keepAlive?: string;
   /** Normal model options, applied regardless of input modality. */
   contextWindow?: number;

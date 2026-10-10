@@ -18,9 +18,24 @@ let prompt = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', data => prompt += data);
 process.stdin.on('end', () => {
+  if (process.argv.includes('exec')) {
+    require('fs').appendFileSync(${JSON.stringify(path.join(root, 'codex-calls.jsonl'))}, JSON.stringify({args:process.argv.slice(2),prompt})+'\\n');
+    console.log(JSON.stringify({type:'thread.started',thread_id:'fixture-diagnostic-thread'}));
+    if (prompt.includes('hold-diagnostic')) return setInterval(() => {}, 1000);
+    return setTimeout(() => {
+      console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'diagnostic fixture result'}}));
+      process.exit(prompt.includes('fail-diagnostic') ? 1 : 0);
+    }, 150);
+  }
   console.log(JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'fixture response'}]}}));
   if (prompt.includes('wait')) setInterval(() => {}, 1000);
 });
+`, { mode: 0o700 })
+const desktopBin = path.join(root, 'desktop-bin')
+fs.mkdirSync(desktopBin)
+fs.writeFileSync(path.join(desktopBin, 'x-terminal-emulator'), `#!/usr/bin/env node
+require('fs').appendFileSync(${JSON.stringify(path.join(root, 'desktop-calls.jsonl'))}, JSON.stringify(process.argv.slice(2))+'\\n');
+setInterval(() => {}, 1000);
 `, { mode: 0o700 })
 fs.writeFileSync(path.join(root, 'etc', 'tool-executor.json'), JSON.stringify({ backends: {
   'claude-code': { enabled: true, command: executable, args: [], timeout: 15000 },
@@ -42,7 +57,7 @@ const script = path.join(root, 'run.mjs')
 fs.writeFileSync(script, `import { eventBus } from ${JSON.stringify(new URL('../infrastructure/event-bus/client.ts', import.meta.url).href)}; eventBus.disconnect(); const { runTerminalService } = await import(${JSON.stringify(new URL('./service.ts', import.meta.url).href)}); await runTerminalService();`)
 let service: ReturnType<typeof spawn> | undefined
 let diagnostics = ''
-const env: NodeJS.ProcessEnv = { ...process.env, SHELL: '/bin/bash' }
+const env: NodeJS.ProcessEnv = { ...process.env, SHELL: '/bin/bash', PATH: `${desktopBin}:${process.env.PATH}` }
 delete env.NODE_TEST_CONTEXT
 async function eventually(check: () => boolean | Promise<boolean>) {
   const deadline = Date.now() + 7000
@@ -208,3 +223,73 @@ test('Big Brother starts the canonical service on demand and works again after a
   await assert.rejects(client.executeInBigBrotherSession('claude-code', 'complete', { signal: abort.signal }), /aborted/);
   assert.equal((await client.getTerminalState()).status, 'stopped');
 });
+
+test('diagnostic node opens one desktop, queues reports, resumes the exact thread and keeps chat separate', async t => {
+  await launch()
+  t.after(async () => { await client.stopTerminalService(); await waitForExit() })
+  const { bigBrotherNode } = await import('../nodes/utility/big-brother.node.js')
+  const first = await bigBrotherNode.execute({ data: { error: 'first diagnostic' }, data2: false },
+    { username: 'fixture', userMessage: 'fixture request',
+      graphNode: { id: '31', inputs: [{ source: { id: '17', label: 'User Input' } }] } },
+    { model: 'fixture-model' })
+  const second = await client.submitBigBrotherDiagnostic({ prompt: 'fixture', data: 'second diagnostic', username: 'fixture', reasoning: false, model: 'fixture-model-2' })
+  assert.equal(first.sessionId, second.sessionId)
+  assert.equal(first.status, 'submitted')
+  await eventually(async () => {
+    const session = (await client.getTerminalState()).sessions.find(s => s.id === first.sessionId)
+    return session?.phase === 'completed' && session.diagnostic?.submissionId === second.submissionId && session.diagnostic.pending === 0
+  })
+  const calls = fs.readFileSync(path.join(root, 'codex-calls.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line))
+  assert.equal(calls.length, 2)
+  assert.match(calls[0].prompt, /"data2": false/)
+  assert.match(calls[0].prompt, /"label": "User Input"/)
+  assert.match(calls[0].prompt, /"originalRequest": "fixture request"/)
+  assert.match(calls[0].prompt, /graph-traces\.ndjson/)
+  assert.ok(calls[0].args.includes('model_reasoning_effort="high"'), 'node defaults to high reasoning')
+  assert.ok(calls[0].args.includes('--dangerously-bypass-approvals-and-sandbox'))
+  assert.equal(calls[0].args[calls[0].args.indexOf('--model') + 1], 'fixture-model')
+  assert.ok(calls[1].args.includes('resume'))
+  assert.equal(calls[1].args[calls[1].args.indexOf('resume') + 1], 'fixture-diagnostic-thread')
+  assert.equal(calls[1].args.includes('--last'), false)
+  assert.equal(calls[1].args.includes('model_reasoning_effort="high"'), false)
+  assert.equal(calls[1].args[calls[1].args.indexOf('--model') + 1], 'fixture-model-2')
+  const desktopCalls = fs.readFileSync(path.join(root, 'desktop-calls.jsonl'), 'utf8').trim().split('\n')
+  assert.equal(desktopCalls.length, 1)
+  assert.ok(desktopCalls[0].includes('terminal'))
+  const state = (await client.getTerminalState()).sessions.find(s => s.id === first.sessionId)!
+  const log = fs.readFileSync(state.diagnostic!.repairLog, 'utf8')
+  assert.ok(log.includes(first.submissionId))
+  assert.ok(log.includes(second.submissionId))
+  assert.match(log, /diagnostic fixture result/)
+  const chat = await client.executeInBigBrotherSession('claude-code', 'complete')
+  assert.equal(chat.success, true)
+  await client.stopBigBrotherSession()
+  assert.ok((await client.getTerminalState()).sessions.some(s => s.id === first.sessionId))
+  await client.terminalCall('/diagnostic-input', { id: first.sessionId, message: 'operator followup' })
+  await eventually(async () => (await client.getTerminalState()).sessions.find(s => s.id === first.sessionId)?.phase === 'completed')
+  await client.terminalCall('/close', { id: first.sessionId })
+  assert.deepEqual(fs.readdirSync(terminalReceipts), [])
+  await client.stopTerminalService()
+  await waitForExit()
+})
+
+test('diagnostic failures remain visible, new reports resume, and closing cancels active and pending work', async t => {
+  await launch()
+  t.after(async () => { await client.stopTerminalService(); await waitForExit() })
+  const request = { prompt: 'fixture', data: 'fail-diagnostic', reasoning: true }
+  const first = await client.submitBigBrotherDiagnostic(request)
+  await eventually(async () => (await client.getTerminalState()).sessions.find(s => s.id === first.sessionId)?.phase === 'failed')
+  const failed = (await client.getTerminalState()).sessions.find(s => s.id === first.sessionId)!
+  assert.match(failed.error || '', /code 1/)
+  const second = await client.submitBigBrotherDiagnostic({ ...request, data: 'hold-diagnostic' })
+  const pending = await client.submitBigBrotherDiagnostic({ ...request, data: 'pending-diagnostic' })
+  assert.equal(second.sessionId, first.sessionId)
+  await client.terminalCall('/close', { id: first.sessionId })
+  const log = fs.readFileSync(failed.diagnostic!.repairLog, 'utf8')
+  assert.match(log, /agent turn failed/)
+  assert.ok(log.includes(`${pending.submissionId} · cancelled`))
+  assert.deepEqual((await client.getTerminalState()).sessions, [])
+  assert.deepEqual(fs.readdirSync(terminalReceipts), [])
+  await client.stopTerminalService()
+  await waitForExit()
+})

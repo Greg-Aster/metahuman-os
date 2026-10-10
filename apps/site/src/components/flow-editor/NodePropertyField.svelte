@@ -8,7 +8,6 @@
   } from '../../lib/client/flow-editor/node-property-layout'
   import {
     loadPropertySuggestions,
-    registerSelectedModel,
     type PropertySuggestion,
   } from '../../lib/client/flow-editor/property-suggestions'
 
@@ -214,38 +213,7 @@
     {/if}
   </div>
 
-  {#if schema.suggestions === 'models'}
-    <div class="suggestion-input-row">
-      <select id={controlId} class="property-input nodrag nopan nowheel"
-        value={currentValue ?? ''} disabled={overridden || suggestionsLoading}
-        onchange={async (event) => {
-          const control = event.target as HTMLSelectElement
-          const selected = control.value
-          suggestionsError = ''
-          suggestionsLoading = true
-          try {
-            await registerSelectedModel(selected)
-            onValueChange(selected)
-          } catch (error) {
-            control.value = String(currentValue ?? '')
-            suggestionsError = error instanceof Error ? error.message : String(error)
-          } finally {
-            suggestionsLoading = false
-          }
-        }}>
-        <option value="">Use configured role</option>
-        {#if currentValue && !suggestions.some(item => item.value === currentValue)}
-          <option value={String(currentValue)}>{currentValue}</option>
-        {/if}
-        {#each suggestions as suggestion}
-          <option value={suggestion.value}>{suggestion.label}</option>
-        {/each}
-      </select>
-      <button type="button" class="suggestion-refresh nodrag nopan" disabled={suggestionsLoading}
-        aria-label="Refresh model choices" onclick={refreshSuggestions}>↻</button>
-    </div>
-    {#if suggestionsError}<p class="suggestion-status suggestion-error">{suggestionsError}</p>{/if}
-  {:else if schema.type === 'text' || schema.type === 'string'}
+  {#if schema.type === 'text' || schema.type === 'string'}
     <div class="suggestion-input-row">
       <input
         id={controlId}
@@ -321,6 +289,7 @@
       <span>{String(currentValue ?? schema.default ?? 0)}</span>
     </div>
   {:else if schema.type === 'select'}
+    <div class="suggestion-input-row">
     <select
       id={controlId}
       class="property-input nodrag nopan nowheel"
@@ -328,10 +297,25 @@
       disabled={overridden}
       onchange={(event) => onValueChange((event.target as HTMLSelectElement).value)}
     >
+      {#if schema.suggestions}
+        <option value="">Choose {schema.label || propertyKey}</option>
+        {#if currentValue && !suggestions.some(item => item.value === currentValue)}
+          <option value={String(currentValue)}>{currentValue}</option>
+        {/if}
+        {#each suggestions as suggestion}
+          <option value={suggestion.value}>{suggestion.label}</option>
+        {/each}
+      {/if}
       {#each schema.options || [] as option}
         <option value={optionValue(option)}>{optionLabel(option)}</option>
       {/each}
     </select>
+    {#if schema.suggestions}
+      <button type="button" class="suggestion-refresh nodrag nopan" disabled={suggestionsLoading}
+        aria-label={`Refresh ${schema.label || propertyKey} choices`} onclick={refreshSuggestions}>↻</button>
+    {/if}
+    </div>
+    {#if suggestionsError}<p class="suggestion-status suggestion-error">{suggestionsError}</p>{/if}
   {:else if schema.type === 'multiselect'}
     <div
       id={controlId}

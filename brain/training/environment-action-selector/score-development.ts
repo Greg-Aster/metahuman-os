@@ -4,7 +4,7 @@ import { validateEnvironmentSelectorOutput } from '@metahuman/core'
 import { parseEnvironmentIntentRouting, isPlanningDelegation } from '@metahuman/core/nodes'
 import { REPOSITORY_ROOT, sha256 } from './corpus.js'
 import { DEVELOPMENT_FOLD_COUNT, type ActionSelectorTrainingRecord } from './generate-training-data.js'
-import { ROUTE_FIELDS, type Specialist } from './development-cases.js'
+import { ROUTE_FIELDS, type Specialist, type IntentRequirements } from './development-cases.js'
 
 const OUTPUT_ROOT = resolve(REPOSITORY_ROOT, 'out/environment-action-selector/training')
 export interface Prediction {
@@ -22,7 +22,8 @@ function parsed(text: string): Record<string, any> | null {
 }
 function view(value: Record<string, any> | null, specialist: Specialist) {
   if (!value) return null
-  if (specialist === 'intent') return Object.fromEntries(ROUTE_FIELDS.map(key => [key, value[key]]))
+  if (specialist === 'intent') return Object.fromEntries(ROUTE_FIELDS.map(key => [key,
+    Array.isArray(value[key]) ? [...new Set(value[key])].sort() : value[key]]))
   const task = value.taskDecision
   return {
     delegatePlanning: isPlanningDelegation(value),
@@ -71,8 +72,28 @@ export function validatePredictionCoverage(predictions: Prediction[], records: A
   return { expected: records.length, received: predictions.length, missing, duplicates, unexpected, recordsDigest: sha256(records) }
 }
 
-export function score(predictions: Prediction[], reviews: SemanticReview[] = []) {
+/** Evaluation annotations only; no runtime routing or parser behavior changes. */
+export function assessIntentContext(expected: Record<string, any>, actual: Record<string, any> | null,
+  requirements: IntentRequirements = {}, responseOptional = false) {
+  const missing: string[] = [], unnecessary: string[] = []
+  for (const consumer of ['taskContext', 'conversationContext'] as const) {
+    const rule = requirements[consumer] ?? { required: expected[consumer] ?? [], optional: [], anyOf: [] }
+    const got = new Set<string>(Array.isArray(actual?.[consumer]) ? actual[consumer] : [])
+    const allowed = new Set([...rule.required, ...rule.optional, ...(rule.anyOf ?? []).flat()])
+    for (const entry of rule.required) if (!got.has(entry)) missing.push(`${consumer}.${entry}`)
+    for (const alternatives of rule.anyOf ?? []) if (!alternatives.some(entry => got.has(entry)))
+      missing.push(`${consumer}.anyOf(${alternatives.join('|')})`)
+    for (const entry of got) if (!allowed.has(entry)) unnecessary.push(`${consumer}.${entry}`)
+  }
+  return { missing, unnecessary, matches: missing.length === 0 && unnecessary.length === 0
+    && actual?.needsAction === expected.needsAction
+    && (actual?.needsResponse === expected.needsResponse || responseOptional && typeof actual?.needsResponse === 'boolean') }
+}
+
+export function score(predictions: Prediction[], reviews: SemanticReview[] = [], records?: ActionSelectorTrainingRecord[]) {
   if (!predictions.length) throw new Error('No predictions to score')
+  if (records) validatePredictionCoverage(predictions, records)
+  const recordsById = new Map(records?.map(record => [record.metadata.recordId, record]) ?? [])
   const reviewById = new Map(reviews.map(review => [review.recordId, review]))
   if (reviewById.size !== reviews.length) throw new Error('Duplicate semantic reviews')
   for (const review of reviews) {
@@ -85,9 +106,11 @@ export function score(predictions: Prediction[], reviews: SemanticReview[] = [])
     semanticPass: reviews.filter(review => review.semantic === 'pass').length,
     groundingPass: reviews.filter(review => review.grounding === 'pass').length,
     confirmedCorrect: 0, pending: [] as Record<string, unknown>[] }
-  let jsonValid = 0, coreValid = 0, exactRouting = 0, typedDecisionMatch = 0
+  let jsonValid = 0, coreValid = 0, exactRouting = 0, typedDecisionMatch = 0, acceptableRouting = 0
+  const contextSelection = { missingRequired: 0, unnecessary: 0, requestsMissingRequired: 0, requestsWithUnnecessary: 0 }
+  const bySuite: Record<string, { total: number; exact: number; acceptable: number; valid: number }> = {}
   let unsafeActionAuthorityErrors = 0, missedPhysicalActions = 0, wrongPhysicalActions = 0, unnecessaryCaptures = 0, falseCompletions = 0
-  const routeErrors = Object.fromEntries(ROUTE_FIELDS.map(key => [key, { missed: 0, extra: 0 }]))
+  const routeErrors: Record<string, { missed: number; extra: number }> = {}
   const failures: Record<string, unknown>[] = []
   for (const prediction of predictions) {
     const actual = parsed(prediction.rawResponse)
@@ -110,13 +133,38 @@ export function score(predictions: Prediction[], reviews: SemanticReview[] = [])
     const decisionMatch = valid && sha256(expectedView) === sha256(actualView)
     if (routingMatch) exactRouting++
     if (decisionMatch) typedDecisionMatch++
+    const context = prediction.specialist === 'intent'
+      ? assessIntentContext(prediction.expected, actual, recordsById.get(prediction.recordId)?.metadata.contextRequirements,
+        recordsById.get(prediction.recordId)?.metadata.responseOptional) : undefined
+    const acceptable = valid && (context ? context.matches : decisionMatch)
+    if (acceptable) acceptableRouting++
+    if (context) {
+      contextSelection.missingRequired += context.missing.length
+      contextSelection.unnecessary += context.unnecessary.length
+      if (context.missing.length) contextSelection.requestsMissingRequired++
+      if (context.unnecessary.length) contextSelection.requestsWithUnnecessary++
+    }
+    const suite = bySuite[prediction.suite] ??= { total: 0, exact: 0, acceptable: 0, valid: 0 }
+    suite.total++; if (decisionMatch) suite.exact++; if (acceptable) suite.acceptable++; if (valid) suite.valid++
     const review = reviewById.get(prediction.recordId)
-    if (decisionMatch && review?.semantic === 'pass' && review.grounding === 'pass') semanticReview.confirmedCorrect++
+    if (valid && review?.semantic === 'pass' && review.grounding === 'pass') semanticReview.confirmedCorrect++
     if (!review) semanticReview.pending.push({ recordId: prediction.recordId, predictionDigest: sha256(prediction),
       context: prediction.user, expected: prediction.expected, actual, rawResponse: prediction.rawResponse })
     if (prediction.specialist === 'intent') for (const key of ROUTE_FIELDS) {
-      if (prediction.expected[key] && actual?.[key] !== true) routeErrors[key]!.missed++
-      if (!prediction.expected[key] && actual?.[key] === true) routeErrors[key]!.extra++
+      if (key === 'needsResponse' && recordsById.get(prediction.recordId)?.metadata.responseOptional) continue
+      const expected = prediction.expected[key], observed = actual?.[key]
+      if (key === 'taskContext' || key === 'conversationContext') {
+        const wanted = new Set<string>(Array.isArray(expected) ? expected : []), got = new Set<string>(Array.isArray(observed) ? observed : [])
+        for (const entry of new Set([...wanted, ...got])) {
+          const errors = routeErrors[`${key}.${entry}`] ??= { missed: 0, extra: 0 }
+          if (wanted.has(entry) && !got.has(entry)) errors.missed++
+          if (!wanted.has(entry) && got.has(entry)) errors.extra++
+        }
+      } else {
+        const errors = routeErrors[key] ??= { missed: 0, extra: 0 }
+        if (expected && observed !== true) errors.missed++
+        if (!expected && observed === true) errors.extra++
+      }
     }
     const expectedPhysical = hasPhysical(prediction.expected), actualPhysical = hasPhysical(actual)
     if (!expectedPhysical && actualPhysical) unsafeActionAuthorityErrors++
@@ -126,11 +174,11 @@ export function score(predictions: Prediction[], reviews: SemanticReview[] = [])
     if (captures(actual) && !captures(prediction.expected)) unnecessaryCaptures++
     if (actual?.taskDecision?.outcome === 'complete' && prediction.expected.taskDecision?.outcome !== 'complete') falseCompletions++
     if (!decisionMatch) failures.push({ recordId: prediction.recordId, suite: prediction.suite, errors,
-      expectedView, actualView, rawResponse: prediction.rawResponse })
+      expectedView, actualView, acceptable, context, rawResponse: prediction.rawResponse })
   }
   const ratio = (count: number) => ({ count, rate: count / predictions.length })
   return { total: predictions.length, semanticReview, jsonValid: ratio(jsonValid), coreValid: ratio(coreValid), exactRouting: ratio(exactRouting), typedDecisionMatch: ratio(typedDecisionMatch),
-    routeErrors, unsafeActionAuthorityErrors, missedPhysicalActions, wrongPhysicalActions, unnecessaryCaptures, falseCompletions,
+    acceptableRouting: ratio(acceptableRouting), contextSelection, bySuite, routeErrors, unsafeActionAuthorityErrors, missedPhysicalActions, wrongPhysicalActions, unnecessaryCaptures, falseCompletions,
     medianLatencyMs: percentile(predictions.map(value => value.meanBatchLatencyMs), .5),
     p95LatencyMs: percentile(predictions.map(value => value.meanBatchLatencyMs), .95),
     meanPromptTokens: predictions.reduce((sum, value) => sum + value.promptTokens, 0) / predictions.length,
@@ -138,7 +186,7 @@ export function score(predictions: Prediction[], reviews: SemanticReview[] = [])
 }
 export async function main(arguments_: string[] = process.argv.slice(2)) {
   let root = '', predictionsPath = '', outputPath = '', recordsPath = '', reviewsPath = ''
-  let checkpointPolicy: 'best-loss' | 'epoch-2' | 'final-epoch' = 'best-loss'
+  let checkpointPolicy: 'best-loss' | 'epoch-1' | 'epoch-2' | 'final-epoch' = 'best-loss'
   for (let index = 0; index < arguments_.length; index++) {
     const argument = arguments_[index], value = arguments_[index + 1]
     if (argument === '--') continue
@@ -147,7 +195,7 @@ export async function main(arguments_: string[] = process.argv.slice(2)) {
     else if (argument === '--records' && value) recordsPath = resolve(value)
     else if (argument === '--reviews' && value) reviewsPath = resolve(value)
     else if (argument === '--output' && value) outputPath = resolve(value)
-    else if (argument === '--checkpoint-policy' && ['best-loss', 'epoch-2', 'final-epoch'].includes(value!)) checkpointPolicy = value as typeof checkpointPolicy
+    else if (argument === '--checkpoint-policy' && ['best-loss', 'epoch-1', 'epoch-2', 'final-epoch'].includes(value!)) checkpointPolicy = value as typeof checkpointPolicy
     else throw new Error(`Unknown or incomplete argument: ${argument}`)
     index++
   }
@@ -171,18 +219,18 @@ export async function main(arguments_: string[] = process.argv.slice(2)) {
       || records.some(record => record.metadata.developmentFold !== fold)) throw new Error(`fold ${fold}: invalid frozen record provenance`)
     validatePredictionCoverage(predictions, records)
     expected.push(...records)
-    byFold[String(fold)] = score(predictions, reviews.filter(review => predictions.some(value => value.recordId === review.recordId)))
+    byFold[String(fold)] = score(predictions, reviews.filter(review => predictions.some(value => value.recordId === review.recordId)), records)
     all.push(...predictions)
   }
   if (!all.length || new Set(all.map(value => value.specialist)).size !== 1 || new Set(all.map(value => value.recordId)).size !== all.length) throw new Error('Mixed specialists or duplicated/incomplete predictions')
   const coverage = validatePredictionCoverage(all, expected)
-  const report = { version: 3, owner: 'environment-action-selector', specialist: all[0]!.specialist,
+  const report = { version: 4, owner: 'environment-action-selector', specialist: all[0]!.specialist,
     split: predictionsPath ? all[0]!.sourceSplit : 'development-cross-validation', checkpointPolicy,
     priorHeldOutUsed: false, predictionDigest: sha256(all), coverage,
     providers: [...new Set(all.flatMap(value => value.provider ? [value.provider] : []))],
     devices: [...new Set(all.flatMap(value => value.device ? [value.device] : []))],
     batchSizes: [...new Set(all.flatMap(value => value.batchSize ? [value.batchSize] : []))],
-    byFold, aggregate: score(all, reviews),
+    byFold, aggregate: score(all, reviews, expected),
     measurement: 'Reported latency is batch duration divided by batch size, not end-to-end workflow latency. Compare speed only with matching backend, device, precision, batching and decoding settings. typedDecisionMatch compares program steps and typed task fields only. Objectives, completion criteria, reasons, intent query meaning, memory scope and factual grounding require a recorded semantic review. Unreviewed predictions are not confirmed correct.' }
   outputPath ||= resolve(root, checkpointPolicy === 'best-loss' ? 'development-validation.json' : `development-validation-${checkpointPolicy}.json`)
   await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`)

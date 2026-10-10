@@ -1,15 +1,13 @@
 import { apiFetch } from '../../lib/client/api-config'
-import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../../lib/client/connection-pool'
 import type { TerminalEvent, TerminalSession, TerminalState } from '@metahuman/core/terminal/types'
 
 /** Owns only this mounted view's requests and subscription. Sessions live in the agent. */
 export class TerminalController {
   private abort = new AbortController()
-  private stream?: ConnectionHandle
+  private stream?: EventSource
   private generation = 0
   private inputQueue = ''
   private sending = false
-  private streamId = `terminal-${crypto.randomUUID()}`
   selected = ''
   constructor(private event: (event: TerminalEvent) => void, private error: (message: string) => void) {}
   private async request<T>(path: string, data?: unknown): Promise<T> {
@@ -46,28 +44,25 @@ export class TerminalController {
     this.inputQueue = ''
     const generation = ++this.generation
     this.stream?.close()
-    this.stream = connectionPool.request({
-      id: this.streamId, name: 'Terminal', url: `/api/terminal/events${id ? `?id=${encodeURIComponent(id)}` : ''}`,
-      priority: ConnectionPriority.CRITICAL,
-      onMessage: message => {
-        if (generation !== this.generation || this.abort.signal.aborted) return
-        try {
-          const event: TerminalEvent = JSON.parse(message.data)
-          this.event(event)
-          if (event.type === 'error' || (event.type === 'state' && event.state.status !== 'running')) {
-            this.stream?.close(); this.stream = undefined
-          } else if (event.type === 'state' && !event.state.sessions.some(s => s.id === this.selected)) {
-            const next = event.state.sessions.find(s => s.kind === 'provider')?.id || event.state.sessions[0]?.id || ''
-            if (next !== this.selected) this.select(next)
-          }
-        } catch (error) { this.error((error as Error).message) }
-      },
-      onError: () => {
-        if (generation !== this.generation || this.abort.signal.aborted) return
-        this.stream?.close(); this.stream = undefined
-        this.error('Terminal connection interrupted. Use Reconnect to restore the screen.')
-      },
-    })
+    this.stream = new EventSource(`/api/terminal/events${id ? `?id=${encodeURIComponent(id)}` : ''}`)
+    this.stream.onmessage = message => {
+      if (generation !== this.generation || this.abort.signal.aborted) return
+      try {
+        const event: TerminalEvent = JSON.parse(message.data)
+        this.event(event)
+        if (event.type === 'error' || (event.type === 'state' && event.state.status !== 'running')) {
+          this.stream?.close(); this.stream = undefined
+        } else if (event.type === 'state' && !event.state.sessions.some(s => s.id === this.selected)) {
+          const next = event.state.sessions.find(s => s.kind === 'provider')?.id || event.state.sessions[0]?.id || ''
+          if (next !== this.selected) this.select(next)
+        }
+      } catch (error) { this.error((error as Error).message) }
+    }
+    this.stream.onerror = () => {
+      if (generation !== this.generation || this.abort.signal.aborted) return
+      this.stream?.close(); this.stream = undefined
+      this.error('Terminal connection interrupted. Use Reconnect to restore the screen.')
+    }
   }
   async resize(cols: number, rows: number): Promise<void> {
     if (this.selected) await this.request('sessions', { action: 'resize', id: this.selected, cols, rows })

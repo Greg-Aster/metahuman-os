@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Persona LLM Node
  *
@@ -58,9 +59,10 @@ export const PersonaLLMNode: NodeDefinition = defineNode({
       label: 'Repeat Penalty',
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'persona',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     fallbackSystemPrompt: {
       type: 'text_multiline',

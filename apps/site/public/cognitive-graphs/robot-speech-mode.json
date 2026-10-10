@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Robot Speech Delivery",
+  "description": "Checkpointed playback admission after finite speech rendering in the existing Coordinator.",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 0
+  },
+  "nodes": [
+    {
+      "id": "deliver",
+      "type": "outputNode",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "data": {
+        "label": "Deliver Prepared Robot Speech",
+        "nodeType": "robot_speech_delivery",
+        "properties": {}
+      }
+    }
+  ],
+  "edges": []
+}

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
-  import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
   import TriggerManagerSummary from './TriggerManagerSummary.svelte';
 
   interface WorkView {
@@ -25,6 +24,16 @@
     error?: string;
   }
 
+  interface PersonResume {
+    sessionId: string;
+    candidateFrame?: string;
+    observedAt?: string;
+    frameExpiresAt?: string;
+    windowExpiresAt: string;
+    terminationConfirmed: boolean;
+    rejection?: string;
+  }
+
   interface QueueSnapshot {
     lifecycle: string;
     running: boolean;
@@ -34,15 +43,16 @@
     tasks: WorkView[];
     history: WorkView[];
     canConfirmRobotStopped: boolean;
-    executions: { executionId: string; graph: string; status: string; waitingReason?: string; updatedAt: string }[];
+    executions: { executionId: string; graph: string; status: string; waitingReason?: string; updatedAt: string; personResume?: PersonResume }[];
   }
 
   let snapshot: QueueSnapshot | null = null;
   let connected = false;
   let error = '';
   let actionError = '';
+  let actionNotice = '';
   let busyAction = '';
-  let sourceHandle: ConnectionHandle | null = null;
+  let sourceHandle: EventSource | null = null;
 
   function age(timestamp?: string): string {
     if (!timestamp) return '—';
@@ -55,6 +65,7 @@
   async function mutate(label: string, path: string, init: RequestInit) {
     busyAction = label;
     actionError = '';
+    actionNotice = '';
     try {
       const response = await apiFetch(path, {
         ...init,
@@ -63,6 +74,7 @@
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) throw new Error(data.error || `Request failed: ${response.status}`);
       if (data.snapshot) snapshot = data.snapshot;
+      if (data.status === 'requested') actionNotice = 'Candidate selection requested. The execution owner must validate it before movement can resume.';
     } catch (caught) {
       actionError = (caught as Error).message;
     } finally {
@@ -82,6 +94,18 @@
     mutate(`execution:${executionId}`, `/api/unified-queue/executions/${encodeURIComponent(executionId)}`, { method: 'DELETE' });
   }
 
+  function candidateReady(candidate: PersonResume) {
+    return candidate.terminationConfirmed && !!candidate.candidateFrame && !!candidate.frameExpiresAt
+      && Date.parse(candidate.frameExpiresAt) > Date.now() && Date.parse(candidate.windowExpiresAt) > Date.now();
+  }
+
+  function confirmCandidate(executionId: string, candidate: PersonResume) {
+    mutate(`candidate:${executionId}`, `/api/unified-queue/executions/${encodeURIComponent(executionId)}`, {
+      method: 'POST', body: JSON.stringify({ action: 'confirm_person_candidate',
+        sessionId: candidate.sessionId, candidateFrame: candidate.candidateFrame, confirmCandidate: true, resume: true }),
+    });
+  }
+
   function confirmRobotStopped(task: WorkView) {
     if (!confirm(`Have you checked that the robot for session "${task.robotSessionId}" has stopped? This records your confirmation, not a device acknowledgement. Do not confirm while it is moving.`)) return;
     mutate(`confirm:${task.id}`, `/api/unified-queue/tasks/${encodeURIComponent(task.id)}`, {
@@ -97,25 +121,18 @@
   }
 
   onMount(() => {
-    sourceHandle = connectionPool.request({
-      id: 'work-coordinator-panel-stream',
-      name: 'Work Coordinator Stream',
-      url: '/api/queue-stream',
-      priority: ConnectionPriority.MEDIUM,
-      defer: true,
-      onOpen: () => { connected = true; error = ''; },
-      onClose: () => { connected = false; },
-      onError: () => { connected = false; },
-      onMessage: event => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'error') error = data.error || 'Coordinator stream failed';
-          if (data.snapshot) { snapshot = data.snapshot; error = ''; }
-        } catch (caught) {
-          error = (caught as Error).message;
-        }
-      },
-    });
+    sourceHandle = new EventSource('/api/queue-stream');
+    sourceHandle.onopen = () => { connected = true; error = ''; };
+    sourceHandle.onmessage = event => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'error') error = data.error || 'Coordinator stream failed';
+        if (data.snapshot) { snapshot = data.snapshot; error = ''; }
+      } catch (caught) {
+        error = (caught as Error).message;
+      }
+    };
+    sourceHandle.onerror = () => { connected = false; };
   });
 
   onDestroy(() => sourceHandle?.close());
@@ -141,6 +158,7 @@
         {actionError || error || snapshot?.error || 'Coordinator is degraded'}
       </div>
     {/if}
+    {#if actionNotice}<p class="mt-2 text-xs text-gray-500 dark:text-gray-400" role="status">{actionNotice}</p>{/if}
   </header>
 
   <div class="min-h-0 flex-1 overflow-y-auto p-3">
@@ -166,6 +184,23 @@
             <div>{execution.graph} · {execution.status}</div>
             <div class="mt-1 break-all text-[0.7rem] text-gray-500">{execution.executionId}</div>
             {#if execution.waitingReason}<div class="mt-1 text-amber-600 dark:text-amber-300">{execution.waitingReason}</div>{/if}
+            {#if execution.personResume && (execution.status === 'running' || execution.status === 'waiting')}
+              {@const candidate = execution.personResume}
+              <div class="mt-2 rounded border border-amber-500/40 p-2">
+                <div class="font-semibold">Person tracking paused</div>
+                <p>Candidate person only; identity continuity is unverified. Check the current camera view before confirming.</p>
+                <p>Session: {candidate.sessionId}</p>
+                <p>{candidate.terminationConfirmed ? 'Previous command termination confirmed; this does not prove physical rest.' : 'Previous command termination unconfirmed. Movement cannot resume.'}</p>
+                <p>{Date.parse(candidate.windowExpiresAt) <= Date.now() ? 'Observation window expired. Resume is unavailable for this attempt.'
+                  : candidate.candidateFrame ? `Candidate observed at ${candidate.observedAt}` : 'Waiting for three distinct fresh frames spanning one second.'}</p>
+                {#if candidate.rejection}<p class="text-amber-600 dark:text-amber-300">{candidate.rejection}</p>{/if}
+                {#if snapshot.canConfirmRobotStopped}
+                  <button class="mt-2 rounded border border-amber-500/40 px-2 py-1 disabled:opacity-50"
+                    disabled={!!busyAction || !candidateReady(candidate)}
+                    on:click={() => confirmCandidate(execution.executionId, candidate)}>Confirm candidate and resume</button>
+                {/if}
+              </div>
+            {/if}
             {#if execution.status === 'running' || execution.status === 'waiting'}
               <button class="mt-2 rounded border border-red-500/40 px-2 py-1 text-red-600 dark:text-red-300"
                 disabled={!!busyAction} on:click={() => cancelExecution(execution.executionId)}>Cancel workflow</button>

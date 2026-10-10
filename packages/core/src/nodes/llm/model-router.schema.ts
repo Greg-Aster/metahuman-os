@@ -1,6 +1,7 @@
 import type { NodeDefinition } from '../types.js';
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 
-export const modelRouterDefinition: Omit<NodeDefinition, 'execute' | 'color' | 'bgColor' | 'execution'> & { execution: Partial<NodeDefinition['execution']> } = {
+export const modelRouterDefinition: Omit<NodeDefinition, 'execute' | 'color' | 'bgColor' | 'execution'> & { execution: Partial<NodeDefinition['execution']>; propertySchemas: NonNullable<NodeDefinition['propertySchemas']> } = {
   id: 'model_router',
   name: 'Model Router',
   category: 'model',
@@ -15,7 +16,6 @@ export const modelRouterDefinition: Omit<NodeDefinition, 'execute' | 'color' | '
     { name: 'response', type: 'string', description: 'Normalized model text; downstream nodes own parsing, validation, and effects' },
   ],
   properties: {
-    modelId: '',
     role: 'persona',
     maxTokens: 2048,
     temperature: 0.7,
@@ -23,19 +23,12 @@ export const modelRouterDefinition: Omit<NodeDefinition, 'execute' | 'color' | '
     format: 'text',
   },
   propertySchemas: {
-    modelId: { type: 'string', default: '', label: 'Model / LoRA', emptyLabel: 'Use configured role', suggestions: 'models', description: 'Leave blank to follow the role and preferred backend. Select a registry model or served LoRA to use it for this node.' },
     role: {
       type: 'select',
       default: 'persona',
       label: 'Model Role',
-      description: 'Routing role resolved through the active profile and cognitive-mode model mapping. A connected role input overrides this setting.',
-      options: [
-        { value: 'persona', label: 'Persona' },
-        { value: 'environmentActionSelector', label: 'Environment Action Selector' },
-        { value: 'orchestrator', label: 'Orchestrator' },
-        { value: 'fallback', label: 'Fallback' },
-        { value: 'coder', label: 'Coder' },
-      ],
+      description: 'Uses the model assigned to this role in the sidebar for the active cognitive mode. A connected role input overrides this setting.',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     maxTokens: {
       type: 'slider',

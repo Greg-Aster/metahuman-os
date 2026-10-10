@@ -1,5 +1,6 @@
 export interface SerialTaskQueue {
-  enqueue: (task: () => Promise<void>) => void;
+  enqueue: (task: () => Promise<void>, orderingKey?: string, dependency?: Promise<void>) => Promise<void>;
+  pending: (orderingKey?: string) => Promise<void>;
   drain: () => Promise<void>;
 }
 
@@ -13,20 +14,22 @@ export function createSerialTaskQueue(
 
   let failed = false;
   let pendingTasks = 0;
-  let tail = Promise.resolve();
+  const tails = new Map<string, Promise<void>>();
+  const pending = (key = 'adapter') => tails.get(key) ?? Promise.resolve();
 
   return {
-    enqueue(task) {
-      if (failed) return;
+    enqueue(task, orderingKey = 'adapter', dependency) {
+      if (failed) return Promise.resolve();
       if (pendingTasks >= maximumPendingTasks) {
         failed = true;
         onError(new Error(`Serial task queue exceeded ${maximumPendingTasks} pending tasks`));
-        return;
+        return Promise.resolve();
       }
       pendingTasks += 1;
-      tail = tail
+      const tail = pending(orderingKey)
         .then(async () => {
           try {
+            if (dependency) await dependency;
             if (!failed) await task();
           } finally {
             pendingTasks -= 1;
@@ -37,9 +40,13 @@ export function createSerialTaskQueue(
           failed = true;
           onError(error);
         });
-    },
-    drain() {
+      tails.set(orderingKey, tail);
+      void tail.then(() => { if (tails.get(orderingKey) === tail) tails.delete(orderingKey); });
       return tail;
+    },
+    pending,
+    async drain() {
+      while (tails.size) await Promise.all(tails.values());
     },
   };
 }

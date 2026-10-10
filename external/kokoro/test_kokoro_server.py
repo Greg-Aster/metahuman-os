@@ -1,4 +1,5 @@
 """HTTP, inference ownership and voicepack contracts without model downloads."""
+import asyncio
 import io
 import tempfile
 import threading
@@ -13,8 +14,6 @@ from unittest.mock import Mock, patch
 import numpy as np
 import soundfile as sf
 import torch
-from fastapi.testclient import TestClient
-
 import kokoro_server as server
 
 
@@ -57,6 +56,7 @@ class FakeFrontend:
 
 class KokoroServerTests(unittest.TestCase):
     def setUp(self):
+        from fastapi.testclient import TestClient
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.model = FakeModel()
@@ -145,6 +145,21 @@ class KokoroServerTests(unittest.TestCase):
 
 
 class OnnxStartupTests(unittest.TestCase):
+    def test_auto_mode_prefers_cuda_and_reports_cpu_fallback(self):
+        with patch.object(server, "load_model", return_value="gpu-model") as load:
+            self.assertEqual(server.load_selected_model("auto"), ("gpu-model", "cuda", None))
+        load.assert_called_once_with("cuda")
+
+        def unavailable(device):
+            if device == "cuda":
+                raise RuntimeError("CUDAExecutionProvider unavailable")
+            return "cpu-model"
+
+        with patch.object(server, "load_model", side_effect=unavailable) as load:
+            self.assertEqual(server.load_selected_model("auto"), (
+                "cpu-model", "cpu", "cuda_initialization_failed"))
+        self.assertEqual([call.args[0] for call in load.call_args_list], ["cuda", "cpu"])
+
     def test_unavailable_cuda_is_not_silently_replaced_with_cpu(self):
         with patch.object(server.ort, "get_available_providers", return_value=["CPUExecutionProvider"]):
             with self.assertRaisesRegex(RuntimeError, "CUDAExecutionProvider"):
@@ -173,6 +188,55 @@ class OnnxStartupTests(unittest.TestCase):
         self.assertEqual(options.get_session_config_entry("session.intra_op.allow_spinning"), "0")
         self.assertEqual(options.get_session_config_entry("session.inter_op.allow_spinning"), "0")
         session.disable_fallback.assert_called_once()
+
+
+class AutoDeviceTests(unittest.TestCase):
+    def setUp(self):
+        self.previous = (
+            server.pipeline, server.model, server.requested_device,
+            server.processing_device, server.fallback_reason,
+        )
+        self.addCleanup(self.restore_state)
+        server.pipeline = FakeFrontend("a", model=False)
+        server.requested_device = "auto"
+        server.processing_device = "cuda"
+
+    def restore_state(self):
+        (server.pipeline, server.model, server.requested_device,
+         server.processing_device, server.fallback_reason) = self.previous
+
+    def test_cuda_inference_failure_switches_to_cpu_for_later_requests(self):
+        gpu = Mock()
+        gpu.create.side_effect = RuntimeError("CUDA out of memory")
+        cpu = Mock()
+        cpu.create.return_value = (np.full(240, 0.1, dtype=np.float32), 24000)
+        server.model = gpu
+
+        with patch.object(server, "load_model", return_value=cpu) as load:
+            first = server.render_speech("First.", lang_code="a", voice="af_heart", speed=1,
+                                         custom_voicepack=None, normalize=False)
+            second = server.render_speech("Second.", lang_code="a", voice="af_heart", speed=1,
+                                          custom_voicepack=None, normalize=False)
+        self.assertEqual(first[:4], b"RIFF")
+        self.assertEqual(second[:4], b"RIFF")
+        load.assert_called_once_with("cpu")
+        gpu.create.assert_called_once()
+        self.assertEqual(cpu.create.call_count, 2)
+        health = asyncio.run(server.health())
+        self.assertEqual(health["requested_device"], "auto")
+        self.assertEqual(health["device"], "cpu")
+        self.assertEqual(health["fallback_reason"], "cuda_inference_failed")
+
+    def test_non_cuda_failure_remains_visible(self):
+        server.model = Mock()
+        server.model.create.side_effect = RuntimeError("Invalid voice")
+
+        with patch.object(server, "load_model") as load:
+            with self.assertRaisesRegex(RuntimeError, "Invalid voice"):
+                server.render_speech("Hello.", lang_code="a", voice="af_heart", speed=1,
+                                     custom_voicepack=None, normalize=False)
+        load.assert_not_called()
+        self.assertEqual(server.processing_device, "cuda")
 
 
 if __name__ == "__main__":

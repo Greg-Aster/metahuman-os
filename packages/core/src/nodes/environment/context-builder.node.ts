@@ -1,3 +1,6 @@
+import { serializeContext } from '../../context-serialization.js';
+import { selectedEnvironmentRoutes } from './context-routing.js';
+import { resolveMemoryWork } from '../memory/memory-router.node.js';
 import { defineNode } from '../types.js';
 import { PLANNING_DELEGATION_DESCRIPTION } from './planning-contract.js';
 import { withVisualObservationSchema } from '../../visual-observation.js';
@@ -63,8 +66,19 @@ export const environmentContextBuilderNode = defineNode({
   name: 'Environment Context Builder',
   category: 'environment',
   inputs: [
+    { name: 'plannerDecision', type: 'object', optional: true, description: 'Internally authored intention with its recorded observation, reason and time' },
+    { name: 'robotObserver', type: 'object', optional: true, description: 'Source and cycle identity of the internally authored intention' },
+    { name: 'sourceObservationAt', type: 'string', optional: true, description: 'Recorded observation time supplied with the planner intention' },
+    { name: 'delegatedMemories', type: 'array', optional: true, description: 'Historical memories supplied with the planner intention' },
+    { name: 'memoryWork', type: 'object', optional: true, description: 'Coordinator lookup selected by intent' },
+    { name: 'sourceObservation', type: 'object', optional: true, description: 'Environment observation supplied before task execution' },
+    { name: 'sourceExecution', type: 'object', optional: true, description: 'Execution context supplied before task execution' },
     { name: 'selectedContext', type: 'object', optional: true, description: 'Already selected evidence package from the task context builder' },
     { name: 'selectedTask', type: 'object', optional: true, description: 'Parsed task selection and its admission result' },
+    { name: 'program', type: 'object', optional: true, description: 'Program admitted by the task parser for execution, or null' },
+    { name: 'taskResult', type: 'object', optional: true, description: 'Returned program progress, evidence and failure from the execution owner' },
+    { name: 'resultImages', type: 'array', optional: true, description: 'Validated camera images returned by the selected program' },
+    { name: 'resultFrames', type: 'array', optional: true, description: 'Recorded identities and times of the returned images' },
     { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions available for steering or cancellation' },
     { name: 'observationHistory', type: 'array', optional: true, description: 'Image-linked interpretations supplied by Observation History' },
     { name: 'execution', type: 'object', optional: true, description: 'Checkpointed objective and execution events' },
@@ -81,6 +95,9 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'robotStatus', type: 'object', optional: true, description: 'Reusable Robot Status supporting context' },
   ],
   outputs: [
+    { name: 'activeExecutions', type: 'array', description: 'Execution targets supplied to this task decision and its parser' },
+    { name: 'currentVisualEvidence', type: 'boolean', description: 'Current images supplied to this task decision' },
+    { name: 'receivedInput', type: 'object', description: 'Input received while awaiting selected context' },
     { name: 'selectedContext', type: 'object', description: 'Selected evidence reused by the conversation context builder without new retrieval' },
     { name: 'precomputedResponse', type: 'string', optional: true, description: 'Saved task interpretation for the connected task model only' },
     { name: 'frames', type: 'array', description: 'Exact source frames attached to this model call' },
@@ -90,8 +107,8 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'planningSchema', type: 'object', description: 'Original task schema without delegation' },
     { name: 'jsonSchema', type: 'object', description: 'Provider schema constrained to currently advertised capabilities' },
     { name: 'context', type: 'object', description: 'Structured environment context package' },
-    { name: 'currentInstruction', type: 'string', description: 'Current unchanged user instruction' },
-    { name: 'instructionSource', type: 'string', description: 'Instruction provenance for this interactive workflow: user' },
+    { name: 'currentInstruction', type: 'string', description: 'Current user message or internally authored intention' },
+    { name: 'instructionSource', type: 'string', description: 'Instruction provenance: user or autonomy' },
     { name: 'location', type: 'object', description: 'Resolved location data' },
     { name: 'map', type: 'object', description: 'Resolved map data' },
     { name: 'images', type: 'array', description: 'Visual frames suitable for image-capable models' },
@@ -105,7 +122,7 @@ export const environmentContextBuilderNode = defineNode({
   propertySchemas: {
     planningDelegation: { type: 'boolean', default: false, label: 'Allow Planning Delegation', description: 'Expose the approved optional larger-model planning output for task-only decisions.' },
     purpose: { type: 'select', default: 'combined', label: 'Context Purpose',
-      description: 'Task builds task-only JSON; conversation reuses evidence and the parsed selection. Combined preserves the contract of existing saved graphs.',
+      description: 'Task and conversation select their own evidence. Combined preserves the contract of existing saved graphs.',
       options: [{ value: 'combined', label: 'Combined Selection' }, { value: 'task', label: 'Task Decision' }, { value: 'conversation', label: 'Conversation' }] },
     systemPrompt: {
       type: 'text_multiline',
@@ -115,37 +132,20 @@ export const environmentContextBuilderNode = defineNode({
       rows: 5,
     },
   },
-  description: 'Builds task or conversation messages from the selected evidence. Conversation reuses the task context and validated selection without retrieval.',
+  description: 'Builds independently selected task or conversation context from shared sources and correlated recall. Conversation includes the validated selection and returned evidence.',
   async execute(inputs, context, properties) {
-    if (properties?.purpose === 'conversation') {
-      const { capabilityRules: _rules, ...evidence } = inputs.selectedContext;
-      const environment = evidence.currentEnvironment;
-      const catalog = environment?.capabilities?.robotCommandCatalog ?? {};
-      const selectedTask = inputs.selectedTask;
-      const commands = (selectedTask.program?.steps ?? [])
-        .filter((step: any) => step.kind === 'action' && step.action.type === 'robotCommand')
-        .map((step: any) => step.action.command as string);
-      const commandDescriptions = Object.fromEntries(commands
-        .filter((command: string) => typeof catalog[command] === 'string')
-        .map((command: string) => [command, catalog[command]]));
-      const message = JSON.stringify({ ...evidence, selectedTask: { ...selectedTask, commandDescriptions } });
-      const images = Array.isArray(inputs.images) ? inputs.images : [];
-      return { message, messages: [
-        { role: 'system', content: String(properties.systemPrompt ?? '').trim() },
-        { role: 'user', content: images.length ? [
-          { type: 'text', text: `The attached images are what you saw at the corresponding visualFrames times.\n${message}` }, ...images,
-        ] : message },
-      ] };
-    }
 
-    const routingAnalysis = isRecord(inputs.routingAnalysis)
-      ? Object.fromEntries(Object.entries(inputs.routingAnalysis).filter(([, value]) => typeof value === 'boolean'))
-      : {};
-    const environmentSelected = routingAnalysis.needsEnvironment === true
-      || routingAnalysis.needsVision === true
-      || routingAnalysis.needsAction === true;
-    const suppliedObservation = isRecord(inputs.observation)
-      ? inputs.observation as unknown as EnvironmentObservation
+    // An interrupted program hands input to continuation before conversation recall.
+    if (properties?.purpose === 'conversation' && inputs.program && inputs.taskResult?.done !== true) return {};
+    const consumer = properties?.purpose === 'conversation' ? 'conversation' : 'task';
+    const routingAnalysis = selectedEnvironmentRoutes(isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : {}, consumer);
+    const recalled = routingAnalysis.needsMemory === true && inputs.memoryWork
+      ? await resolveMemoryWork(inputs.memoryWork, context) : undefined;
+    const environmentSelected = routingAnalysis.needsEnvironment === true || routingAnalysis.needsVision === true
+      || (!Array.isArray(inputs.routingAnalysis?.taskContext) && routingAnalysis.needsAction === true);
+    const initialObservation = consumer === 'conversation' ? inputs.sourceObservation : inputs.observation;
+    const suppliedObservation = isRecord(initialObservation)
+      ? initialObservation as unknown as EnvironmentObservation
       : null;
     // Intent selects optional evidence, not the interfaces the informed model
     // may use. Keep the adapter's capability catalog available after retrieval.
@@ -166,30 +166,38 @@ export const environmentContextBuilderNode = defineNode({
     const conversationalInstruction = typeof inputs.instruction === 'string'
       ? inputs.instruction.trim()
       : '';
-    const personaText = typeof inputs.personaText === 'string'
+    const personaText = (Array.isArray(inputs.routingAnalysis?.taskContext) ? routingAnalysis.needsPersona : true) && typeof inputs.personaText === 'string'
       ? inputs.personaText.trim().slice(0, 2_000)
       : '';
     const robotStatus = isRecord(inputs.robotStatus) ? inputs.robotStatus : null;
     const userInstruction = typeof inputs.userInstruction === 'string'
       ? inputs.userInstruction.trim()
       : '';
-    const rawInstruction = conversationalInstruction || userInstruction;
-    const inputSource = 'user';
+    const plannerDecision = !userInstruction && !conversationalInstruction && isRecord(inputs.plannerDecision)
+      && typeof inputs.plannerDecision.instruction === 'string' ? inputs.plannerDecision : null;
+    const rawInstruction = conversationalInstruction || userInstruction
+      || (typeof plannerDecision?.instruction === 'string' ? plannerDecision.instruction : '');
+    const inputSource = plannerDecision ? 'autonomy' : 'user';
     const directUserTurn = Boolean(userInstruction);
     const replyToContent = directUserTurn && typeof context.replyToContent === 'string'
       ? context.replyToContent.trim().slice(0, 500)
       : '';
     const includeRecentHistory = routingAnalysis.needsConversationHistory === true
-      && directUserTurn;
+      && (directUserTurn || Boolean(plannerDecision));
     const useImages = routingAnalysis.needsVision === true
       && images.length > 0;
     const selectedImages = useImages ? images : [];
     const selectedFrames = useImages && Array.isArray(inputs.frames)
       ? inputs.frames as EnvironmentVisualFrame[] : [];
-    const execution = routingAnalysis.needsExecutionContext === true ? inputs.execution : null;
+    const execution = routingAnalysis.needsExecutionContext === true ? (consumer === 'conversation' ? inputs.sourceExecution : inputs.execution) : null;
     const activeExecutions = routingAnalysis.needsExecutionContext === true && Array.isArray(inputs.activeExecutions)
       ? inputs.activeExecutions as EnvironmentExecutionTarget[] : [];
-    const currentVision = useImages && inputs.observationCurrent === true;
+    const observationFrameIds = new Set([
+      suppliedObservation?.visual?.id,
+      ...(suppliedObservation?.visuals ?? []).map(frame => frame.id),
+    ].filter(Boolean));
+    const currentVision = useImages && inputs.observationCurrent === true
+      && selectedFrames.some(frame => observationFrameIds.has(frame.id));
     const actionRouteSelected = Boolean(observation?.capabilities.actions.length);
     const withoutUnselectedVision = effectiveObservation
       ? useImages
@@ -209,7 +217,7 @@ export const environmentContextBuilderNode = defineNode({
       includeRecentHistory,
       rawInstruction,
     );
-    const routedMemories = routingAnalysis.needsMemory === true ? inputs.memories : [];
+    const routedMemories = routingAnalysis.needsMemory === true ? (recalled?.memories ?? inputs.memories) : [];
     const memoryItems = [...new Set([
       ...relevantMemoryItems(routedMemories),
     ])].slice(0, 3);
@@ -222,7 +230,7 @@ export const environmentContextBuilderNode = defineNode({
           text: `The attached images are what you saw at the corresponding visualFrames times.\n${content}`,
         }, ...selectedImages]
       : content;
-    const message = buildEnvironmentSelectorEnvelope({
+    const envelope = buildEnvironmentSelectorEnvelope({
       execution: execution ?? null,
       activeExecutions,
       instruction: rawInstruction,
@@ -241,18 +249,65 @@ export const environmentContextBuilderNode = defineNode({
       currentObservation: inputs.observationCurrent === true,
       currentVisionAvailable: currentVision,
     });
+    const message = plannerDecision ? JSON.stringify({ ...JSON.parse(envelope), plannerDecision,
+      robotObserver: inputs.robotObserver ?? null,
+      sourceObservationAt: inputs.sourceObservationAt ?? null,
+      delegatedMemories: relevantMemoryItems(inputs.delegatedMemories),
+    }) : envelope;
+    if (properties?.purpose === 'conversation') {
+      const selected = Array.isArray(inputs.routingAnalysis?.conversationContext) ? JSON.parse(message) : inputs.selectedContext;
+      const { capabilityRules: _rules, ...evidence } = selected;
+      const environment = evidence.currentEnvironment;
+      const catalog = environment?.capabilities?.robotCommandCatalog ?? {};
+      const selectedTask = inputs.selectedTask;
+      const commands = (selectedTask.program?.steps ?? [])
+        .filter((step: any) => step.kind === 'action' && step.action.type === 'robotCommand')
+        .map((step: any) => step.action.command as string);
+      const commandDescriptions = Object.fromEntries(commands
+        .filter((command: string) => typeof catalog[command] === 'string')
+        .map((command: string) => [command, catalog[command]]));
+      const taskResult = inputs.taskResult;
+      const hasReturnedImages = Array.isArray(inputs.resultImages) && inputs.resultImages.length > 0;
+      const returned = taskResult && isRecord(inputs.observation)
+        ? JSON.parse(buildEnvironmentSelectorEnvelope({ instruction: evidence.currentInstruction,
+            observation: inputs.observation as unknown as EnvironmentObservation,
+            visualFrames: hasReturnedImages ? inputs.resultFrames : [] }))
+        : undefined;
+      // Retain dated input images when this program returned none. Their old
+      // frame times remain explicit alongside the new action evidence.
+      if (returned && !hasReturnedImages) returned.currentEnvironment.visualFrames = environment?.visualFrames ?? [];
+      const conversationMessage = serializeContext({ ...evidence,
+        ...(returned ? { currentEnvironment: returned.currentEnvironment,
+          evidenceAvailability: returned.evidenceAvailability } : {}),
+        ...(taskResult ? { execution: inputs.execution ?? evidence.execution,
+          taskResult: { done: taskResult.done, objectiveComplete: taskResult.objectiveComplete,
+            stepIndex: taskResult.stepIndex, evidence: taskResult.evidence,
+            failure: taskResult.failure, capturedFrameIds: taskResult.capturedFrameIds } } : {}),
+        selectedTask: { ...selectedTask, commandDescriptions } });
+      const images = hasReturnedImages ? inputs.resultImages : Array.isArray(inputs.routingAnalysis?.conversationContext)
+        ? selectedImages : (Array.isArray(inputs.images) ? inputs.images : []);
+      return { receivedInput: recalled?.receivedInput, message: conversationMessage, messages: [
+        { role: 'system', content: String(properties.systemPrompt ?? '').trim() },
+        { role: 'user', content: images.length ? [
+          { type: 'text', text: `The attached images are what you saw at the corresponding visualFrames times.\n${conversationMessage}` }, ...images,
+        ] : conversationMessage },
+      ] };
+    }
+
     const jsonSchema = buildEnvironmentSelectorJsonSchema({
       includeResponse: properties?.purpose !== 'task',
       activeExecutions,
       actions: promptObservation?.capabilities.actions ?? [],
       robotCommands: promptObservation?.capabilities.robotCommands ?? [],
+      expressions: promptObservation?.capabilities.expressionLibrary?.map(entry => entry.name) ?? [],
       actionRouteSelected,
     });
 
+    const modelMessage = serializeContext(JSON.parse(message));
     const planningSchema = withVisualObservationSchema(jsonSchema, selectedFrames);
     const planningMessages = [
       { role: 'system', content: selectorContext },
-      { role: 'user', content: renderedContent(message) },
+      { role: 'user', content: renderedContent(modelMessage) },
     ];
     const delegation = properties?.purpose === 'task' && properties.planningDelegation === true;
     const delegatedSchema = delegation ? { ...planningSchema, anyOf: [...planningSchema.anyOf, {
@@ -261,6 +316,8 @@ export const environmentContextBuilderNode = defineNode({
     }] } : planningSchema;
     return {
       planningMessages, planningSchema,
+      activeExecutions, currentVisualEvidence: currentVision,
+      receivedInput: recalled?.receivedInput,
       selectedContext: JSON.parse(message),
       precomputedResponse: context.environmentInterpretation?.response,
       message,
@@ -270,7 +327,7 @@ export const environmentContextBuilderNode = defineNode({
         { role: 'system', content: delegation ? `${selectorContext}\n\n${PLANNING_DELEGATION_DESCRIPTION}` : selectorContext },
         {
           role: 'user',
-          content: renderedContent(message),
+          content: renderedContent(modelMessage),
         },
       ],
       context: {

@@ -1,3 +1,4 @@
+import { MODEL_ROLE_OPTIONS } from '../../model-roles.js';
 /**
  * Desire Plan Generator Node
  *
@@ -577,9 +578,10 @@ export const DesirePlanGeneratorNode: NodeDefinition = defineNode({
       description: 'LLM temperature for plan generation',
     },
     role: {
-      type: 'string',
+      type: 'select',
       default: 'orchestrator',
       label: 'LLM Role',
+      options: [...MODEL_ROLE_OPTIONS],
     },
     systemPrompt: {
       type: 'text_multiline',

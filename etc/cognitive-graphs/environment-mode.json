@@ -12,7 +12,7 @@
     "maxLoopIterations": 0,
     "eventInputNodeId": "input-events"
   },
-  "last_modified": "2026-09-10T17:39:48.592Z",
+  "last_modified": "2026-10-10T00:57:45.906Z",
   "nodes": [
     {
       "id": "user-input",
@@ -72,12 +72,12 @@
         "label": "Intent Orchestrator",
         "nodeType": "orchestrator_llm",
         "properties": {
+          "role": "environmentIntent",
           "outputContract": "environment-request",
-          "systemPrompt": "You are the Environment Intent Orchestrator. Read the current incoming request and select the workflow routes needed to handle it. Your input contains no retrieved conversation, memories, robot observations, or execution history.\n\nSelect independently: needsResponse for user-visible expression; needsPersona for identity, personality, values, and goals relevant to expression or autonomous behavior selection; needsConversationHistory for earlier dialogue; needsMemory for stored experience or facts; needsRobotStatus for robot condition and task status; needsEnvironment for environment observations and capabilities; needsVision for visual evidence; needsAction for physical, sensing, or environment action selection; needsExecutionContext for interpreting or changing an ongoing execution.\n\nSelect context sources according to the information needed to interpret and fulfill the incoming request. Source availability does not imply relevance. Unselected sources will not be retrieved; their contents are unknown to this call. When the request refers to earlier dialogue or activity, select the sources needed to resolve that reference. Return the route fields as JSON, with memoryQuery and memoryTypes when relevant. Specific responses, robot commands, and execution targets are selected downstream after the requested context is available.",
+          "systemPrompt": "You are the Environment Intent Orchestrator. Read the incoming request and select workflow routes. Your input contains no retrieved persona, conversation, memories, robot observations, or execution history.\n\nSelect needsResponse for user-visible expression and needsAction for physical, sensing, or environment action selection. Select taskContext for execution and task decisions, and conversationContext for user-visible expression. Select each consumer’s context independently.\n\nAvailable context entries are persona.identity for name, role, and purpose; persona.background for background; persona.personality for communication style and traits; persona.values for values; persona.goals for persona goals; conversationHistory for earlier dialogue; memory for stored experience or facts; robotStatus for reported body condition, task state, recent action outcomes, and source times; environment for environment observations; vision for visual evidence; executionContext for ongoing execution state and events. The capability interface is supplied downstream independently.\n\nSelect information according to its relevance to interpreting and fulfilling the request. Source availability does not imply relevance. Unselected sources will not be retrieved; their contents are unknown to this call.\n\nReturn JSON containing needsResponse, needsAction, taskContext, and conversationContext, with memoryQuery and memoryTypes when relevant. Specific responses, commands, and execution targets are selected downstream after context is available.",
           "userPromptTemplate": "Current user message: {{userMessage}}",
           "temperature": 0.1,
-          "maxTokens": 768,
-          "modelId": "ollama.qwen3.5:0.8b"
+          "maxTokens": 768
         },
         "comment": "One request-only LLM call selects context and capability routes. Sources load after this decision."
       }
@@ -94,6 +94,7 @@
         "label": "Relevant Long-Term Memory",
         "nodeType": "memory_router",
         "properties": {
+          "dispatch": true,
           "topK": 3,
           "threshold": 0.65
         },
@@ -163,10 +164,13 @@
         "nodeType": "persona_loader",
         "properties": {
           "formatContext": true,
+          "includeIdentity": true,
+          "includeBackground": true,
           "includeValues": true,
           "includeGoals": true,
           "includePersonality": true
         },
+        "comment": "Formats the persona sections selected independently for task decisions and conversation. With routed selections, those lists replace the static section switches.",
         "activation": {
           "when": [
             {
@@ -175,8 +179,7 @@
               "truthy": true
             }
           ]
-        },
-        "comment": "Loads the selected persona and formats the enabled sections only when needsPersona is selected."
+        }
       }
     },
     {
@@ -188,10 +191,10 @@
       },
       "width": 260,
       "data": {
-        "label": "Use Current-Run Camera Evidence",
+        "label": "Select Available Camera Evidence",
         "nodeType": "environment_image_input",
         "properties": {},
-        "comment": "Validates camera data and admits it as current evidence only when that observation triggered this graph run.",
+        "comment": "Reads available images only when Intent selects vision. Preserves frame timestamps; a cached frame is not a capture for the current request.",
         "activation": {
           "when": [
             {
@@ -216,10 +219,10 @@
         "nodeType": "environment_context_builder",
         "properties": {
           "purpose": "task",
-          "systemPrompt": "ENVIRONMENT TASK DECISION\ncurrentInstruction contains the person's current message; the selected context describes the shared situation. Select execution and task behavior through the available interface. A separate conversation model produces user-visible speech.\n\nactivePersona describes identity, personality, values, and goals, not a record of events. Supplied context provides evidence with its recorded source and time. Missing evidence represents unknown information.\n\nprogram requests execution. taskDecision describes the objective and its execution state. Requests, intentions, capability descriptions, and execution results represent different information; task state should reflect the evidence actually supplied.\n\nInterface format: return strict JSON with taskDecision and program. Either may be null when this pass selects no corresponding objective change or activity. selectedRoutes describes the context and interfaces available for this turn.\ntaskDecision has required fields objective, completionCriteria, outcome, reason, continuationPolicy, and requiredCompletionBasis. outcome describes objective progress and allows complete, continue, observe, act, report, curiosity, background, request_user, or wait. act means a program is selected for execution; complete means the objective's completion criteria are satisfied; request_user means human information or assistance is needed. continuationPolicy allows none or bounded. requiredCompletionBasis identifies evidence of completion and allows response, action_result, visual_observation, environment_state, or user_input. action_result means a correlated action completion result; user_input means information provided by the person. These values describe task progress and completion evidence, not the source of the request.\nAn advertised robot command step has the form {\"kind\":\"action\",\"action\":{\"type\":\"robotCommand\",\"command\":\"<catalog identifier>\"}}. Other advertised action types use {\"kind\":\"action\",\"action\":{\"type\":\"<advertised action type>\",...}} with their action-specific fields. Action steps execute in order without additional model calls. Use the advertised exact command and its supplied meaning. Set continuous:true for ongoing motions described by the adapter. Use continuous move for live forward/turn composition. For a novel body-local motion use {kind:\"generatedMotion\",description:\"...\"}; preserve the full movement nuance.\nOngoing visual behavior steps are {kind:\"behavior\",target:\"free-text object or interest\",completionCriteria:\"success for THIS phase\",motion:{type:\"move\",direction:\"forward\",continuous:true,durationMs:1500,speed:...,forward:...,turn:...},candidateLabels:[],identifyEveryFrames:...,steering:null}. Forward and turn are signed percentages from -100 to 100 of the gait's translation and rotation; positive turn is left. They compose during walking. Optional steering {label:\"...\",gain:...} adjusts turning from the current object's horizontal image position. You author the movement and camera cadence. Detector labels are hints, not required target vocabulary. Remote identification runs alongside locomotion. Steps following a behavior execute after that phase completes. A complete activity is represented by its ordered program, including any phases after finding a target.\nDo not introduce safety policies, avoidance, extra sensor requirements, fallback actions, or completion gates unless the user specifically authorized them. An image identifies a behavior's target; it cannot establish a future gesture's completion. Attached images are observations at their recorded time. Optional visualObservation records their interpretation. Preserve current execution identity when continuing or steering a task.\n\nWhen execution context is supplied, executionDisposition is new, steer, or cancel. For steer or cancel, targetExecutionId identifies one of the supplied active executions. A steer forwards the unchanged incoming request to that execution; return null program and taskDecision for this handoff. A cancel requests cancellation of the selected execution through its existing owner. A new disposition handles the request in this invocation. When no other executions are supplied, omit executionDisposition and targetExecutionId.",
-          "planningDelegation": true
+          "planningDelegation": true,
+          "systemPrompt": "ENVIRONMENT TASK DECISION\ncurrentInstruction contains the person's current message; the selected context describes the shared situation. Select execution and task behavior through the available interface. A separate conversation model produces user-visible speech.\n\nactivePersona describes identity, personality, values, and goals, not a record of events. Supplied context provides evidence with its recorded source and time. Missing evidence represents unknown information.\n\nprogram requests execution. taskDecision describes the objective and its execution state. Requests, intentions, capability descriptions, and execution results represent different information; task state should reflect the evidence actually supplied.\n\nInterface format: return strict JSON with taskDecision and program. Either may be null when this pass selects no corresponding objective change or activity. selectedRoutes describes the context and interfaces available for this turn.\ntaskDecision has required fields objective, completionCriteria, outcome, reason, continuationPolicy, and requiredCompletionBasis. outcome describes objective progress and allows complete, continue, observe, act, report, curiosity, background, request_user, or wait. act means a program is selected for execution; complete means the objective's completion criteria are satisfied; request_user means human information or assistance is needed. continuationPolicy allows none or bounded. requiredCompletionBasis identifies evidence of completion and allows response, action_result, visual_observation, environment_state, or user_input. action_result means a correlated action completion result; user_input means information provided by the person. These values describe task progress and completion evidence, not the source of the request.\nAn advertised robot command step has the form {\"kind\":\"action\",\"action\":{\"type\":\"robotCommand\",\"command\":\"<catalog identifier>\"}}. Other advertised action types use {\"kind\":\"action\",\"action\":{\"type\":\"<advertised action type>\",...}} with their action-specific fields. Action steps execute in order without additional model calls. Use the advertised exact command and its supplied meaning. Set continuous:true for ongoing motions described by the adapter. Use continuous move for live forward/turn composition. For a novel body-local motion use {kind:\"generatedMotion\",description:\"...\"}; preserve the full movement nuance.\nOngoing visual behavior steps are {kind:\"behavior\",target:\"free-text object or interest\",completionCriteria:\"success for THIS phase\",motion:{type:\"move\",direction:\"forward\",continuous:true,durationMs:1500,speed:...,forward:...,turn:...},candidateLabels:[],identifyEveryFrames:...,steering:null}. Forward and turn are signed percentages from -100 to 100 of the gait's translation and rotation; positive turn is left. They compose during walking. Optional steering {label:\"...\",gain:...} adjusts turning from the current object's horizontal image position. You author the movement and camera cadence. Detector labels are hints, not required target vocabulary. Remote identification runs alongside locomotion. Steps following a behavior execute after that phase completes. A complete activity is represented by its ordered program, including any phases after finding a target.\nDo not introduce safety policies, avoidance, extra sensor requirements, fallback actions, or completion gates unless the user specifically authorized them. An image identifies a behavior's target; it cannot establish a future gesture's completion. Attached images are observations at their recorded time. Optional visualObservation records their interpretation. Preserve current execution identity when continuing or steering a task.\n\nWhen execution context is supplied, executionDisposition is new, steer, or cancel. For steer or cancel, targetExecutionId identifies one of the supplied active executions. A steer forwards the unchanged incoming request to that execution; return null program and taskDecision for this handoff. A cancel requests cancellation of the selected execution through its existing owner. A new disposition handles the request in this invocation. When no other executions are supplied, omit executionDisposition and targetExecutionId."
         },
-        "comment": "Combines the original request and selected evidence once. Builds the task-only contract and shares its evidence package with conversation."
+        "comment": "Builds only the task-selected context. Joins memory lookup only when taskContext selects memory; conversation-only recall can continue alongside task work."
       }
     },
     {
@@ -237,9 +240,8 @@
           "role": "environmentActionSelector",
           "maxTokens": 2048,
           "temperature": 0.1,
-          "repeatPenalty": 1.15,
-          "format": "json",
-          "modelId": "ollama.qwen3.5:0.8b"
+          "repeatPenalty": 1,
+          "format": "json"
         },
         "comment": "Executes the chosen routes by selecting task state, a complete program, and any execution target. It does not compose speech or decide which context branches run."
       }
@@ -257,11 +259,10 @@
         "nodeType": "environment_task_planner",
         "properties": {
           "role": "persona",
-          "modelId": "",
-          "format": "json",
           "maxTokens": 2048,
           "temperature": 0.1,
-          "repeatPenalty": 1.15
+          "repeatPenalty": 1.15,
+          "format": "json"
         }
       }
     },
@@ -269,8 +270,8 @@
       "id": "conversation-context",
       "type": "environmentNode",
       "position": {
-        "x": 4220,
-        "y": 80
+        "x": 5895,
+        "y": 75
       },
       "width": 460,
       "data": {
@@ -278,8 +279,10 @@
         "nodeType": "environment_context_builder",
         "properties": {
           "purpose": "conversation",
+          "planningDelegation": false,
           "systemPrompt": "ENVIRONMENT CONVERSATION\nactivePersona describes who you are. currentInstruction contains the person's current message; the selected context describes the shared situation. Produce the user-visible response as plain text.\n\nPersona describes identity and expression, not a record of events. Supplied context provides evidence with its recorded source and time. Missing evidence represents unknown information.\n\nselectedTask contains the task model's decision, selected program, and validation result. A selected program is a request for execution, not a receipt of completion. Supplied execution events and environment feedback describe recorded results. Speech does not dispatch actions or change task state. Factual claims should reflect the evidence actually supplied."
         },
+        "comment": "Builds conversation-selected context independently, reusing fetched sources. Joins selected recall and includes the returned task result before conversation inference.",
         "activation": {
           "mode": "required-inputs",
           "requiredInputs": [
@@ -298,23 +301,21 @@
               "truthy": true
             }
           ]
-        },
-        "comment": "Reuses selected evidence and the validated task decision. Omits command-selection rules and the full command catalog; includes descriptions of selected commands."
+        }
       }
     },
     {
       "id": "conversation-model",
-      "type": "llmNode",
+      "type": "environmentNode",
       "position": {
-        "x": 4740,
-        "y": 80
+        "x": 6495,
+        "y": 450
       },
       "width": 330,
       "data": {
         "label": "Conversation",
         "nodeType": "environment_conversation",
         "properties": {
-          "modelId": "",
           "role": "persona",
           "maxTokens": 2048,
           "temperature": 0.7,
@@ -328,7 +329,7 @@
       "id": "robot-status-out",
       "type": "outputNode",
       "position": {
-        "x": 6140,
+        "x": 4220,
         "y": 397
       },
       "width": 280,
@@ -402,8 +403,8 @@
       "id": "input-events",
       "type": "utilityNode",
       "position": {
-        "x": 7520,
-        "y": 80
+        "x": 7320,
+        "y": 90
       },
       "data": {
         "label": "Receive Pending Input",
@@ -483,7 +484,7 @@
       "id": "active-task",
       "type": "environmentNode",
       "position": {
-        "x": 5300,
+        "x": 4740,
         "y": 900
       },
       "data": {
@@ -503,10 +504,10 @@
     },
     {
       "id": "task-result",
-      "type": "environmentNode",
+      "type": "outputNode",
       "position": {
-        "x": 5900,
-        "y": 900
+        "x": 5320,
+        "y": 1400
       },
       "data": {
         "label": "Publish Task Result",
@@ -536,18 +537,18 @@
         "properties": {
           "eventLimit": 16
         },
+        "comment": "Task-level cognitive continuation after the complete active program or a conversation. Never runs between physical phases.",
         "activation": {
           "mode": "always"
-        },
-        "comment": "Task-level cognitive continuation after the complete active program or a conversation. Never runs between physical phases."
+        }
       }
     },
     {
       "id": "review-remaining-objective",
       "type": "utilityNode",
       "position": {
-        "x": 8900,
-        "y": 80
+        "x": 8835,
+        "y": 480
       },
       "data": {
         "label": "Review Unfinished Objective",
@@ -579,6 +580,7 @@
         "nodeType": "execution_event_wait",
         "properties": {
           "waitForEvent": true,
+          "drain": false,
           "userGraph": "environment",
           "autonomyGraph": "robot-autonomy-controller"
         },
@@ -601,26 +603,355 @@
         "y": 80
       },
       "width": 1050,
-      "height": 2000,
       "data": {
         "label": "How Environment Mode Works",
         "nodeType": "graph_note",
         "properties": {
           "title": "How Environment Mode Works",
-          "content": "ENVIRONMENT MODE \u2014 INTENT, TASK DECISION, CONVERSATION\n\n1. RECEIVE AND SAVE\nUser Input carries the original incoming request and offers independent Save to Conversation Buffer and Save to Long-Term Memory switches. Existing storage owners preserve speaker, time and identity. Saving the current turn does not retrieve earlier dialogue.\n\n2. INTENT ORCHESTRATOR \u2014 FIRST LLM CALL\nReceives only the incoming request and its editable routing instructions. Selects needsResponse, needsPersona, needsConversationHistory, needsMemory, needsRobotStatus, needsEnvironment, needsVision, needsAction and needsExecutionContext independently. It also supplies a memory search query/types when needed. It does not choose concrete commands or execution targets. Currently uses the untrained Qwen3.5 0.8B base model.\n\n3. SELECTED SOURCES\nActive Persona loads and formats its selected identity/personality/value/goal sections only when needsPersona is selected. Conversation History reads the buffer only when needsConversationHistory is selected. Relevant Long-Term Memory searches only when needsMemory is selected. Robot Status supplies its saved projection only when needsRobotStatus is selected. Current Execution reads the durable objective, events and other unfinished executions only when needsExecutionContext is selected.\nThe Environment Bridge always exposes its advertised interface. needsEnvironment, needsVision or needsAction selects additional environment evidence. Use Current-Run Camera Evidence supplies dated images when needsVision is selected. Observation History supplies saved image-linked interpretations. Reading these sources sends no physical command.\n\n4. BUILD TASK DECISION CONTEXT\nCombines the original request and selected sources once, preserving source/time information. Builds capability-specific task JSON schema. Selected evidence is also exported for conversation, without loading sources again. Persona remains capped at 2,000 characters. No LLM call occurs in this builder.\n\n5. TASK DECISION \u2014 SECOND LLM CALL\nCurrently uses the untrained Qwen3.5 0.8B base model. Returns taskDecision and program, optional visual interpretation, and new/steer/cancel with a target when execution context is present. It does not compose conversational speech. A program contains complete ordered action, generated-motion or ongoing-behavior steps. Null task/program values represent no selected objective change/activity. Validate Task Decision retains structural and capability validation. A steering handoff forwards the unchanged input through the durable owner and produces no local speech or program. Cancellation uses the existing execution owner.\n\n6. CONVERSATION \u2014 OPTIONAL THIRD LLM CALL\nBuild Conversation Context runs only when needsResponse is selected and this pass has a local parsed selection. It reuses the evidence package, selected program, task decision and admission result. It excludes task-selection rules and the full command catalog, retaining descriptions of selected commands. It does not search or load history/persona again.\nConversation uses the configured Persona role and preferred backend, currently the main 9B model, unless its Model / LoRA selector is changed. It produces plain text only. Its output connects to the existing Conversation Buffer, Memory Capture, TTS and Stream Writer. Speech does not produce commands or modify task decisions. A selected program is not physical completion evidence.\n\n7. EXECUTION AND CONTINUATION\nRobot Status Out records the task decision and projects status. Execute Complete Task is the existing sole owner of physical phases, using correlated receipts. There is no decision LLM call per ordinary movement. Novel motion generation, periodic visual identification, and unfinished-objective review remain conditional extra model calls through their existing owners.\nInput forwarded to an ongoing task is interpreted using the intent/task portion of this graph. The saved task output is connected only to Task Decision's precomputed input; it cannot replace conversation output. The resumed pass can produce conversation through the separate conversation branch. Remaining Objective, Goal Review and Await Requested Context continue from durable state.\n\nMODEL SELECTION AND DIAGNOSIS\nIntent Orchestrator, Task Decision and Conversation each expose Model / LoRA. An empty selection follows the configured role and preferred backend; an explicit model or served adapter overrides that node only. Selection does not train a model or start another server. The 0.8B base model is not yet trained for these tasks and can make semantic mistakes.\nInspect activation conditions and Last Run outputs to see skipped branches and selected evidence. A normal pass has two calls without conversation or three with conversation. Corrections, task reinterpretation, generated motion, identification and goal review can add calls. Measure each stage's tokens, duration and model independently.\n\nThis Graph Note is editor-only and never enters an LLM prompt.",
+          "content": "ENVIRONMENT MODE — INTENT, TASK DECISION, CONVERSATION\n\n1. RECEIVE AND SAVE\nUser Input carries the original incoming request and offers independent Save to Conversation Buffer and Save to Long-Term Memory switches. Existing storage owners preserve speaker, time and identity. Saving the current turn does not retrieve earlier dialogue.\n\n2. INTENT ORCHESTRATOR — FIRST LLM CALL\nReceives only the incoming request and its editable routing instructions. Selects needsResponse and needsAction plus independent taskContext and conversationContext lists. Those lists name the sources and individual persona sections each consumer needs. The graph derives source activation switches from the union; these switches do not add model decisions. It also supplies a memory search query/types when needed. It does not choose concrete commands or execution targets. The selected intent model must support the context-list contract; older adapters trained on the global boolean fields require retraining.\n\n3. SELECTED SOURCES\nActive Persona loads once when either context list selects persona.identity, persona.background, persona.personality, persona.values or persona.goals. It emits taskFormatted and conversationFormatted separately. Routed lists replace the static section switches; those switches remain available to workflows without routed selection.\nConversation History, memory search, Robot Status and Current Execution load only if selected by either consumer. Robot Status projects current body/task state, recent action results, source times and the configured bounded history. It does not own the durable objective.\nThe Environment Bridge always supplies its capability interface. Additional observations and images enter only the consumer selecting environment or vision. Reading these sources sends no physical command.\n\n4. BUILD TASK DECISION CONTEXT\nCombines the original request with taskContext selections, preserving source/time information. Builds capability-specific task JSON schema. Memory Router dispatches a lookup through the existing Work Coordinator. This builder joins the result only when taskContext includes memory; conversation-only recall continues alongside task inference and execution. Input received during a recall wait is retained for the existing task interpreter and continuation. Persona remains capped at 2,000 characters. No LLM call occurs in this builder.\n\n5. TASK DECISION — SECOND LLM CALL\nUses the trained Qwen3.5 0.8B task specialist, run 008, as a merged Q4_K_M model. It may select delegatePlanning to request the configured larger model; Resolve Task Plan uses the existing parser for the final selection. Returns taskDecision and program, optional visual interpretation, and new/steer/cancel with a target when execution context is present. It does not compose conversational speech. A program contains complete ordered action, generated-motion or ongoing-behavior steps. Null task/program values represent no selected objective change/activity. Validate Task Decision retains structural and capability validation. A steering handoff forwards the unchanged input through the durable owner and produces no local speech or program. Cancellation uses the existing execution owner.\n\n6. CONVERSATION — OPTIONAL THIRD LLM CALL\nBuild Conversation Context runs only when needsResponse is selected and this pass has a local parsed selection. It builds its own conversationContext selection from the already fetched source outputs, selected program, task decision and admission result. If conversation selected memory, it joins or reuses the correlated recall result before inference. Memory cannot be inserted into a model request after that request starts. A selected program returns first; its execution receipts, progress, failures and selected returned camera evidence feed this builder. A program interrupted by a new turn hands that turn to continuation without generating a premature final reply. It excludes task-selection rules and retains the full capability catalog plus descriptions of selected commands. It does not search or load history/persona again.\nConversation uses the configured Persona role and preferred backend, currently the main 9B model, unless its Model / LoRA selector is changed. It produces plain text only. The existing Coordinator generates the response, and its delivery workflow uses Conversation Buffer, Memory Capture, TTS and Stream Writer. Await Final Response Delivery joins that work before pending input and remaining-objective review, so review sees the delivered response. Speech does not produce commands or modify task decisions. A selected program is not physical completion evidence.\n\n7. EXECUTION AND CONTINUATION\nRobot Status Out records the task decision and projects status. Execute Complete Task is the existing sole owner of physical phases, using correlated receipts. There is no decision LLM call per ordinary movement. Novel motion generation, periodic visual identification, and unfinished-objective review remain conditional extra model calls through their existing owners.\nInput forwarded to an ongoing task is interpreted using the intent/task portion of this graph. That finite interpreter already runs alongside the active program and completes selected recall inside its existing job, without dispatching another execution. The saved task output is connected only to Task Decision's precomputed input; it cannot replace conversation output. The resumed pass can produce conversation through the separate conversation branch. Remaining Objective, Goal Review and Await Requested Context continue from durable state.\n\n8. DECISION RECORDING AND REVIEW\nSave Intent Decision records the Intent Orchestrator model output and its exact prompt messages. Save Task Decision records the task model output and its exact context-builder messages; a precomputed task response is not recorded as a new model call. Save failures are visible in node outputs and do not stop the robot request. These records are separate from conversation memory.\nThe Freestyle motion generator runs in the Environment Freestyle graph, where its own save node records exact model messages, raw output, and validation result. Its motion plan remains the existing eight-joint contract. Persona → Memory → Environment Training shows the separate intent, task, and Freestyle banks with attributed execution evidence. The manually triggered curator proposes reviews; a person must accept, correct, reject, or defer each record before it can enter a training export. The trainer uses reviewed intent/task exports without changing the frozen evaluation set.\n\nMODEL SELECTION AND DIAGNOSIS\nIntent Orchestrator, Task Decision and Conversation each expose Model / LoRA. An empty selection follows the configured role and preferred backend; an explicit model or served adapter overrides that node only. Selection does not train a model or start another server. The two trained 0.8B specialists are served by separate resident llama.cpp processes alongside the preferred 9B model. They remain experimental and can make semantic mistakes; their training covered text decisions, not visual understanding. The task server retains the base vision projector for image input. These explicit selections are registered in the installation profile. Conversation and Resolve Task Plan continue to follow the configured Persona role and preferred backend.\nInspect activation conditions and Last Run outputs to see skipped branches and selected evidence. A normal pass has two calls without conversation or three with conversation. Corrections, task reinterpretation, generated motion, identification and goal review can add calls. Measure each stage's tokens, duration and model independently.\n\nThis Graph Note is editor-only and never enters an LLM prompt.",
           "style": "info",
           "frame": false
+        }
+      }
+    },
+    {
+      "id": "conversation-result-images",
+      "type": "environmentNode",
+      "position": {
+        "x": 5640,
+        "y": 900
+      },
+      "data": {
+        "label": "Select Returned Camera Evidence",
+        "nodeType": "environment_image_input",
+        "properties": {},
+        "activation": {
+          "when": [
+            {
+              "nodeId": "active-task",
+              "output": "finished",
+              "truthy": true
+            },
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsResponse",
+              "truthy": true
+            },
+            {
+              "nodeId": "6",
+              "output": "selection",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "conversation-execution",
+      "type": "contextNode",
+      "position": {
+        "x": 5320,
+        "y": 1050
+      },
+      "data": {
+        "label": "Read Returned Execution Evidence",
+        "nodeType": "execution_context",
+        "properties": {
+          "eventLimit": 16
+        },
+        "activation": {
+          "when": [
+            {
+              "nodeId": "active-task",
+              "output": "finished",
+              "truthy": true
+            },
+            {
+              "nodeId": "intent-orchestrator",
+              "output": "needsResponse",
+              "truthy": true
+            },
+            {
+              "nodeId": "6",
+              "output": "selection",
+              "truthy": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "conversation-result",
+      "type": "utilityNode",
+      "position": {
+        "x": 6960,
+        "y": 420
+      },
+      "data": {
+        "label": "Await Final Response Delivery",
+        "nodeType": "work_result_wait",
+        "properties": {}
+      }
+    },
+    {
+      "id": "thinking-on",
+      "type": "environmentNode",
+      "position": {
+        "x": 240,
+        "y": 0
+      },
+      "data": {
+        "label": "Thinking On",
+        "nodeType": "environment_expression_feedback",
+        "properties": {
+          "operation": "set",
+          "expression": "thinking",
+          "timeoutMs": 60000,
+          "background": true,
+          "errorExpression": "confused",
+          "errorTimeoutMs": 5000
+        }
+      }
+    },
+    {
+      "id": "thinking-out",
+      "type": "environmentNode",
+      "position": {
+        "x": 1000,
+        "y": 80
+      },
+      "data": {
+        "label": "Face Expression Out",
+        "nodeType": "environment_face_expression",
+        "properties": {
+          "expression": "",
+          "sessionId": "",
+          "operation": "set",
+          "timeoutMs": 60000,
+          "background": false
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "feedback"
+          ]
+        }
+      }
+    },
+    {
+      "id": "response-thinking",
+      "type": "environmentNode",
+      "position": {
+        "x": 5565,
+        "y": -765
+      },
+      "data": {
+        "label": "Processing Final Response",
+        "nodeType": "environment_expression_feedback",
+        "properties": {
+          "operation": "set",
+          "expression": "thinking",
+          "timeoutMs": 60000,
+          "background": true,
+          "errorExpression": "confused",
+          "errorTimeoutMs": 5000
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "control"
+          ]
+        }
+      }
+    },
+    {
+      "id": "response-thinking-out",
+      "type": "environmentNode",
+      "position": {
+        "x": 6360,
+        "y": -900
+      },
+      "data": {
+        "label": "Face Expression Out",
+        "nodeType": "environment_face_expression",
+        "properties": {
+          "expression": "",
+          "sessionId": "",
+          "operation": "set",
+          "timeoutMs": 60000,
+          "background": false
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "feedback"
+          ]
+        }
+      }
+    },
+    {
+      "id": "thinking-off",
+      "type": "environmentNode",
+      "position": {
+        "x": 6810,
+        "y": -1065
+      },
+      "data": {
+        "label": "Thinking Off",
+        "nodeType": "environment_expression_feedback",
+        "properties": {
+          "operation": "release",
+          "expression": "thinking",
+          "timeoutMs": 60000,
+          "background": true,
+          "errorExpression": "confused",
+          "errorTimeoutMs": 5000
+        },
+        "activation": {
+          "mode": "always"
+        }
+      }
+    },
+    {
+      "id": "thinking-off-out",
+      "type": "environmentNode",
+      "position": {
+        "x": 7460,
+        "y": -900
+      },
+      "data": {
+        "label": "Release Request Expression",
+        "nodeType": "environment_face_expression",
+        "properties": {
+          "expression": "",
+          "sessionId": "",
+          "operation": "set",
+          "timeoutMs": 60000,
+          "background": false
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "feedback"
+          ]
+        }
+      }
+    },
+    {
+      "id": "save-intent-decision",
+      "type": "environmentNode",
+      "position": {
+        "x": 1740,
+        "y": -380
+      },
+      "width": 250,
+      "data": {
+        "label": "Save Intent Decision",
+        "nodeType": "environment_training_output",
+        "properties": {
+          "specialist": "intent",
+          "sourceNodeId": "intent-orchestrator"
+        },
+        "comment": "Saves the exact intent model output and its input messages to the separate review bank. This side branch does not select routes."
+      }
+    },
+    {
+      "id": "save-task-decision",
+      "type": "environmentNode",
+      "position": {
+        "x": 3510,
+        "y": -380
+      },
+      "width": 250,
+      "data": {
+        "label": "Save Task Decision",
+        "nodeType": "environment_training_output",
+        "properties": {
+          "specialist": "task",
+          "sourceNodeId": "4"
+        },
+        "comment": "Saves the task model output and its input messages when this branch called the model. Precomputed responses are not training candidates."
+      }
+    },
+    {
+      "id": "node-367fd7e0-a23a-40b7-8355-1988072c5c70",
+      "type": "genericNode",
+      "position": {
+        "x": 6795,
+        "y": -465
+      },
+      "data": {
+        "nodeType": "cognitive/big_brother",
+        "properties": {
+          "prompt": "You are MetaHuman OS Big Brother, the installation's diagnostic and repair agent. Read docs/technical/BIG_BROTHER.md and the supplied repair-log path. Evaluate the supplied diagnostic data, investigate the responsible system, and repair confirmed issues within the Installation Owner's authorization. Record findings, changes, validation results, and unresolved issues in the repair log. Distinguish reported symptoms, verified causes, attempted changes, and demonstrated repairs.",
+          "model": "",
+          "reasoning": true
         }
       }
     }
   ],
   "edges": [
     {
+      "id": "save-intent-output",
+      "source": "intent-orchestrator",
+      "target": "save-intent-decision",
+      "sourceHandle": "raw",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "save-intent-messages",
+      "source": "intent-orchestrator",
+      "target": "save-intent-decision",
+      "sourceHandle": "modelMessages",
+      "targetHandle": "messages",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "save-task-output",
+      "source": "4",
+      "target": "save-task-decision",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "save-task-messages",
+      "source": "3",
+      "target": "save-task-decision",
+      "sourceHandle": "messages",
+      "targetHandle": "messages",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "save-task-precomputed",
+      "source": "3",
+      "target": "save-task-decision",
+      "sourceHandle": "precomputedResponse",
+      "targetHandle": "precomputedResponse",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
       "id": "e-user-intent",
       "source": "user-input",
-      "target": "intent-orchestrator",
+      "target": "thinking-on",
       "sourceHandle": "message",
-      "targetHandle": "message",
+      "targetHandle": "control",
       "type": "default",
       "data": {
         "type": "string"
@@ -750,7 +1081,7 @@
       "id": "e-persona-context",
       "source": "persona-loader",
       "target": "3",
-      "sourceHandle": "formatted",
+      "sourceHandle": "taskFormatted",
       "targetHandle": "personaText",
       "type": "default",
       "data": {
@@ -891,9 +1222,9 @@
     },
     {
       "id": "e-current-image-parser",
-      "source": "11",
+      "source": "3",
       "target": "6",
-      "sourceHandle": "current",
+      "sourceHandle": "currentVisualEvidence",
       "targetHandle": "currentVisualEvidence",
       "type": "default",
       "data": {
@@ -1035,7 +1366,7 @@
     {
       "id": "robot-status-out-persisted-input-events-control",
       "source": "robot-status-out",
-      "target": "input-events",
+      "target": "thinking-off",
       "sourceHandle": "persisted",
       "targetHandle": "control",
       "type": "default",
@@ -1051,8 +1382,8 @@
     {
       "id": "visual-history-2-observation-observation-history-observation",
       "source": "2",
-      "sourceHandle": "observation",
       "target": "observation-history",
+      "sourceHandle": "observation",
       "targetHandle": "observation",
       "type": "default",
       "data": {
@@ -1062,8 +1393,8 @@
     {
       "id": "visual-history-observation-history-observations-3-observationHistory",
       "source": "observation-history",
-      "sourceHandle": "observations",
       "target": "3",
+      "sourceHandle": "observations",
       "targetHandle": "observationHistory",
       "type": "default",
       "data": {
@@ -1073,8 +1404,8 @@
     {
       "id": "visual-history-3-frames-6-frames",
       "source": "3",
-      "sourceHandle": "frames",
       "target": "6",
+      "sourceHandle": "frames",
       "targetHandle": "frames",
       "type": "default",
       "data": {
@@ -1084,8 +1415,8 @@
     {
       "id": "visual-history-3-frames-save-observation-frames",
       "source": "3",
-      "sourceHandle": "frames",
       "target": "save-observation",
+      "sourceHandle": "frames",
       "targetHandle": "frames",
       "type": "default",
       "data": {
@@ -1095,8 +1426,8 @@
     {
       "id": "visual-history-2-observation-save-observation-observation",
       "source": "2",
-      "sourceHandle": "observation",
       "target": "save-observation",
+      "sourceHandle": "observation",
       "targetHandle": "observation",
       "type": "default",
       "data": {
@@ -1106,8 +1437,8 @@
     {
       "id": "visual-history-6-visualObservation-save-observation-visualObservation",
       "source": "6",
-      "sourceHandle": "visualObservation",
       "target": "save-observation",
+      "sourceHandle": "visualObservation",
       "targetHandle": "visualObservation",
       "type": "default",
       "data": {
@@ -1117,8 +1448,8 @@
     {
       "id": "visual-history-save-observation-observation-robot-status-out-visualObservation",
       "source": "save-observation",
-      "sourceHandle": "observation",
       "target": "robot-status-out",
+      "sourceHandle": "observation",
       "targetHandle": "visualObservation",
       "type": "default",
       "data": {
@@ -1181,20 +1512,9 @@
       }
     },
     {
-      "id": "active-active-task-input-events-userInput",
-      "source": "active-task",
-      "target": "input-events",
-      "sourceHandle": "userInput",
-      "targetHandle": "receivedInput",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
       "id": "active-active-task-input-events-completed",
       "source": "active-task",
-      "target": "input-events",
+      "target": "thinking-off",
       "sourceHandle": "finished",
       "targetHandle": "control",
       "type": "default",
@@ -1266,9 +1586,10 @@
     {
       "id": "remaining-objective-await-input",
       "source": "remaining-objective",
-      "sourceHandle": "awaitContext",
       "target": "await-objective-input",
+      "sourceHandle": "awaitContext",
       "targetHandle": "control",
+      "type": "default",
       "data": {
         "kind": "control",
         "type": "boolean",
@@ -1281,9 +1602,10 @@
     {
       "id": "await-objective-input-continue",
       "source": "await-objective-input",
-      "sourceHandle": "invocation",
       "target": "continue-user-input",
+      "sourceHandle": "invocation",
       "targetHandle": "invocation",
+      "type": "default",
       "data": {
         "kind": "data",
         "type": "object",
@@ -1297,8 +1619,8 @@
     {
       "id": "execution-activeExecutions-3",
       "source": "execution",
-      "sourceHandle": "activeExecutions",
       "target": "3",
+      "sourceHandle": "activeExecutions",
       "targetHandle": "activeExecutions",
       "type": "default",
       "data": {
@@ -1307,9 +1629,9 @@
     },
     {
       "id": "execution-activeExecutions-6",
-      "source": "execution",
-      "sourceHandle": "activeExecutions",
+      "source": "3",
       "target": "6",
+      "sourceHandle": "activeExecutions",
       "targetHandle": "activeExecutions",
       "type": "default",
       "data": {
@@ -1319,8 +1641,8 @@
     {
       "id": "intent-conversation-history-control",
       "source": "intent-orchestrator",
-      "sourceHandle": "needsConversationHistory",
       "target": "conversation-history",
+      "sourceHandle": "needsConversationHistory",
       "targetHandle": "control",
       "type": "default",
       "data": {
@@ -1335,8 +1657,8 @@
     {
       "id": "intent-execution-control",
       "source": "intent-orchestrator",
-      "sourceHandle": "needsExecutionContext",
       "target": "execution",
+      "sourceHandle": "needsExecutionContext",
       "targetHandle": "control",
       "type": "default",
       "data": {
@@ -1351,8 +1673,8 @@
     {
       "id": "active-task-result-context-review",
       "source": "active-task",
-      "sourceHandle": "resultContext",
       "target": "review-remaining-objective",
+      "sourceHandle": "resultContext",
       "targetHandle": "context",
       "type": "default",
       "data": {
@@ -1362,8 +1684,8 @@
     {
       "id": "task-interpretation-model",
       "source": "3",
-      "sourceHandle": "precomputedResponse",
       "target": "4",
+      "sourceHandle": "precomputedResponse",
       "targetHandle": "precomputedResponse",
       "type": "default",
       "data": {
@@ -1373,8 +1695,8 @@
     {
       "id": "3-selectedContext-conversation-context-selectedContext",
       "source": "3",
-      "sourceHandle": "selectedContext",
       "target": "conversation-context",
+      "sourceHandle": "selectedContext",
       "targetHandle": "selectedContext",
       "type": "default",
       "data": {
@@ -1383,9 +1705,9 @@
     },
     {
       "id": "3-images-conversation-context-images",
-      "source": "3",
-      "sourceHandle": "images",
+      "source": "11",
       "target": "conversation-context",
+      "sourceHandle": "images",
       "targetHandle": "images",
       "type": "default",
       "data": {
@@ -1395,8 +1717,8 @@
     {
       "id": "6-selection-conversation-context-selectedTask",
       "source": "6",
-      "sourceHandle": "selection",
       "target": "conversation-context",
+      "sourceHandle": "selection",
       "targetHandle": "selectedTask",
       "type": "default",
       "data": {
@@ -1406,9 +1728,9 @@
     {
       "id": "conversation-context-messages-conversation-model-messages",
       "source": "conversation-context",
+      "target": "response-thinking",
       "sourceHandle": "messages",
-      "target": "conversation-model",
-      "targetHandle": "messages",
+      "targetHandle": "control",
       "type": "default",
       "data": {
         "type": "array"
@@ -1435,11 +1757,530 @@
       "data": {
         "type": "object"
       }
+    },
+    {
+      "id": "result-handoff-active-task-result-conversation-context-taskResult",
+      "source": "active-task",
+      "target": "conversation-context",
+      "sourceHandle": "result",
+      "targetHandle": "taskResult",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "result-handoff-returned-observation-context",
+      "source": "active-task",
+      "target": "conversation-context",
+      "sourceHandle": "resultObservation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "result-handoff-conversation-result-images-images-conversation-context-resultImages",
+      "source": "conversation-result-images",
+      "target": "conversation-context",
+      "sourceHandle": "images",
+      "targetHandle": "resultImages",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "result-handoff-conversation-result-images-frames-conversation-context-resultFrames",
+      "source": "conversation-result-images",
+      "target": "conversation-context",
+      "sourceHandle": "frames",
+      "targetHandle": "resultFrames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "result-handoff-conversation-execution-context-conversation-context-execution",
+      "source": "conversation-execution",
+      "target": "conversation-context",
+      "sourceHandle": "context",
+      "targetHandle": "execution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "result-handoff-conversation-model-work-conversation-result-work",
+      "source": "conversation-model",
+      "target": "conversation-result",
+      "sourceHandle": "work",
+      "targetHandle": "work",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "result-handoff-conversation-result-result-input-events-control",
+      "source": "conversation-result",
+      "target": "thinking-off",
+      "sourceHandle": "result",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "object",
+        "kind": "control"
+      }
+    },
+    {
+      "id": "result-handoff-returned-observation-images",
+      "source": "active-task",
+      "target": "conversation-result-images",
+      "sourceHandle": "resultObservation",
+      "targetHandle": "observation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "result-handoff-admitted-program-context",
+      "source": "6",
+      "target": "conversation-context",
+      "sourceHandle": "program",
+      "targetHandle": "program",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-intent-orchestrator-analysis-persona-loader-routingAnalysis",
+      "source": "intent-orchestrator",
+      "target": "persona-loader",
+      "sourceHandle": "analysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-memory-router-work-3-memoryWork",
+      "source": "memory-router",
+      "target": "3",
+      "sourceHandle": "work",
+      "targetHandle": "memoryWork",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-memory-router-work-conversation-context-memoryWork",
+      "source": "memory-router",
+      "target": "conversation-context",
+      "sourceHandle": "work",
+      "targetHandle": "memoryWork",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-intent-orchestrator-analysis-conversation-context-routingAnalysis",
+      "source": "intent-orchestrator",
+      "target": "conversation-context",
+      "sourceHandle": "analysis",
+      "targetHandle": "routingAnalysis",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-user-input-message-conversation-context-userInstruction",
+      "source": "user-input",
+      "target": "conversation-context",
+      "sourceHandle": "message",
+      "targetHandle": "userInstruction",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "context-routing-2-observation-conversation-context-sourceObservation",
+      "source": "2",
+      "target": "conversation-context",
+      "sourceHandle": "observation",
+      "targetHandle": "sourceObservation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-2-isTriggeringObservation-conversation-context-observationCurrent",
+      "source": "2",
+      "target": "conversation-context",
+      "sourceHandle": "isTriggeringObservation",
+      "targetHandle": "observationCurrent",
+      "type": "default",
+      "data": {
+        "type": "boolean"
+      }
+    },
+    {
+      "id": "context-routing-execution-context-conversation-context-sourceExecution",
+      "source": "execution",
+      "target": "conversation-context",
+      "sourceHandle": "context",
+      "targetHandle": "sourceExecution",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-conversation-history-history-conversation-context-conversationHistory",
+      "source": "conversation-history",
+      "target": "conversation-context",
+      "sourceHandle": "history",
+      "targetHandle": "conversationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "context-routing-memory-router-memories-conversation-context-memories",
+      "source": "memory-router",
+      "target": "conversation-context",
+      "sourceHandle": "memories",
+      "targetHandle": "memories",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "context-routing-robot-status-context-conversation-context-robotStatus",
+      "source": "robot-status",
+      "target": "conversation-context",
+      "sourceHandle": "context",
+      "targetHandle": "robotStatus",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-persona-loader-conversationFormatted-conversation-context-personaText",
+      "source": "persona-loader",
+      "target": "conversation-context",
+      "sourceHandle": "conversationFormatted",
+      "targetHandle": "personaText",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "context-routing-11-frames-conversation-context-frames",
+      "source": "11",
+      "target": "conversation-context",
+      "sourceHandle": "frames",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "context-routing-observation-history-observations-conversation-context-observationHistory",
+      "source": "observation-history",
+      "target": "conversation-context",
+      "sourceHandle": "observations",
+      "targetHandle": "observationHistory",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "context-routing-3-receivedInput-input-events-receivedInput",
+      "source": "3",
+      "target": "input-events",
+      "sourceHandle": "receivedInput",
+      "targetHandle": "receivedInput",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "active-active-task-input-events-userInput",
+      "source": "active-task",
+      "target": "input-events",
+      "sourceHandle": "userInput",
+      "targetHandle": "receivedInput",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-conversation-context-receivedInput-input-events-receivedInput",
+      "source": "conversation-context",
+      "target": "input-events",
+      "sourceHandle": "receivedInput",
+      "targetHandle": "receivedInput",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "result-handoff-conversation-result-userInput-input-events-receivedInput",
+      "source": "conversation-result",
+      "target": "input-events",
+      "sourceHandle": "userInput",
+      "targetHandle": "receivedInput",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "context-routing-task-input-active-task",
+      "source": "3",
+      "target": "active-task",
+      "sourceHandle": "receivedInput",
+      "targetHandle": "userInput",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "thinking-control",
+      "source": "thinking-on",
+      "target": "thinking-out",
+      "sourceHandle": "control",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-feedback",
+      "source": "thinking-on",
+      "target": "thinking-out",
+      "sourceHandle": "feedback",
+      "targetHandle": "feedback",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-message",
+      "source": "thinking-out",
+      "target": "intent-orchestrator",
+      "sourceHandle": "control",
+      "targetHandle": "message",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-session",
+      "source": "2",
+      "target": "thinking-out",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-response-token",
+      "source": "thinking-on",
+      "target": "response-thinking",
+      "sourceHandle": "token",
+      "targetHandle": "token",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-response-control",
+      "source": "response-thinking",
+      "target": "response-thinking-out",
+      "sourceHandle": "control",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-response-feedback",
+      "source": "response-thinking",
+      "target": "response-thinking-out",
+      "sourceHandle": "feedback",
+      "targetHandle": "feedback",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-response-messages",
+      "source": "response-thinking-out",
+      "target": "conversation-model",
+      "sourceHandle": "control",
+      "targetHandle": "messages",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-response-session",
+      "source": "2",
+      "target": "response-thinking-out",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-release-token",
+      "source": "thinking-on",
+      "target": "thinking-off",
+      "sourceHandle": "token",
+      "targetHandle": "token",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-release-feedback",
+      "source": "thinking-off",
+      "target": "thinking-off-out",
+      "sourceHandle": "feedback",
+      "targetHandle": "feedback",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-release-control",
+      "source": "thinking-off",
+      "target": "thinking-off-out",
+      "sourceHandle": "control",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-release-session",
+      "source": "2",
+      "target": "thinking-off-out",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "thinking-released",
+      "source": "thinking-off-out",
+      "target": "input-events",
+      "sourceHandle": "status",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "control"
+      }
+    },
+    {
+      "id": "thinking-action-result",
+      "source": "active-task",
+      "target": "thinking-off",
+      "sourceHandle": "result",
+      "targetHandle": "actionResult",
+      "type": "default",
+      "data": {}
+    },
+    {
+      "id": "thinking-work-result",
+      "source": "conversation-result",
+      "target": "thinking-off",
+      "sourceHandle": "result",
+      "targetHandle": "workResult",
+      "type": "default",
+      "data": {}
+    },
+    {
+      "id": "context-routing-execution-activeExecutions-conversation-context-activeExecutions",
+      "source": "execution",
+      "target": "conversation-context",
+      "sourceHandle": "activeExecutions",
+      "targetHandle": "activeExecutions",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "e-bridge-session-image",
+      "source": "2",
+      "target": "11",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "xy-edge__user-inputmessage-node-367fd7e0-a23a-40b7-8355-1988072c5c70data",
+      "source": "user-input",
+      "target": "node-367fd7e0-a23a-40b7-8355-1988072c5c70",
+      "sourceHandle": "message",
+      "targetHandle": "data",
+      "data": {}
+    },
+    {
+      "id": "xy-edge__conversation-contextmessages-node-367fd7e0-a23a-40b7-8355-1988072c5c70data2",
+      "source": "conversation-context",
+      "target": "node-367fd7e0-a23a-40b7-8355-1988072c5c70",
+      "sourceHandle": "messages",
+      "targetHandle": "data2",
+      "data": {}
     }
   ],
   "viewport": {
-    "x": 264.5934109526239,
-    "y": 606.8247006679115,
-    "zoom": 0.16556008817697923
+    "x": -7418.257306815246,
+    "y": 515.4187985226333,
+    "zoom": 1.1876188565032382
   }
 }

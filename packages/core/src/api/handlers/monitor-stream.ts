@@ -54,6 +54,7 @@ async function* streamMonitorUpdates(signal: AbortSignal | undefined): AsyncGene
       });
     } catch (error) {
       console.error('Error computing agent monitor snapshot:', error);
+      push({ type: 'error', error: (error as Error).message });
     }
   };
 
@@ -68,9 +69,12 @@ async function* streamMonitorUpdates(signal: AbortSignal | undefined): AsyncGene
   const watchPath = (target: string) => {
     try {
       if (!fs.existsSync(target)) return;
-      watchers.push(fs.watch(target, scheduleSnapshot));
+      const watcher = fs.watch(target, scheduleSnapshot);
+      watcher.on('error', error => push({ type: 'error', error: error.message }));
+      watchers.push(watcher);
     } catch (error) {
       console.warn('[monitor/stream] Watch failed:', target, (error as Error).message);
+      push({ type: 'error', error: (error as Error).message });
     }
   };
 
@@ -85,6 +89,7 @@ async function* streamMonitorUpdates(signal: AbortSignal | undefined): AsyncGene
   watchPath(path.join(systemPaths.root, 'etc', 'agents.json'));
 
   signal?.addEventListener('abort', close, { once: true });
+  if (signal?.aborted) close();
 
   try {
     while (!closed || queue.length > 0) {

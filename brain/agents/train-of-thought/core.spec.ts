@@ -26,6 +26,7 @@ const graph: SvelteFlowGraph = {
   nodes: [
     { id: 'aggregate', type: 'cognitiveNode', position: { x: 0, y: 0 }, data: { label: 'aggregate', nodeType: 'thought_aggregator', properties: {} } },
     { id: 'persist', type: 'outputNode', position: { x: 1, y: 0 }, data: { label: 'persist', nodeType: 'inner_dialogue_buffer', properties: {} } },
+    { id: 'memory', type: 'outputNode', position: { x: 2, y: 0 }, data: { label: 'memory', nodeType: 'inner_dialogue_saver', properties: {} } },
   ],
   edges: [],
 }
@@ -49,11 +50,14 @@ function completedState(overrides: Record<string, Record<string, any>> = {}): Gr
       outputs: {
         saved: true,
         persisted: true,
-        eventId: 'evt-train',
-        eventPath: 'memory/episodic/train.json',
         ...overrides.persist,
       },
       definition: { type: 'inner_dialogue_buffer' },
+    }],
+    ['memory', {
+      nodeId: 'memory', status: 'completed',
+      outputs: { saved: true, eventId: 'evt-train', eventPath: 'memory/episodic/train.json', ...overrides.memory },
+      definition: { type: 'inner_dialogue_saver' },
     }],
   ])
   return { nodes, startTime: 0, endTime: 1, status: 'completed' }
@@ -121,6 +125,9 @@ test('manual Train of Thought uses the bounded canonical memory sampler and skip
 })
 
 test('Train of Thought rejects graph and persistence failures', async () => {
+  assert.throws(() => evaluateTrainOfThoughtGraph(graph, completedState({ memory: { saved: false } }), {
+    username: 'test-user', executionId: 'execution', seedSource: 'supplied',
+  }), /did not confirm long-term memory capture/)
   const failed = completedState()
   failed.status = 'failed'
   failed.nodes.set('aggregate', {

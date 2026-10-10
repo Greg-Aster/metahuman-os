@@ -8,7 +8,8 @@ import { ROOT, systemPaths } from './path-builder.js';
 import {
   buildAgentNodePath,
   resolveAgentExecutablePath,
-  resolveTsx,
+  resolveAgentRunner,
+  resolveAgentBootstrapPath,
 } from './agent-executable-resolver.js';
 import {
   clearAgentFailure,
@@ -131,7 +132,7 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
       };
     }
 
-    const bootstrapPath = path.join(ROOT, 'packages', 'core', 'src', 'agent-bootstrap.ts');
+    const bootstrapPath = resolveAgentBootstrapPath();
     const agentPath = resolveAgentExecutablePath(agentName);
     if (!agentPath) {
       return failedStart(agentName, source, 'Agent file not found');
@@ -159,7 +160,7 @@ export async function startAgentProcess(agentName: string, options: StartAgentPr
     }
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(resolveTsx(), commandArgs, {
+      child = spawn(resolveAgentRunner(commandArgs[0]), commandArgs, {
         // A detached service must never inherit pipes owned by a short-lived
         // CLI/API request. Durable files keep diagnostics without keeping the
         // launcher terminal alive or delivering EPIPE to the service later.

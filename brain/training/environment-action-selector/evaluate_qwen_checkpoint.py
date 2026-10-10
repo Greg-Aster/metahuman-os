@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--fold", type=int, default=-1)
-    parser.add_argument("--split", choices=["development", "evaluation"], default="development")
+    parser.add_argument("--split", choices=["development", "evaluation", "regression"], default="development")
     parser.add_argument("--base", action="store_true")
     return parser.parse_args()
 

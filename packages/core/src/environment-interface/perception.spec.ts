@@ -69,6 +69,21 @@ test('camera identity, receipt age, expiry and transport changes fence recogniti
     gateway: { robots: { robot: { epoch: 7, connection_state: 'stale' } } } } }, perception()), null);
 });
 
+test('named people retain evidence state and never become verified identity', () => {
+  const box = { x: .1, y: .1, width: .3, height: .7 };
+  const face = { trackId: 'track-a', state: 'face_match', personId: 'person-a', name: 'Alice', faceAgeMs: 0, similarity: .7 };
+  const tracked = { trackId: 'track-a', state: 'tracked', personId: 'person-a', name: 'Alice', faceAgeMs: 500 };
+  for (const identity of [face, tracked, { trackId: 'track-b', state: 'unknown' }]) {
+    const result = core.normalizeEnvironmentPerception(perception(1, { objects: [{ label: 'person', box, identity }] }));
+    assert.deepEqual(result.objects[0].identity, identity);
+  }
+  for (const identity of [{ ...face, verified: true }, { ...face, similarity: NaN }, { ...face, faceAgeMs: 1 },
+    { ...tracked, faceAgeMs: 3001 }, { trackId: 'track-b', state: 'unknown', name: 'Alice' }]) {
+    assert.throws(() => core.normalizeEnvironmentPerception(perception(1, { objects: [{ label: 'person', box, identity }] })));
+  }
+  assert.throws(() => core.normalizeEnvironmentPerception(perception(1, { objects: [{ label: 'keys', box, identity: face }] })));
+});
+
 test('telemetry exposes current recognition to task graphs while preserving stills and queue ownership', async () => {
   const originalToken = process.env.MH_ENVIRONMENT_BRIDGE_TOKEN;
   process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'fixture-token';
@@ -129,4 +144,39 @@ test('expiry hides previous recognition and unsigned camera counters can wrap', 
   state.sessions[source.sessionId].status = 'disconnected';
   core.writeEnvironmentBridgeState(state);
   assert.equal(await core.recordEnvironmentPerception(source.sessionId, perception(1)), false);
+});
+
+test('successive frames keep one pending perception wake and preserve the newest observation', async () => {
+  const { openExecutionStore } = await import('../durable-execution/storage.js');
+  const store = openExecutionStore('perception-owner');
+  const queue = getQueueManager();
+  const definition = { graphId: 'perception-wait', graphHash: 'fixture', runtimeVersion: 'fixture', checkpointSchemaVersion: 1, nodeVersions: {} };
+  const execution = store.create('perception-owner', definition);
+  const lease = store.claim(execution.executionId, definition);
+  store.settle(lease, 'waiting', 'active_task:robot-session:perception'); store.release(lease);
+  const owner = queue.enqueue({ type: 'generic', handler: 'environment.active-task-deadline', username: 'perception-owner',
+    input: { sessionId: 'robot-session' }, durable: { executionId: execution.executionId, effectId: 'owner-deadline', recovery: 'resume' } });
+  const wakes: any[] = [];
+  const enqueue = async (input: any) => { wakes.push(input); return queue.enqueue(input); };
+  try {
+    core.recordEnvironmentObservation(observation());
+    await assert.rejects(core.recordEnvironmentPerception('robot-session', perception(1), async () => {
+      throw new Error('Temporary queue outage');
+    }), /Temporary queue outage/);
+    for (let frame = 2; frame <= 8; frame++) assert.equal(await core.recordEnvironmentPerception('robot-session', perception(frame), enqueue), true);
+    assert.equal(core.getEnvironmentPerception('robot-session')?.frameCounter, 8, 'Live state is latest-frame, not a buffered old frame');
+    assert.equal(wakes.length, 1, 'Camera rate must not create an unbounded queue of equivalent wakes');
+    const events = store.events(execution.executionId);
+    assert.equal(events.length, 1);
+    assert.equal((events[0].payload as any).perception.frameCounter, 1, 'Historical event evidence is not rewritten');
+    store.db.transaction(() => store.commitTransition(execution.executionId, 'consumed', {
+      transitionId: 'consumed', processedEventIds: [events[0].eventId],
+    }))();
+    assert.equal(await core.recordEnvironmentPerception('robot-session', perception(9), enqueue), true);
+    assert.equal(wakes.length, 2, 'Consuming a wake must allow the next frame to wake the owner');
+    store.deliverEvent(execution.executionId, { eventId: 'receipt', kind: 'physical_result', actionId: 'original-motion', payload: { type: 'cancelled' } });
+    assert.equal(await core.recordEnvironmentPerception('robot-session', perception(10), enqueue), true);
+    assert.equal(store.events(execution.executionId).filter(event => event.kind === 'perception_received').length, 2);
+    assert.ok(store.findEvent(execution.executionId, 'receipt'), 'Coalescing never removes a movement receipt');
+  } finally { queue.cancel(owner.id, 'Fixture complete'); store.close(); }
 });

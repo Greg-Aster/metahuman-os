@@ -1,5 +1,6 @@
 import { defineNode } from '../types.js';
 import {
+  getLatestEnvironmentVisual,
   validEnvironmentJpegDataUrl,
   type EnvironmentFeedback,
   type EnvironmentVisualFrame,
@@ -34,6 +35,8 @@ export const environmentImageInputNode = defineNode({
   name: 'Select Available Camera Evidence',
   category: 'environment',
   inputs: [
+    { name: 'sessionId', type: 'string', optional: true, description: 'Read already received camera evidence for this Bridge session when the node runs.' },
+    { name: 'observation', type: 'object', optional: true, description: 'Returned observation containing camera evidence from the execution owner' },
     { name: 'visual', label: 'Current camera frame', type: 'object', optional: true, description: 'The latest camera frame received from the robot bridge.' },
     { name: 'visuals', label: 'Camera frame list', type: 'array', optional: true, description: 'Other camera frames included in the current robot observation.' },
     { name: 'observationCurrent', label: 'Current-run observation', type: 'boolean', optional: true, description: 'Whether these frames arrived with the observation that triggered this graph run. Omit only in workflows whose input is already current by contract.' },
@@ -62,7 +65,10 @@ export const environmentImageInputNode = defineNode({
   },
   description: 'Selects the latest available Bridge camera image for observation, or matches images to a specific returned action for result review. Retains recorded timestamps and action IDs, and sends no capture command.',
   async execute(inputs, context) {
-    const candidates = framesFromInputs(inputs.visual, inputs.visuals);
+    const supplied = framesFromInputs(inputs.visual ?? inputs.observation?.visual, inputs.visuals ?? inputs.observation?.visuals);
+    const sessionId = cleanText(inputs.sessionId);
+    const available = sessionId ? getLatestEnvironmentVisual(sessionId) : undefined;
+    const candidates = framesFromInputs(undefined, [...supplied, ...(available ? [available] : [])]);
     const valid = candidates.filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl));
     const observationCurrent = inputs.observationCurrent !== false;
     const status = isRecord(inputs.execution) ? inputs.execution : null;
@@ -77,7 +83,7 @@ export const environmentImageInputNode = defineNode({
     const baseline = terminalFeedback && task?.baselineFrame
       ? context.graphExecution?.frame(task.baselineFrame.id)
       : undefined;
-    const latest = [...valid].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    const latest = [...valid].sort((a, b) => (b.timestamp ?? '').localeCompare(a.timestamp ?? ''));
     const resultFrame = terminalFeedback
       ? latest.find(frame => {
           const frameActionId = cleanText(frame.metadata?.actionId);
@@ -100,7 +106,7 @@ export const environmentImageInputNode = defineNode({
       })),
       frames: accepted,
       rejectedCount: candidates.length - valid.length,
-      current: Boolean(observationCurrent && selected),
+      current: Boolean(observationCurrent && selected && supplied.some(frame => frame.id === selected.id)),
       verified: Boolean(selected),
     };
   },

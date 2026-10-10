@@ -11,6 +11,10 @@ export const workResultWaitNode = defineNode({
   properties: {},
   async execute(inputs, context) {
     if (!context.graphExecution || !inputs.work?.effectId) throw new Error('Agent result wait requires an identified dispatch')
+    const pendingIds = new Set(context.graphExecution.pendingEvents().map((event: { eventId: string }) => event.eventId))
+    const recorded = context.graphExecution.events().find((event: { eventId: string; kind: string; payload: unknown }) => event.kind === 'work_result'
+      && (event.payload as any).effectId === inputs.work.effectId && !pendingIds.has(event.eventId))
+    if (recorded) return { result: recorded.payload }
     let userInput: Record<string, any> | undefined
     const events = []
     for (;;) {

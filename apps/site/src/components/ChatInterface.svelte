@@ -18,13 +18,11 @@
   import {
     buildConversationParams,
     buildResponsePipelineRequestBody,
-    closeEventSourceConnections,
     parseConversationStreamEvent,
     readLlmOptions,
     responsePipelineCardTypeForReply,
   } from '../lib/client/conversation-transport';
   import { connectProposalsStream, disconnectProposalsStream } from '../stores/proposals';
-  import { connectionPool, ConnectionPriority, type ConnectionHandle } from '../lib/client/connection-pool';
   import { autonomyModeDefinition, nextAutonomyMode, type AutonomyMode } from '../lib/client/active-operator-modes';
   import { setActiveOperatorMode, triggerManagerSnapshot, useTriggerManager } from '../lib/stores/trigger-manager';
   import { projectBufferFeed, replaceBufferSlice, stampBufferSource } from '../lib/client/buffer-feed';
@@ -45,15 +43,11 @@
   let savingBigBrother = false;
   let unsubscribeBigBrother: (() => void) | undefined;
   let bigBrotherProviderLabel = 'Claude Code';
-  let chatResponseHandle: ConnectionHandle | null = null;
   let chatResponseStream: EventSource | null = null;
   let activeChatTaskId: string | null = null;
   let reconcilingChatTaskId: string | null = null;
   let queuedChatStreams = new Map<string, EventSource>();
-  let innerDialogueHandle: ConnectionHandle | null = null;
-  let innerDialogueStream: EventSource | null = null;
-  let robotHandle: ConnectionHandle | null = null;
-  let robotStream: EventSource | null = null;
+  let bufferStream: EventSource | null = null;
   let isTabVisible = true;
   // View selection: VS Code-style multi-select
   // All three tabs can be combined for unified feed
@@ -77,7 +71,7 @@
   let transientStatusTimer: ReturnType<typeof setTimeout> | null = null;
   let messagesContainer: HTMLDivElement;
   let shouldAutoScroll = true;
-  // Buffer stream (innerDialogueStream) provides real-time updates via fs.watch SSE
+  // Buffer stream provides real-time updates via fs.watch SSE
   let visibilityCleanup: (() => void) | null = null;
   // Convenience toggles
   let ttsEnabled = true;
@@ -155,14 +149,13 @@
   // Initialize Activity Tracking
   const activityApi = useActivityTracking();
 
-  // Initialize LLM Backend Status (supports both Ollama and vLLM)
+  // Initialize LLM backend status.
   const backendApi = useOllamaStatus();
   const {
     running: backendRunning,
     hasModels: backendHasModels,
     modelCount: backendModelCount,
-    error: backendError,
-    activeBackend
+    error: backendError
   } = backendApi;
 
   // Initialize Microphone composable
@@ -218,7 +211,6 @@
   const thinkingTraceApi = useThinkingTrace({
     getCurrentMode: () => $currentMode || 'dual',
     getReasoningDepth: () => reasoningDepth,
-    getConversationSessionId: () => $conversationSessionId,
     getReasoningStagesCount: () => reasoningStages.length,
   });
   const {
@@ -393,7 +385,7 @@
 
   // Server-first conversation buffer management
 
-  onMount(async () => {
+  onMount(() => {
     loadChatPrefs();
     loadThinkingMode(); // Load vLLM thinking mode setting
     releaseTriggerManager = useTriggerManager();
@@ -441,11 +433,7 @@
       messagesApi.generateSessionId();
     }
 
-    // Connect to buffer streams for all selected views - this loads initial history AND provides real-time updates
-    // Uses fs.watch on server, no polling needed
-    // Fetch all selected buffers and merge them
-    await fetchAllSelectedBuffers();
-    // Connect streams for real-time updates
+    // The stream sends the initial buffer snapshots and subsequent updates.
     connectMultipleBufferStreams();
     console.log(`[ChatInterface] Connected to buffer streams for:`, Array.from(selectedViews));
 
@@ -473,17 +461,10 @@
 
       if (selectedViews.size > 0) {
         // Check if any streams need reconnection
-        const needsReconnect =
-          (selectedViews.has('conversation') && (!conversationStream || conversationStream.readyState === EventSource.CLOSED)) ||
-          (selectedViews.has('inner') && (!innerDialogueStream || innerDialogueStream.readyState === EventSource.CLOSED)) ||
-          (selectedViews.has('system') && (
-            !systemStream || systemStream.readyState === EventSource.CLOSED ||
-            !robotStream || robotStream.readyState === EventSource.CLOSED
-          ));
+        const needsReconnect = !bufferStream || bufferStream.readyState === EventSource.CLOSED;
 
         if (needsReconnect) {
           console.log('[chat] Tab visible, reconnecting buffer streams');
-          fetchAllSelectedBuffers();
           connectMultipleBufferStreams();
         }
       }
@@ -508,8 +489,6 @@
       chatResponseStream?.close();
       queuedChatStreams.forEach(stream => stream.close());
       queuedChatStreams.clear();
-      innerDialogueStream?.close();
-      robotStream?.close();
       disconnectAllBufferStreams();
       disconnectProposalsStream();
     };
@@ -622,47 +601,9 @@
   }
 
   function disconnectAllBufferStreams() {
-    if (innerDialogueHandle) {
-      innerDialogueHandle.close();
-      innerDialogueHandle = null;
-      innerDialogueStream = null;
-    }
-    if (conversationHandle) {
-      conversationHandle.close();
-      conversationHandle = null;
-      conversationStream = null;
-    }
-    if (systemHandle) {
-      systemHandle.close();
-      systemHandle = null;
-      systemStream = null;
-    }
-    if (robotHandle) {
-      robotHandle.close();
-      robotHandle = null;
-      robotStream = null;
-    }
+    bufferStream?.close();
+    bufferStream = null;
   }
-
-  function pausePassiveChatStreams() {
-    // Suspend the shared pool first so closing one stream cannot immediately
-    // promote another queued background stream into the freed browser slot.
-    connectionPool.suspend();
-    disconnectAllBufferStreams();
-    disconnectProposalsStream();
-    thinkingTraceApi.pauseTelemetry();
-  }
-
-  function restorePassiveChatStreams() {
-    if (!isComponentMounted || (typeof document !== 'undefined' && document.hidden)) {
-      return;
-    }
-
-    connectMultipleBufferStreams();
-    connectProposalsStream();
-    connectionPool.resume();
-  }
-
 
   onDestroy(() => {
     // Mark component as unmounted to stop animation loops
@@ -677,16 +618,11 @@
     disconnectAllBufferStreams();
     disconnectProposalsStream(); // Clean up proposals SSE stream
     activityApi.clearActivity();
-    thinkingTraceApi.cleanup();
+    thinkingTraceApi.stop();
     unsubscribeYolo();
     unsubscribeBigBrother?.();
     releaseTriggerManager?.();
     if (transientStatusTimer) clearTimeout(transientStatusTimer);
-
-    // A navigation can destroy the chat while a foreground request has the
-    // shared pool suspended. Release the suspension so streams owned by the
-    // next view are allowed to connect.
-    connectionPool.resume();
 
     // Clean up IntersectionObserver (moved from async onMount which doesn't work for cleanup)
     if (scrollObserver) {
@@ -756,7 +692,7 @@
             thinkingTraceApi.stop();
             reasoningStages = [];
             loading = false;
-            restorePassiveChatStreams();
+
             return;
           }
 
@@ -766,7 +702,7 @@
             reasoningStages = [];
             loading = false;
             messagesApi.pushMessage('system', `Error: ${task.error || 'Queued message failed'}`);
-            restorePassiveChatStreams();
+
             return;
           }
 
@@ -825,24 +761,24 @@
           pushGeneratedResponse(data.response, queuedMode, { facet: data.facet });
           loading = false;
           close();
-          restorePassiveChatStreams();
+
         } else if (type === 'error') {
           thinkingTraceApi.stop();
           messagesApi.pushMessage('system', `Error: ${data?.message || 'Queued message failed'}`);
           loading = false;
           close();
-          restorePassiveChatStreams();
+
         } else if (type === 'queued_task_completed') {
           thinkingTraceApi.stop();
           loading = false;
           close();
-          restorePassiveChatStreams();
+
         }
       } catch (err) {
         messagesApi.pushMessage('system', `Error: ${(err as Error).message || 'Failed to process queued response.'}`);
         loading = false;
         close();
-        restorePassiveChatStreams();
+
       }
     };
 
@@ -850,7 +786,7 @@
       messagesApi.pushMessage('system', 'Error: Queued message stream disconnected.');
       loading = false;
       close();
-      restorePassiveChatStreams();
+
     };
   }
 
@@ -906,45 +842,8 @@
       // Step 0: Pre-flight validation
       console.log('[response-pipeline] Step 0: Pre-flight checks');
 
-      // CRITICAL: Close ALL EventSource connections FIRST
-      // Browsers limit concurrent connections per-origin (typically 6 for HTTP/1.1)
-      // If limit is reached, fetch() hangs indefinitely waiting for a slot
-      // SYMPTOMS OF CONNECTION EXHAUSTION:
-      // - No CPU/GPU activity
-      // - No network requests visible in DevTools
-      // - Request just sits in "pending" state forever
-      // - No error, no timeout - just infinite hang
-      console.log('[response-pipeline] ========== CONNECTION CLEANUP START ==========');
-      console.log('[response-pipeline] Reason: Browser connection limit (6 per origin)');
-      console.log('[response-pipeline] Closing all EventSource connections to free slots...');
-
-      let closedCount = closeEventSourceConnections('[response-pipeline]', [
-        {
-          name: 'chatResponseStream',
-          source: chatResponseStream,
-          clear: () => {
-            chatResponseStream = null;
-          },
-        },
-        {
-          name: 'innerDialogueStream',
-          source: innerDialogueStream,
-          clear: () => {
-            innerDialogueStream = null;
-          },
-        },
-      ]);
-
-      try {
-        disconnectAllBufferStreams();
-        console.log('[response-pipeline] → Closed buffer streams');
-        closedCount++;
-      } catch (e) {
-        console.error('[response-pipeline] ❌ Error closing buffer streams:', e);
-      }
-
-      console.log(`[response-pipeline] ✅ Closed ${closedCount} connections`);
-      console.log('[response-pipeline] ========== CONNECTION CLEANUP COMPLETE ==========');
+      chatResponseStream?.close();
+      chatResponseStream = null;
 
       // Check 1: Session validity (NO TIMEOUT - but with progress notifications)
       try {
@@ -965,7 +864,6 @@
             console.warn('[response-pipeline] This usually indicates:');
             console.warn('[response-pipeline]   1. Server is overloaded');
             console.warn('[response-pipeline]   2. Network connection is very slow');
-            console.warn('[response-pipeline]   3. All browser connection slots were full (now freed)');
             messagesApi.pushMessage('system', '⏳ **Session Check Taking Longer Than Expected**\n\nChecking your session is taking over 10 seconds. This is unusual and may indicate server load or network issues.\n\n**Status**: Still trying (no timeout)...\n**Your reply is preserved** and will be restored if this fails.');
           }
 
@@ -1047,10 +945,7 @@
       // Check 2: Backend readiness
       thinkingTraceApi.appendTrace(`[${timestamp()}] Checking backend...`, 5);
       if (!(bigBrotherEnabled && bigBrotherDelegateAll) && !backendApi.isReady()) {
-        const backend = get(activeBackend);
-        const msg = backend === 'vllm'
-          ? 'Cannot send response: vLLM server is not running. Please start vLLM from Settings → Backend.'
-          : 'Cannot send response: Ollama is not running or no models are loaded. Please check Settings → Backend.';
+        const msg = 'Cannot send response: the selected LLM backend is unavailable or has no model loaded. Check Settings → Backend.';
         thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ Backend not ready`, 5);
         messagesApi.pushMessage('system', `⚠️ **Backend Not Ready - Your Reply Was Not Sent**\n\n${msg}\n\nYour message has been restored to the input field.`);
         restoreInputAndCleanup();
@@ -1288,7 +1183,7 @@
       responsePipelineTaskId = null;
 
       loading = false;
-      restorePassiveChatStreams();
+
     }
   }
 
@@ -1302,17 +1197,13 @@
     sendInProgress = true;
     await interruptAssistantSpeech('user-input');
 
-    // Health checks are ordinary fetches and need an available browser
-    // connection. Free background SSE slots before consulting connectivity;
-    // otherwise a saturated page can falsely route a healthy server to offline.
-    pausePassiveChatStreams();
     const healthResult = await forceHealthCheck();
     const connected = healthResult.connected;
 
     // Chat execution is server-owned. Keep the draft intact when disconnected.
     if (!connected) {
       sendInProgress = false;
-      restorePassiveChatStreams();
+
       messagesApi.pushMessage('system', '⚠️ MetaHuman server is unavailable. Reconnect before sending this message.');
       return;
     }
@@ -1333,7 +1224,7 @@
         statusRefreshTrigger.update(value => value + 1);
       } catch (error) {
         sendInProgress = false;
-        restorePassiveChatStreams();
+
         messagesApi.pushMessage('system', `Big Brother: ${(error as Error).message}`);
         return;
       }
@@ -1342,11 +1233,8 @@
     // Check LLM backend status before sending (only when online)
     if (!(bigBrotherEnabled && bigBrotherDelegateAll) && !backendApi.isReady()) {
       sendInProgress = false; // Reset guard on early return
-      restorePassiveChatStreams();
-      const backend = get(activeBackend);
-      const msg = backend === 'vllm'
-        ? 'Cannot send message: vLLM server is not running. Please start vLLM from Settings → Backend.'
-        : 'Cannot send message: Ollama is not running or no models are loaded. Please start Ollama and load a model first.';
+
+      const msg = 'Cannot send message: the selected LLM backend is unavailable or has no model loaded. Check Settings → Backend.';
       alert(msg);
       return;
     }
@@ -1500,9 +1388,7 @@
       console.log('[sendMessage] Step 5: Queueing chat request');
       thinkingTraceApi.appendTrace(`[${timestamp()}] 🌐 Queueing message`, 15);
 
-      // This is idempotent: the pool was suspended before the health check and
-      // remains suspended through auth, enqueue, and foreground stream setup.
-      pausePassiveChatStreams();
+
 
       // PRE-FLIGHT AUTH CHECK: Verify session is valid before opening EventSource
       // This prevents silent hangs when session cookie is stale/mismatched
@@ -1751,7 +1637,7 @@
             reasoningStages = [];
             chatResponseStream?.close();
             chatResponseStream = null;
-            restorePassiveChatStreams();
+
           } else if (type === 'reasoning') {
             thinkingTraceApi.stop();
             if (typeof data === 'string') {
@@ -1786,7 +1672,7 @@
             loading = false;
             chatResponseStream?.close();
             chatResponseStream = null;
-            restorePassiveChatStreams();
+
           } else if (type === 'queued_task_completed') {
             clearConnectionTracking();
             activeChatTaskId = null;
@@ -1795,7 +1681,7 @@
             reasoningStages = [];
             chatResponseStream?.close();
             chatResponseStream = null;
-            restorePassiveChatStreams();
+
           } else if (type === 'system_message') {
             // System status message (e.g., summarization progress)
             if (data.content) {
@@ -1825,7 +1711,7 @@
             reasoningStages = [];
             chatResponseStream?.close();
             chatResponseStream = null;
-            restorePassiveChatStreams();
+
             return; // Don't throw, we handled it
           }
           // Note: Big Brother output is streamed to System Terminal's Big Brother tab via WebSocket
@@ -1839,7 +1725,7 @@
           reasoningStages = [];
           chatResponseStream?.close();
           chatResponseStream = null;
-          restorePassiveChatStreams();
+
         }
       };
 
@@ -1864,7 +1750,7 @@
           loading = false;
           reasoningStages = [];
           messagesApi.pushMessage('system', 'The server accepted your message, but the live connection was lost. Its saved result will appear when the server reconnects.');
-          restorePassiveChatStreams();
+
           return;
         }
 
@@ -1889,7 +1775,7 @@
       loading = false;
       sendInProgress = false; // Safety net: ensure guard is reset on error
       reasoningStages = [];
-      restorePassiveChatStreams();
+
     }
   }
 
@@ -1984,151 +1870,35 @@
     selectedViews = newSet;
     setInnerDialogueSpeechVisible(isTabVisible && selectedViews.has('inner'));
 
-    // Fetch and merge all selected buffers
-    fetchAllSelectedBuffers();
-
-    // Connect to buffer streams for real-time updates
-    // When we have multiple views, we need streams for all of them
+    // Update the selected projections on the shared buffer stream.
     connectMultipleBufferStreams();
   }
 
-  // Stores for multiple buffer streams (all three can be active simultaneously)
-  let conversationHandle: ConnectionHandle | null = null;
-  let conversationStream: EventSource | null = null;
-  let systemHandle: ConnectionHandle | null = null;
-  let systemStream: EventSource | null = null;
-
-  /**
-   * Connect to buffer streams for all selected views
-   * Handles real-time updates from multiple sources
-   *
-   * Four canonical buffers projected through three views:
-   * - conversation view → conversation buffer stream
-   * - inner view → inner buffer stream
-   * - system view → system and robot buffer streams
-   */
+  // One transport preserves the separate canonical buffer projections.
   function connectMultipleBufferStreams() {
-    if (typeof document !== 'undefined' && document.hidden) {
-      console.log('[chat] Skipping buffer stream connect (tab hidden)');
-      return;
-    }
-    // Close existing connection handles (pool will close underlying EventSource)
-    if (innerDialogueHandle) {
-      innerDialogueHandle.close();
-      innerDialogueHandle = null;
-      innerDialogueStream = null;
-    }
-    if (conversationHandle) {
-      conversationHandle.close();
-      conversationHandle = null;
-      conversationStream = null;
-    }
-    if (systemHandle) {
-      systemHandle.close();
-      systemHandle = null;
-      systemStream = null;
-    }
-    if (robotHandle) {
-      robotHandle.close();
-      robotHandle = null;
-      robotStream = null;
-    }
-
-    // Connect to streams for each selected view. System intentionally owns a
-    // two-buffer read projection; this does not merge their persistence.
-    if (selectedViews.has('conversation')) {
-      connectBufferStreamForMode(
-        'conversation',
-        (stream) => { conversationStream = stream; },
-        (handle) => { conversationHandle = handle; }
-      );
-    }
-    if (selectedViews.has('inner')) {
-      connectBufferStreamForMode(
-        'inner',
-        (stream) => { innerDialogueStream = stream; },
-        (handle) => { innerDialogueHandle = handle; }
-      );
-    }
-    if (selectedViews.has('system')) {
-      connectBufferStreamForMode(
-        'system',
-        (stream) => { systemStream = stream; },
-        (handle) => { systemHandle = handle; }
-      );
-      connectBufferStreamForMode(
-        'robot',
-        (stream) => { robotStream = stream; },
-        (handle) => { robotHandle = handle; }
-      );
-    }
-  }
-
-  /**
-   * Connect to a single buffer stream with proper merge handling
-   * Now uses connection pool for priority-based allocation
-   */
-  function connectBufferStreamForMode(
-    streamMode: 'conversation' | 'inner' | 'system' | 'robot',
-    setStream: (stream: EventSource | null) => void,
-    setHandle: (handle: ConnectionHandle | null) => void
-  ) {
-    console.log(`[chat] Requesting ${streamMode} buffer stream from connection pool...`);
-
-    // Conversation TTS is a user-facing output contract. The optional Robot
-    // Buffer projection must yield its pool slot when the TTS queue needs one.
-    const isPassiveRobotStream = streamMode === 'robot';
-
-    const handle = connectionPool.request({
-      id: `buffer-${streamMode}`,
-      name: `Buffer Stream (${streamMode})`,
-      url: `/api/buffer-stream?mode=${streamMode}`,
-      priority: isPassiveRobotStream ? ConnectionPriority.LOW : ConnectionPriority.HIGH,
-      viewDependency: 'chat',
-      defer: isPassiveRobotStream,
-      onOpen: (source) => {
-        console.log(`[chat] ${streamMode} buffer stream opened via pool`);
-        setStream(source);
-      },
-      onClose: () => {
-        console.log(`[chat] ${streamMode} buffer stream closed via pool`);
-        setStream(null);
-      },
-      onMessage: (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'connected') {
-            console.log(`[chat] ${streamMode} buffer stream connected`);
-            return;
-          }
-          if (data.type === 'error') {
-            console.error(`[chat] ${streamMode} buffer stream error:`, data.error);
-            return;
-          }
-          if (data.type === 'update' && Array.isArray(data.messages)) {
-            console.log(`[chat] ${streamMode} buffer: ${data.messages.length} messages from SSE`);
-            messages.update(msgs => replaceBufferSlice(msgs, streamMode, data.messages));
-          }
-        } catch (err) {
-          console.error(`[chat] ${streamMode} buffer stream parse error:`, err);
+    disconnectAllBufferStreams();
+    if (typeof document !== 'undefined' && document.hidden) return;
+    const modes: string[] = [...selectedViews];
+    if (selectedViews.has('system')) modes.push('robot');
+    if (!modes.length) return;
+    const source = new EventSource(`/api/buffer-stream?mode=${modes.join(',')}`);
+    bufferStream = source;
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'error') {
+          messagesApi.pushMessage('system', `Buffer update failed (${data.mode || 'connection'}): ${data.error}`);
+        } else if (data.type === 'update' && Array.isArray(data.messages)) {
+          messages.update(msgs => replaceBufferSlice(msgs, data.mode, data.messages));
         }
-      },
-      onError: (err) => {
-        console.error(`[chat] ${streamMode} buffer stream error:`, err);
-        setTimeout(() => {
-          const isSelected = streamMode === 'robot'
-            ? selectedViews.has('system')
-            : selectedViews.has(streamMode);
-          if (isComponentMounted && !document.hidden && isSelected) {
-            connectBufferStreamForMode(streamMode, setStream, setHandle);
-          }
-        }, 3000);
-      },
-    });
-
-    setHandle(handle);
+      } catch (error) {
+        messagesApi.pushMessage('system', `Buffer update failed: ${(error as Error).message}`);
+      }
+    };
+    source.onerror = (error) => {
+      console.error('[chat] Buffer stream disconnected; reconnecting', error);
+    };
   }
-
 
   async function loadBigBrotherConfig() {
     if (!get(isOwner)) return;
@@ -2408,24 +2178,16 @@
       <div class="warning-content">
         <div class="warning-title">
           {#if !$backendRunning}
-            {$activeBackend === 'vllm' ? 'vLLM Server Not Running' : 'Ollama Service Not Running'}
+            LLM Backend Not Running
           {:else}
             No Language Models Loaded
           {/if}
         </div>
         <div class="warning-message">
           {#if !$backendRunning}
-            {#if $activeBackend === 'vllm'}
-              The vLLM server is not running. Start it from Settings → Backend or use the vLLM control panel.
-            {:else}
-              The Ollama service is not running. Please start it using: <code>systemctl start ollama</code>
-            {/if}
+            The selected LLM backend is unavailable. Check its status and configuration in Settings → Backend.
           {:else if $backendModelCount === 0}
-            {#if $activeBackend === 'vllm'}
-              No model is loaded in vLLM. Configure and start the server from Settings → Backend.
-            {:else}
-              No models are currently loaded. Please install a model using: <code>ollama pull </code>
-            {/if}
+            No model is loaded for the selected backend. Check Settings → Backend.
           {/if}
           {#if $backendError}
             <div class="warning-error">Error: {$backendError}</div>
