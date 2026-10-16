@@ -1,6 +1,6 @@
 ---
 import ThemeToggle from "../components/ThemeToggle.astro";
-import BackendSelector from '../components/BackendSelector.svelte';
+import BackendConnectionStatus from '../components/BackendConnectionStatus.svelte';
 import '../styles/tailwind.css';
 const { title = 'MetaHuman', description = 'MetaHuman Dashboard' } = Astro.props;
 ---
@@ -22,7 +22,7 @@ const { title = 'MetaHuman', description = 'MetaHuman Dashboard' } = Astro.props
     </script>
   </head>
   <body class="container-page flex flex-col">
-    <BackendSelector client:only="svelte" />
+    <BackendConnectionStatus client:only="svelte" />
     <header class="border-b border-gray-200/60 dark:border-white/10 backdrop-blur sticky top-0">
       <div class="page-max flex items-center justify-between py-4">
         <a href="/" class="font-semibold text-lg">🧠 MetaHuman OS</a>

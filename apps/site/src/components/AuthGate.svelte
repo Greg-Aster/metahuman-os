@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
-  import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, normalizeUrl, isMobileApp, isHostedUi } from '../lib/client/api-config';
+  import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, normalizeUrl, isMobileApp, isHostedUi, setBackendUrl } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
   import { canSyncOnLogin } from '../lib/client/sync-settings';
   import { getRemoteSyncConfig, runProfileSyncAgent } from '../lib/client/profile-sync';
@@ -73,7 +73,7 @@
     }
   }
 
-  let view: 'splash' | 'login' | 'register' | 'register-type' | 'register-local' | 'post-register' | 'onboarding' | 'forgot-password' | 'recovery-codes' | 'sync-prompt' = 'splash';
+  let view: 'splash' | 'login' | 'register' | 'register-type' | 'register-local' | 'post-register' | 'onboarding' | 'forgot-password' | 'recovery-codes' | 'sync-prompt' = isMobileApp() ? 'splash' : 'login';
   let isAuthenticated = false;
   let isCheckingAuth = true;
   let error = '';
@@ -88,6 +88,8 @@
   // Form fields
   let username = '';
   let password = '';
+  let machineAddress = getApiBaseUrl();
+  let machineInput: HTMLInputElement;
   let confirmPassword = '';
   let displayName = '';
   let email = '';
@@ -115,6 +117,23 @@
 
   // Subscribe to health status
   $: serverConnected = $healthStatus.connected;
+
+  function selectLoginMachine(): boolean {
+    if (!isHostedUi()) return true;
+    if (!machineInput.reportValidity()) return false;
+    try {
+      setBackendUrl(machineAddress);
+      machineAddress = getApiBaseUrl();
+      return true;
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+      return false;
+    }
+  }
+
+  function openAccountView(next: 'register' | 'forgot-password' | 'sync-prompt'): void {
+    if (selectLoginMachine()) view = next;
+  }
 
   // Check if user is already authenticated
   async function checkAuth() {
@@ -164,6 +183,7 @@
   async function handleLogin(e: Event) {
     e.preventDefault();
     error = '';
+    if (!selectLoginMachine()) return;
     loading = true;
 
     try {
@@ -547,6 +567,7 @@
 
   // Continue as guest (anonymous access)
   async function continueAsGuest() {
+    if (!selectLoginMachine()) return;
     try {
       console.log('[AuthGate] Continue as guest clicked');
       guestSessionError = '';
@@ -583,7 +604,13 @@
     console.log('[AuthGate] Component mounted, starting auth check');
     window.addEventListener('mh:api-auth-failure', handleApiAuthFailure);
     window.addEventListener('mh:api-action', handleApiAction);
-    if (!isHostedUi() || getApiBaseUrl()) checkAuth();
+    const url = new URL(window.location.href);
+    const changingMachine = isHostedUi() && url.searchParams.has('login');
+    if (changingMachine) {
+      url.searchParams.delete('login');
+      window.history.replaceState(window.history.state, '', url);
+    }
+    if (!changingMachine && (!isHostedUi() || getApiBaseUrl())) checkAuth();
     else isCheckingAuth = false;
     return () => {
       window.removeEventListener('mh:api-auth-failure', handleApiAuthFailure);
@@ -732,19 +759,30 @@
       {:else if view === 'login'}
         <!-- Login Form -->
         <div class="relative">
+          {#if !isHostedUi()}
           <button aria-label="Back to welcome" class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
                         [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = 'splash'}>
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
               <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
+          {/if}
 
           <div class="text-center mb-8">
-            <h2 class="text-2xl font-bold m-0 mb-2 text-white [html:not(.dark)_&]:text-gray-900">Welcome Back</h2>
+            <h2 class="text-2xl font-bold m-0 mb-2 text-white [html:not(.dark)_&]:text-gray-900">Sign in to MetaHuman OS</h2>
             <p class="text-base text-white/60 m-0 [html:not(.dark)_&]:text-black/60">Sign in to your MetaHuman OS account</p>
           </div>
 
           <form on:submit={handleLogin}>
+            {#if isHostedUi()}
+              <div class="mb-5">
+                <label for="login-machine" class="block text-sm font-medium text-white/80 mb-2 [html:not(.dark)_&]:text-black/80">Machine address</label>
+                <input id="login-machine" type="url" bind:value={machineAddress} bind:this={machineInput}
+                  on:input={() => { showSyncHint = false; error = ''; successMessage = ''; }}
+                  required disabled={loading} autocomplete="url" placeholder="https://desktop.ainek.io" class="input-field" />
+                <p class="mt-2 text-xs text-white/60 [html:not(.dark)_&]:text-black/60">Use the machine's HTTPS tunnel address under ainek.io. Your account and data stay on that machine.</p>
+              </div>
+            {/if}
             <div class="mb-5">
               <label for="login-username" class="block text-sm font-medium text-white/80 mb-2 [html:not(.dark)_&]:text-black/80">Username</label>
               <input
@@ -788,7 +826,7 @@
                 <div class="flex-1">
                   <strong class="block text-blue-400 mb-1 [html:not(.dark)_&]:text-blue-500">First time on this device?</strong>
                   <p class="text-sm text-white/70 m-0 mb-3 [html:not(.dark)_&]:text-black/60">Your account may exist on another server. Sync to pull your profile here.</p>
-                  <button type="button" class="btn-secondary w-full py-2 px-4 text-sm" on:click={() => view = 'sync-prompt'}>
+                  <button type="button" class="btn-secondary w-full py-2 px-4 text-sm" on:click={() => openAccountView('sync-prompt')}>
                     Sync from Server
                   </button>
                 </div>
@@ -800,7 +838,7 @@
             </button>
 
             <div class="text-center mt-3">
-              <button type="button" class="bg-transparent border-none text-blue-400 cursor-pointer underline text-inherit p-0 hover:text-blue-300 [html:not(.dark)_&]:text-blue-600 [html:not(.dark)_&]:hover:text-blue-800" on:click={() => view = 'forgot-password'}>
+              <button type="button" class="bg-transparent border-none text-blue-400 cursor-pointer underline text-inherit p-0 hover:text-blue-300 [html:not(.dark)_&]:text-blue-600 [html:not(.dark)_&]:hover:text-blue-800" on:click={() => openAccountView('forgot-password')}>
                 Forgot password?
               </button>
             </div>
@@ -809,21 +847,25 @@
           <div class="mt-6 text-center text-sm text-white/60 [html:not(.dark)_&]:text-black/60">
             <p>
               Don't have an account?
-              <button class="bg-transparent border-none text-blue-400 cursor-pointer underline text-inherit p-0 hover:text-blue-300 [html:not(.dark)_&]:text-blue-600 [html:not(.dark)_&]:hover:text-blue-800" on:click={() => view = 'register'}>Create one</button>
+              <button class="bg-transparent border-none text-blue-400 cursor-pointer underline text-inherit p-0 hover:text-blue-300 [html:not(.dark)_&]:text-blue-600 [html:not(.dark)_&]:hover:text-blue-800" on:click={() => openAccountView('register')}>Create one</button>
             </p>
             {#if !showSyncHint}
               <p class="text-xs mt-2 opacity-80">
                 Need to sync from another device?
-                <button class="bg-transparent border-none text-blue-400 cursor-pointer underline text-inherit p-0 hover:text-blue-300 [html:not(.dark)_&]:text-blue-600 [html:not(.dark)_&]:hover:text-blue-800" on:click={() => view = 'sync-prompt'}>Sync from Server</button>
+                <button class="bg-transparent border-none text-blue-400 cursor-pointer underline text-inherit p-0 hover:text-blue-300 [html:not(.dark)_&]:text-blue-600 [html:not(.dark)_&]:hover:text-blue-800" on:click={() => openAccountView('sync-prompt')}>Sync from Server</button>
               </p>
             {/if}
+            <p class="mt-3">
+              <button type="button" class="bg-transparent border-none text-blue-400 cursor-pointer underline text-inherit p-0 hover:text-blue-300 [html:not(.dark)_&]:text-blue-600 [html:not(.dark)_&]:hover:text-blue-800" on:click={continueAsGuest}>Continue as Guest</button>
+            </p>
+            {#if guestSessionError}<p role="alert" class="mt-2 text-red-500">{guestSessionError}</p>{/if}
           </div>
         </div>
       {:else if view === 'register'}
         <!-- Registration Form -->
         <div class="relative">
-          <button aria-label="Back to welcome" class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
-                        [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = 'splash'}>
+          <button aria-label={isHostedUi() ? 'Back to login' : 'Back to welcome'} class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
+                        [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = isHostedUi() ? 'login' : 'splash'}>
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
               <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
@@ -1135,8 +1177,8 @@
       {:else if view === 'register-local'}
         <!-- Local Profile Registration -->
         <div class="relative">
-          <button aria-label="Back to welcome" class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
-                        [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = 'splash'}>
+          <button aria-label={isHostedUi() ? 'Back to login' : 'Back to welcome'} class="absolute -top-4 -left-2 w-9 h-9 rounded-lg border-none bg-white/10 text-white/70 cursor-pointer flex items-center justify-center transition-all hover:bg-white/20 hover:text-white
+                        [html:not(.dark)_&]:bg-black/5 [html:not(.dark)_&]:text-black/60 [html:not(.dark)_&]:hover:bg-black/10 [html:not(.dark)_&]:hover:text-black/90" on:click={() => view = isHostedUi() ? 'login' : 'splash'}>
             <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
               <path d="M8 14L2 8l6-6M2 8h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>

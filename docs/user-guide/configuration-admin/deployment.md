@@ -46,9 +46,13 @@ provide its runtime environment and persistent filesystem.
 The browser interface can be published at `https://mh.ainek.io` on GitHub Pages.
 The existing Astro standalone server still runs on each backend machine and owns
 its API, authenticated sessions, Core, Brain, models, and persistent data. The
-hosted UI lets you enter a backend address, remembers that address in your browser,
-and signs in to that machine. **Machine → Change** selects another address and
-reloads the views and subscriptions. It does not migrate or cancel server work.
+hosted UI opens one login form with machine address, username, and password.
+It remembers only the machine address in your browser and signs in to that machine.
+**Machine → Change** reloads the views and subscriptions and returns to the same
+login form, where you can select another machine and sign in. It does not migrate
+or cancel server work. On the local Node.js server, the same login component omits
+the machine field and uses the current server automatically; no Local checkbox is
+needed.
 Profile Sync retains its separate destination and execution owner.
 
 Build the hosted interface from the repository root:
