@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import OnboardingWizard from './OnboardingWizard.svelte';
   import ProfileSelector from './ProfileSelector.svelte';
-  import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, normalizeUrl, isMobileApp } from '../lib/client/api-config';
+  import { apiFetch, getApiBaseUrl, initServerUrl, getSyncServerUrl, normalizeUrl, isMobileApp, isHostedUi } from '../lib/client/api-config';
   import { healthStatus, forceHealthCheck } from '../lib/client/server-health';
   import { canSyncOnLogin } from '../lib/client/sync-settings';
   import { getRemoteSyncConfig, runProfileSyncAgent } from '../lib/client/profile-sync';
@@ -23,9 +23,8 @@
 
   async function clearServerSessionCookie(): Promise<void> {
     try {
-      await fetch(`${getApiBaseUrl()}/api/auth/logout`, {
+      await apiFetch('/api/auth/logout', {
         method: 'POST',
-        credentials: 'same-origin',
       });
     } catch (err) {
       console.warn('[AuthGate] Failed to clear server session cookie:', err);
@@ -584,7 +583,8 @@
     console.log('[AuthGate] Component mounted, starting auth check');
     window.addEventListener('mh:api-auth-failure', handleApiAuthFailure);
     window.addEventListener('mh:api-action', handleApiAction);
-    checkAuth();
+    if (!isHostedUi() || getApiBaseUrl()) checkAuth();
+    else isCheckingAuth = false;
     return () => {
       window.removeEventListener('mh:api-auth-failure', handleApiAuthFailure);
       window.removeEventListener('mh:api-action', handleApiAction);

@@ -41,6 +41,93 @@ Keep credentials, profiles, memories, logs, generated output, and machine-local
 state outside tracked configuration. An operator deploying to another host must
 provide its runtime environment and persistent filesystem.
 
+## Hosted UI with local backends
+
+The browser interface can be published at `https://mh.ainek.io` on GitHub Pages.
+The existing Astro standalone server still runs on each backend machine and owns
+its API, authenticated sessions, Core, Brain, models, and persistent data. The
+hosted UI lets you enter a backend address, remembers that address in your browser,
+and signs in to that machine. **Machine → Change** selects another address and
+reloads the views and subscriptions. It does not migrate or cancel server work.
+Profile Sync retains its separate destination and execution owner.
+
+Build the hosted interface from the repository root:
+
+```bash
+pnpm build:static
+```
+
+This uses the same UI components and transport owner as the local application.
+It writes only the static UI artifact to `apps/site/dist-static/`; the normal
+`pnpm build` still writes the local standalone server to `apps/site/dist/`.
+The static route table includes `/`, `/audit`, `/debug`, `/monitor`, `/tasks`,
+`/guide`, and `/user-guide`. API routes, server middleware, agent executables,
+and the legacy filesystem-rendered `/events` page are excluded. Runtime data is
+fetched from the selected machine rather than rendered into the published files.
+The interface can load while every backend is offline; reading data or doing
+work requires the selected machine and its tunnel to be running.
+
+### Backend addresses and browser login
+
+Give each machine its own HTTPS tunnel hostname under `ainek.io`, such as
+`desktop.ainek.io` or `q6a.ainek.io`. These are examples to configure with your
+existing tunnel owner, not preconfigured endpoints. Keep `mh.ainek.io` for the
+GitHub Pages UI; a single hostname cannot simultaneously point to Pages and a
+machine tunnel.
+
+On each backend, allow the hosted UI origin through the existing exposure
+configuration and start the existing runtime:
+
+```bash
+MH_EXPOSURE_MODE=shared \
+MH_ALLOWED_ORIGINS=https://mh.ainek.io \
+./start.sh
+```
+
+Preserve any other explicitly configured origins in the comma-separated
+`MH_ALLOWED_ORIGINS` value. Keep the existing tunnel's allowed-host configuration.
+This changes no credentials, account roles, or login-cookie policy. API requests
+and event streams send the selected backend's session cookies; media URLs also
+resolve to that backend. Using HTTPS subdomains of the same domain keeps the
+current `SameSite=Lax` login usable. An unrelated domain, the default
+`github.io` site, or a raw localhost/LAN address is not a supported authenticated
+backend for this hosted deployment with the current cookie contract.
+
+If a backend is protected by Cloudflare Access, sign into its hostname in a
+browser tab first and configure Access CORS/preflight handling for
+`https://mh.ainek.io` using
+[Cloudflare's CORS instructions](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/cors/).
+Do not place Access service tokens in the static site. MetaHuman login remains
+required independently of Access. Verify actual login, authenticated requests,
+streams, and media from the hosted origin; a build alone cannot establish these.
+
+### Publish the UI
+
+The repository's **Publish hosted UI** GitHub Actions workflow runs on pushes to
+`dev`. It installs the pinned workspace dependencies, tests browser transport,
+builds the static artifact, and deploys only `apps/site/dist-static/`.
+
+1. Publish the source changes to `dev`. A manual trigger is also available once
+   the workflow reaches the repository's default branch; it is not needed for
+   deployment from a push to `dev`.
+2. In the repository's **Settings → Pages**, choose **GitHub Actions** as the
+   source and set **Custom domain** to `mh.ainek.io`.
+3. In the domain's DNS, point the `mh` CNAME to `greg-aster.github.io`.
+   If `mh.ainek.io` currently routes to a backend tunnel, move that backend to its
+   own hostname before changing this record. Configure the Pages domain in GitHub
+   before pointing DNS at it, following
+   [GitHub's custom-domain instructions](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site).
+4. Allow `dev` to deploy to the `github-pages` environment if GitHub's environment
+   settings restrict deployment branches. Let **Publish hosted UI** finish and enable
+   **Enforce HTTPS** in Pages when its certificate is ready.
+5. Open `https://mh.ainek.io`, enter the machine's HTTPS tunnel address, and sign
+   into its existing MetaHuman account. Check login, chat/queue streams, audio,
+   machine switching, and the disconnected state with the real backend.
+
+Publishing the UI does not configure GitHub Pages, DNS, Access, tunnels, or backend
+startup automatically. Repository settings and DNS must be applied by an account
+with the corresponding access. Subsequent pushes to `dev` update the hosted UI.
+
 ## Remote model execution
 
 Remote model calls remain behind the Core provider contract in

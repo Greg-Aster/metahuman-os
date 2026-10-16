@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiEventSource, apiFetch } from '../lib/client/api-config';
   import { get } from 'svelte/store';
   import { isOwner } from '../stores/security-policy';
   import BodyConnectionSelector from './BodyConnectionSelector.svelte';
@@ -407,7 +407,7 @@
   onMount(async () => {
     if (!get(isOwner)) return;
 
-    eventSourceHandle = new EventSource('/api/monitor/stream');
+    eventSourceHandle = apiEventSource('/api/monitor/stream');
     eventSourceHandle.onopen = () => {
       connected = true;
     };

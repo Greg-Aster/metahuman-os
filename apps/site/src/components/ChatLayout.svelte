@@ -3,7 +3,7 @@
   import { writable } from 'svelte/store';
   import { graphEditorHref, statusStore, statusRefreshTrigger, nodeEditorMode, rightSidebarOpen as rightSidebarStore, userDisplayNameStore } from '../stores/navigation';
   import { clearSecurityPolicy, fetchSecurityPolicy, policyStore, isOwner, isReadOnly } from '../stores/security-policy';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiFetch, apiUrl } from '../lib/client/api-config';
   import UserMenu from './UserMenu.svelte';
   import HeadlessClaimBanner from './HeadlessClaimBanner.svelte';
   // FlowEditorLayout is loaded dynamically to avoid bundling @xyflow/svelte in client
@@ -448,7 +448,7 @@
         >
           {#if personaIcon && !personaIconError}
             <img
-              src="/api/persona-icon"
+              src={apiUrl('/api/persona-icon')}
               alt="Persona icon"
               class="persona-icon"
               on:error={() => { personaIconError = true; }}

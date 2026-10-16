@@ -6,7 +6,7 @@
    */
 
   import { onMount } from 'svelte';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiFetch, apiUrl } from '../lib/client/api-config';
 
   export let provider: 'piper' | 'sovits' | 'gpt-sovits' | 'rvc' = 'gpt-sovits';
   export let speakerId: string = 'default';
@@ -226,7 +226,7 @@
     // Start playing the selected sample via API endpoint
     playingId = sample.id;
     // Use API endpoint to serve the audio file
-    const audioUrl = `/api/voice-samples/${sample.id}`;
+    const audioUrl = apiUrl(`/api/voice-samples/${sample.id}`);
     audioElement = new Audio(audioUrl);
 
     audioElement.addEventListener('ended', () => {

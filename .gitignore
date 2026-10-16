@@ -10,6 +10,7 @@ __pycache__/
 *.pyo
 *.egg-info/
 dist/
+apps/site/dist-static/
 build/
 
 # ============================================

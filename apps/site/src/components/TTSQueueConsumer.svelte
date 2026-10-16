@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiEventSource, apiFetch } from '../lib/client/api-config';
   import { readAssistantSpeechEnabled } from '../lib/client/assistant-speech-preference';
   import { useTTS, type PreparedSpeech } from '../lib/client/composables/useTTS';
   import { shouldPlayAdmittedSpeech } from '../lib/client/inner-dialogue-speech-visibility';
@@ -169,7 +169,7 @@
     if (queueStream) return;
 
     console.log('[tts-queue] Connecting app-level TTS queue stream');
-    queueStream = new EventSource(`/api/tts-queue-stream?consumerId=${encodeURIComponent(consumerId)}`);
+    queueStream = apiEventSource(`/api/tts-queue-stream?consumerId=${encodeURIComponent(consumerId)}`);
     queueStream.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);

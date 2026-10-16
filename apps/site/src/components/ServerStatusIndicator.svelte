@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '../lib/client/api-config';
   /**
    * ServerStatusIndicator
    * Reusable component for displaying server status with controls
@@ -30,7 +31,7 @@
 
   async function fetchStatus() {
     try {
-      const response = await fetch(statusEndpoint);
+      const response = await apiFetch(statusEndpoint);
       if (!response.ok) throw new Error('Failed to fetch status');
       status = await response.json();
       error = null;
@@ -46,7 +47,7 @@
     starting = true;
     error = null;
     try {
-      const response = await fetch(controlEndpoint, {
+      const response = await apiFetch(controlEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'start' })
@@ -76,7 +77,7 @@
     stopping = true;
     error = null;
     try {
-      const response = await fetch(controlEndpoint, {
+      const response = await apiFetch(controlEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'stop' })

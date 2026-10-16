@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiUrl } from '../lib/client/api-config';
   import type {
     EnvironmentBridgeDiagnosticsSession,
     EnvironmentBridgeDiagnosticsSnapshot,
@@ -41,7 +42,7 @@
     kind: 'image' | 'audio',
     version: string,
   ): string {
-    return `/api/environment-bridge/diagnostics/media?sessionId=${encodeURIComponent(item.sessionId)}&kind=${kind}&v=${encodeURIComponent(version)}`;
+    return apiUrl(`/api/environment-bridge/diagnostics/media?sessionId=${encodeURIComponent(item.sessionId)}&kind=${kind}&v=${encodeURIComponent(version)}`);
   }
 
   const robotFields: Array<{ key: string; label: string; suffix?: string }> = [

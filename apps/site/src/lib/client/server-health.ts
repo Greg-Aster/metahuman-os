@@ -1,16 +1,13 @@
 /**
  * Server Health Monitor
  *
- * LOCAL-FIRST ARCHITECTURE:
- * - Mobile (React Native): Checks local Node.js server at 127.0.0.1:4322
- * - Web: Checks same-origin server health
- *
- * This monitors the LOCAL system health, not remote server connectivity.
- * Remote server connectivity is only relevant for explicit sync operations.
+ * Mobile checks its local Node.js server; local web checks the same origin.
+ * The hosted UI monitors the selected backend using the same transport owner.
+ * Profile sync destinations remain independent.
  */
 
 import { writable, derived, type Readable, type Writable } from 'svelte/store';
-import { isReactNativeWebView } from './api-config';
+import { apiUrl, getApiBaseUrl, isHostedUi, isReactNativeWebView } from './api-config';
 
 export interface HealthStatus {
   connected: boolean;
@@ -74,9 +71,8 @@ function calculateQuality(latencyMs: number, connected: boolean): HealthStatus['
 /**
  * Perform a single health check
  *
- * LOCAL-FIRST ARCHITECTURE:
- * - Mobile (React Native): Check local Node.js server at 127.0.0.1:4322
- * - Web: Check same-origin server health via local fetch
+ * Check the current API server without reporting an unauthenticated health
+ * response as a session failure.
  */
 export async function checkHealth(): Promise<HealthStatus> {
   let status: HealthStatus;
@@ -86,12 +82,13 @@ export async function checkHealth(): Promise<HealthStatus> {
   // Use the lightweight, side-effect-free status endpoint for health checks.
   const healthUrl = isReactNativeWebView()
     ? 'http://127.0.0.1:4322/api/status'
-    : '/api/status';
+    : apiUrl('/api/status');
 
   // Check server health
   try {
     const response = await fetch(healthUrl, {
       method: 'GET',
+      credentials: getApiBaseUrl() ? 'include' : 'same-origin',
       signal: AbortSignal.timeout(5000),
     });
 
@@ -150,6 +147,7 @@ export async function checkHealth(): Promise<HealthStatus> {
  * Start periodic health monitoring
  */
 export function startHealthMonitor(customConfig?: Partial<HealthConfig>): void {
+  if (isHostedUi() && !getApiBaseUrl()) return;
   // Stop existing monitor if running
   stopHealthMonitor();
 

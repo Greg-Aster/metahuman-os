@@ -236,7 +236,7 @@
   async function loadLocalServerInfo() {
     loadingServerInfo = true;
     try {
-      const response = await fetch('/api/server-info');
+      const response = await apiFetch('/api/server-info');
       const data = await response.json();
       if (data.success) {
         localServerInfo = data.server;
