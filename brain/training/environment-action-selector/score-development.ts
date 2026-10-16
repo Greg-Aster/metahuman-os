@@ -87,6 +87,8 @@ export function assessIntentContext(expected: Record<string, any>, actual: Recor
   }
   return { missing, unnecessary, matches: missing.length === 0 && unnecessary.length === 0
     && actual?.needsAction === expected.needsAction
+    && actual?.needsToolUse === expected.needsToolUse
+    && actual?.taskPlanner === expected.taskPlanner
     && (actual?.needsResponse === expected.needsResponse || responseOptional && typeof actual?.needsResponse === 'boolean') }
 }
 
@@ -159,6 +161,12 @@ export function score(predictions: Prediction[], reviews: SemanticReview[] = [],
           const errors = routeErrors[`${key}.${entry}`] ??= { missed: 0, extra: 0 }
           if (wanted.has(entry) && !got.has(entry)) errors.missed++
           if (!wanted.has(entry) && got.has(entry)) errors.extra++
+        }
+      } else if (key === 'taskPlanner') {
+        for (const planner of ['specialist', 'vision']) {
+          const errors = routeErrors[`taskPlanner.${planner}`] ??= { missed: 0, extra: 0 }
+          if (expected === planner && observed !== planner) errors.missed++
+          if (expected !== planner && observed === planner) errors.extra++
         }
       } else {
         const errors = routeErrors[key] ??= { missed: 0, extra: 0 }

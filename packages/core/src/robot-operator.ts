@@ -49,23 +49,12 @@ export function robotAutonomyControllerContext(cycleId: string, graph: string, s
 
 export interface RobotOperatorConfig {
   enabled: boolean
-  robotStatusInactivityThresholdSeconds: number
-  robotStatusJitterMs: number
-  robotGoalReviewInactivityThresholdSeconds: number
-  robotGoalReviewJitterMs: number
-  boredomObserverInactivityThresholdSeconds: number
-  boredomObserverJitterMs: number
-  boredomMovementInactivityThresholdSeconds: number
-  boredomMovementJitterMs: number
-  boredomReflectionInactivityThresholdSeconds: number
-  boredomReflectionJitterMs: number
   robotStatusGraph: string
   robotAutonomyControllerGraph: string
   robotGoalReviewGraph: string
   boredomObserverGraph: string
   boredomMovementGraph: string
   boredomReflectionGraph: string
-  autonomyGraph: string
   environmentGraph: string
   sessionId?: string
 }
@@ -75,7 +64,6 @@ export interface RobotOperatorChildRuntimeState {
   enabled: boolean
   handler: string
   graph: string
-  nextRunAt?: string
   lastAdmittedAt?: string
   lastTaskId?: string
   lastOutcome?: string
@@ -93,23 +81,12 @@ export interface RobotOperatorRuntimeState {
 
 const DEFAULT_CONFIG: RobotOperatorConfig = {
   enabled: true,
-  robotStatusInactivityThresholdSeconds: 300,
-  robotStatusJitterMs: 60_000,
-  robotGoalReviewInactivityThresholdSeconds: 60,
-  robotGoalReviewJitterMs: 0,
-  boredomObserverInactivityThresholdSeconds: 300,
-  boredomObserverJitterMs: 60_000,
-  boredomMovementInactivityThresholdSeconds: 600,
-  boredomMovementJitterMs: 120_000,
-  boredomReflectionInactivityThresholdSeconds: 900,
-  boredomReflectionJitterMs: 180_000,
   robotStatusGraph: 'robot-status',
   robotAutonomyControllerGraph: 'robot-autonomy-controller',
   robotGoalReviewGraph: 'robot-goal-review',
   boredomObserverGraph: 'boredom-observer',
   boredomMovementGraph: 'boredom-movement',
   boredomReflectionGraph: 'boredom-reflection',
-  autonomyGraph: 'boredom-autonomy',
   environmentGraph: 'environment',
 }
 
@@ -117,11 +94,6 @@ function configuredGraph(value: unknown, fallback: string): string {
   return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim())
     ? value.trim()
     : fallback
-}
-
-function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
-  const numeric = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(numeric) ? Math.max(min, Math.min(max, numeric)) : fallback
 }
 
 function serviceConfig(): Record<string, unknown> {
@@ -137,73 +109,12 @@ function serviceConfig(): Record<string, unknown> {
 
 export function loadRobotOperatorConfig(): RobotOperatorConfig {
   const configured = serviceConfig()
-  const autonomyGraph = configuredGraph(configured.autonomyGraph, DEFAULT_CONFIG.autonomyGraph)
   const environmentGraph = configuredGraph(configured.environmentGraph, DEFAULT_CONFIG.environmentGraph)
   const sessionId = typeof configured.sessionId === 'string' && configured.sessionId.trim()
     ? configured.sessionId.trim()
     : undefined
   return {
     enabled: typeof configured.enabled === 'boolean' ? configured.enabled : DEFAULT_CONFIG.enabled,
-    robotStatusInactivityThresholdSeconds: boundedNumber(
-      configured.robotStatusInactivityThreshold,
-      DEFAULT_CONFIG.robotStatusInactivityThresholdSeconds,
-      1,
-      86_400,
-    ),
-    robotStatusJitterMs: boundedNumber(
-      configured.robotStatusJitterMs,
-      DEFAULT_CONFIG.robotStatusJitterMs,
-      0,
-      3_600_000,
-    ),
-    robotGoalReviewInactivityThresholdSeconds: boundedNumber(
-      configured.robotGoalReviewInactivityThreshold,
-      DEFAULT_CONFIG.robotGoalReviewInactivityThresholdSeconds,
-      1,
-      86_400,
-    ),
-    robotGoalReviewJitterMs: boundedNumber(
-      configured.robotGoalReviewJitterMs,
-      DEFAULT_CONFIG.robotGoalReviewJitterMs,
-      0,
-      3_600_000,
-    ),
-    boredomObserverInactivityThresholdSeconds: boundedNumber(
-      configured.boredomObserverInactivityThreshold ?? configured.inactivityThreshold,
-      DEFAULT_CONFIG.boredomObserverInactivityThresholdSeconds,
-      1,
-      86_400,
-    ),
-    boredomObserverJitterMs: boundedNumber(
-      configured.boredomObserverJitterMs ?? configured.jitterMs,
-      DEFAULT_CONFIG.boredomObserverJitterMs,
-      0,
-      3_600_000,
-    ),
-    boredomMovementInactivityThresholdSeconds: boundedNumber(
-      configured.boredomMovementInactivityThreshold,
-      DEFAULT_CONFIG.boredomMovementInactivityThresholdSeconds,
-      1,
-      86_400,
-    ),
-    boredomMovementJitterMs: boundedNumber(
-      configured.boredomMovementJitterMs,
-      DEFAULT_CONFIG.boredomMovementJitterMs,
-      0,
-      3_600_000,
-    ),
-    boredomReflectionInactivityThresholdSeconds: boundedNumber(
-      configured.boredomReflectionInactivityThreshold,
-      DEFAULT_CONFIG.boredomReflectionInactivityThresholdSeconds,
-      1,
-      86_400,
-    ),
-    boredomReflectionJitterMs: boundedNumber(
-      configured.boredomReflectionJitterMs,
-      DEFAULT_CONFIG.boredomReflectionJitterMs,
-      0,
-      3_600_000,
-    ),
     robotStatusGraph: configuredGraph(configured.robotStatusGraph, DEFAULT_CONFIG.robotStatusGraph),
     robotAutonomyControllerGraph: configuredGraph(
       configured.robotAutonomyControllerGraph,
@@ -213,7 +124,6 @@ export function loadRobotOperatorConfig(): RobotOperatorConfig {
     boredomObserverGraph: configuredGraph(configured.boredomObserverGraph, DEFAULT_CONFIG.boredomObserverGraph),
     boredomMovementGraph: configuredGraph(configured.boredomMovementGraph, DEFAULT_CONFIG.boredomMovementGraph),
     boredomReflectionGraph: configuredGraph(configured.boredomReflectionGraph, DEFAULT_CONFIG.boredomReflectionGraph),
-    autonomyGraph,
     environmentGraph,
     sessionId,
   }
@@ -274,6 +184,7 @@ export function activeRobotExecutions(username: string) {
     return store.list(username).filter(record => !['completed', 'failed', 'cancelled'].includes(record.status)
       && store.entry(record.executionId).context?.cognitiveMode === 'environment')
       .map(record => ({ executionId: record.executionId, status: record.status,
+        stimulusAgent: store.entry(record.executionId).context?.robotOperatorContext?.stimulusAgent,
         waitingReason: record.waitingReason, checkpointVersion: record.checkpointVersion,
         resumePending: store.dispatches(record.executionId).some(effect => effect.kind === 'graph_resume'
           && ['pending', 'admitted', 'accepted'].includes(effect.status)) }))
@@ -296,30 +207,6 @@ export function isRobotAutonomyWorkItem(
 ): boolean {
   return ROBOT_AUTONOMY_HANDLERS.has(task.handler)
     || hasRobotObserverMetadata(task.input)
-}
-
-export function hasActiveRobotAutonomyCycle(
-  tasks: Array<Pick<QueuedTask, 'id' | 'handler' | 'input' | 'state' | 'correlationId'>>,
-  ignoreTaskId?: string,
-  ignoreCycleId?: string,
-): boolean {
-  const normalizedIgnoreCycleId = ignoreCycleId?.trim() ?? ''
-  return tasks.some(task => (
-    task.id !== ignoreTaskId
-    && (!normalizedIgnoreCycleId || task.correlationId?.trim() !== normalizedIgnoreCycleId)
-    && (task.state === 'queued' || task.state === 'leased' || task.state === 'waiting')
-    && isRobotAutonomyWorkItem(task)
-  ))
-}
-
-export function randomizedRobotOperatorIdleMs(
-  config: { inactivityThresholdSeconds: number; jitterMs: number },
-  random: () => number = Math.random,
-): number {
-  const centerMs = Math.max(1_000, config.inactivityThresholdSeconds * 1_000)
-  const jitterMs = Math.max(0, config.jitterMs)
-  const sample = Math.max(0, Math.min(1, random()))
-  return Math.max(1_000, Math.round(centerMs - jitterMs + sample * jitterMs * 2))
 }
 
 export function readRobotOperatorRuntimeState(): RobotOperatorRuntimeState | null {
@@ -348,7 +235,6 @@ export function readRobotOperatorRuntimeState(): RobotOperatorRuntimeState | nul
         enabled: child.enabled === true,
         handler: optionalText(child.handler, 100) ?? `workflow.${id}`,
         graph: configuredGraph(child.graph, robotOperatorChildGraph(DEFAULT_CONFIG, id)),
-        ...(optionalText(child.nextRunAt, 50) ? { nextRunAt: optionalText(child.nextRunAt, 50) } : {}),
         ...(optionalText(child.lastAdmittedAt, 50) ? { lastAdmittedAt: optionalText(child.lastAdmittedAt, 50) } : {}),
         ...(optionalText(child.lastTaskId, 200) ? { lastTaskId: optionalText(child.lastTaskId, 200) } : {}),
         ...(optionalText(child.lastOutcome, 500) ? { lastOutcome: optionalText(child.lastOutcome, 500) } : {}),

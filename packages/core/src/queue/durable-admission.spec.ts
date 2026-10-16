@@ -11,7 +11,34 @@ const action = (): TaskInput => ({
   durable: { executionId: 'execution', effectId: 'effect', recovery: 'reconcile' },
 })
 
-test('display commands preserve concurrent movement and speech ownership across restart', () => {
+test('feedback resumes wait for the current graph owner while inference and body work remain independent', () => {
+  const manager = new UnifiedQueueManager()
+  const initial = manager.enqueue({ type: 'generic', handler: 'environment.observation',
+    resource: 'local-llm', source: 'environment', username: 'fixture', input: {} })
+  assert.ok(manager.claim(initial.id))
+  const releaseWriter = manager.attachExecution(initial.id, 'conversation')
+  const resume = (effectId: string) => manager.enqueue({ type: 'generic', handler: 'graph.resume',
+    resource: 'execution:conversation', source: 'environment', username: 'fixture', input: { executionId: 'conversation' },
+    durable: { executionId: 'conversation', effectId, recovery: 'resume' } })
+  const feedback = resume('display-result')
+  const result = resume('inference-result')
+  const inference = manager.enqueue({ type: 'generic', handler: 'environment.conversation',
+    resource: 'environment-conversation', source: 'environment', username: 'fixture', input: {},
+    durable: { executionId: 'conversation', effectId: 'inference', recovery: 'resume' } })
+  assert.equal(manager.claim(feedback.id), null)
+  assert.ok(manager.claim(inference.id), 'Inference does not need execution ownership')
+  assert.ok(manager.claim(manager.enqueue(action()).id), 'Movement remains independent')
+  releaseWriter()
+  assert.ok(manager.claim(feedback.id), 'Releasing ownership makes feedback immediately runnable')
+  assert.equal(initial.state, 'leased', 'Other work after a child graph must not retain its writer ownership')
+  assert.equal(manager.claim(result.id), null)
+  manager.complete(feedback.id, true)
+  assert.ok(manager.claim(result.id), 'The saved answer does not wait for a lease deadline')
+  assert.equal(result.notBefore, undefined)
+  assert.equal(result.wakeAt, undefined)
+})
+
+test('interrupted display delivery settles across restart while movement and speech retain ownership', () => {
   const manager = new UnifiedQueueManager()
   const motion = manager.enqueue(action())
   const speech = manager.enqueue({ ...action(), resource: 'environment-speech:test-body',
@@ -27,14 +54,76 @@ test('display commands preserve concurrent movement and speech ownership across 
   assert.equal(manager.claim(next.id), null, 'Display commands keep their wire order')
   const recovered = new UnifiedQueueManager()
   recovered.importState(JSON.parse(JSON.stringify(manager.exportState())))
-  for (const work of [motion, speech, display]) {
+  for (const work of [motion, speech]) {
     assert.equal(recovered.getTask(work.id)?.state, 'waiting')
     assert.ok(recovered.hasCurrentBodyLease(work.id))
   }
-  recovered.complete(display.id, true)
+  assert.equal(recovered.getTask(display.id)?.state, 'failed')
+  assert.equal(recovered.getTask(display.id)?.error?.code, 'outcome_unknown')
   assert.ok(recovered.claim(next.id))
   assert.ok(recovered.hasCurrentBodyLease(motion.id))
   assert.ok(recovered.hasCurrentBodyLease(speech.id))
+})
+
+test('display replacement supersedes unsent states within a layer and releases only its token', () => {
+  const manager = new UnifiedQueueManager()
+  const face = (id: string, fields: Record<string, unknown>) => manager.enqueue({ ...action(),
+    resource: 'environment-display:test-body', input: { sessionId: 'test-body', type: 'faceExpression',
+      expression: 'thinking', displayToken: id, ...fields },
+    durable: { ...action().durable!, effectId: id } })
+  const old = face('old', { displayBackground: true })
+  const front = face('front', { displayBackground: false })
+  const current = face('current', { displayBackground: true })
+  assert.equal(old.state, 'cancelled')
+  assert.equal(old.startedAt, undefined)
+  assert.equal(front.state, 'queued')
+  const oldRelease = face('old-release', { displayRelease: true, displayToken: 'old' })
+  assert.equal(current.state, 'queued', 'An old turn release cannot supersede a newer turn')
+  face('conditional-release', { displayRelease: true, displayToken: 'current', displayIfToken: 'different' })
+  assert.equal(current.state, 'queued', 'A conditional release that cannot match must not discard its setter')
+  const currentRelease = face('current-release', { displayRelease: true, displayToken: 'current' })
+  assert.equal(current.state, 'cancelled')
+  assert.equal(currentRelease.state, 'queued')
+  assert.equal(oldRelease.state, 'queued', 'Release may still clear a previously displayed token')
+  assert.equal(front.state, 'queued')
+})
+
+test('conditional expressions preserve prerequisites and display failures never replay', () => {
+  const manager = new UnifiedQueueManager()
+  const base = { ...action(), resource: 'environment-display:test-body',
+    input: { sessionId: 'test-body', type: 'faceExpression', expression: 'thinking', displayToken: 'turn', displayBackground: true } }
+  const first = manager.enqueue(base)
+  const conditional = manager.enqueue({ ...base, input: { ...base.input, expression: 'sad', displayIfToken: 'turn' },
+    durable: { ...base.durable!, effectId: 'conditional' } })
+  assert.equal(first.state, 'queued')
+  assert.ok(manager.claim(first.id))
+  assert.equal(manager.requeue(first, { code: 'outcome_unknown', message: 'disconnect', retryable: false }), false)
+  assert.equal(first.state, 'failed')
+  assert.equal(first.error?.code, 'outcome_unknown')
+  assert.ok(manager.claim(conditional.id))
+})
+
+test('legacy disconnected display backlog is settled and superseded during recovery', () => {
+  const old = new UnifiedQueueManager()
+  const base = { ...action(), resource: 'environment-display:test-body',
+    input: { sessionId: 'test-body', type: 'faceExpression', expression: 'thinking', displayToken: 'turn', displayBackground: true } }
+  const sent = old.enqueue(base)
+  assert.ok(old.claim(sent.id))
+  old.wait(sent.id, 'outcome_unknown: disconnect')
+  const saved = old.exportState()
+  const pending = { ...saved.items![0]!, id: 'pending-face', state: 'queued' as const,
+    startedAt: undefined, bodyLease: undefined, waitingReason: undefined, leaseOwner: undefined,
+    durable: { ...base.durable!, effectId: 'pending' } }
+  const release = { ...pending, id: 'release-face', input: { ...base.input, displayRelease: true },
+    durable: { ...base.durable!, effectId: 'release' } }
+  saved.items!.push(pending, release)
+  const recovered = new UnifiedQueueManager()
+  recovered.importState(JSON.parse(JSON.stringify(saved)))
+  assert.equal(recovered.getTask(sent.id)?.state, 'failed')
+  assert.equal(recovered.getTask(sent.id)?.error?.code, 'outcome_unknown')
+  assert.equal(recovered.getTask(pending.id)?.state, 'cancelled')
+  assert.equal(recovered.getNextExecutable()?.id, release.id)
+  assert.ok(recovered.claim(release.id))
 })
 
 test('display replacement and release retain admission order when timestamps tie, including restart', () => {
@@ -82,16 +171,15 @@ for (const speechFirst of [true, false]) {
     restored.importState(JSON.parse(JSON.stringify(manager.exportState())))
     assert.equal(restored.getTask(speech.id)?.state, 'waiting')
     assert.equal(restored.getTask(movement.id)?.state, 'waiting')
-    assert.deepEqual(restored.assertBodyLease(speech.id), speechLease)
+    assert.deepEqual(restored.getTask(speech.id)?.bodyLease, speechLease)
     assert.deepEqual(restored.assertBodyLease(movement.id), movementLease)
-    assert.equal(restored.getNextExecutable(), null, 'Restart cannot replay either unknown physical result')
+    assert.equal(restored.getNextExecutable()?.id, nextSpeech.id, 'Interrupted speech cannot block a new delivery')
     restored.complete(movement.id, true, { completed: true })
     assert.ok(restored.claim(nextMovement.id), 'Speech playback cannot hold the next movement')
-    assert.deepEqual(restored.assertBodyLease(speech.id), speechLease, 'A new motion cannot fence out a speech receipt')
+    assert.deepEqual(restored.getTask(speech.id)?.bodyLease, speechLease, 'A new motion cannot rewrite a speech receipt')
     restored.cancel(speech.id, 'Explicit speech cancellation')
-    assert.equal(restored.claim(nextSpeech.id), null, 'Cancellation must retain speaker ownership until acknowledged')
-    restored.acknowledgeCancellation(speech.id)
     assert.ok(restored.claim(nextSpeech.id))
+    restored.acknowledgeCancellation(speech.id)
     assert.ok(restored.hasCurrentBodyLease(nextMovement.id))
     assert.ok(restored.hasCurrentBodyLease(nextSpeech.id))
     assert.equal(restored.hasCurrentBodyLease(speech.id), false)

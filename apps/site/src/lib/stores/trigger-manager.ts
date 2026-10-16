@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { apiFetch } from '../client/api-config';
 import type { AutonomyMode } from '../client/active-operator-modes';
+import { coordinatorSnapshot, coordinatorConnection, coordinatorError, useWorkCoordinator } from './work-coordinator';
 import { isOwner } from '../../stores/security-policy';
 
 export type TriggerLifecycle = 'scheduled-work' | 'workflow' | 'service';
@@ -79,13 +80,11 @@ export interface TriggerManagerSnapshot {
   healthFindings: string[];
 }
 
-export type TriggerConnectionState = 'idle' | 'connecting' | 'live' | 'reconnecting';
-
 export const triggerManagerSnapshot = writable<TriggerManagerSnapshot | null>(null);
-export const triggerManagerConnection = writable<TriggerConnectionState>('idle');
+export const triggerManagerConnection = coordinatorConnection;
 export const triggerManagerError = writable('');
 
-let streamHandle: EventSource | null = null;
+let releaseCoordinator: (() => void) | undefined;
 let users = 0;
 
 function applySnapshot(snapshot: TriggerManagerSnapshot | undefined): void {
@@ -105,32 +104,19 @@ export async function refreshTriggerManager(): Promise<TriggerManagerSnapshot> {
   return data.snapshot;
 }
 
-function connect(): void {
-  if (!get(isOwner) || streamHandle || typeof window === 'undefined') return;
-  triggerManagerConnection.set('connecting');
-  streamHandle = new EventSource('/api/trigger-manager/stream');
-  streamHandle.onopen = () => {
-    triggerManagerConnection.set('live');
-    triggerManagerError.set('');
-  };
-  streamHandle.onmessage = event => {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.error) throw new Error(data.error);
-      applySnapshot(data.snapshot);
-    } catch (error) {
-      triggerManagerError.set((error as Error).message);
-    }
-  };
-  streamHandle.onerror = () => triggerManagerConnection.set('reconnecting');
-}
-
 export function useTriggerManager(): () => void {
   if (!get(isOwner)) return () => {};
   users += 1;
   if (users === 1) {
-    void refreshTriggerManager().catch(error => triggerManagerError.set((error as Error).message));
-    connect();
+    const unsubscribeSnapshot = coordinatorSnapshot.subscribe(snapshot => applySnapshot(snapshot?.triggerManager));
+    const unsubscribeError = coordinatorError.subscribe(error => triggerManagerError.set(error));
+    const release = useWorkCoordinator();
+    releaseCoordinator = () => {
+      unsubscribeSnapshot();
+      unsubscribeError();
+      release();
+      triggerManagerSnapshot.set(null);
+    };
   }
   let released = false;
   return () => {
@@ -138,9 +124,8 @@ export function useTriggerManager(): () => void {
     released = true;
     users = Math.max(0, users - 1);
     if (users === 0) {
-      streamHandle?.close();
-      streamHandle = null;
-      triggerManagerConnection.set('idle');
+      releaseCoordinator?.();
+      releaseCoordinator = undefined;
     }
   };
 }

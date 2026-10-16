@@ -47,9 +47,12 @@ mock.module(new URL('../providers/bridge.ts', import.meta.url).href, { namedExpo
       usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 } }
   },
 } })
+let robotSpeechEnabled = false
 const voice = await import('../tts/robot-speech.js')
 mock.module(new URL('../tts/robot-speech.ts', import.meta.url).href, { namedExports: {
-  ...voice, getSpeechOutputSettings: () => ({ speechDisabled: true, outputTarget: 'local' }),
+  ...voice, getSpeechOutputSettings: () => robotSpeechEnabled
+    ? { speechDisabled: false, outputTarget: 'robot', provider: 'kokoro' }
+    : { speechDisabled: true, outputTarget: 'local' },
 } })
 
 const { getQueueManager } = await import('../queue/unified-queue-manager.js')
@@ -260,7 +263,7 @@ if (restartRequest) {
   process.exit(0)
 }
 
-test('an equivalent editor save resumes the saved Environment result without replaying its action', async () => {
+test('an edited template resumes the saved Environment graph without replaying its action', async () => {
   await withUserContext(user, async () => {
     const { loadGraphForMode, clearGraphCache } = await import('../graph-streaming.js')
     const { executionDefinition, resolveExecutionGraph } = await import('./graph-contract.js')
@@ -304,7 +307,9 @@ test('an equivalent editor save resumes the saved Environment result without rep
       const store = openExecutionStore(username)
       try {
         const objectiveId = store.task(executionId)!.objectiveId
+        edited.nodes.find(node => node.id === '4')!.data.properties.maxTokens++
         fs.writeFileSync(loaded.source, JSON.stringify(edited))
+        assert.notEqual(executionDefinition(edited).graphHash, definition.graphHash)
         assert.deepEqual(resolveExecutionGraph(store, executionId).definition, definition)
         // Executable changes still cannot reuse this checkpoint.
         for (const change of ['property', 'activation', 'edge', 'scheduler', 'output', 'muted']) {
@@ -403,7 +408,7 @@ test('saved Controller calls the real Executor and resumes its preset action und
       const resumed = await run({ graph: graph('robot-autonomy-controller'), context: controllerContext(after), executionId })
       assert.equal(resumed.status, 'completed', resumed.error?.stack)
       assert.equal(calls.length, beforeCalls + 4, 'Resuming adds only visual goal assessment, without replaying decisions or the action')
-      assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-autonomy', 'robot-active-task'])
+      assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'environment', 'robot-active-task'])
       assert.equal(takeAdapterActions(current.sessionId!, 10).length, 0)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
@@ -438,7 +443,7 @@ test('saved Controller selects Observer, waits for its image, then calls Executo
       const finished = await run({ graph: graph('robot-autonomy-controller'), context: controllerContext(moved.after), executionId })
       assert.equal(finished.status, 'completed', finished.error?.stack)
       assert.equal(calls.length, beforeCalls + 5)
-      assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-observer', 'boredom-autonomy', 'robot-active-task'])
+      assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-observer', 'environment', 'robot-active-task'])
       const store = openExecutionStore(username)
       try {
         assert.equal(store.frame(executionId, 'controller-observer-captured')?.id, 'controller-observer-captured')
@@ -598,7 +603,7 @@ test('a new process resumes the saved Controller child wait without reconstructi
       assert.equal(resumed.calls.length, 1, 'Visual goal assessment runs after restart without replaying physical work')
       assert.equal(resumed.physicalJobs, 0, 'The completed movement must not be admitted again')
       assert.equal(resumed.remainingReplies, 0)
-      assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-autonomy', 'robot-active-task'])
+      assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'environment', 'robot-active-task'])
       const store = openExecutionStore(username)
       try { assert.equal(store.task(executionId)?.objective, objective) } finally { store.close() }
       assert.equal(replies.length, 0)
@@ -796,7 +801,7 @@ test('saved Controller and Goal Review return incomplete executor instructions t
       replies.push(goalCompletion('choice-correction-after'))
       const completed = await run({ graph: graph('robot-autonomy-controller'), context: controllerContext(current), executionId })
       assert.equal(completed.status, 'completed', completed.error?.stack)
-      assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'boredom-autonomy', 'robot-active-task'])
+      assertParticipatingGraphs(executionId, ['robot-autonomy-controller', 'environment', 'robot-active-task'])
       assert.equal(takeAdapterActions(current.sessionId!).length, 0)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
@@ -813,14 +818,14 @@ test('user and Controller selectors correct rejected programs before dispatch', 
       const invalid = { ...presetChoice(), program: null }
       const before = calls.length
       replies.push(routes, invalid, presetChoice())
-      const started = await run({ graph: graph(entry), context: entry === 'environment' ? context(current) : controllerContext(current) })
+      const started = await run({ graph: graph(entry === 'autonomy' ? 'environment' : entry), context: entry === 'environment' ? context(current) : controllerContext(current) })
       assert.equal(started.status, 'waiting', started.error?.stack)
       assert.match(calls.at(-1)!.messages.at(-1).content, /requires a program/)
       assert.equal(calls.length, before + (entry === 'environment' ? 3 : 4))
       const { action } = completeAction(current, 'robotCommand', `corrected-${entry}`)
       replies.push(goalCompletion(`corrected-${entry}`))
       assert.equal(action.executionId, started.executionId)
-      const finished = await run({ graph: graph(entry), context: context(current), executionId: started.executionId })
+      const finished = await run({ graph: graph(entry === 'autonomy' ? 'environment' : entry), context: context(current), executionId: started.executionId })
       assert.equal(finished.status, 'completed', finished.error?.stack)
       assert.equal(replies.length, 0)
     } finally { unsubscribe() }
@@ -829,7 +834,7 @@ test('user and Controller selectors correct rejected programs before dispatch', 
 
 test('a no-action objective enters the existing review wait and keeps its criteria through later action and evidence', async () => {
   await withUserContext(user, async () => {
-    for (const entry of ['environment', 'boredom-autonomy']) {
+    for (const entry of ['environment', 'autonomy']) {
       const current = freshObservation(`objective-without-action-${entry}`)
       recordEnvironmentObservation(current)
       setEnvironmentBridgeEnabled(true)
@@ -846,7 +851,7 @@ test('a no-action objective enters the existing review wait and keeps its criter
           response: 'I am considering where to inspect next.', program: null,
           taskDecision: { ...presetChoice().taskDecision, outcome: 'continue', continuationPolicy: 'none' },
         }, goalReview('wait'))
-        const started = await run({ graph: graph(entry), context: initialContext })
+        const started = await run({ graph: graph(entry === 'autonomy' ? 'environment' : entry), context: initialContext })
         assert.equal(started.status, 'waiting', started.error?.stack)
         assert.equal(calls.length, before + 3, 'An incomplete objective reaches one review, without forcing an action')
         assert.equal(takeAdapterActions(current.sessionId!).length, 0)
@@ -861,11 +866,11 @@ test('a no-action objective enters the existing review wait and keeps its criter
 
         replies.push(controllerChoice('robot-autonomy-executor'), routes, presetChoice())
         await signalExecution(executionId)
-        const moving = await run({ graph: graph(entry), context: initialContext, executionId })
+        const moving = await run({ graph: graph(entry === 'autonomy' ? 'environment' : entry), context: initialContext, executionId })
         assert.equal(moving.status, 'waiting', moving.error?.stack)
         const completed = completeAction(current, 'robotCommand', `${entry}-objective-after`)
         replies.push(goalCompletion(`${entry}-objective-after`))
-        const finished = await run({ graph: graph(entry), context: initialContext, executionId })
+        const finished = await run({ graph: graph(entry === 'autonomy' ? 'environment' : entry), context: initialContext, executionId })
         assert.equal(finished.status, 'completed', finished.error?.stack)
         const saved = openExecutionStore(username)
         try {
@@ -1019,7 +1024,7 @@ test('execution handoff checks current compatibility without hiding the saved ob
     const currentDefinition = executionDefinition(savedGraph)
     const store = openExecutionStore(username)
     try {
-      for (const change of ['runtime', 'schema', 'node', 'graph', 'during-decision']) {
+      for (const change of ['runtime', 'schema', 'node']) {
         const definition = structuredClone(currentDefinition)
         if (change === 'runtime') definition.runtimeVersion = 'previous-executable'
         if (change === 'schema') definition.checkpointSchemaVersion++
@@ -1038,35 +1043,22 @@ test('execution handoff checks current compatibility without hiding the saved ob
         }))()
         store.settle(lease, 'waiting', 'operator_authorization')
         store.release(lease)
-        const changeSource = () => fs.writeFileSync(source, JSON.stringify({ ...savedGraph,
-          scheduler: { ...savedGraph.scheduler, maxLoopIterations: savedGraph.scheduler.maxLoopIterations + 1 } }))
-        if (change === 'graph') changeSource()
         const before = store.get(saved.executionId)
         const message = `  A separate request with its exact spacing.\n${change}  `
         const callStart = calls.length
-        if (change === 'during-decision') {
-          replies.push(() => { changeSource(); return { ...routes, executionDisposition: 'steer', targetExecutionId: saved.executionId } })
-        } else {
-          replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false },
-            { response: 'A new response.', program: null,  taskDecision: null })
-        }
+        replies.push({ ...routes, needsEnvironment: false, needsVision: false, needsAction: false },
+          { response: 'A new response.', program: null, taskDecision: null })
         const received = await run({ graph: graph('environment'), context: { ...context(current), userMessage: message } })
         const candidate = received.nodes.get('execution')?.outputs?.activeExecutions.find((item: any) => item.executionId === saved.executionId)
         assert.ok(candidate, 'Incompatible work remains visible, including its objective and original instruction')
         assert.equal(candidate.task.objective, objective)
         assert.equal(candidate.instruction, objective)
-        assert.equal(candidate.canSteer, change === 'during-decision', 'Only a compatible saved execution is offered as steerable')
-        if (change === 'during-decision') {
-          assert.equal(received.status, 'failed', 'A definition changed during the decision cannot accept its handoff')
-          assert.match(received.error!.message, /does not match/)
-          assert.equal(calls.length, callStart + 1)
-        } else {
-          assert.match(candidate.resumeError, /does not match/)
-          assert.equal(received.status, 'completed', received.error?.stack)
-          assert.equal(calls.length, callStart + 2, 'A separate request keeps its existing router and selector calls')
-          assert.equal(received.nodes.get('intent-orchestrator')?.outputs?.continueHere, true)
-          assert.ok(JSON.stringify(calls[callStart].messages).includes(candidate.resumeError))
-        }
+        assert.equal(candidate.canSteer, false, 'Incompatible executable versions are not offered as steerable')
+        assert.match(candidate.resumeError, /does not match/)
+        assert.equal(received.status, 'completed', received.error?.stack)
+        assert.equal(calls.length, callStart + 2, 'A separate request keeps its existing router and selector calls')
+        assert.equal(received.nodes.get('intent-orchestrator')?.outputs?.continueHere, true)
+        assert.ok(JSON.stringify(calls[callStart].messages).includes(candidate.resumeError))
         const { loadBufferForUser } = await import('../conversation-buffer.js')
         assert.ok(loadBufferForUser(username, 'conversation').messages.some(entry => entry.role === 'user' && entry.content === message))
         assert.deepEqual(store.get(saved.executionId), before, 'Inspection or rejected delivery does not retire or rekey the old execution')
@@ -1145,7 +1137,7 @@ test('a failed correction preserves its actual error without dispatch or fabrica
           completionCriteria: 'Identify the target in visual evidence and report its location.',
           continuationPolicy: 'none', reason: 'Fixture malformed contract.', requiredCompletionBasis: 'not-a-supported-evidence-type' } },
       new Error('Controlled correction transport failure'))
-    const result = await run({ graph: graph(entry), context: entry === 'environment' ? context(current) : controllerContext(current) })
+    const result = await run({ graph: graph(entry === 'autonomy' ? 'environment' : entry), context: entry === 'environment' ? context(current) : controllerContext(current) })
     assert.equal(result.status, 'failed')
     assert.equal(result.error?.message, 'Controlled correction transport failure', 'The old parser rejection must not hide a new failure')
     if (entry === 'environment') assert.equal(result.nodes.get('6')?.status, 'failed')
@@ -1512,5 +1504,333 @@ test('standalone image interpretations reach the next Controller through configu
     assert.equal(replay.status, 'completed', replay.error?.stack)
     assert.equal(calls.length, beforeCalls + 3)
     assert.equal(replies.length, 0)
+  })
+})
+
+
+test('speech chunks admit during a live parent writer and replay without duplicate playback', async () => {
+  await withUserContext(user, async () => {
+    const current = freshObservation('speech-writer')
+    current.state = { ...current.state, body: { ...(current.state?.body as object), speakerReady: true } }
+    recordEnvironmentObservation(current)
+    setEnvironmentBridgeEnabled(true)
+    const unsubscribe = connectAdapter(current.sessionId!)
+    robotSpeechEnabled = true
+    const { KokoroService } = await import('../tts/providers/kokoro-service.js')
+    fs.writeFileSync(profile.voiceConfig, JSON.stringify({ tts: { provider: 'kokoro', kokoro: { voice: 'af_heart', langCode: 'a', speed: 1 } }, cache: { enabled: false, directory: path.join(root, 'voice-cache') } }))
+    const audio = Buffer.alloc(44 + 480)
+    audio.write('RIFF'); audio.writeUInt32LE(audio.length - 8, 4)
+    audio.write('WAVEfmt ', 8); audio.writeUInt32LE(16, 16)
+    audio.writeUInt16LE(1, 20); audio.writeUInt16LE(1, 22)
+    audio.writeUInt32LE(24000, 24); audio.writeUInt32LE(48000, 28)
+    audio.writeUInt16LE(2, 32); audio.writeUInt16LE(16, 34)
+    audio.write('data', 36); audio.writeUInt32LE(480, 40)
+    const synthesis = mock.method(KokoroService.prototype, 'synthesizeStream', async function* () {
+      yield { index: 0, total: 2, audio, text: 'first', isFinal: false, synthesisMs: 0, cacheHit: false }
+      // This resumes only after the first graph has admitted playback.
+      assert.equal(takeAdapterActions(current.sessionId!).length, 1)
+      yield { index: 1, total: 2, audio, text: 'second', isFinal: true, synthesisMs: 0, cacheHit: false }
+    })
+    const store = openExecutionStore(username)
+    let parentLease: ReturnType<typeof store.claim> | undefined
+    let executionId: string | undefined
+    try {
+      const started = await run({ graph: graph('environment-conversation'), context: {
+        ...context(current), environmentConversationResponse: 'A model-authored greeting.',
+      } })
+      assert.equal(started.status, 'waiting', started.error?.stack)
+      executionId = started.executionId!
+      const speechEffect = store.dispatches(executionId).find(effect => (effect.payload as any).handler === 'tts.robot-speech')!
+      const task = manager.getTask(speechEffect.workItemId!)!
+      assert.ok(manager.claim(task.id))
+      parentLease = store.claim(executionId, store.get(executionId).definition)
+      const parentHead = store.db.prepare("SELECT checkpoint_id FROM execution_heads WHERE execution_id=? AND namespace=''").get(executionId)
+      const render = () => withGraphWork(task, id => manager.attachExecution(task.id, id),
+        () => voice.runRobotSpeechWork(task.input as any, username, new AbortController().signal),
+        async input => manager.enqueue(input))
+      const rendered = await render()
+      assert.equal(rendered.actionIds.length, 2)
+      assert.equal(new Set(rendered.actionIds).size, 2)
+      store.assertLease(parentLease)
+      assert.equal(store.dispatches(executionId).filter(effect => effect.actionId).length, 2)
+      // Complete both speech receipts while the same parent still holds its lease.
+      const finalChunk = takeAdapterActions(current.sessionId!)
+      assert.equal(finalChunk.length, 0, 'The speaker channel owns one chunk at a time')
+      for (const actionId of rendered.actionIds) {
+        dispatchEnvironmentActions(current.sessionId!, 10)
+        recordEnvironmentActionResult({ id: randomUUID(), actionId, type: 'accepted', message: 'Fixture speech accepted', timestamp: new Date().toISOString() })
+        recordEnvironmentActionResult({ id: randomUUID(), actionId, type: 'completed', message: 'Fixture speech completed', timestamp: new Date().toISOString() })
+        takeAdapterActions(current.sessionId!)
+      }
+      synthesis.mock.restore()
+      const replaySynthesis = mock.method(KokoroService.prototype, 'synthesizeStream', async function* () {
+        for (let index = 0; index < 2; index++) yield { index, total: 2, audio, text: 'replay', isFinal: index === 1, synthesisMs: 0, cacheHit: false }
+      })
+      try {
+        assert.deepEqual(await render(), rendered)
+        assert.deepEqual(store.db.prepare("SELECT checkpoint_id FROM execution_heads WHERE execution_id=? AND namespace=''").get(executionId), parentHead)
+        store.cancel(executionId, { eventId: 'explicit-speech-cancellation', kind: 'user_cancelled', payload: {} })
+        await assert.rejects(render, /Execution cancelled/)
+      } finally { replaySynthesis.mock.restore() }
+      assert.equal(store.dispatches(executionId).filter(effect => effect.actionId).length, 2)
+      assert.equal(takeAdapterActions(current.sessionId!).length, 0, 'A rendering replay does not replay physical speech')
+      manager.complete(task.id, true, rendered)
+      await deliverDurableWorkReceipt(manager.getTask(task.id)!, async input => manager.enqueue(input), store)
+      assert.equal(voice.robotSpeechDeliveryProgress({ route: 'robot', deliveryId: speechEffect.effectId }, store.events(executionId)).status, 'completed')
+      assert.ok(store.events(executionId).some(event => event.actionId === rendered.actionIds[0] && event.kind === 'physical_result'))
+      store.assertLease(parentLease)
+    } finally {
+      synthesis.mock.restore()
+      if (parentLease) store.release(parentLease)
+      if (executionId) store.cancel(executionId, { eventId: 'speech-writer-cleanup', kind: 'user_cancelled', payload: {} })
+      store.close()
+      robotSpeechEnabled = false
+      takeAdapterActions(current.sessionId!)
+      unsubscribe()
+    }
+  })
+})
+
+test('body event workflow may decline without calling Environment Mode', async () => {
+  await withUserContext(user, async () => {
+    const current = freshObservation('body-none')
+    current.state = { ...current.state, bodyEvent: { name: 'body_event', event_id: 'none-event',
+      data: { kind: 'rapid_movement', rotation_dps: 200 } } }
+    recordEnvironmentObservation(current)
+    const before = calls.length
+    replies.push({ decision: 'none', instruction: '', reason: 'The reported movement belongs to the current action.' })
+    const result = await run({ graph: graph('body-event-trigger'), context: { ...context(current), userMessage: '' } })
+    assert.equal(result.status, 'completed', result.error?.stack)
+    assert.equal(calls.length, before + 1)
+    assert.equal(result.nodes.get('environment')?.status, 'skipped')
+    assert.equal(replies.length, 0)
+  })
+})
+
+test('body event reasoning receives the unchanged, attributed Stop conversation before selecting a response', async () => {
+  await withUserContext(user, async () => {
+    const { writeBufferEntry, loadBufferForUser } = await import('../conversation-buffer.js')
+    const stop = { role: 'user' as const, content: 'please stop', timestamp: Date.now(),
+      meta: { sessionId: 'body-after-stop', executionId: 'stop-execution' } }
+    await writeBufferEntry(username, 'conversation', stop)
+    const history = loadBufferForUser(username, 'conversation').messages
+    const current = freshObservation('body-after-stop')
+    current.state = { ...current.state, bodyEvent: { name: 'body_event', event_id: 'after-stop',
+      data: { kind: 'rapid_movement', rotation_dps: 191.665 } } }
+    recordEnvironmentObservation(current)
+    const before = calls.length
+    replies.push({ decision: 'none', instruction: '', reason: 'The current evidence does not warrant a new action.' })
+    const result = await run({ graph: graph('body-event-trigger'), context: { ...context(current), userMessage: '' } })
+    assert.equal(result.status, 'completed', result.error?.stack)
+    const evidence = JSON.parse(calls[before].messages[1].content)
+    assert.deepEqual(evidence.recentConversation, history)
+    assert.ok(evidence.recentConversation.some((entry: any) => entry.role === 'user'
+      && entry.content === stop.content && entry.timestamp === stop.timestamp
+      && entry.meta.executionId === stop.meta.executionId))
+    assert.equal(calls.length, before + 1)
+    assert.equal(result.nodes.get('environment')?.status, 'skipped')
+  })
+})
+
+test('body event decision reaches Environment Mode and retains one execution through returned action evidence', async () => {
+  await withUserContext(user, async () => {
+    const current = freshObservation('body-delegate')
+    current.state = { ...current.state, bodyEvent: { name: 'body_event', event_id: 'wake-event',
+      data: { kind: 'wake', reason: 'boot' } } }
+    recordEnvironmentObservation(current)
+    setEnvironmentBridgeEnabled(true)
+    const unsubscribe = connectAdapter(current.sessionId!)
+    try {
+      const before = calls.length
+      replies.push({ decision: 'delegate', instruction: objective, reason: 'The event warrants a response.' },
+        { needsResponse: false, needsAction: true, needsToolUse: false,
+          taskContext: ['environment', 'robotStatus', 'executionContext'],
+          conversationContext: [] }, { program: presetChoice().program, taskDecision: presetChoice().taskDecision })
+      const started = await run({ graph: graph('body-event-trigger'), context: { ...context(current), userMessage: '' } })
+      assert.equal(started.status, 'waiting', started.error?.stack)
+      assert.equal(calls.length, before + 3)
+      const selectorInput = JSON.stringify(calls[before + 2].messages)
+      assert.ok(selectorInput.includes('body-event-trigger'), 'Intention keeps its source rather than becoming user speech')
+      assert.ok(selectorInput.includes(objective))
+      const executionId = started.executionId!
+      const { action, after } = completeAction(current, 'robotCommand', 'body-event-after')
+      assert.equal(action.command, 'walk')
+      assert.equal(action.executionId, executionId)
+      replies.push({ response: '', outcome: 'complete', reason: 'The returned image supplies the requested evidence.',
+        requiredCompletionBasis: 'visual_observation', observationSummary: 'Target identified in body-event-after.',
+        completionEvidence: 'The target and its location are visible in body-event-after.' })
+      const resumed = await run({ graph: graph('body-event-trigger'), context: { ...context(after), userMessage: '' }, executionId })
+      assert.equal(resumed.status, 'completed', resumed.error?.stack)
+      assert.equal(calls.length, before + 4, 'The event decision is not repeated after an action result')
+      assertParticipatingGraphs(executionId, ['body-event-trigger', 'environment', 'robot-active-task'])
+      assert.equal(replies.length, 0)
+    } finally { unsubscribe() }
+  })
+})
+
+test('body event context keeps another event response under its existing execution owner', async () => {
+  await withUserContext(user, async () => {
+    const current = freshObservation('body-event-ownership')
+    const firstEvent = { name: 'body_event', event_id: 'motion-first', data: { kind: 'rapid_movement', rotation_dps: 200 } }
+    current.state = { ...current.state, bodyEvent: firstEvent }
+    current.metadata = { perceptionEvent: 'body_event' }
+    recordEnvironmentObservation(current)
+    setEnvironmentBridgeEnabled(true)
+    const unsubscribe = connectAdapter(current.sessionId)
+    let ownerId: string | undefined
+    try {
+      replies.push({ decision: 'delegate', instruction: objective, reason: 'The model selects this response.' },
+        { needsResponse: false, needsAction: true, needsToolUse: false,
+          taskContext: ['environment', 'robotStatus', 'executionContext'], conversationContext: [] },
+        { program: presetChoice().program, taskDecision: presetChoice().taskDecision })
+      const first = await run({ graph: graph('body-event-trigger'), context: { ...context(current), userMessage: '' } })
+      assert.equal(first.status, 'waiting', first.error?.stack)
+      ownerId = first.executionId!
+      const admitted = takeAdapterActions(current.sessionId)
+      assert.equal(admitted.length, 1)
+      assert.equal(admitted[0].command, 'walk')
+      assert.equal(admitted[0].executionId, ownerId)
+      assert.equal(loadRobotStatus(username)?.task?.executionId, ownerId)
+      const next = { ...structuredClone(current), id: 'motion-next-observation',
+        state: { ...current.state, bodyEvent: { ...firstEvent, event_id: 'motion-next' } } }
+      recordEnvironmentObservation(next)
+      const before = calls.length
+      replies.push({ decision: 'none', instruction: '', reason: 'The existing execution already owns the selected response.' })
+      const second = await run({ graph: graph('body-event-trigger'), context: { ...context(next), userMessage: '' } })
+      assert.equal(second.status, 'completed', second.error?.stack)
+      const evidence = JSON.parse(calls[before].messages[1].content)
+      assert.equal(evidence.currentTask, null, 'Another execution task must not become this event task')
+      assert.equal(evidence.executionId, second.executionId)
+      assert.equal(evidence.robotStatus.saved.task.executionId, ownerId, 'Robot-wide status remains available with its owner')
+      const other = evidence.activeExecutions.find((item: any) => item.executionId === ownerId)
+      assert.equal(other.status, 'waiting')
+      assert.equal(other.task.executionId, ownerId)
+      assert.equal(other.task.instruction, objective)
+      assert.deepEqual(other.sourceObservation.bodyEvent, firstEvent)
+      assert.equal(other.sourceObservation.sessionId, current.sessionId)
+      assert.equal(evidence.event.event_id, 'motion-next')
+      assert.equal(calls.length, before + 1)
+      assert.equal(second.nodes.get('environment')?.status, 'skipped')
+      const store = openExecutionStore(username)
+      try {
+        assert.equal(store.dispatches(second.executionId!).length, 0)
+        assert.equal(store.task(ownerId)?.instruction, objective)
+        assert.equal(store.get(ownerId).status, 'waiting', 'The other response remains independently active')
+      } finally { store.close() }
+    } finally {
+      if (ownerId) {
+        const store = openExecutionStore(username)
+        try { store.cancel(ownerId, { eventId: 'ownership-test-cleanup', kind: 'user_cancelled', payload: {} }) }
+        finally { store.close() }
+      }
+      unsubscribe()
+    }
+  })
+})
+
+test('admitted root and child graphs retain exact prompts while fresh invocations use the edited template', async () => {
+  await withUserContext(user, async () => {
+    const { executionDefinition, resolveExecutionGraph } = await import('./graph-contract.js')
+    const { executeGraph } = await import('../graph-executor.js')
+    const oldPrompt = 'Original fixture prompt'
+    const newPrompt = 'Edited fixture prompt'
+    const makeGraph = (prompt: string) => validateSvelteFlowGraph({
+      version: '1.0', format: 'svelte-flow', name: 'immutable-prompt-fixture',
+      scheduler: { version: 1, activation: 'demand', skippedState: 'explicit', sideEffectOrder: 'serial-topological', maxLoopIterations: 5 },
+      nodes: [
+        { id: 'input', type: 'genericNode', position: { x: 0, y: 0 }, data: { nodeType: 'text_input', label: 'Input', properties: { message: JSON.stringify([{ role: 'user', content: prompt }]) } } },
+        { id: 'parse', type: 'genericNode', position: { x: 100, y: 0 }, data: { nodeType: 'json_parser', label: 'Parse', properties: {} } },
+        { id: 'llm', type: 'genericNode', position: { x: 200, y: 0 }, data: { nodeType: 'model_router', label: 'LLM', properties: { role: 'persona' }, schema: { isOutputNode: true } } },
+      ],
+      edges: [
+        { id: 'a', source: 'input', target: 'parse', sourceHandle: 'text', targetHandle: 'text' },
+        { id: 'b', source: 'parse', target: 'llm', sourceHandle: 'data', targetHandle: 'messages' },
+      ],
+    })
+    const original = makeGraph(oldPrompt)
+    const edited = makeGraph(newPrompt)
+    const store = openExecutionStore(username)
+    const source = path.join(root, 'template-fixture.json')
+    fs.writeFileSync(source, JSON.stringify(edited))
+    const definition = executionDefinition(original)
+    const rootRecord = store.enter(username, definition, randomUUID(), { graph: original, graphSource: source, context: { username } })
+    try {
+      assert.deepEqual(resolveExecutionGraph(store, rootRecord.executionId).graph, original)
+      const lease = store.claim(rootRecord.executionId, definition)
+      store.pinGraph(lease, 'child:existing', definition, original)
+      const start = calls.length
+      replies.push('Old answer')
+      const result = await executeGraph(edited, { username }, undefined, undefined, { store, lease, invocationId: 'child:existing', checkpointNamespace: 'child:existing', externalChild: true })
+      assert.equal(result.status, 'completed', result.error?.stack)
+      assert.equal(calls.at(-1)!.messages[0].content, oldPrompt)
+      const repeated = await executeGraph(edited, { username }, undefined, undefined, { store, lease, invocationId: 'child:existing', checkpointNamespace: 'child:existing', externalChild: true, resume: true })
+      assert.equal(repeated.status, 'completed', repeated.error?.stack)
+      assert.equal(calls.length, start + 1, 'Completed child inference is not replayed')
+      replies.push('New answer')
+      const fresh = await executeGraph(edited, { username }, undefined, undefined, { store, lease, invocationId: 'child:fresh', checkpointNamespace: 'child:fresh', externalChild: true })
+      assert.equal(fresh.status, 'completed', fresh.error?.stack)
+      assert.equal(calls.at(-1)!.messages[0].content, newPrompt)
+      assert.deepEqual(store.graphSnapshot(rootRecord.executionId, 'child:existing'), original)
+      assert.deepEqual(store.graphSnapshot(rootRecord.executionId, 'child:fresh'), edited)
+      store.pinGraph(lease, 'child:legacy', definition)
+      await assert.rejects(executeGraph(edited, { username }, undefined, undefined, { store, lease, invocationId: 'child:legacy' }), /does not match/)
+      assert.equal(store.graphSnapshot(rootRecord.executionId, 'child:legacy'), null)
+      store.release(lease)
+      replies.push('Original root answer')
+      const resumedRoot = await run({ graph: edited, context: { username }, executionId: rootRecord.executionId })
+      assert.equal(resumedRoot.status, 'completed', resumedRoot.error?.stack)
+      assert.equal(calls.at(-1)!.messages[0].content, oldPrompt)
+      const beforeReplay = calls.length
+      await run({ graph: edited, context: { username }, executionId: rootRecord.executionId })
+      assert.equal(calls.length, beforeReplay)
+      for (const field of ['runtimeVersion', 'checkpointSchemaVersion', 'nodeVersions'] as const) {
+        const incompatible = structuredClone(definition)
+        if (field === 'runtimeVersion') incompatible.runtimeVersion = 'old-executable'
+        if (field === 'checkpointSchemaVersion') incompatible.checkpointSchemaVersion++
+        if (field === 'nodeVersions') incompatible.nodeVersions.text_input = 'old-node'
+        const stale = store.enter(username, incompatible, randomUUID(), { graph: original, context: { username } })
+        assert.throws(() => resolveExecutionGraph(store, stale.executionId), /does not match/)
+      }
+      replies.push('Fresh root answer')
+      const freshRoot = await run({ graph: edited, context: { username } })
+      assert.equal(freshRoot.status, 'completed', freshRoot.error?.stack)
+      assert.equal(calls.at(-1)!.messages[0].content, newPrompt)
+      const requestId = randomUUID()
+      replies.push('Idempotent root answer')
+      const admitted = await runDurableGraph({ graph: original, context: { username, requestId } })
+      assert.equal(admitted.status, 'completed', admitted.error?.stack)
+      const beforeRetry = calls.length
+      const retried = await runDurableGraph({ graph: edited, context: { username, requestId } })
+      assert.equal(retried.executionId, admitted.executionId)
+      assert.equal(retried.status, 'completed', retried.error?.stack)
+      assert.equal(calls.length, beforeRetry, 'An admission retry retains its saved graph without repeating inference')
+      const work = manager.enqueue({ type: 'generic', handler: 'fixture.graph', source: 'user', username, input: {} })
+      replies.push('Worker root answer')
+      const workerRoot = await withGraphWork(work, () => {}, () => runDurableGraph({ graph: original, context: { username } }))
+      assert.equal(workerRoot.status, 'completed', workerRoot.error?.stack)
+      const beforeWorkerRetry = calls.length
+      const workerRetry = await withGraphWork(work, () => {}, () => runDurableGraph({ graph: edited, context: { username } }))
+      assert.equal(workerRetry.executionId, workerRoot.executionId)
+      assert.equal(workerRetry.status, 'completed', workerRetry.error?.stack)
+      assert.equal(calls.length, beforeWorkerRetry)
+      const parent = store.enter(username, definition, randomUUID(), { graph: original, context: { username } })
+      store.db.transaction(() => store.commitTransition(parent.executionId, 'fixture-child-dispatch', {
+        transitionId: 'fixture-child-dispatch', dispatches: [{ effectId: 'fixture-child', kind: 'coordinator_work',
+          payload: { type: 'generic', handler: 'fixture.graph', executionScope: 'invocation', input: { graphContext: { username } } } }],
+      }))()
+      const { executionWorkInput } = await import('./coordinator-outbox.js')
+      const childWork = manager.enqueue(executionWorkInput(store, store.dispatch('fixture-child')))
+      store.acknowledgeAdmission('fixture-child', childWork.id)
+      replies.push('Worker child answer')
+      const workerChild = await withGraphWork(childWork, () => {}, () => runDurableGraph({ graph: original, context: { username } }))
+      assert.equal(workerChild.status, 'completed', workerChild.error?.stack)
+      assert.equal(calls.at(-1)!.messages[0].content, oldPrompt)
+      const beforeChildRetry = calls.length
+      const childRetry = await withGraphWork(childWork, () => {}, () => runDurableGraph({ graph: edited, context: { username } }))
+      assert.equal(childRetry.status, 'completed', childRetry.error?.stack)
+      assert.equal(calls.length, beforeChildRetry, 'Finite child retry uses its saved graph and output')
+      assert.deepEqual(store.graphSnapshot(parent.executionId, 'work:fixture-child:graph:0'), original)
+      assert.equal(replies.length, 0)
+    } finally { store.close() }
   })
 })

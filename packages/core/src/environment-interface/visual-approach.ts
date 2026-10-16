@@ -75,7 +75,7 @@ export function normalizeEnvironmentTargetBox(value: unknown): EnvironmentNormal
   const y = normalizedNumber(box.y, 'visual target box y');
   const width = normalizedNumber(box.width, 'visual target box width');
   const height = normalizedNumber(box.height, 'visual target box height');
-  if (width < 0.01 || height < 0.01 || x + width > 1.000001 || y + height > 1.000001) {
+  if (width <= 0 || height <= 0 || x + width > 1.000001 || y + height > 1.000001) {
     throw new Error('visual target box must have visible area within the frame');
   }
   return { x, y, width, height };

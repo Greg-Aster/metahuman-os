@@ -43,7 +43,7 @@ test('human continuation follows the preceding assistant and never uses the futu
 })
 
 test('assistant targets preserve dual mode exchanges and the requested persona context', () => {
-  const selected = selectPersonalizationDataset(fixture(), parseTrainingDataSettings({ objective: 'assistant-continuation' }), {
+  const selected = selectPersonalizationDataset(fixture(), parseTrainingDataSettings({ objective: 'assistant-continuation', objectivesByMode: { dual: 'assistant-continuation' } }), {
     personaContext: 'I am the configured synthetic persona.',
   })
   for (const row of [...selected.train, ...selected.evaluation]) {
@@ -70,7 +70,7 @@ test('frozen inputs give identical bytes, with entire sessions in one split', ()
 
 test('zero weights and unknown types never reenter through sampling or synthetic caps', () => {
   const input = fixture()
-  const settings = parseTrainingDataSettings({ objective: 'assistant-continuation', includePersona: false, memoryTypes: { percentages: { conversation: 0, daydream: 0 } } })
+  const settings = parseTrainingDataSettings({ objective: 'assistant-continuation', objectivesByMode: { dual: 'assistant-continuation' }, includePersona: false, memoryTypes: { percentages: { conversation: 0, daydream: 0 } } })
   const onlyDreams = { ...input, records: input.records.map(record => ({ ...record, memoryType: 'daydream', provenance: { ...record.provenance!, kind: 'synthetic-exchange' as const } })) }
   const zero = selectPersonalizationDataset(onlyDreams, settings)
   assert.equal(zero.train.length + zero.evaluation.length, 0)
@@ -89,7 +89,7 @@ test('synthetic ceilings survive a tight global budget and exact duplicates are 
   } : record)
   records.push({ ...records[1]!, id: 'duplicate-record', provenance: { ...records[1]!.provenance!, sessionId: 'copied-session' } })
   const selected = selectPersonalizationDataset({ ...input, records }, parseTrainingDataSettings({
-    objective: 'assistant-continuation', includePersona: false, maxSyntheticPercent: 10,
+    objective: 'assistant-continuation', objectivesByMode: { dual: 'assistant-continuation' }, includePersona: false, maxSyntheticPercent: 10,
     memoryTypes: { percentages: { conversation: 10, reflection: 100 } },
   }), { maxSamples: 20 })
   const hashes = new Set<string>()
@@ -118,7 +118,7 @@ test('rolling selection retains recent data and a bounded reproducible sample of
   const records = input.records.map((record, index) => ({
     ...record, originalTimestamp: index < 20 ? '2026-09-08T00:00:00Z' : '2025-01-01T00:00:00Z',
   }))
-  const settings = parseTrainingDataSettings({ objective: 'assistant-continuation', includePersona: false })
+  const settings = parseTrainingDataSettings({ objective: 'assistant-continuation', objectivesByMode: { dual: 'assistant-continuation' }, includePersona: false })
   const selected = selectPersonalizationDataset({ ...input, records }, settings, { recentDays: 30, olderSamples: 7 })
   const rows = [...selected.train, ...selected.evaluation]
   assert.equal(rows.filter(row => row.metadata.timestamp.startsWith('2026')).length, 20)
@@ -131,7 +131,7 @@ test('rolling selection retains recent data and a bounded reproducible sample of
 
 test('null sample limit includes all eligible data, without the historical 5000-row default', () => {
   const input = fixture(1800)
-  const selected = selectPersonalizationDataset(input, parseTrainingDataSettings({ includePersona: false, objective: 'assistant-continuation' }), { maxSamples: null })
+  const selected = selectPersonalizationDataset(input, parseTrainingDataSettings({ includePersona: false, objective: 'assistant-continuation', objectivesByMode: { dual: 'assistant-continuation' } }), { maxSamples: null })
   assert.equal(selected.train.length + selected.evaluation.length, 5400)
 })
 

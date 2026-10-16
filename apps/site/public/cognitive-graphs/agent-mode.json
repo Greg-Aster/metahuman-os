@@ -125,7 +125,6 @@
         "label": "ReAct Planner",
         "nodeType": "react_planner",
         "properties": {
-          "model": "default.coder",
           "temperature": 0.2
         },
         "activation": {

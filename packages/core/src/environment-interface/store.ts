@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { openExecutionStore } from '../durable-execution/storage.js';
 import { contentHash } from '../durable-execution/store.js';
 import { ExecutionConflictError, type NewExecutionEvent } from '../durable-execution/types.js';
-import { executionWorkInput, relayExecutionOutbox } from '../durable-execution/coordinator-outbox.js';
+import { executionWorkInput, relayExecutionOutbox, reconcileTerminatedExecutionWork } from '../durable-execution/coordinator-outbox.js';
 import type {
   EnvironmentAction,
   EnvironmentActionQueueOptions,
@@ -23,6 +23,7 @@ import type {
   EnvironmentTextEvent,
   EnvironmentVisualFrame,
 } from './types.js';
+import { environmentActionHasEnded } from './types.js';
 import { validEnvironmentJpegDataUrl } from './visual-correlation.js';
 import {
   commandedPoseAfterCompletedAction,
@@ -230,12 +231,14 @@ export function writeEnvironmentBridgeState(state: EnvironmentBridgeState): Envi
 
 export function summarizeEnvironmentBridgeState(state = readEnvironmentBridgeState()): EnvironmentBridgeSummary {
   const now = Date.now();
+  const pendingCommands = getQueueManager().getAllTasks()
+    .filter(task => task.type === 'environment_command');
   const sessions = Object.values(state.sessions).map(session => ({
     ...session,
     status: sessionStatus(session, now),
+    pendingCommandCount: pendingCommands.filter(task => task.input.sessionId === session.sessionId).length,
   }));
-  const pendingCommandCount = getQueueManager().getAllTasks()
-    .filter(task => task.type === 'environment_command').length;
+  const pendingCommandCount = pendingCommands.length;
   return {
     enabled: state.enabled,
     updatedAt: state.updatedAt,
@@ -408,7 +411,6 @@ export function applyRobotStatusToEnvironmentObservation(
   observation: EnvironmentObservation,
   robotStatus: Record<string, unknown>,
 ): EnvironmentObservation {
-  if (typeof robotStatus.camera_ready !== 'boolean') return observation;
 
   const body = observation.state?.body;
   const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
@@ -424,7 +426,12 @@ export function applyRobotStatusToEnvironmentObservation(
     return observation;
   }
 
-  const cameraReady = robotStatus.camera_ready;
+  const gateway = isRecord(observation.state?.gateway) ? observation.state.gateway : {};
+  const robots = isRecord(gateway.robots) ? gateway.robots : {};
+  const robot = observedRobotId && isRecord(robots[observedRobotId]) ? robots[observedRobotId] : {};
+  if (robotStatus.epoch !== undefined && robot.epoch !== undefined && robotStatus.epoch !== robot.epoch) return observation;
+  const cameraReady = typeof robotStatus.camera_ready === 'boolean' ? robotStatus.camera_ready : bodyRecord?.cameraReady;
+  const hasCamera = typeof cameraReady === 'boolean';
   const actions: EnvironmentActionType[] = observation.capabilities.actions.filter(
     action => action !== 'captureImage'
       && (cameraReady || (action !== 'inspect' && action !== 'visualApproach')),
@@ -434,15 +441,18 @@ export function applyRobotStatusToEnvironmentObservation(
     ...observation,
     capabilities: {
       ...observation.capabilities,
-      actions,
-      visual: cameraReady,
+      actions: hasCamera ? actions : observation.capabilities.actions,
+      visual: hasCamera ? cameraReady : observation.capabilities.visual,
     },
     state: {
       ...(observation.state ?? {}),
       body: {
         ...(bodyRecord ?? {}),
-        cameraReady,
+        ...(hasCamera ? { cameraReady } : {}),
       },
+      ...(observedRobotId ? { gateway: { ...gateway, robots: { ...robots, [observedRobotId]: {
+        ...robot, status: { ...(isRecord(robot.status) ? robot.status : {}), ...robotStatus },
+      } } } } : {}),
     },
   };
 }
@@ -454,23 +464,11 @@ export function recordEnvironmentRobotStatus(
   const state = readEnvironmentBridgeState();
   const session = state.sessions[sessionId];
   const observation = session?.latestObservation;
-  if (!session || !observation || typeof robotStatus.camera_ready !== 'boolean') {
+  if (!session || !observation) {
     return summarizeEnvironmentBridgeState(state);
   }
   const nextObservation = applyRobotStatusToEnvironmentObservation(observation, robotStatus);
-  const currentReady = observation.state?.body
-    && typeof observation.state.body === 'object'
-    && !Array.isArray(observation.state.body)
-    ? (observation.state.body as Record<string, unknown>).cameraReady
-    : undefined;
-  if (
-    nextObservation === observation
-    || (
-      currentReady === robotStatus.camera_ready
-      && observation.capabilities.visual === robotStatus.camera_ready
-      && observation.capabilities.actions.includes('captureImage') === robotStatus.camera_ready
-    )
-  ) {
+  if (nextObservation === observation || JSON.stringify(nextObservation) === JSON.stringify(observation)) {
     return summarizeEnvironmentBridgeState(state);
   }
   session.latestObservation = nextObservation;
@@ -478,9 +476,51 @@ export function recordEnvironmentRobotStatus(
   return summarizeEnvironmentBridgeState(writeEnvironmentBridgeState(state));
 }
 
+async function wakeEnvironmentSensorWaiters(sessionId: string, event: NewExecutionEvent,
+  enqueue?: (input: TaskInput) => Promise<QueuedTask>, username?: string | null): Promise<void> {
+  if (!username) return;
+  const executions = openExecutionStore(username);
+  try {
+    const locomotionOnly = isRecord(event.payload) && event.payload.locomotionMeasurement !== undefined;
+    for (const execution of executions.list(username).filter(record => record.status === 'waiting'
+      && (record.waitingReason === `active_task:${sessionId}:perception:locomotion`
+        || (!locomotionOnly && record.waitingReason === `active_task:${sessionId}:perception`)))) {
+      // Sensor wakes read the latest state; retain one immutable outstanding event.
+      if (!executions.events(execution.executionId, execution.lastProcessedSequence)
+        .some(pending => pending.kind === 'perception_received')) {
+        executions.deliverEvent(execution.executionId, event);
+      }
+      await relayExecutionOutbox(executions, execution.executionId, enqueue);
+    }
+  } finally { executions.close(); }
+}
+
+/** Preserve source measurements and wake only an existing sensor subscription. */
+export async function recordEnvironmentLocomotionMeasurement(sessionId: string, value: unknown,
+  enqueue?: (input: TaskInput) => Promise<QueuedTask>, username?: string | null): Promise<boolean> {
+  if (!isRecord(value)) throw new Error('Locomotion measurement must be an object');
+  const state = readEnvironmentBridgeState();
+  const session = state.sessions[sessionId];
+  const observation = session?.latestObservation;
+  if (!session || sessionStatus(session) !== 'connected' || !observation) return false;
+  const body = isRecord(observation.state?.body) ? observation.state.body : {};
+  const sources = Object.values(value);
+  if (!sources.length || sources.some(source => !isRecord(source)
+    || typeof source.available !== 'boolean'
+    || source.robotId !== body.robotId
+    || (source.sessionId !== undefined && source.sessionId !== sessionId))) return false;
+  session.latestObservation = { ...observation, state: { ...observation.state, locomotionMeasurement: value } };
+  writeEnvironmentBridgeState(state);
+  await wakeEnvironmentSensorWaiters(sessionId, {
+    eventId: `locomotion:${sessionId}:${contentHash(value)}`,
+    kind: 'perception_received', payload: { sessionId, locomotionMeasurement: value },
+  }, enqueue, username);
+  return true;
+}
+
 /** Update sensor state and wake an existing local behavior; never admit a new objective. */
 export async function recordEnvironmentPerception(sessionId: string, value: unknown,
-  enqueue?: (input: TaskInput) => Promise<QueuedTask>): Promise<boolean> {
+  enqueue?: (input: TaskInput) => Promise<QueuedTask>, username?: string | null): Promise<boolean> {
   const perception = normalizeEnvironmentPerception(value);
   const state = readEnvironmentBridgeState();
   const session = state.sessions[sessionId];
@@ -501,24 +541,12 @@ export async function recordEnvironmentPerception(sessionId: string, value: unkn
   // Sensor updates wake only phases subscribed to perception. A finite action
   // waiting for its receipt cannot make progress from another camera frame.
   // The execution ledger/outbox remains the single continuation owner.
-  const owners = getQueueManager().getAllTasks().filter(task => task.input.sessionId === sessionId && task.durable);
-  for (const username of new Set(owners.map(task => task.username))) {
-    const executions = openExecutionStore(username);
-    try {
-      for (const execution of executions.list(username).filter(record => record.status === 'waiting'
-        && record.waitingReason === `active_task:${sessionId}:perception`)) {
-        // A wake means "read the latest observation", not "replay this frame".
-        // Keep one outstanding signal while the owner is busy. Its immutable
-        // evidence remains intact; the latest-frame projection above still advances.
-        if (!executions.events(execution.executionId, execution.lastProcessedSequence)
-          .some(event => event.kind === 'perception_received')) executions.deliverEvent(execution.executionId, {
-          eventId: `perception:${perception.gatewayInstance}:${perception.epoch}:${perception.frameCounter}`,
-          kind: 'perception_received', payload: { sessionId, perception },
-        });
-        await relayExecutionOutbox(executions, execution.executionId, enqueue);
-      }
-    } finally { executions.close(); }
-  }
+  // The authenticated bridge owner owns durable waits even when all finite
+  // Coordinator jobs have completed. Queue occupancy is not a subscription.
+  await wakeEnvironmentSensorWaiters(sessionId, {
+    eventId: `perception:${perception.gatewayInstance}:${perception.epoch}:${perception.frameCounter}`,
+    kind: 'perception_received', payload: { sessionId, perception },
+  }, enqueue, username);
   return true;
 }
 
@@ -743,8 +771,9 @@ function normalizeAction(
     units: typeof action.units === 'number' ? Math.max(0, Math.floor(action.units)) : undefined,
     amount: typeof action.amount === 'number' ? Math.max(0, Math.min(1, action.amount)) : undefined,
     durationMs,
+    locomotionGoal: action.locomotionGoal,
     continuous: action.continuous, speed: action.speed, stride: action.stride, rate: action.rate,
-    gait: action.gait, forward: action.forward, turn: action.turn,
+    gait: action.gait, forward: action.forward, turn: action.turn, lateral: action.lateral,
     target: action.target,
     frames: motionPlan?.frames,
     endPose: motionPlan?.endPose,
@@ -830,7 +859,7 @@ export function pendingEnvironmentCancellations(sessionId: string): Record<strin
       reason: task.cancellationReason }));
 }
 
-export function dispatchEnvironmentActions(sessionId: string, limit = 10): EnvironmentCommandWork[] {
+export function dispatchEnvironmentActions(sessionId: string, limit = 10, owner = `environment-adapter:${sessionId}`): EnvironmentCommandWork[] {
   const state = readEnvironmentBridgeState();
   if (!state.enabled || !state.sessions[sessionId]) return [];
   const manager = getQueueManager();
@@ -844,6 +873,8 @@ export function dispatchEnvironmentActions(sessionId: string, limit = 10): Envir
     if (next.durable) {
       const store = openExecutionStore(next.username);
       try {
+        reconcileTerminatedExecutionWork(store, next.durable.executionId, manager);
+        if (manager.getTask(next.id)?.state === 'cancelled') continue;
         const effect = store.assertDispatchable(next.durable.effectId);
         if (!effect.workItemId) {
           if (manager.enqueue(executionWorkInput(store, effect)).id !== next.id) throw new Error('Conflicting body work receipt');
@@ -851,19 +882,71 @@ export function dispatchEnvironmentActions(sessionId: string, limit = 10): Envir
         } else if (effect.workItemId !== next.id) throw new Error('Body work does not match its admission receipt');
       }
       catch (error) {
-        if (store.get(next.durable.executionId).status === 'cancelled') {
-          manager.cancel(next.id, 'Parent execution cancelled');
-          continue;
-        }
+        // A different worker can terminate the execution after the first read.
+        // Advance only when the admission owner proves this work never started.
+        const cancelled = reconcileTerminatedExecutionWork(store, next.durable.executionId, manager);
+        if (cancelled.some(receipt => receipt.id === next.id)) continue;
         throw error;
       } finally { store.close(); }
     }
-    const task = manager.claim(next.id, `environment-adapter:${sessionId}`);
+    const task = manager.claim(next.id, owner);
     if (!task) break;
     manager.assertBodyLease(task.id);
     claimed.push(commandView(task));
   }
   return claimed;
+}
+
+/** Read requests use Coordinator work identity, without a physical command or body lease. */
+export function dispatchEnvironmentVisualReads(sessionId: string, owner = `environment-adapter:${sessionId}`): Record<string, unknown>[] {
+  const manager = getQueueManager();
+  const requests: Record<string, unknown>[] = [];
+  for (;;) {
+    const next = manager.getNextExecutable(task => task.handler === 'environment.visual-read'
+      && task.input.sessionId === sessionId);
+    if (!next) break;
+    const task = manager.claim(next.id, owner);
+    if (!task) break;
+    requests.push({ ...(isRecord(task.input.vision) ? task.input.vision : {}),
+      type: 'environment.visual.read', version: 1, requestId: task.id, sessionId });
+  }
+  return requests;
+}
+
+export function recordEnvironmentVisualReadResult(result: Record<string, unknown>): void {
+  const manager = getQueueManager();
+  const task = typeof result.requestId === 'string' ? manager.getTask(result.requestId) : undefined;
+  if (!task || task.handler !== 'environment.visual-read' || task.input.sessionId !== result.sessionId) {
+    throw new Error('Camera read result does not match a Coordinator request');
+  }
+  if (result.error !== undefined) {
+    manager.complete(task.id, false, { code: 'camera_read_failed', message: String(result.error), retryable: false });
+  } else if (task.input.vision) {
+    manager.complete(task.id, true, { vision: result.vision });
+  } else {
+    const visual = result.visual;
+    if (visual !== null && (!isRecord(visual) || typeof visual.id !== 'string'
+      || typeof visual.timestamp !== 'string' || !validEnvironmentJpegDataUrl(visual.dataUrl))) {
+      throw new Error('Camera read returned invalid image evidence');
+    }
+    manager.complete(task.id, true, { visual });
+  }
+}
+
+export function releaseEnvironmentStreamWork(sessionId: string, owner?: string): void {
+  const manager = getQueueManager();
+  for (const task of manager.getAllTasks()) {
+    if (task.type === 'environment_command' && task.input.type === 'speak' && task.input.sessionId === sessionId
+      && task.state === 'leased' && (!owner || task.leaseOwner === owner)) {
+      manager.requeue(task, { code: 'outcome_unknown', message: 'Speech delivery connection ended', retryable: false });
+    }
+    if (task.handler === 'environment.visual-read' && task.input.sessionId === sessionId
+      && ['queued', 'leased', 'waiting'].includes(task.state)
+      && (!owner || task.leaseOwner === owner || task.state === 'queued' && !getEnvironmentActionSubscriberCount(sessionId))) {
+      if (task.state === 'queued') manager.cancel(task.id, 'Camera read interrupted by bridge disconnection');
+      else manager.complete(task.id, false, { code: 'bridge_disconnected', message: 'Camera read interrupted by bridge disconnection', retryable: false });
+    }
+  }
 }
 
 export function subscribeEnvironmentActions(sessionId: string, subscriber: ActionSubscriber): () => void {
@@ -952,14 +1035,19 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
         const delivery = isRecord(feedback.data?.delivery) ? feedback.data.delivery : undefined;
         const transport = feedback.data?.producer === 'environment-bridge' && delivery !== undefined;
         deliveryOnly = previous?.kind === 'delivery_result' || !previous && effect.status === 'completed'
-          && transport && feedback.type === 'outcome_unknown' && delivery?.outcome === 'unknown';
+          && feedback.type === 'outcome_unknown'
+          && (transport && delivery?.outcome === 'unknown' || feedback.data?.executionEnded === true);
         const priorResult = effect.status === 'completed' && !previous && !transport
           && !isLegacyBridgeDeliveryFailure(feedback) && ['completed', 'failed', 'rejected', 'cancelled', 'expired'].includes(feedback.type)
           ? store.events(effect.executionId).filter(event => event.actionId === feedback.actionId && event.kind === 'physical_result').at(-1)
           : undefined;
         const reconcilesEventId = priorResult && isRecord(priorResult.payload)
           && (isLegacyBridgeDeliveryFailure(priorResult.payload.feedback as EnvironmentFeedback | undefined)
-            || (priorResult.payload.feedback as EnvironmentFeedback | undefined)?.data?.producer === 'owner_confirmation')
+            || task.input.type === 'faceExpression'
+              && (priorResult.payload.feedback as EnvironmentFeedback | undefined)?.type === 'outcome_unknown'
+            || (priorResult.payload.feedback as EnvironmentFeedback | undefined)?.data?.producer === 'owner_confirmation'
+            || (priorResult.payload.feedback as EnvironmentFeedback | undefined)?.type === 'outcome_unknown'
+              && (priorResult.payload.feedback as EnvironmentFeedback | undefined)?.data?.executionEnded === true)
           ? priorResult.eventId : undefined;
         store.deliverActionResult(effect.executionId, feedback.actionId, {
           eventId: feedback.id, kind: previous?.kind ?? (deliveryOnly ? 'delivery_result' : 'physical_result'),
@@ -967,7 +1055,7 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
           ...(previous?.parentEventId || reconcilesEventId ? { parentEventId: previous?.parentEventId ?? reconcilesEventId } : {}),
           payload: { feedback, action: task.input },
         }, feedback.type === 'outcome_unknown', ['rejected', 'expired', 'cancelled'].includes(feedback.type),
-        task.startedAt || task.bodyLease ? task : undefined, { deliveryOnly, reconcilesEventId });
+        task.startedAt || task.bodyLease ? task : undefined, { deliveryOnly, reconcilesEventId, executionEnded: environmentActionHasEnded(feedback) });
       }
     } finally { store.close(); }
   }
@@ -981,13 +1069,9 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
     } else if (feedback.type === 'expired') {
       manager.complete(task.id, false, { code: 'adapter_expired', message: feedback.message, retryable: false });
     } else if (feedback.type === 'outcome_unknown') {
-      manager.wait(task.id, `outcome_unknown: ${feedback.message}`);
-      if (task.input.type === 'speak') {
-        // Speech interrupted in transit must not keep later replies blocked.
-        // The existing adapter handshake confirms cancellation before the
-        // Coordinator releases ownership; no audio is replayed or called done.
-        manager.cancel(task.id, 'Interrupted robot speech: reconcile by cancellation');
-      }
+      if (task.input.type === 'faceExpression' || environmentActionHasEnded(feedback)) {
+        manager.complete(task.id, false, { code: 'outcome_unknown', message: feedback.message, retryable: false });
+      } else manager.wait(task.id, `outcome_unknown: ${feedback.message}`);
     } else if (feedback.type === 'failed' || feedback.type === 'rejected') {
       manager.complete(task.id, false, { code: `adapter_${feedback.type}`, message: feedback.message, retryable: false });
     }
@@ -1009,7 +1093,16 @@ export function recordEnvironmentActionResult(feedback: EnvironmentFeedback): Re
 getQueueManager().addEventListener(event => {
   if (!event.taskId) return;
   const task = getQueueManager().getTask(event.taskId);
-  if (task?.type !== 'environment_command') return;
+  if (task?.type !== 'environment_command' && task?.handler !== 'environment.visual-read') return;
+  if (task.handler === 'environment.visual-read' && event.type === 'task_enqueued'
+    && (!readEnvironmentBridgeState().enabled || !getEnvironmentActionSubscriberCount(String(task.input.sessionId)))) {
+    const manager = getQueueManager();
+    if (manager.claim(task.id, `environment-adapter:${task.input.sessionId}`)) {
+      manager.complete(task.id, false, { code: 'bridge_disconnected',
+        message: 'Camera read requires the selected Environment Bridge connection', retryable: false });
+    } else manager.cancel(task.id, 'Camera read requires the selected Environment Bridge connection');
+    return;
+  }
   notifyEnvironmentActionSubscribers(String(task.input.sessionId || ''));
   notifyEnvironmentBridgeStateSubscribers();
 });

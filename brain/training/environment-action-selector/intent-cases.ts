@@ -71,7 +71,7 @@ const regression: Array<[string, string[], string[]]> = [
  ['stop', ['Terminate the activity you are executing.', 'Please end the ongoing routine.'], ['needsExecutionContext',...movement]],
  ['steer', ['Change the in-progress search to look for a mug.', 'Keep the same task but lower its movement speed.'], ['needsExecutionContext',...movement]],
  ['repeat', ['Once more, the way you just did it.', 'Repeat that sequence from our last exchange.'], ['needsConversationHistory',...movement]],
- ['vision', ['Describe the arrangement visible to your camera.', 'What is written on the visible label?'], ['needsResponse','needsVision','needsEnvironment']],
+ ['vision', ['Describe the arrangement visible to your camera.', 'What is written on the visible label?', 'What can you see in front of you right now?'], ['needsResponse','needsVision','needsEnvironment']],
  ['no-execution', ['Explain what the instruction bow means; do not carry it out.', 'Discuss waving as a gesture without making it.'], speaking],
  ['quote', ['Translate walk backward into German.', 'How many letters are in the word wave?'], ['needsResponse']],
  ['fresh-image', ['Acquire another photograph now.', 'Request a new camera exposure.'], movement],
@@ -114,6 +114,8 @@ const optionalResponseSuites = new Set([
 // Correct request-level annotations instead of applying one persona bundle to a suite.
 for (const item of cases.filter(item => item.specialist === 'intent')) {
   if (optionalResponseSuites.has(item.suite)) allowResponseChoice(item)
+  // Capturing a new image uses the vision planner even without an input frame.
+  if (item.suite === 'fresh-image') item.expected.taskPlanner = 'vision'
   if (item.suite === 'identity') {
     item.expected = output([], ['persona.identity'])
     if (item.split === 'regression') item.targets = { 1: output([], [P]) }

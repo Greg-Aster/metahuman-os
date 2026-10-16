@@ -22,9 +22,78 @@ const user = { isAuthenticated: true, role: 'owner', username: 'stream-fixture' 
 const streamResponse = (stream: AsyncIterable<string>) => ({ status: 200, stream, headers: {} });
 const parse = (value: string) => JSON.parse(value.slice(value.indexOf('data: ') + 6).trim());
 
+test('Queue observation leaves producers free and builds one snapshot per delivered event batch', async () => {
+  const system = Object.assign(new EventEmitter(), { triggers: new EventEmitter() });
+  let reads = 0;
+  let revision = 0;
+  let fail = false;
+  const owner = load('./unified-queue.ts', ['handleQueueStream', 'sse'], {
+    getQueueSystem: () => system,
+    queueSnapshot: () => {
+      reads++;
+      if (fail) throw new Error('Snapshot unavailable');
+      return { revision };
+    },
+  });
+  const abort = new AbortController();
+  const response = await owner.handleQueueStream({ user, signal: abort.signal });
+  const iterator = response.stream[Symbol.asyncIterator]();
+  assert.equal(parse((await iterator.next()).value).snapshot.revision, 0);
+  for (revision = 1; revision <= 40; revision++) {
+    system.emit('queue', { type: 'task_completed', taskId: `task-${revision}` });
+  }
+  assert.equal(reads, 1, 'command producers must not read or serialize UI snapshots');
+  for (let i = 1; i <= 40; i++) {
+    const update = parse((await iterator.next()).value);
+    assert.equal(update.event.taskId, `task-${i}`, 'all event identities and ordering survive batching');
+    assert.equal(update.snapshot?.revision, i === 40 ? revision : undefined);
+  }
+  assert.equal(reads, 2, 'a delayed reader needs one current projection, not forty obsolete snapshots');
+  fail = true;
+  system.emit('queue', { type: 'task_started', taskId: 'next' });
+  assert.equal(reads, 2);
+  assert.equal(parse((await iterator.next()).value).error, 'Snapshot unavailable');
+  assert.equal((await iterator.next()).done, true);
+  assert.equal(system.listenerCount('queue'), 0);
+  assert.equal(system.triggers.listenerCount('stateChange'), 0);
+});
+
+test('the coordinator stream delivers trigger-only changes for owners without doing snapshot work in producers', async () => {
+  for (const role of ['owner', 'guest']) {
+    const system = Object.assign(new EventEmitter(), { triggers: new EventEmitter() });
+    let revision = 0;
+    let reads = 0;
+    const owner = load('./unified-queue.ts', ['handleQueueStream', 'sse'], {
+      getQueueSystem: () => system,
+      queueSnapshot: () => { reads++; return { revision }; },
+    });
+    const abort = new AbortController();
+    const response = await owner.handleQueueStream({ user: { ...user, role }, signal: abort.signal });
+    const iterator = response.stream[Symbol.asyncIterator]();
+    await iterator.next();
+    assert.equal(system.triggers.listenerCount('stateChange'), role === 'owner' ? 1 : 0);
+    const next = iterator.next();
+    revision++;
+    system.triggers.emit('stateChange', { reason: 'modeChanged' });
+    assert.equal(reads, 1);
+    if (role === 'owner') {
+      const packet = parse((await next).value);
+      assert.equal(packet.type, 'trigger-state');
+      assert.equal(packet.snapshot.revision, 1);
+      abort.abort();
+      assert.equal((await iterator.next()).done, true);
+    } else {
+      abort.abort();
+      assert.equal((await next).done, true, 'guest stream must not wake for owner trigger state');
+    }
+    assert.equal(system.listenerCount('queue'), 0);
+    assert.equal(system.triggers.listenerCount('stateChange'), 0);
+  }
+});
+
 for (const taskStream of [false, true]) {
   test(`${taskStream ? 'task' : 'Queue'} stream releases wait listeners on updates, heartbeat and disconnect`, async () => {
-    const system = new EventEmitter();
+    const system = Object.assign(new EventEmitter(), { triggers: new EventEmitter() });
     const timers = new Map<number, () => void>();
     let id = 0;
     const task = { id: 'fixture-task', state: 'leased', username: user.username };
@@ -50,12 +119,15 @@ for (const taskStream of [false, true]) {
     }
     const heartbeat = iterator.next();
     [...timers.values()][0]();
-    assert.equal((await heartbeat).value, ': heartbeat\n\n');
+    const beat = (await heartbeat).value;
+    if (taskStream) assert.equal(beat, ': heartbeat\n\n');
+    else assert.equal(parse(beat).type, 'reconcile');
     assert.equal(getEventListeners(abort.signal, 'abort').length, 0);
     const waiting = iterator.next();
     abort.abort();
     assert.equal((await waiting).done, true);
     assert.equal(system.listenerCount('queue'), 0);
+    assert.equal(system.triggers.listenerCount('stateChange'), 0);
     assert.equal(timers.size, 0);
     assert.equal(task.state, 'leased', 'closing observation cannot cancel admitted work');
   });

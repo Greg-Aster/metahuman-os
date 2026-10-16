@@ -7,6 +7,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import type { PersonaCore } from '../../identity.js';
 import {
   getActivePersonaGoals,
+  getStandingPersonaGoals,
   getPersonaBackground,
   getPersonaTraitDescriptions,
   getPersonaValueDescriptions,
@@ -78,8 +79,13 @@ const execute: NodeExecutor = async (inputs, _context, properties) => {
 
   // Format goals
   if (include('goals')) {
-    const goals = getActivePersonaGoals(persona).slice(0, 7);
-    if (goals.length > 0) sections.push(`## Active Goals\n${goals.map(goal => `- ${goal}`).join('\n')}`);
+    if (properties?.goalContext === 'standing') {
+      const goals = getStandingPersonaGoals(persona);
+      if (goals.length > 0) sections.push(`## Standing Persona Goals\nThese goals provide context. Their presence does not establish an active task, new evidence, or reinforcement.\n${goals.map(goal => `- ${goal.id ? `id=${goal.id} | ` : ''}tier=${goal.tier} | status=${goal.status} | ${goal.goal}`).join('\n')}`);
+    } else {
+      const goals = getActivePersonaGoals(persona).slice(0, 7);
+      if (goals.length > 0) sections.push(`## Active Goals\n${goals.map(goal => `- ${goal}`).join('\n')}`);
+    }
   }
 
   return {
@@ -106,9 +112,15 @@ export const PersonaFormatterNode: NodeDefinition = defineNode({
     includeIdentity: true, includeBackground: true,
     includeValues: true,
     includeGoals: true,
+    goalContext: 'active',
     includePersonality: true,
   },
   propertySchemas: {
+    goalContext: {
+      type: 'select', default: 'active', label: 'Goal Context',
+      options: ['active', 'standing'],
+      description: 'Select active goals or recorded standing goals with their status and time horizon.',
+    },
     includeIdentity: { type: 'toggle', default: true, label: 'Include Identity' },
     includeBackground: { type: 'toggle', default: true, label: 'Include Background' },
     includeValues: {

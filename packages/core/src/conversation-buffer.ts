@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
 import { systemPaths } from './path-builder.js';
 import { withBufferLock } from './buffer-locks.js';
 import { assertProfileMemoryAvailable } from './locks.js';
@@ -46,17 +45,17 @@ export type ConversationBuffer = {
   lastUpdated: string;
   userMessageCount?: number;
   /** Admission receipts outlive the visible window until every referencing execution retires. */
-  executionAdmissions?: Record<string, { executionIds: string[]; contentHash: string }>;
+  executionAdmissions?: Record<string, { executionIds: string[] }>;
 };
 
 function normalizeExecutionAdmissions(admissions: ConversationBuffer['executionAdmissions']): ConversationBuffer['executionAdmissions'] {
   if (!admissions) return admissions;
   return Object.fromEntries(Object.entries(admissions).map(([key, receipt]) => {
-    if (Array.isArray(receipt.executionIds)) return [key, receipt];
+    if (Array.isArray(receipt.executionIds)) return [key, { executionIds: receipt.executionIds }];
     // Migrate existing persisted single-execution receipts at their storage owner.
     const executionId = (receipt as unknown as { executionId?: unknown }).executionId;
     if (typeof executionId !== 'string') throw new Error('Invalid buffer execution admission receipt');
-    return [key, { executionIds: [executionId], contentHash: receipt.contentHash }];
+    return [key, { executionIds: [executionId] }];
   }));
 }
 
@@ -296,15 +295,11 @@ export async function writeBufferEntry(
       const executionId = typeof message.meta?.executionId === 'string' ? message.meta.executionId : '';
       buffer.executionAdmissions = normalizeExecutionAdmissions(buffer.executionAdmissions);
       const receipt = idempotencyKey ? buffer.executionAdmissions?.[idempotencyKey] : undefined;
-      const contentHash = createHash('sha256').update(JSON.stringify([message.role, message.content])).digest('hex');
       const existing = idempotencyKey ? buffer.messages.find(entry => entry.meta?.idempotencyKey === idempotencyKey) : undefined;
       if (receipt || existing) {
-        const committedHash = receipt ? receipt.contentHash
-          : createHash('sha256').update(JSON.stringify([existing!.role, existing!.content])).digest('hex');
-        if (committedHash !== contentHash) throw new Error('Buffer admission ID conflicts with its committed entry');
         if (executionId && (!receipt || !receipt.executionIds.includes(executionId))) {
           buffer.executionAdmissions = { ...buffer.executionAdmissions,
-            [idempotencyKey]: { contentHash, executionIds: [...(receipt ? receipt.executionIds : []), executionId] } };
+            [idempotencyKey]: { executionIds: [...(receipt ? receipt.executionIds : []), executionId] } };
           const temporary = `${bufferPath}.${process.pid}.tmp`;
           fs.writeFileSync(temporary, JSON.stringify(buffer, null, 2));
           fs.renameSync(temporary, bufferPath);
@@ -326,7 +321,7 @@ export async function writeBufferEntry(
       buffer.messages.push(newMessage);
       if (idempotencyKey && executionId) {
         buffer.executionAdmissions = { ...buffer.executionAdmissions,
-          [idempotencyKey]: { executionIds: [executionId], contentHash } };
+          [idempotencyKey]: { executionIds: [executionId] } };
       }
       const existingUserCount = resolveUserMessageCount(buffer.userMessageCount, buffer.messages.slice(0, -1));
       if (mode === 'conversation' && message.role === 'user') {

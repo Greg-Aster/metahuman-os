@@ -4,9 +4,59 @@ import test from 'node:test'
 import type { EnvironmentObservation } from '../../environment-interface/index.js'
 import { environmentContextBuilderNode } from './context-builder.node.js'
 import { environmentImageInputNode } from './image-input.node.js'
-import { buildEnvironmentSelectorEnvelope, buildEnvironmentSelectorJsonSchema } from './helpers.js'
+import { buildEnvironmentSelectorEnvelope, buildEnvironmentSelectorJsonSchema, projectRobotStatusContext } from './helpers.js'
 
 const TEST_JPEG = 'data:image/jpeg;base64,/9j/2gAA/9k='
+
+test('status context retains execution provenance and full outcomes without a second raw gateway event', () => {
+  const snapshot = {
+    projection: { executionId: 'other-execution', effectId: 'other-effect' },
+    updatedAt: '2026-10-15T03:51:00Z', sourceUpdatedAt: { environment: '2026-10-15T03:50:00Z' },
+    body: { sessionId: 'body', environmentId: 'room', connectionStatus: 'connected',
+      observationAt: '2026-10-15T03:50:00Z', telemetryAt: '2026-10-15T03:50:00Z', battery: { voltage: 7 },
+      motion: { activity: 'unknown' }, state: { bodyEvent: { data: { kind: 'tipped' } }, gateway: { robots: {} } } },
+    task: { objectiveId: 'old-goal', executionId: 'other-execution', executionStatus: 'waiting',
+      completionCriteria: 'Correlated result', objective: 'Earlier objective', instruction: 'Earlier instruction',
+      source: 'autonomy', decision: { outcome: 'continue', reason: 'rejected', objectiveComplete: false,
+        continuationPolicy: 'none', requiredCompletionBasis: 'action_result', observationSummary: 'No movement',
+        completionEvidence: '', nestedEvidence: Array.from({ length: 30 }, (_, i) => ({ i, value: 'Full evidence' })) },
+      selectedAction: { type: 'robotCommand', command: 'stretch' }, actionId: 'stretch', actionStatus: 'rejected',
+      feedback: { type: 'rejected', actionId: 'stretch', message: 'Motion mapping failed', observedAt: '2026-10-15T03:50:59Z' },
+      baselineFrame: null, updatedAt: '2026-10-15T03:51:00Z' },
+    situation: { uncertainties: Array.from({ length: 20 }, (_, i) => `Uncertainty ${i}`) },
+  }
+  const result = projectRobotStatusContext(snapshot) as any
+  assert.deepEqual(result.projection, snapshot.projection)
+  assert.deepEqual(result.task, snapshot.task)
+  assert.deepEqual(result.situation.uncertainties, snapshot.situation.uncertainties)
+  assert.equal(result.body.observationAt, snapshot.body.observationAt)
+  assert.equal('state' in result.body, false)
+  assert.equal(snapshot.body.state.bodyEvent.data.kind, 'tipped')
+})
+
+test('unselected environment evidence does not remove advertised tracking operations', async () => {
+  for (const visionOperations of [['search', 'select', 'release'], ['release'], []]) {
+    const current = observation()
+    current.state = { recognition: { visionOperations, visionTarget: { description: 'private scene evidence' } } }
+    const result = await environmentContextBuilderNode.execute({
+      userInstruction: 'Track the chair while stationary.', observation: current,
+      routingAnalysis: { needsAction: false, needsResponse: true, taskContext: [], conversationContext: [] },
+    }, {}, { purpose: 'task' })
+    const activity = result.jsonSchema.anyOf.find((branch: any) => branch.properties.program.type === 'object')
+    const steps = activity.properties.program.properties.steps.items.anyOf
+    const operations = steps.filter((step: any) => step.properties.kind.const === 'vision')
+      .map((step: any) => step.properties.operation.const)
+    assert.deepEqual(operations, ['acquire', ...visionOperations])
+    const referenceDescription = steps.find((step: any) => step.properties.operation?.const === 'acquire')
+      .properties.referenceFrameId.description
+    assert.ok(result.planningMessages[1].content.includes(referenceDescription))
+    assert.ok(result.messages[1].content.includes(referenceDescription))
+    const acquisitionDescription = steps.find((step: any) => step.properties.operation?.const === 'acquire')
+      .properties.operation.description
+    assert.ok(result.planningMessages[1].content.includes(acquisitionDescription))
+    assert.equal(JSON.stringify(result.selectedContext).includes('private scene evidence'), false)
+  }
+})
 
 test('selector follows the adapter-selected V1 or V2 body without losing model or live gait controls', () => {
   const robots = {
@@ -36,6 +86,7 @@ test('selector follows the adapter-selected V1 or V2 body without losing model o
     assert.deepEqual(envelope.currentEnvironment.state.activeMovementUpdates.controls,
       v2 ? ['speed', 'stride', 'rate', 'forward', 'turn'] : [])
     assert.equal(envelope.capabilityRules.some((rule: string) => rule.startsWith('V2 locomotion:')), v2)
+    assert.equal(envelope.capabilityRules.some((rule: string) => rule.startsWith('V2 named locomotion commands are open-ended')), v2)
     assert.equal(envelope.currentEnvironment.capabilities.actions.includes('robotMotionPlan'), !v2)
     assert.deepEqual(envelope.currentEnvironment.capabilities.robotCommandCatalog, current.capabilities.robotCommandDescriptions)
     if (v2) assert.equal(envelope.currentEnvironment.state.gateway.selectedRobot.activeWalk.speed, 150)
@@ -293,12 +344,13 @@ test('Environment selector schema describes conversation or an ordered program w
   const steps = program.properties.steps.items.anyOf
   assert.deepEqual(steps.map((step: any) => step.properties.kind.const), ['action', 'generatedMotion'])
   for (const step of steps) assert.equal(step.additionalProperties, false)
-  assert.deepEqual(steps[0].required, ['kind', 'action'])
-  assert.deepEqual(steps[0].properties.action.required, ['type', 'command'])
-  assert.deepEqual(steps[0].properties.action.properties.type.enum, ['robotCommand'])
-  assert.deepEqual(steps[0].properties.action.properties.command.enum, capabilities.robotCommands)
-  assert.deepEqual(steps[1].required, ['kind', 'description'])
-  assert.equal(steps[1].properties.description.minLength, 1)
+  const [action, generated] = steps
+  assert.deepEqual(action.required, ['kind', 'action'])
+  assert.deepEqual(action.properties.action.required, ['type', 'command'])
+  assert.deepEqual(action.properties.action.properties.type.enum, ['robotCommand'])
+  assert.deepEqual(action.properties.action.properties.command.enum, capabilities.robotCommands)
+  assert.deepEqual(generated.required, ['kind', 'description'])
+  assert.equal(generated.properties.description.minLength, 1)
   assert.equal(activity.properties.taskDecision.type, 'object', 'A physical program requires its objective decision')
   assert.equal(activity.properties.taskDecision.additionalProperties, false)
   const outcomes = activity.properties.taskDecision.properties.outcome.enum
@@ -316,14 +368,14 @@ test('program steps remain restricted to advertised commands, generation and fee
     [['robotCommand'], ['wave'], ['action'], ['robotCommand']],
     [['robotMotionPlan'], [], ['generatedMotion'], []],
     [['move'], [], ['action'], ['move']],
-    [['captureImage'], [], ['action'], ['captureImage']],
-    [['move', 'captureImage'], [], ['action', 'behavior'], ['move', 'captureImage']],
-    [['robotCommand', 'robotMotionPlan', 'move', 'captureImage'], ['wave'], ['action', 'generatedMotion', 'behavior'], ['move', 'captureImage', 'robotCommand']],
+    [['captureImage'], [], ['action', 'vision', 'behavior'], ['captureImage']],
+    [['move', 'captureImage'], [], ['action', 'vision', 'behavior'], ['move', 'captureImage']],
+    [['robotCommand', 'robotMotionPlan', 'move', 'captureImage'], ['wave'], ['action', 'generatedMotion', 'vision', 'behavior'], ['move', 'captureImage', 'robotCommand']],
   ] as const) {
     const schema = buildEnvironmentSelectorJsonSchema({ actions, robotCommands }) as any
     const activity = schema.anyOf.find((route: any) => route.properties.program.type === 'object')
     const steps = activity?.properties.program.properties.steps.items.anyOf ?? []
-    assert.deepEqual(steps.map((step: any) => step.properties.kind.const), expectedKinds, JSON.stringify(actions))
+    assert.deepEqual(steps.map((step: any) => step.properties.kind.const), [...expectedKinds], JSON.stringify(actions))
     const action = steps.find((step: any) => step.properties.kind.const === 'action')?.properties.action
     const choices = action ? action.anyOf ?? [action] : []
     assert.deepEqual([...new Set(choices.flatMap((choice: any) => choice.properties.type.enum))].sort(), [...expectedActions].sort())
@@ -337,8 +389,15 @@ test('program steps remain restricted to advertised commands, generation and fee
       assert.deepEqual(behavior.required, ['kind', 'target', 'completionCriteria', 'motion', 'candidateLabels', 'identifyEveryFrames', 'steering'])
       assert.equal(behavior.properties.target.minLength, 1)
       assert.equal(behavior.properties.completionCriteria.minLength, 1)
-      assert.equal(behavior.properties.motion.properties.type.const, 'move')
-      assert.equal(behavior.properties.motion.properties.continuous.const, true)
+      const motionChoices = behavior.properties.motion.anyOf
+      assert.equal(motionChoices[0].type, 'null')
+      assert.equal(motionChoices.length, actions.some(value => value === 'move') ? 2 : 1)
+      if (motionChoices.length === 2) {
+        assert.equal(motionChoices[1].properties.type.const, 'move')
+        assert.equal(motionChoices[1].properties.continuous.const, true)
+      }
+      const vision = steps.find((step: any) => step.properties.kind.const === 'vision')
+      assert.equal(vision.properties.operation.const, 'acquire')
       assert.equal(behavior.properties.identifyEveryFrames.minimum, 1)
     }
     const disabled = buildEnvironmentSelectorJsonSchema({ actions, robotCommands, actionRouteSelected: false, requireAction: true }) as any
@@ -432,6 +491,27 @@ test('an interrupted program hands off before joining conversation recall', asyn
   assert.deepEqual(result, {})
 })
 
+test('conversation retains acquisition, configuration and correlated tracking evidence as distinct returned facts', async () => {
+  const acquisition = { purpose: 'locate', outcome: 'found', frame: { id: 'acquired-frame' }, candidates: [
+    { box: { x: .2, y: .3, width: .1, height: .2 }, description: 'striped cup', evidence: 'One striped cup is visible.' },
+  ] }
+  const visionResult = { queryId: 'selected-query', operation: 'select' }
+  const perception = { queryId: 'selected-query', observedAt: '2030-01-15T12:00:02.000Z',
+    objects: [{ trackId: 'selected-query:1', label: 'striped cup' }] }
+  for (const returned of [
+    { done: true, objectiveComplete: false, planningRequired: true, acquisition },
+    { done: true, objectiveComplete: false, visionResult, queryId: 'selected-query' },
+    { done: true, objectiveComplete: true, visionResult, queryId: 'selected-query', perception },
+  ]) {
+    const result = await environmentContextBuilderNode.execute({ userInstruction: 'Track the striped cup without moving.',
+      sourceObservation: observation(), taskResult: returned,
+      routingAnalysis: { needsResponse: true, needsAction: true, taskContext: [], conversationContext: [] },
+      selectedTask: { program: null, taskDecision: null },
+    }, {}, { purpose: 'conversation' })
+    assert.deepEqual(JSON.parse(result.message).taskResult, returned)
+  }
+})
+
 test('recall receipts already consumed by task execution can be reused without another event wait', async () => {
   const result = await environmentContextBuilderNode.execute({ userInstruction: 'Current request', sourceObservation: observation(),
     memoryWork: { effectId: 'recall-effect', threshold: .65 },
@@ -443,4 +523,49 @@ test('recall receipts already consumed by task execution can be reused without a
     } } }], pendingEvents: () => [], waitForEvent: () => { throw new Error('Receipt must be reused') },
   } }, { purpose: 'conversation' })
   assert.equal(JSON.parse(result.message).memories[0].content, 'Earlier receipt')
+})
+
+
+test('selected body motor evidence survives model context without changing capability or borrowing another body', () => {
+  const current = observation()
+  const timestamp = '2026-10-14T22:58:49.076903+00:00'
+  const motorOutput = { output_ready: false, output_armed: false, output_fault: 1, timestamp }
+  current.state = { body: { robotId: 'selected', motionAvailable: true }, gateway: { robots: {
+    selected: { status: { ...motorOutput, status_received_at: timestamp } }, other: { status: { output_ready: true, output_armed: true, output_fault: 0 } },
+  } } }
+  const envelope = JSON.parse(buildEnvironmentSelectorEnvelope({ instruction: 'Report body state.', observation: current,
+    robotStatus: { live: { movement: { motorOutput } } } }))
+  assert.deepEqual(envelope.currentEnvironment.state.gateway.selectedRobot.motorOutput, motorOutput)
+  assert.equal(envelope.currentEnvironment.state.body.motionAvailable, true)
+  assert.deepEqual(envelope.currentEnvironment.capabilities.actions, current.capabilities.actions)
+  assert.ok(JSON.stringify(envelope.robotStatus.live).includes('motorOutput'))
+  current.state = { body: { robotId: 'missing' }, gateway: { robots: { other: { status: motorOutput } } } }
+  const missing = JSON.parse(buildEnvironmentSelectorEnvelope({ instruction: 'Report body state.', observation: current }))
+  assert.equal(missing.currentEnvironment.state.gateway.selectedRobot, null)
+})
+
+test('locomotion capability context presents the exact executable goal schemas and placement', async () => {
+  const current = observation()
+  current.capabilities.actions = ['move', 'robotCommand', 'captureImage']
+  current.capabilities.robotCommands = ['walk', 'wave']
+  current.capabilities.locomotion = { commands: ['walk'], goalKinds: ['distance', 'relativeTurn', 'approach', 'follow', 'visual'] }
+  const result = await environmentContextBuilderNode.execute({ userInstruction: 'Execute the selected locomotion goal.', observation: current,
+    routingAnalysis: { needsAction: true, taskContext: ['environment'], conversationContext: [] } }, {}, { purpose: 'task' })
+  const readable = JSON.parse(result.message).currentEnvironment.capabilities.locomotion.programSteps
+  const branch = result.planningSchema.anyOf.find((entry: any) => entry.properties.program.type === 'object')
+  const executable = branch.properties.program.properties.steps.items.anyOf
+  const behavior = executable.find((step: any) => step.properties.kind.const === 'behavior')
+  assert.deepEqual(readable.find((step: any) => step.properties.kind.const === 'behavior'), behavior)
+  const action = executable.find((step: any) => step.properties.kind.const === 'action').properties.action
+  const expectedMoves = (action.anyOf ?? [action]).filter((choice: any) => choice.properties.type.enum.includes('move'))
+  assert.deepEqual(readable.find((step: any) => step.properties.kind.const === 'action').properties.action.anyOf, expectedMoves)
+  for (const move of [...expectedMoves, ...behavior.properties.motion.anyOf.filter((choice: any) => choice.type === 'object')]) {
+    const keys = Object.keys(move.properties)
+    assert.equal(keys[0], 'type', 'Constrained decoding selects the action type before its goal')
+    assert.equal(keys.at(-1), 'locomotionGoal', 'Goal parameters follow the ordinary gait controls')
+  }
+  for (const field of ['metres', 'tolerance', 'degrees', 'groundContact', 'endingCondition', 'locomotionGoal']) {
+    assert.ok(result.planningMessages[1].content.includes(field))
+    assert.ok(result.messages[1].content.includes(field))
+  }
 })

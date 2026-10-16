@@ -80,9 +80,7 @@
   }
 
   interface BigBrotherConfig {
-    enabled: boolean;
     provider: string;
-    delegateAll?: boolean;
     model?: string;
     reasoningEffort?: string;
     escalateOnStuck: boolean;
@@ -129,7 +127,7 @@
   let llamaEndpoint = 'http://127.0.0.1:8080';
   let llamaModel = '';
   let llamaContextWindow = 4096;
-  let llamaMaxTokens = 512;
+  let llamaMaxTokens = -1;
   let llamaTemperature = 0.7;
   let llamaTopP = 0.9;
   let llamaImages = false;
@@ -227,7 +225,6 @@
   } | null = null;
 
   let bigBrotherConfig: BigBrotherConfig | null = null;
-  let bigBrotherEnabled = false;
   let bigBrotherModel = '';
   let bigBrotherReasoningEffort = '';
   let bigBrotherProvider: string = 'claude-code';
@@ -301,7 +298,7 @@
     llamaEndpoint = config.llamaCpp?.endpoint ?? 'http://127.0.0.1:8080';
     llamaModel = config.llamaCpp?.model ?? '';
     llamaContextWindow = config.llamaCpp?.contextWindow ?? 4096;
-    llamaMaxTokens = config.llamaCpp?.maxTokens ?? 512;
+    llamaMaxTokens = config.llamaCpp?.maxTokens ?? -1;
     llamaTemperature = config.llamaCpp?.temperature ?? 0.7;
     llamaTopP = config.llamaCpp?.topP ?? 0.9;
     llamaImages = config.llamaCpp?.capabilities?.includes('image') ?? false;
@@ -813,7 +810,6 @@
       if (res.ok) {
         const data = await res.json();
         bigBrotherConfig = data.config;
-        bigBrotherEnabled = data.config?.enabled ?? false;
         bigBrotherModel = data.config?.model || '';
         bigBrotherReasoningEffort = data.config?.reasoningEffort || '';
         bigBrotherProvider = data.config?.provider || 'claude-code';
@@ -832,8 +828,6 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          enabled: bigBrotherEnabled,
-          delegateAll: bigBrotherEnabled,
           model: bigBrotherModel,
           reasoningEffort: bigBrotherReasoningEffort,
           provider: bigBrotherProvider,
@@ -1070,7 +1064,7 @@
           <label class="block text-sm"><span class="block mb-1">Server URL</span><input class="input-field font-mono" bind:value={llamaEndpoint} placeholder="http://127.0.0.1:8080" /></label>
           <label class="block text-sm"><span class="block mb-1">Served model name</span><input class="input-field font-mono" bind:value={llamaModel} placeholder="Model alias reported by the server" /></label>
           <label class="block text-sm"><span class="block mb-1">Context tokens</span><input class="input-field" type="number" min="256" max="1048576" bind:value={llamaContextWindow} /></label>
-          <label class="block text-sm"><span class="block mb-1">Max output tokens</span><input class="input-field" type="number" min="1" max={llamaContextWindow - 1} bind:value={llamaMaxTokens} /></label>
+          <label class="block text-sm"><span class="block mb-1">Max output tokens (-1 = unlimited)</span><input class="input-field" type="number" min="-1" max={llamaContextWindow - 1} bind:value={llamaMaxTokens} /></label>
           <label class="block text-sm"><span class="block mb-1">Temperature</span><input class="input-field" type="number" min="0" max="5" step="0.1" bind:value={llamaTemperature} /></label>
           <label class="block text-sm"><span class="block mb-1">Top P</span><input class="input-field" type="number" min="0" max="1" step="0.05" bind:value={llamaTopP} /></label>
           <label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={llamaImages} />Model supports image input</label>
@@ -1733,13 +1727,9 @@
     <section class="panel p-4 mb-6 bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800">
       <h4 class="text-base font-semibold mb-2 text-blue-800 dark:text-blue-300">Big Brother</h4>
       <p class="text-sm text-blue-700 dark:text-blue-400 mb-3">
-        When enabled, Big Brother uses the selected CLI model. Turn it off to return to the configured local model. Claude Code and Codex display their work in the terminal.
+        Choose Big Brother separately for each model role in the left Status widget. These settings select its CLI provider, model, and reasoning effort. Claude Code and Codex display their work in the terminal.
       </p>
 
-      <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer mb-3">
-        <input type="checkbox" bind:checked={bigBrotherEnabled} on:change={saveBigBrotherConfig} disabled={savingBigBrother} class="w-4 h-4 accent-violet-600" />
-        <span>Enable Big Brother Mode</span>
-      </label>
 
       <label for="big-brother-provider" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Provider</label>
       <select id="big-brother-provider" bind:value={bigBrotherProvider} on:change={() => { bigBrotherModel = ''; saveBigBrotherConfig(); }} disabled={savingBigBrother} class="select-field w-full mb-3">
@@ -1766,10 +1756,6 @@
       {/if}
 
       <div class="bg-black/5 dark:bg-white/5 rounded-lg p-3 text-sm">
-        <div class="flex justify-between py-1">
-          <span class="text-gray-500 dark:text-gray-400">Status:</span>
-          <span class="font-medium {bigBrotherEnabled ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}">{bigBrotherEnabled ? 'Enabled' : 'Disabled'}</span>
-        </div>
         <div class="flex justify-between py-1">
           <span class="text-gray-500 dark:text-gray-400">Provider:</span>
           <span class="font-medium text-gray-700 dark:text-gray-300">{getBigBrotherProviderLabel(bigBrotherProvider)}</span>

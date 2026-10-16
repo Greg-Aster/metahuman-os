@@ -9,10 +9,11 @@
   import { canUseOperator, currentMode, isOwner } from '../stores/security-policy';
   import { yoloModeStore, statusRefreshTrigger } from '../stores/navigation';
   import { calculateVoiceVolume } from '../lib/client/utils/audio-utils.js';
+  import { nextSpeechOutputState, speechOutputState, speechOutputSettings, type SpeechOutputState } from '../lib/client/assistant-speech-preference';
   import { useTTS } from '../lib/client/composables/useTTS';
   import { useMicrophone } from '../lib/client/composables/useMicrophone';
   import { useThinkingTrace } from '../lib/client/composables/useThinkingTrace';
-  import { useMessages, useActivityTracking, useOllamaStatus, type ChatMessage, type ReasoningStage } from '../lib/client/composables/useMessages';
+  import { useMessages, useActivityTracking, type ChatMessage, type ReasoningStage } from '../lib/client/composables/useMessages';
   import { forceHealthCheck } from '../lib/client/server-health';
   import { apiEventSource, apiFetch } from '../lib/client/api-config';
   import {
@@ -37,12 +38,6 @@
   let reasoningDepth: number = 0;
   const reasoningLabels = ['Off', 'Quick', 'Focused', 'Deep'];
   const clampReasoningDepth = (value: number) => Math.max(0, Math.min(reasoningLabels.length - 1, Math.round(value)));
-  let bigBrotherEnabled = false;
-  let bigBrotherDelegateAll = false;
-  let bigBrotherProvider = 'claude-code';
-  let savingBigBrother = false;
-  let unsubscribeBigBrother: (() => void) | undefined;
-  let bigBrotherProviderLabel = 'Claude Code';
   let chatResponseStream: EventSource | null = null;
   let activeChatTaskId: string | null = null;
   let reconcilingChatTaskId: string | null = null;
@@ -54,7 +49,7 @@
   // - Conversation: user/assistant messages from conversation buffer
   // - Inner: reflection/dream/reasoning from inner buffer
   // - System: chronological System Buffer + Robot Buffer records
-  let selectedViews = new Set<'conversation' | 'inner' | 'system'>(['conversation', 'inner', 'system']);
+  let selectedViews = new Set<'conversation' | 'inner' | 'system'>(['conversation', 'inner']);
 
   // Terminal is a control surface, not a buffer tab.
   let terminalVisible = false;
@@ -75,6 +70,10 @@
   let visibilityCleanup: (() => void) | null = null;
   // Convenience toggles
   let ttsEnabled = true;
+  let speechOutput: SpeechOutputState = 'browser';
+  let speechPreferenceLoading = true;
+  let speechPreferenceError = '';
+  $: speechOutputLabel = speechOutput === 'off' ? 'Off' : speechOutput === 'browser' ? 'Browser' : 'Body Control';
   // vLLM Thinking Mode (Qwen3)
   let thinkingModeEnabled = false;
   let thinkingModeLoading = false;
@@ -148,15 +147,6 @@
 
   // Initialize Activity Tracking
   const activityApi = useActivityTracking();
-
-  // Initialize LLM backend status.
-  const backendApi = useOllamaStatus();
-  const {
-    running: backendRunning,
-    hasModels: backendHasModels,
-    modelCount: backendModelCount,
-    error: backendError
-  } = backendApi;
 
   // Initialize Microphone composable
   const mic = useMicrophone({
@@ -235,18 +225,19 @@
   let isComponentMounted = true;
 
 
-  async function syncSpeechDisabledPreference(disabled: boolean): Promise<void> {
+  async function loadSpeechPreference(): Promise<void> {
+    speechPreferenceLoading = true;
     try {
-      const response = await apiFetch('/api/voice-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ speechDisabled: disabled }),
-      });
-      if (!response.ok) {
-        console.warn(`[chat-prefs] Failed to sync speech preference (${response.status})`);
-      }
+      const response = await apiFetch('/api/voice-settings');
+      if (!response.ok) throw new Error(`Unable to load speech settings (${response.status})`);
+      speechOutput = speechOutputState(await response.json());
+      ttsEnabled = speechOutput !== 'off';
+      speechPreferenceError = '';
+      saveChatPrefs();
     } catch (error) {
-      console.warn('[chat-prefs] Failed to sync speech preference:', error);
+      speechPreferenceError = (error as Error).message;
+    } finally {
+      speechPreferenceLoading = false;
     }
   }
 
@@ -256,7 +247,6 @@
       if (!raw) {
         console.log('[chat-prefs] No chatPrefs in localStorage, using defaults');
         ttsEnabled = true;
-        void syncSpeechDisabledPreference(false);
         return;
       }
       const p = JSON.parse(raw);
@@ -270,11 +260,9 @@
         reasoningDepth = p.reasoningEnabled ? 2 : 0;
       }
       console.log('[chat-prefs] Loaded:', { ttsEnabled, reasoningDepth });
-      void syncSpeechDisabledPreference(!ttsEnabled);
     } catch (e) {
       console.error('[chat-prefs] Error loading:', e);
       ttsEnabled = true;
-      void syncSpeechDisabledPreference(false);
     }
   }
   function saveChatPrefs() {
@@ -291,15 +279,28 @@
     } catch {}
   }
 
-  function toggleAssistantSpeech(): void {
-    ttsEnabled = !ttsEnabled;
-    if (ttsEnabled) {
-      ttsApi.prefetchVoiceResources();
-    } else {
-      void interruptAssistantSpeech('speech-disabled');
+  async function toggleAssistantSpeech(): Promise<void> {
+    const next = nextSpeechOutputState(speechOutput);
+    speechPreferenceLoading = true;
+    try {
+      const response = await apiFetch('/api/voice-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(speechOutputSettings(next)),
+      });
+      if (!response.ok) throw new Error(`Unable to save speech output (${response.status})`);
+      speechOutput = next;
+      ttsEnabled = next !== 'off';
+      speechPreferenceError = '';
+      saveChatPrefs();
+      if (ttsEnabled) ttsApi.prefetchVoiceResources();
+      else await interruptAssistantSpeech('speech-disabled');
+      window.dispatchEvent(new CustomEvent('voice-settings-updated'));
+    } catch (error) {
+      speechPreferenceError = (error as Error).message;
+    } finally {
+      speechPreferenceLoading = false;
     }
-    saveChatPrefs();
-    void syncSpeechDisabledPreference(!ttsEnabled);
   }
 
   async function interruptAssistantSpeech(
@@ -387,6 +388,7 @@
 
   onMount(() => {
     loadChatPrefs();
+    void loadSpeechPreference();
     loadThinkingMode(); // Load vLLM thinking mode setting
     releaseTriggerManager = useTriggerManager();
     mic.loadVADSettings(); // Load VAD settings from voice config
@@ -414,10 +416,7 @@
       ttsApi.prefetchVoiceResources();
     }
 
-    unsubscribeBigBrother = statusRefreshTrigger.subscribe(() => { void loadBigBrotherConfig(); });
 
-    // Check LLM backend health status
-    backendApi.checkStatus();
 
     // Initialize or restore conversation session ID
     try {
@@ -513,6 +512,7 @@
   function handleVoiceSettingsUpdate() {
     console.log('[chat-mic] Voice settings updated, reloading...');
     mic.loadVADSettings();
+    void loadSpeechPreference();
     ttsApi.refreshVoiceSettings();
   }
 
@@ -620,7 +620,6 @@
     activityApi.clearActivity();
     thinkingTraceApi.stop();
     unsubscribeYolo();
-    unsubscribeBigBrother?.();
     releaseTriggerManager?.();
     if (transientStatusTimer) clearTimeout(transientStatusTimer);
 
@@ -942,17 +941,6 @@
         return;
       }
 
-      // Check 2: Backend readiness
-      thinkingTraceApi.appendTrace(`[${timestamp()}] Checking backend...`, 5);
-      if (!(bigBrotherEnabled && bigBrotherDelegateAll) && !backendApi.isReady()) {
-        const msg = 'Cannot send response: the selected LLM backend is unavailable or has no model loaded. Check Settings → Backend.';
-        thinkingTraceApi.appendTrace(`[${timestamp()}] ❌ Backend not ready`, 5);
-        messagesApi.pushMessage('system', `⚠️ **Backend Not Ready - Your Reply Was Not Sent**\n\n${msg}\n\nYour message has been restored to the input field.`);
-        restoreInputAndCleanup();
-        return;
-      }
-      thinkingTraceApi.appendTrace(`[${timestamp()}] ✅ Backend ready`, 5);
-
       // Check 3: Connection health
       thinkingTraceApi.appendTrace(`[${timestamp()}] Checking server connection...`, 5);
       const healthResult = await forceHealthCheck();
@@ -1205,37 +1193,6 @@
       sendInProgress = false;
 
       messagesApi.pushMessage('system', '⚠️ MetaHuman server is unavailable. Reconnect before sending this message.');
-      return;
-    }
-
-    // Claude Code and Codex are exposed through the visible system terminal.
-    // Mount the terminal manager before escalation so the live transcript and
-    // close-to-cancel control appear as soon as the server starts the process.
-    await loadBigBrotherConfig();
-    if (bigBrotherEnabled && bigBrotherDelegateAll && (bigBrotherProvider === 'claude-code' || bigBrotherProvider === 'codex')) {
-      try {
-        const response = await apiFetch('/api/terminal/control', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'start' }),
-        });
-        if (!response.ok) throw new Error((await response.json()).error || 'Could not start Big Brother terminal');
-        terminalVisible = true;
-        terminalMinimized = false;
-        statusRefreshTrigger.update(value => value + 1);
-      } catch (error) {
-        sendInProgress = false;
-
-        messagesApi.pushMessage('system', `Big Brother: ${(error as Error).message}`);
-        return;
-      }
-    }
-
-    // Check LLM backend status before sending (only when online)
-    if (!(bigBrotherEnabled && bigBrotherDelegateAll) && !backendApi.isReady()) {
-      sendInProgress = false; // Reset guard on early return
-
-      const msg = 'Cannot send message: the selected LLM backend is unavailable or has no model loaded. Check Settings → Backend.';
-      alert(msg);
       return;
     }
 
@@ -1603,6 +1560,7 @@
                 terminalVisible = true;
                 // Big Brother status updates - show prominent status WITH TIMESTAMPS
                 if (data.step === 'big_brother_init') {
+                  terminalMinimized = false;
                   thinkingTraceApi.setStatusLabel('🤖 Big Brother initializing...');
                   thinkingTraceApi.appendTrace(`[${timestamp()}] 🤖 Big Brother: Initializing...`, 15);
                 } else if (data.step === 'big_brother_ready') {
@@ -1900,58 +1858,10 @@
     };
   }
 
-  async function loadBigBrotherConfig() {
-    if (!get(isOwner)) return;
-    try {
-      const response = await apiFetch('/api/big-brother-config');
-      if (!response.ok) throw new Error('Failed to load Big Brother settings');
-      const { config } = await response.json();
-      bigBrotherEnabled = config.enabled ?? false;
-      bigBrotherDelegateAll = config.delegateAll ?? false;
-      bigBrotherProvider = config.provider || 'claude-code';
-      updateBigBrotherUiState();
-    } catch (error) {
-      console.error('[big-brother] Failed to load config:', error);
-    }
-  }
-
-  async function toggleBigBrother() {
-    savingBigBrother = true;
-    try {
-      const enabled = !bigBrotherEnabled;
-      const response = await apiFetch('/api/big-brother-config', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled, delegateAll: enabled }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to update Big Brother settings');
-      bigBrotherEnabled = data.config.enabled;
-      bigBrotherDelegateAll = data.config.delegateAll;
-      bigBrotherProvider = data.config.provider;
-      updateBigBrotherUiState();
-      statusRefreshTrigger.update(value => value + 1);
-    } catch (error) {
-      messagesApi.pushMessage('system', `Big Brother: ${(error as Error).message}`);
-    } finally {
-      savingBigBrother = false;
-    }
-  }
-
-  function updateBigBrotherUiState() {
-    const providerLabels: Record<string, string> = {
-      'claude-code': 'Claude Code',
-      'aider': 'Aider',
-      'gemini-cli': 'Gemini CLI',
-      'qwen-code': 'Qwen Code',
-      'codex': 'Codex',
-    };
-    bigBrotherProviderLabel = providerLabels[bigBrotherProvider] || bigBrotherProvider;
-  }
-
   async function cycleActiveOperatorMode() {
     if (activeOperatorLoading) return;
     const nextMode = nextAutonomyMode(autonomyMode);
-    if (nextMode === 'full' && !confirm('Enable fully autonomous mode? Robot Operator may admit completion-driven robot workflow chains.')) return;
+    if (nextMode === 'full' && !confirm('Enable fully autonomous mode? Active Operator may admit completion-driven robot workflow chains.')) return;
     activeOperatorLoading = true;
     try {
       await setActiveOperatorMode(nextMode);
@@ -1999,10 +1909,6 @@
     } else {
       console.warn(`[ChatInterface] Failed to clear ${composeTarget} buffer`);
     }
-  }
-
-  function checkBackendStatus() {
-    backendApi.checkStatus();
   }
 
   // Terminal resize handlers
@@ -2122,19 +2028,6 @@
       {/if}
     </button>
 
-    <!-- Big Brother Mode Toggle -->
-    <button
-      class="big-brother-toggle {bigBrotherEnabled ? 'active' : ''} {bigBrotherDelegateAll ? 'delegate-all' : ''}"
-      title={bigBrotherEnabled ? `Big Brother on — ${bigBrotherProviderLabel}. Click to return to the local model.` : 'Big Brother off — using the local model. Click to enable.'}
-      aria-label="Big Brother"
-      aria-pressed={bigBrotherEnabled}
-      disabled={savingBigBrother}
-      on:click={toggleBigBrother}
-    >
-      <span class="big-brother-icon">🤖</span>
-      {#if bigBrotherEnabled}<span class="big-brother-badge delegate-all">On</span>{/if}
-    </button>
-
     <!-- Active Operator Toggle -->
     <button
       class="active-operator-toggle {activeOperatorMode.buttonClass}"
@@ -2148,17 +2041,19 @@
       <span class="active-operator-badge">{activeOperatorMode.badge}</span>
     </button>
 
-    <!-- Quick voice/tts controls - single toggle for all modes (conversation, inner, system) -->
+    <!-- Speech admission and destination use the saved Voice Settings. -->
     <div class="quick-audio">
       <button
         class="icon-btn {ttsEnabled ? 'tts-active' : ''}"
-        title={ttsEnabled ? 'Disable speech (all modes)' : 'Enable speech (conversation, inner dialogue, system)'}
-        aria-label={ttsEnabled ? 'Disable speech' : 'Enable speech'}
-        aria-pressed={ttsEnabled}
+        title={`Speech: ${speechOutputLabel}. Click to switch to ${nextSpeechOutputState(speechOutput) === 'off' ? 'Off' : nextSpeechOutputState(speechOutput) === 'browser' ? 'Browser' : 'Body Control'}.`}
+        aria-label={`Speech output: ${speechOutputLabel}`}
+        disabled={speechPreferenceLoading}
         on:click={toggleAssistantSpeech}>
         <!-- Speaker icon -->
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zM16.5 12a4.5 4.5 0 00-1.5-3.356V15.356A4.5 4.5 0 0016.5 12z"></path></svg>
+        <span>{speechOutputLabel}</span>
       </button>
+      {#if speechPreferenceError}<span role="alert">{speechPreferenceError}</span>{/if}
     </div>
 
     {#if displayMessages.length > 0}
@@ -2170,35 +2065,6 @@
   </div>
 
   <!-- Messages Area -->
-
-  <!-- LLM Backend Status Warning Banner -->
-  {#if !$backendRunning || !$backendHasModels}
-    <div class="ollama-warning-banner">
-      <div class="warning-icon">⚠️</div>
-      <div class="warning-content">
-        <div class="warning-title">
-          {#if !$backendRunning}
-            LLM Backend Not Running
-          {:else}
-            No Language Models Loaded
-          {/if}
-        </div>
-        <div class="warning-message">
-          {#if !$backendRunning}
-            The selected LLM backend is unavailable. Check its status and configuration in Settings → Backend.
-          {:else if $backendModelCount === 0}
-            No model is loaded for the selected backend. Check Settings → Backend.
-          {/if}
-          {#if $backendError}
-            <div class="warning-error">Error: {$backendError}</div>
-          {/if}
-        </div>
-        <button class="warning-refresh-btn" on:click={checkBackendStatus}>
-          Recheck Status
-        </button>
-      </div>
-    </div>
-  {/if}
 
   <!-- Main chat area with optional terminal split -->
   <div class="chat-main-area" class:with-terminal-split={terminalVisible}>
@@ -2436,26 +2302,4 @@
     white-space: pre-wrap;
   }
 
-  .big-brother-toggle.delegate-all {
-    background: linear-gradient(135deg, #ff6b6b, #ee5a24);
-    box-shadow: 0 0 20px rgba(255, 107, 107, 0.4);
-    animation: pulse-delegation 2s infinite;
-  }
-
-  .big-brother-badge.delegate-all {
-    background: #ff3838;
-    color: white;
-    font-weight: bold;
-    animation: glow-delegation 1.5s infinite alternate;
-  }
-
-  @keyframes pulse-delegation {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.05); }
-  }
-
-  @keyframes glow-delegation {
-    0% { box-shadow: 0 0 5px #ff3838; }
-    100% { box-shadow: 0 0 15px #ff3838, 0 0 25px #ff3838; }
-  }
 </style>

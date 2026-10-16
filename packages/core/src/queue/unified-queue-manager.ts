@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { assertProfileMemoryAvailable } from '../locks.js';
 import { canonicalJSON } from '../durable-execution/store.js';
+import { getTTSQueueState } from '../tts/delivery-queue.js';
 import {
   DEFAULT_HANDLERS,
   DEFAULT_PRIORITIES,
@@ -287,6 +288,21 @@ export class UnifiedQueueManager {
     }
 
     const createdAt = new Date().toISOString();
+    if (handler === 'tts.robot-speech' && typeof input.input.generation === 'number'
+      && input.input.generation !== getTTSQueueState(input.username).generation) {
+      cancellationReason ??= 'Speech belongs to an interrupted user turn';
+    }
+    if (input.type === 'environment_command' && input.input.type === 'speak') {
+      const requestId = input.input.metadata?.speechRequestId;
+      const renderer = requestId && [...this.tasks.values()].find(task => task.username === input.username
+        && task.handler === 'tts.robot-speech' && task.input.requestId === requestId);
+      const interrupted = requestId && [...this.tasks.values()].find(task => task.username === input.username
+        && task.type === 'environment_command' && task.input.sessionId === input.input.sessionId
+        && task.input.metadata?.speechRequestId === requestId && (task.cancellationRequestedAt || task.state === 'cancelled'));
+      if (renderer && (renderer.cancellationRequestedAt || renderer.state === 'cancelled') || interrupted) {
+        cancellationReason ??= 'Speech replaced';
+      }
+    }
     const resource = input.resource || TASK_LANE_MAP[input.type];
     const resourceLane = this.laneFor(resource, input.type);
     const maxAttempts = input.type === 'user_message'
@@ -310,6 +326,7 @@ export class UnifiedQueueManager {
       source: input.source || 'system',
       username: input.username,
       cognitiveMode: input.cognitiveMode,
+      originatingCognitiveMode: input.originatingCognitiveMode,
       resource,
       createdAt,
       ...(cancellationReason !== undefined ? { cancellationReason, completedAt: createdAt } : {}),
@@ -333,6 +350,11 @@ export class UnifiedQueueManager {
     if (scope) this.idempotency.set(scope, task.id);
     const cancellationEvents: Omit<QueueEvent, 'timestamp'>[] = [];
     if (cancellationReason !== undefined) this.addTerminal(task);
+    else cancellationEvents.push(...this.supersedePendingDisplay(task));
+    if (cancellationReason === undefined && (task.handler === 'tts.robot-speech'
+      || task.type === 'environment_command' && task.input.type === 'speak' && task.input.metadata?.speechRequestId)) {
+      cancellationEvents.push(...this.applySpeechInterruption(task.username, 'Replaced by newer speech', task));
+    }
     if (cancellationReason === undefined && task.type === 'environment_command' && task.input.type === 'stop') {
       for (const prior of [...this.tasks.values()]) {
         if (prior.type === 'environment_command' && prior.input.sessionId === task.input.sessionId
@@ -353,6 +375,27 @@ export class UnifiedQueueManager {
       details: { type: task.type, handler: task.handler, priority: task.priority, source: task.source },
     });
     return task;
+  }
+
+  private supersedePendingDisplay(next: QueuedTask): Omit<QueueEvent, 'timestamp'>[] {
+    if (next.state !== 'queued' || next.type !== 'environment_command' || next.input.type !== 'faceExpression') return [];
+    const events: Omit<QueueEvent, 'timestamp'>[] = [];
+    for (const prior of this.tasks.values()) {
+      if (prior.id === next.id) break;
+      if (prior.state !== 'queued' || prior.startedAt || prior.bodyLease
+        || prior.type !== 'environment_command' || prior.input.type !== 'faceExpression'
+        || prior.input.sessionId !== next.input.sessionId || prior.input.displayRelease === true) continue;
+      const replaced = next.input.displayRelease === true
+        ? Boolean(next.input.displayToken && next.input.displayToken === prior.input.displayToken
+          && (!next.input.displayIfToken || next.input.displayIfToken === next.input.displayToken))
+        : !next.input.displayIfToken
+          && (next.input.displayBackground === true) === (prior.input.displayBackground === true);
+      if (replaced) {
+        const event = this.applyCancellation(prior, `Superseded by display update ${next.id}`);
+        if (event) events.push(event);
+      }
+    }
+    return events;
   }
 
   enqueueUserMessage(message: string, username: string, options: Partial<TaskInput> = {}): QueuedTask {
@@ -391,11 +434,17 @@ export class UnifiedQueueManager {
   private isResourceAvailable(task: QueuedTask, now = Date.now()): boolean {
     const resource = this.capacityFor(task);
     if (resource.currentRunning >= resource.config.maxConcurrent) return false;
+    // Initial graph work can still be running when its first feedback arrives.
+    // Its attached execution owns the same writer as subsequent resume jobs.
+    const executionId = task.handler === 'graph.resume' ? task.durable?.executionId ?? task.input?.executionId : undefined;
+    if (executionId && [...this.tasks.values()].some(other => other.id !== task.id
+      && other.state === 'leased' && other.activeGraphExecutionId === executionId)) return false;
     if (task.type === 'environment_command' && task.input?.type !== 'stop') {
       const bodyId = task.input?.sessionId;
       const channel = task.input?.type === 'speak' ? 'speech' : task.input?.type === 'faceExpression' ? 'display' : undefined;
       const sharesBodyOwner = task.input?.type === 'captureImage' || Boolean(task.input?.movementUpdate);
       if ([...this.tasks.values()].some(other => other.id !== task.id && !TERMINAL_STATES.has(other.state)
+        && !(channel === 'speech' && other.input.type === 'speak' && other.cancellationRequestedAt)
         && ((other.bodyLease?.bodyId === bodyId && other.bodyLease?.channel === channel && !(sharesBodyOwner && task.durable
           && other.bodyLease?.executionId === task.durable.executionId))
           || (other.type === 'environment_command' && other.input?.sessionId === bodyId && other.input?.type === 'stop'
@@ -489,6 +538,7 @@ export class UnifiedQueueManager {
     resource.currentRunning = Math.max(0, resource.currentRunning - 1);
     resource.lastExecutionAt = new Date().toISOString();
     task.leaseOwner = undefined;
+    task.activeGraphExecutionId = undefined;
   }
 
   private normalizeError(error: string | WorkError | undefined, fallbackCode: string, retryable = false): WorkError | undefined {
@@ -543,6 +593,11 @@ export class UnifiedQueueManager {
     if (!current || current.state !== 'leased') return false;
     this.changedTaskIds.add(current.id);
     const failure = this.normalizeError(error, 'execution_failed', true);
+    if (current.type === 'environment_command' && current.input.type === 'faceExpression') {
+      this.complete(current.id, false, { ...(failure ?? { code: 'outcome_unknown',
+        message: 'Display delivery interrupted; displayed outcome is unknown' }), retryable: false });
+      return false;
+    }
     if (current.bodyLease || failure?.code === 'outcome_unknown') {
       current.error = failure?.code === 'outcome_unknown' ? failure
         : { code: 'outcome_unknown', message: 'Interrupted physical action requires a correlated result or reconciliation', retryable: false };
@@ -602,7 +657,9 @@ export class UnifiedQueueManager {
     task.waitingReason = reason;
     task.wakeAt = wakeAt;
     task.notBefore = wakeAt || task.notBefore;
+    const interruption = this.reconcileInterruptedSpeech(task);
     this.emit({ type: 'task_waiting', taskId, lane: this.laneFor(task.resource, task.type), details: { reason, wakeAt } });
+    for (const event of interruption) this.emit(event);
     this.notifyChange();
     return task;
   }
@@ -633,12 +690,53 @@ export class UnifiedQueueManager {
     return task;
   }
 
+  interruptSpeech(username: string, reason: string): void {
+    const events = this.applySpeechInterruption(username, reason);
+    if (!events.length) return;
+    this.notifyChange();
+    for (const event of events) this.emit(event);
+  }
+
+  private applySpeechInterruption(username: string, reason: string, replacement?: QueuedTask): Omit<QueueEvent, 'timestamp'>[] {
+    const events: Omit<QueueEvent, 'timestamp'>[] = [];
+    for (const prior of this.tasks.values()) {
+      if (prior === replacement || prior.username !== username || TERMINAL_STATES.has(prior.state)) continue;
+      if (prior.handler !== 'tts.robot-speech' && !(prior.type === 'environment_command' && prior.input.type === 'speak')) continue;
+      if (replacement && (prior.input.sessionId !== replacement.input.sessionId
+        || (prior.input.requestId ?? prior.input.metadata?.speechRequestId)
+          === (replacement.input.requestId ?? replacement.input.metadata?.speechRequestId))) continue;
+      const event = this.applyCancellation(prior, reason);
+      if (event) events.push(event);
+    }
+    return events;
+  }
+
+  private reconcileInterruptedSpeech(task: QueuedTask): Omit<QueueEvent, 'timestamp'>[] {
+    if (task.type !== 'environment_command' || task.input.type !== 'speak' || task.state !== 'waiting'
+      || !task.waitingReason?.startsWith('outcome_unknown')) return [];
+    const events: Omit<QueueEvent, 'timestamp'>[] = [];
+    const requestId = task.input.metadata?.speechRequestId;
+    for (const prior of this.tasks.values()) {
+      if (TERMINAL_STATES.has(prior.state) || prior.username !== task.username || prior.input.sessionId !== task.input.sessionId) continue;
+      if (prior !== task && !(requestId && (prior.handler === 'tts.robot-speech' && prior.input.requestId === requestId
+        || prior.input.type === 'speak' && prior.input.metadata?.speechRequestId === requestId))) continue;
+      const event = this.applyCancellation(prior, 'Interrupted robot speech delivery');
+      if (event) events.push(event);
+    }
+    return events;
+  }
+
   private applyCancellation(task: QueuedTask, reason: string): Omit<QueueEvent, 'timestamp'> | null {
     if (task.state === 'leased' || (task.state === 'waiting' && task.bodyLease)) {
       if (task.cancellationRequestedAt) return null;
       this.changedTaskIds.add(task.id);
       task.cancellationRequestedAt = new Date().toISOString();
       task.cancellationReason = reason;
+      if (task.type === 'environment_command' && task.input.type === 'speak' && task.state === 'leased') {
+        this.releaseCapacity(task);
+        task.state = 'waiting';
+        task.waitingReason = 'speech_interrupted';
+      }
       return { type: 'task_cancel_requested', taskId: task.id, lane: this.laneFor(task.resource, task.type), details: { reason } };
     }
     this.changedTaskIds.add(task.id);
@@ -708,13 +806,19 @@ export class UnifiedQueueManager {
     return [...this.tasks.values()].find(match) || null;
   }
 
-  attachExecution(taskId: string, executionId: string): void {
+  attachExecution(taskId: string, executionId: string): () => void {
     const task = this.tasks.get(taskId);
     if (!task || task.state !== 'leased') throw new Error('Only leased work can enter a graph execution');
     this.changedTaskIds.add(task.id);
     task.graphExecutions ??= [];
     if (!task.graphExecutions.includes(executionId)) task.graphExecutions.push(executionId);
+    task.activeGraphExecutionId = executionId;
     this.notifyChange();
+    return () => {
+      this.changedTaskIds.add(task.id);
+      task.activeGraphExecutionId = undefined;
+      this.notifyChange();
+    };
   }
 
   getAllTasks(): QueuedTask[] {
@@ -866,6 +970,7 @@ export class UnifiedQueueManager {
     }
     for (const rawTask of state.items || []) {
       const task = protectAdmission({ ...rawTask });
+      task.activeGraphExecutionId = undefined;
       if (task.type === 'user_message'
         || task.type === 'desire_execute'
         || task.type === 'desire_review') task.maxAttempts = 1;
@@ -920,6 +1025,18 @@ export class UnifiedQueueManager {
           task.error = { code: 'restart_recovery', message: 'Interrupted work was requeued after restart', retryable: true };
         }
       }
+      if (task.type === 'environment_command' && task.input.type === 'faceExpression'
+        && task.state === 'waiting' && (task.bodyLease || task.error?.code === 'outcome_unknown'
+          || task.waitingReason?.startsWith('outcome_unknown'))) {
+        // Display state is replaceable. Retain uncertainty as the delivery's
+        // failure, without retaining exclusive ownership across a disconnect.
+        task.state = 'failed';
+        task.leaseOwner = undefined;
+        task.completedAt = new Date().toISOString();
+        task.error = { code: 'outcome_unknown', message: task.error?.message
+          ?? task.waitingReason ?? 'Display delivery interrupted; displayed outcome is unknown', retryable: false };
+        task.failureNoticePending = true;
+      }
       this.tasks.set(task.id, task);
       this.changedTaskIds.add(task.id);
       if (TERMINAL_STATES.has(task.state)) this.addTerminal(task);
@@ -927,6 +1044,10 @@ export class UnifiedQueueManager {
       if (scope && (task.durable || !TERMINAL_STATES.has(task.state))) this.idempotency.set(scope, task.id);
     }
     for (const handle of state.inFlightRemote || []) this.inFlightRemote.set(handle.taskId, handle);
+    for (const task of this.tasks.values()) this.reconcileInterruptedSpeech(task);
+    // Recovery uses the same replacement semantics as live admission; old
+    // queued thinking faces must not play back after a reconnect.
+    for (const task of this.tasks.values()) this.supersedePendingDisplay(task);
     this.notifyChange();
   }
 

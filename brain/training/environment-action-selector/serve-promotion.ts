@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 
 const SERVICE = 'llama-cpp-environment-intent.service'
-const TRAINING_GPU_SERVICES = ['llama-cpp.service', SERVICE] as const
+const TRAINING_GPU_SERVICES = ['llama-cpp.service', SERVICE, 'llama-cpp-environment-2b.service'] as const
 
 /** Change only the selected adapter in the existing shared-server startup command. */
 export function replaceStartupAdapter(unit: string, previousPath: string, nextPath: string): string {
@@ -94,26 +94,29 @@ async function awaitLoaded(endpoint: string, adapterPath: string): Promise<void>
 
 /** Run the Core role-owner commit only after llama.cpp advertises the new adapter. */
 export async function activateReviewedLora<T>(input: {
+  baseModel: string
   previousPath: string
   nextPath: string
   endpoint: string
   commit: () => Promise<T>
 }): Promise<T> {
-  const path = resolve(process.env.XDG_CONFIG_HOME || resolve(homedir(), '.config'), 'systemd/user', SERVICE)
+  const service = new Map([['unsloth/Qwen3.5-0.8B', SERVICE], ['unsloth/Qwen3.5-2B', 'llama-cpp-environment-2b.service']]).get(input.baseModel)
+  if (!service) throw new Error(`No specialist service configured for recorded base ${input.baseModel}`)
+  const path = resolve(process.env.XDG_CONFIG_HOME || resolve(homedir(), '.config'), 'systemd/user', service)
   const original = await readFile(path, 'utf8')
   const mode = (await stat(path)).mode & 0o777
   const updated = replaceStartupAdapter(original, input.previousPath, input.nextPath)
   await replaceUnit(path, updated, mode)
   try {
     await systemctl('daemon-reload')
-    await systemctl('restart', SERVICE)
+    await systemctl('restart', service)
     await awaitLoaded(input.endpoint, input.nextPath)
     return await input.commit()
   } catch (error) {
     try {
       await replaceUnit(path, original, mode)
       await systemctl('daemon-reload')
-      await systemctl('restart', SERVICE)
+      await systemctl('restart', service)
       await awaitLoaded(input.endpoint, input.previousPath)
     } catch (rollbackError) {
       throw new AggregateError([error, rollbackError], 'Promotion and service restoration both failed')

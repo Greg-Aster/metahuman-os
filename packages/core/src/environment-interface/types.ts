@@ -168,6 +168,7 @@ export interface EnvironmentMotionPlanFrame {
 }
 
 export interface EnvironmentCapabilities {
+  locomotion?: { commands: string[]; goalKinds: EnvironmentLocomotionGoal['kind'][]; lateral?: boolean };
   actions: EnvironmentActionType[];
   /** Display assets advertised by the selected body's existing expression library. */
   expressionLibrary?: Array<{ name: string; label: string; group?: string }>;
@@ -299,6 +300,12 @@ export interface EnvironmentFeedback {
   data?: Record<string, unknown>;
 }
 
+/** Termination evidence is independent of whether the physical outcome is known. */
+export function environmentActionHasEnded(feedback: Pick<EnvironmentFeedback, 'type' | 'data'>): boolean {
+  return ['completed', 'cancelled', 'failed', 'rejected', 'expired'].includes(feedback.type)
+    || feedback.type === 'outcome_unknown' && feedback.data?.executionEnded === true;
+}
+
 export interface EnvironmentObservation {
   /** Stable adapter receipt identity for replay and acknowledgement. */
   id?: string;
@@ -317,7 +324,41 @@ export interface EnvironmentObservation {
   metadata?: Record<string, unknown>;
 }
 
+export interface EnvironmentLocomotionEvidence {
+  available: boolean;
+  reason?: string;
+  source: string;
+  robotId: string;
+  referenceId: string;
+  observedAt: string;
+  expiresAt?: string;
+}
+export interface EnvironmentLocomotionMeasurement {
+  camera?: EnvironmentLocomotionEvidence & { frameId?: string };
+  position?: EnvironmentLocomotionEvidence & { xMetres: number; yMetres: number; headingDegrees: number; uncertaintyMetres: number | null };
+  yaw?: EnvironmentLocomotionEvidence & { degrees: number; uncertaintyDegrees: number | null };
+  target?: EnvironmentLocomotionEvidence & { frameId: string; trackId?: string; queryId?: string; groundContact?: { x: number; y: number }; rangeMetres?: number; boxHeight?: number; horizontalOffset?: number; uncertaintyMetres: number | null };
+}
+export interface EnvironmentLocomotionTarget {
+  frameId: string;
+  frameTimestamp: string;
+  box: EnvironmentNormalizedBox;
+  trackId?: string;
+  queryId?: string;
+  groundContact?: { x: number; y: number };
+}
+export type EnvironmentLocomotionProximity =
+  | { kind: 'metric'; metres: number; tolerance: number }
+  | { kind: 'imageRelative'; boxHeight: number; tolerance: number };
+export type EnvironmentLocomotionGoal =
+  | { kind: 'distance'; direction: 'forward' | 'back' | 'left' | 'right'; metres: number; tolerance: number }
+  | { kind: 'relativeTurn'; degrees: number; tolerance: number }
+  | { kind: 'approach'; target: EnvironmentLocomotionTarget; proximity: EnvironmentLocomotionProximity }
+  | { kind: 'follow'; target: EnvironmentLocomotionTarget; proximity: EnvironmentLocomotionProximity; endingCondition: string }
+  | { kind: 'visual'; target: string; completionCriteria: string };
+
 export interface EnvironmentAction {
+  locomotionGoal?: EnvironmentLocomotionGoal;
   id: string;
   sessionId?: string;
   type: EnvironmentActionType;
@@ -332,6 +373,7 @@ export interface EnvironmentAction {
   gait?: 'walk' | 'crawl' | 'run' | 'crab';
   forward?: number;
   turn?: number;
+  lateral?: number;
   /** Internal update of the admitted motion, never a new model-selected action. */
   movementUpdate?: { actionId: string; revision: number; controls: Record<string, number> };
 
@@ -438,5 +480,5 @@ export interface EnvironmentBridgeSummary {
   updatedAt: string;
   sessionCount: number;
   pendingCommandCount: number;
-  sessions: EnvironmentSessionState[];
+  sessions: Array<EnvironmentSessionState & { pendingCommandCount: number }>;
 }

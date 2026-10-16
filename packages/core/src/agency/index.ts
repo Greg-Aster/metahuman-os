@@ -113,6 +113,7 @@ export {
   listDesiresFromFolders,
   findSimilarDesires,
   reinforceDesire,
+  applyDesireRelevance,
   depreciateDesire,
   loadGeneratorScratchpad,
   saveGeneratorScratchpad,
@@ -134,3 +135,5 @@ export const agency = {
   config,
   isEnabled: config.isAgencyEnabled,
 };
+
+export { readDesireOperationalContext } from './operational-context.js';

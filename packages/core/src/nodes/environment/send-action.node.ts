@@ -1,3 +1,4 @@
+import { normalizeLocomotionGoal } from '../../environment-interface/active-task.js';
 import { defineNode } from '../types.js';
 import {
   prepareEnvironmentCommand,
@@ -173,6 +174,13 @@ export const environmentSendActionNode = defineNode({
       for (const action of rawActions) {
         try {
           if (!context.graphExecution) throw new Error('Environment Bridge Out requires the durable graph runtime');
+          const locomotion = action.type === 'move' || action.type === 'robotCommand'
+            && targetSession?.latestObservation?.capabilities.locomotion?.commands.includes(action.command ?? '');
+          if (locomotion && !action.movementUpdate) {
+            normalizeLocomotionGoal(action.locomotionGoal);
+            if (!context.activeProgram) throw new Error('Locomotion goals execute through Active Task');
+          }
+
           const prepared = prepareEnvironmentCommand(
             {
               ...action,

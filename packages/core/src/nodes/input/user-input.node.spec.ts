@@ -19,7 +19,7 @@ mock.module('../../memory.js', { namedExports: { ...memory,
   captureEventWithDetails: (content: string, options: any) => {
     if (failMemory) throw new Error('fixture storage failure')
     writes.push({ destination: 'memory', content, timestamp: options.timestamp, key: options.idempotencyKey })
-    return { eventId: 'fixture-memory', filePath: '/fixture-memory' }
+    return { eventId: 'fixture-memory:' + options.idempotencyKey, filePath: '/fixture-memory' }
   },
 } })
 const { UserInputNode } = await import('./user-input.node.js')
@@ -36,6 +36,7 @@ test('independent destination switches preserve exact text and one entry identit
     assert.equal(result.message, context.userMessage)
     assert.equal(result.bufferSaved, saveToBuffer)
     assert.equal(result.memorySaved, saveToLongTermMemory)
+    assert.equal(result.currentMemoryId, saveToLongTermMemory ? 'fixture-memory:current-turn:user' : undefined)
     assert.deepEqual(writes.map(write => write.destination), [saveToBuffer && 'buffer', saveToLongTermMemory && 'memory'].filter(Boolean))
     for (const write of writes) {
       assert.equal(write.content, context.userMessage)
@@ -56,6 +57,7 @@ test('forwarded and buffered turns keep their individual identities', async () =
     const result = await UserInputNode.execute({}, { ...context, pendingInstructionTurns: turns }, { saveToBuffer, saveToLongTermMemory: true })
     assert.deepEqual(result.entries.map((entry: any) => entry.meta.idempotencyKey), ['original-0', 'original-1'])
     assert.equal(result.entry.content, 'second')
+    assert.equal(result.currentMemoryId, 'fixture-memory:original-1')
     assert.deepEqual(writes.filter(write => write.destination === 'memory').map(write => write.content), ['first', 'second'])
   }
 })
@@ -65,6 +67,7 @@ test('profile memory permissions and storage failures remain visible', async () 
   const denied = await UserInputNode.execute({}, { ...context, recordPersonaMemory: false }, { saveToBuffer: true, saveToLongTermMemory: true })
   assert.equal(denied.bufferSaved, true)
   assert.equal(denied.memorySaved, false)
+  assert.equal(denied.currentMemoryId, undefined)
   assert.deepEqual(writes.map(write => write.destination), ['buffer'])
   failMemory = true
   try {

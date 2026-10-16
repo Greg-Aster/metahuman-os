@@ -186,7 +186,6 @@ for (const fileName of fs.readdirSync(graphDirectory)) {
 
 assert.deepEqual(conversationGraphFiles.sort(), [
   'agent-mode.json',
-  'boredom-autonomy-mode.json',
   'curiosity-mode.json',
   'dual-mode.json',
   'emulation-mode.json',

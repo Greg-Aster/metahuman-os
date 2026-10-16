@@ -14,11 +14,30 @@ import { openExecutionStore } from './storage.js'
 import { assertProfileMemoryAvailable } from '../locks.js'
 
 /** Finite-work identity is transport context; the checkpoint owns the reasoning state. */
-const workScope = new AsyncLocalStorage<{ task: QueuedTask; graphIndex: number; attach(executionId: string): void;
-  enqueue?: (input: TaskInput) => Promise<QueuedTask> }>()
+interface GraphWorkScope {
+  task: Pick<QueuedTask, 'id' | 'username' | 'handler' | 'attempt' | 'maxAttempts' | 'durable' | 'originatingCognitiveMode'>
+  graphIndex: number
+  attach(executionId: string): void | (() => void)
+  enqueue?: (input: TaskInput) => Promise<QueuedTask>
+}
+const workScope = new AsyncLocalStorage<GraphWorkScope>()
+let processWorkScope: GraphWorkScope | undefined
 let externalGraphIndex = 0
 
-export function withGraphWork<T>(task: QueuedTask, attach: (executionId: string) => void, run: () => Promise<T>,
+function subprocessWorkScope(): GraphWorkScope | undefined {
+  if (processWorkScope || !process.env.MH_GRAPH_WORK) return processWorkScope
+  const task = JSON.parse(process.env.MH_GRAPH_WORK) as GraphWorkScope['task']
+  processWorkScope = { task, graphIndex: 0, attach: executionId => {
+    const requestId = randomUUID()
+    process.send!({ type: 'mh:graph-attach', requestId, executionId })
+    return () => {
+      if (process.connected) process.send?.({ type: 'mh:graph-release', requestId })
+    }
+  } }
+  return processWorkScope
+}
+
+export function withGraphWork<T>(task: QueuedTask, attach: (executionId: string) => void | (() => void), run: () => Promise<T>,
   enqueue?: (input: TaskInput) => Promise<QueuedTask>): Promise<T> {
   return workScope.run({ task, graphIndex: 0, attach, enqueue }, run)
 }
@@ -26,7 +45,9 @@ export function withGraphWork<T>(task: QueuedTask, attach: (executionId: string)
 export async function runDurableGraph(params: GraphRunParams): Promise<GraphExecutionState> {
   const parent = params.context.graphExecution
   if (parent?.callGraph) return parent.callGraph(params.graph, params.context)
-  const scope = workScope.getStore()
+  const scope = workScope.getStore() ?? subprocessWorkScope()
+  const admittedContext = { ...params.context, ...(scope?.task.originatingCognitiveMode
+    ? { originatingCognitiveMode: scope.task.originatingCognitiveMode } : {}) }
   const delegated = !params.executionId && scope?.task.handler !== 'graph.resume' && scope?.task.durable?.scope !== 'independent'
     ? scope?.task.durable ?? (process.env.MH_PARENT_EXECUTION ? JSON.parse(process.env.MH_PARENT_EXECUTION) : null)
     : null
@@ -36,24 +57,28 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
   const store = openExecutionStore(username)
   let heartbeat: ReturnType<typeof setInterval> | undefined
   let lease: ReturnType<ExecutionStore['claim']> | undefined
+  let releaseWorkExecution: void | (() => void) = undefined
   const controller = new AbortController()
   const signal = params.signal ? AbortSignal.any([params.signal, controller.signal]) : controller.signal
   try {
     const suppliedId = params.executionId || delegated?.executionId
     if (params.resumeEventId && !suppliedId) throw new Error('An event wake requires an execution identity')
-    const resumed = suppliedId ? resolveExecutionGraph(store, suppliedId, delegated ? undefined : params.graph) : null
+    const admissionKey = suppliedId ? undefined
+      : scope ? `${scope.task.id}:graph:${scope.graphIndex++}` : params.context.requestId || randomUUID()
+    const admittedId = suppliedId ?? store.admittedExecutionId(username, admissionKey!)
+    const resumed = admittedId ? resolveExecutionGraph(store, admittedId) : null
     const rootGraph = resumed?.graph ?? params.graph
     const definition = resumed?.definition ?? executionDefinition(rootGraph)
-    const record = suppliedId ? store.get(suppliedId) : store.enter(
-      username, definition,
-      scope ? `${scope.task.id}:graph:${scope.graphIndex++}` : params.context.requestId || randomUUID(),
-      { graph: params.graph, graphSource: loadedGraphSource(params.graph), context: graphContextSnapshot({ ...params.context, username }) },
+    const record = admittedId ? store.get(admittedId) : store.enter(
+      username, definition, admissionKey!,
+      { graph: params.graph, graphSource: loadedGraphSource(params.graph), context: graphContextSnapshot({ ...admittedContext, username }) },
     )
     if (record.username !== username) throw new Error('Execution belongs to a different profile')
     store.assertDefinition(record.executionId, definition)
     if (params.resumeEventId) store.event(record.executionId, params.resumeEventId)
-    scope?.attach(record.executionId)
+    releaseWorkExecution = scope?.attach(record.executionId)
     const invocationId = delegated ? `work:${delegated.effectId}:graph:${scope ? scope.graphIndex++ : externalGraphIndex++}` : undefined
+    const invocationGraph = invocationId ? store.graphSnapshot(record.executionId, invocationId) ?? params.graph : rootGraph
     const checkpointConfig = { configurable: { thread_id: record.executionId } }
     if (record.status === 'cancelled') throw new DOMException('Execution cancelled', 'AbortError')
     if (record.status === 'failed') throw new Error('Execution has a terminal failure')
@@ -65,13 +90,15 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
       const values = saved.checkpoint.channel_values
       return { nodes: new Map(values.nodeEntries as any), startTime: Number(values.startedAt), status: 'completed', executionId: record.executionId, checkpointId: saved.checkpoint.id }
     }
-    lease = store.claim(record.executionId, definition, undefined, undefined,
+    lease = invocationId && delegated?.scope === 'invocation'
+      ? store.claimGraph(record.executionId, invocationId, executionDefinition(invocationGraph), undefined, undefined, invocationGraph)
+      : store.claim(record.executionId, definition, undefined, undefined,
       scope?.task.handler === 'graph.resume' && scope.task.durable
         ? { effectId: scope.task.durable.effectId, workItemId: scope.task.id } : undefined)
     const checkInterruption = () => {
       if (!signal.aborted) return
       // Worker interruption parks the objective; committed intents remain for recovery.
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && !lease!.invocationId) {
         store.settle(lease!, 'waiting', 'interrupted')
         store.requestRecovery(record.executionId)
       }
@@ -90,11 +117,11 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
     // inputs. Process-local arguments are not the authority for that brief.
     const delegatedInput = delegated ? (store.dispatch(delegated.effectId).payload as TaskInput).input?.graphContext : undefined
     const saved = delegated
-      ? { context: graphContextSnapshot({ ...params.context, ...delegatedInput, username }) }
+      ? { context: graphContextSnapshot({ ...admittedContext, ...delegatedInput, username }) }
       : store.entry(record.executionId)
     const reader = new ExecutionCheckpointer(store, lease, undefined, invocationId)
     const previousCheckpoint = await reader.getTuple(checkpointConfig)
-    const result = await executeGraph(delegated ? params.graph : rootGraph, {
+    const result = await executeGraph(invocationGraph, {
       ...saved.context,
       ...Object.fromEntries(Object.entries(params.context).filter(([, value]) => typeof value === 'function')),
     }, params.eventHandler, signal, {
@@ -104,7 +131,7 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
     })
     checkInterruption()
     if (result.error instanceof ExecutionDeliveryError) {
-      store.settle(lease, 'waiting')
+      if (!lease.invocationId) store.settle(lease, 'waiting')
       throw result.error
     }
     if (!delegated) {
@@ -117,6 +144,7 @@ export async function runDurableGraph(params: GraphRunParams): Promise<GraphExec
   } finally {
     if (heartbeat) clearInterval(heartbeat)
     if (lease) store.release(lease)
+    if (releaseWorkExecution) releaseWorkExecution()
     store.close()
   }
 }

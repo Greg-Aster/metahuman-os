@@ -200,7 +200,7 @@ export const environmentActionParserNode = defineNode({
     const phases = validated.program?.steps ?? [];
     const generated = phases.find(step => step.kind === 'generatedMotion');
     const parsed = { ...validated,
-      actions: phases.flatMap(step => step.kind === 'action' ? [step.action] : step.kind === 'behavior' ? [step.motion] : []),
+      actions: phases.flatMap(step => step.kind === 'action' ? [step.action] : step.kind === 'behavior' && step.motion !== null ? [step.motion] : []),
       movementRequest: generated?.kind === 'generatedMotion' ? { description: generated.description, motionClass: 'body_local' as const } : null,
     };
     const motionClass = normalizedEnvironmentMotionClass(parsed.taskDecision?.motionClass)
@@ -208,14 +208,14 @@ export const environmentActionParserNode = defineNode({
     const connectedSession = Boolean(sessionId || observation?.sessionId);
     const unsupportedCommand = unsupportedRobotCommand(
       parsed.actions,
-      observation?.capabilities?.robotCommands,
+      observation?.capabilities?.robotCommands?.filter(command => !observation.capabilities.locomotion?.commands.includes(command)),
     );
     const movementSupported = observation?.capabilities?.actions?.includes('robotMotionPlan') === true;
     const unavailableAction = parsed.actions.find(action => !actionIsAdvertised(action, observation));
     const unavailableExpression = parsed.actions.find(action => !expressionIsAdvertised(action, observation));
     const supportedParsedActions = parsed.actions.filter(action => (
       actionIsAdvertised(action, observation)
-      && !unsupportedRobotCommand([action], observation?.capabilities?.robotCommands)
+      && !unsupportedRobotCommand([action], observation?.capabilities?.robotCommands?.filter(command => !observation.capabilities.locomotion?.commands.includes(command)))
       && expressionIsAdvertised(action, observation)
     ));
     const hasNonMotionAlternative = supportedParsedActions.some(action => !isPhysicalMotionAction(action));

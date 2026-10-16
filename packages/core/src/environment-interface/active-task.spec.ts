@@ -22,7 +22,7 @@ const provider = await import('../providers/bridge.js')
 mock.module(new URL('../providers/bridge.ts', import.meta.url).href, { namedExports: { ...provider,
   callProvider: async (provider: string, messages: any[], options: any) => {
     calls.push({ provider, messages, options })
-    if (options.executionTarget === 'remote') return remoteProvider(provider as any, messages, options)
+    if (options.executionTarget === 'remote' || provider === 'remote-server') return remoteProvider(provider as any, messages, options)
     assert.equal(provider, 'ollama')
     assert.equal(options.model, 'fixture-model')
     assert.ok(replies.length, 'Every model call needs an explicit fixture response')
@@ -100,17 +100,49 @@ globalThis.fetch = async (url, options) => {
 const { saveRemoteServerCredentials } = await import('../llm-config.js')
 saveRemoteServerCredentials(username, serverUrl, 'fixture-session')
 const remoteProvider = provider.callProvider
-const roles = { orchestrator: 'fixture', environmentActionSelector: 'fixture', persona: 'fixture' }
+const roles = { psychotherapist: 'fixture', planner: 'fixture', orchestrator: 'fixture', environmentActionSelector: 'fixture', persona: 'fixture', environmentVision: 'remote-vision' }
 fs.writeFileSync(path.join(profile.etc, 'models.json'), JSON.stringify({ version: '1', description: 'Isolated local task fixture', defaults: roles,
   cognitiveModeMappings: { environment: roles }, roleHierarchy: Object.fromEntries(Object.keys(roles).map(role => [role, ['fixture']])),
   models: { fixture: { provider: 'ollama', model: 'fixture-model', adapters: [], roles: Object.keys(roles),
-    capabilities: ['text', 'image'], description: 'Fixture model transport', options: {} } } }))
+    capabilities: ['text', 'image'], description: 'Fixture model transport', options: {} },
+    'remote-vision': { provider: 'remote-server', model: 'fixture-remote-vision', adapters: [], roles: ['environmentVision'],
+      capabilities: ['text', 'image'], description: 'Configured vision transport', options: {} } } }))
 after(async () => {
   server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()))
   fs.rmSync(root, { recursive: true, force: true })
   assert.deepEqual(forbiddenNetworkCalls, [], 'Remote work must never probe or fall back to a local inference backend')
 })
-test('remote perception uses the remote model even when the lightweight local role is text-only', async () => {
+test('target acquisition returns exact-frame boxes through existing remote work, independently of completion', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const timestamp = new Date().toISOString()
+    const source = { robotId: 'p4', gatewayInstance: 'fixture', epoch: 1, counter: 5 }
+    const image = { id: 'current-image', timestamp, metadata: source, dataUrl: 'data:image/jpeg;base64,/9j/2Q==' }
+    const perception: any = { version: 1, robotId: 'p4', gatewayInstance: 'fixture', epoch: 1, frameCounter: 4,
+      timeBasis: 'gateway_receipt', observedAt: timestamp, expiresAt: timestamp,
+      backend: 'fixture', model: 'fixture', summary: 'keys', objects: [], uncertainties: [] }
+    const candidates = [{ box: { x: .3, y: .4, width: .002, height: .003 }, description: 'Keys with a red ring', evidence: 'A red loop and two metal keys' }]
+    for (const outcome of ['found', 'not_found', 'ambiguous'] as const) {
+      replies.push({ outcome, candidates: outcome === 'not_found' ? [] : candidates })
+      const result = await identifyActiveTaskImage({ purpose: 'locate', target: 'my keys', objective: 'Find my keys',
+        completionCriteria: 'Identify the keys', image, perception,
+        referenceImage: { id: 'reference-keys', timestamp, dataUrl: 'data:image/jpeg;base64,/9j/2Q==' } }, new AbortController().signal)
+      assert.equal(result.purpose, 'locate')
+      assert.equal(result.outcome, outcome)
+      assert.deepEqual(result.frame, { id: image.id, timestamp, metadata: source })
+      assert.deepEqual(result.candidates, outcome === 'not_found' ? [] : candidates)
+      assert.equal('completionSatisfied' in result, false)
+      const sent = remoteCalls.at(-1)
+      const content = sent.messages.find((message: any) => message.role === 'user').content
+      const context = JSON.parse(content[0].text)
+      assert.equal(context.imageAssociation, 'different_frame')
+      assert.deepEqual(context.frame.metadata, source)
+      assert.equal(context.referenceImage.id, 'reference-keys')
+      assert.equal(content.filter((part: any) => part.type === 'image_url').length, 2)
+    }
+  })
+})
+
+test('remote perception uses the remote model even when the lightweight local role is text-only' , async () => {
   await withUserContext({ username, userId: username, role: 'owner' }, async () => {
     replies.push({ matchesTarget: true, completionSatisfied: true, outcome: 'positive',
       description: 'The remote model sees the target.', evidence: 'The target is visible in the supplied image.' })
@@ -120,6 +152,29 @@ test('remote perception uses the remote model even when the lightweight local ro
     assert.equal(result.provider, 'remote-server')
     assert.equal(result.model, 'fixture-remote-vision')
   })
+})
+test('image acquisition honors a local vision assignment without replacing intent or task models', async () => {
+  const registryPath = path.join(profile.etc, 'models.json')
+  const original = fs.readFileSync(registryPath, 'utf8')
+  const registry = JSON.parse(original)
+  registry.cognitiveModeMappings.environment.environmentVision = 'fixture'
+  fs.writeFileSync(registryPath, JSON.stringify(registry))
+  try {
+    await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+      const before = remoteCalls.length
+      replies.push({ outcome: 'found', candidates: [{ box: { x: .2, y: .3, width: .4, height: .5 },
+        description: 'A chair', evidence: 'The chair back and legs are visible' }] })
+      const result = await identifyActiveTaskImage({ purpose: 'locate', target: 'chair', objective: 'Locate chair',
+        completionCriteria: 'Visible chair', image: { id: 'local-image', timestamp: new Date().toISOString(),
+          dataUrl: 'data:image/jpeg;base64,/9j/2Q==' } }, new AbortController().signal)
+      assert.equal(result.outcome, 'found')
+      assert.equal(remoteCalls.length, before)
+      assert.equal(calls.at(-1).provider, 'ollama')
+      assert.equal(calls.at(-1).options.executionTarget, undefined)
+      assert.equal(registry.cognitiveModeMappings.environment.environmentActionSelector, 'fixture')
+      assert.equal(registry.cognitiveModeMappings.environment.orchestrator, 'fixture')
+    })
+  } finally { fs.writeFileSync(registryPath, original) }
 })
 const graph = validateSvelteFlowGraph(JSON.parse(fs.readFileSync(path.join(root, 'etc/cognitive-graphs/environment-mode.json'), 'utf8')))
 const decision = { outcome: 'act', objective: 'Find the described object and greet it.', completionCriteria: 'Identify it, then complete the requested wave.',
@@ -189,7 +244,7 @@ function fixture(sessionId: string, automaticInterpretation = true, suppliedObse
     const now = Date.now()
     assert.equal(await core.recordEnvironmentPerception(sessionId, { version: 1, robotId: 'fixture-robot', epoch: 1,
       gatewayInstance: 'fixture-gateway', frameCounter, timeBasis: 'gateway_receipt', observedAt: new Date(now).toISOString(), expiresAt: new Date(now + ttlMs).toISOString(),
-      backend: 'fixture', model: 'fixture', summary: 'An object is visible.', objects: [{ label: 'cup', box: { x, y: .2, width: .2, height: .2 } }], uncertainties: [] }, async input => manager.enqueue(input)), true)
+      backend: 'fixture', model: 'fixture', summary: 'An object is visible.', objects: [{ label: 'cup', box: { x, y: .2, width: .2, height: .2 } }], uncertainties: [] }, async input => manager.enqueue(input), username), true)
   }
   return { observation, received, run, feedback, complete, perception, unsubscribe }
 }
@@ -876,33 +931,6 @@ test('a second user turn preserves the objective and history while replacing spe
   })
 })
 
-test('Coordinator deadline wakes a silent feedback stream and requests cancellation without inference completing', async () => {
-  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
-    const f = fixture('feedback-expiry-body')
-    try {
-      replies.push(route, { response: '', taskDecision: decision, program: { steps: [behavior] } })
-      const started = await f.run(); const id = started.executionId!
-      const [motion] = f.received.splice(0)
-      f.feedback(motion, 'accepted')
-      await f.perception(1, .4, 3000)
-      await f.run(id)
-      const deadline = manager.getAllTasks().find(task => task.handler === 'environment.active-task-deadline'
-        && task.durable?.executionId === id && task.state === 'queued')!
-      assert.ok(deadline)
-      assert.equal(manager.claim(deadline.id), null, 'The existing notBefore gate owns timing')
-      await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(deadline.notBefore!) - Date.now() + 10)))
-      assert.ok(manager.claim(deadline.id))
-      await (engine as unknown as { execute(task: typeof deadline): Promise<void> }).execute(deadline)
-      const callsBefore = calls.length
-      assert.equal((await f.run(id)).status, 'waiting')
-      const owned = manager.findTask(task => task.type === 'environment_command' && task.input.id === motion.id)!
-      assert.ok(owned.cancellationRequestedAt, 'Feedback expiry must use the existing cancellation transport')
-      assert.equal(calls.length, callsBefore, 'Cleanup does not depend on another model call')
-      assert.equal(f.received.some(command => command.type === 'stop'), false, 'No unscoped Stop action is admitted')
-    } finally { f.unsubscribe() }
-  })
-})
-
 for (const termination of ['finish', 'cancel'] as const) {
   test(`instructions buffered during ${termination} cross the real graph handoff before another ongoing phase`, async () => {
     await withUserContext({ username, userId: username, role: 'owner' }, async () => {
@@ -1095,41 +1123,51 @@ test('delayed interpretation keeps steering live, combines superseded turns, and
   })
 })
 
-test('required feedback expiry cancels motion while instruction inference is still blocked', async () => {
-  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
-    const f = fixture('instruction-expiry-body', false)
-    let release!: () => void, entered!: () => void
-    const blocked = new Promise<void>(resolve => { release = resolve })
-    const reachedModel = new Promise<void>(resolve => { entered = resolve })
-    let worker: Promise<void> | undefined
-    try {
-      const { id, motion } = await startFeedbackTask(f)
-      instruction(id, f.observation.sessionId, 'Explain the search.')
-      await f.run(id)
-      replies.push(async () => { entered(); await blocked; return route })
-      worker = executeWork(queuedInterpretation(id)); await reachedModel
-      await f.perception(2, .4, 3000)
-      await f.run(id)
-      const deadline = manager.getAllTasks().find(task => task.handler === 'environment.active-task-deadline'
-        && task.durable?.executionId === id && task.state === 'queued')!
-      assert.ok(deadline)
-      await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(deadline.notBefore!) - Date.now() + 10)))
-      await executeWork(deadline)
-      await f.run(id)
-      const owned = manager.findTask(task => task.type === 'environment_command' && task.input.id === motion.id)!
-      assert.ok(owned.cancellationRequestedAt)
-      f.feedback(motion, 'outcome_unknown'); await f.run(id)
-      const store = openExecutionStore(username)
-      try { assert.equal(store.task(id)!.actionStatus, 'outcome_unknown') } finally { store.close() }
-      // Execution cancellation remains independent of model completion.
-      const cancel = openExecutionStore(username)
-      try { cancel.cancel(id, { eventId: randomUUID(), kind: 'user_cancelled', payload: {} }) } finally { cancel.close() }
-      replies.push({ response: 'Late cancelled execution reply', program: null, taskDecision: null })
-      release(); await worker
-      assert.equal(f.received.some(command => command.type === 'move' && !command.movementUpdate), false)
-    } finally { release?.(); await worker; f.unsubscribe() }
-  })
-})
-
 // The paired software qualification reuses this real graph/Coordinator fixture.
 export { fixture, route, decision, replies, calls, core, manager, username, withUserContext, openExecutionStore, queuedInterpretation, executeWork, instruction }
+
+
+test('acquisition evidence re-enters the existing task workflow and selects its retained image without a new user turn', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const f = fixture('vision-continuation')
+    const { dispatchEnvironmentVisualReads, recordEnvironmentVisualReadResult } = await import('./store.js')
+    const { deliverDurableWorkReceipt } = await import('../durable-execution/work-results.js')
+    const { loadBufferForUser } = await import('../conversation-buffer.js')
+    const instruction = 'Find and track my keys.'
+    const image = { ...f.observation.visual!, id: 'acquired-keys-frame',
+      metadata: { robotId: 'fixture-robot', gatewayInstance: 'fixture-gateway', epoch: 1, counter: 15 } }
+    const acquisition = { outcome: 'found', candidates: [{ box: { x: .1, y: .2, width: .2, height: .3 },
+      description: 'keys', evidence: 'Two keys on a red ring' }] }
+    const taskDecision = { ...decision, objective: instruction, completionCriteria: 'The keys have been selected for tracking.',
+      requiredCompletionBasis: 'visual_observation' }
+    try {
+      replies.push({ ...route, taskContext: ['environment'] }, { taskDecision, program: { steps: [{ kind: 'vision', operation: 'acquire', target: 'my keys' }] } })
+      const started = await f.run(undefined, { userMessage: instruction })
+      assert.equal(started.status, 'waiting')
+      const read = dispatchEnvironmentVisualReads(f.observation.sessionId)[0]
+      assert.ok(read)
+      const readWork = manager.getTask(String(read.requestId))!
+      recordEnvironmentVisualReadResult({ ...read, type: 'environment.visual.result', visual: image })
+      await deliverDurableWorkReceipt(readWork, async input => manager.enqueue(input))
+      await f.run(started.executionId)
+      const identification = manager.getAllTasks().find(task => task.handler === 'environment.identify'
+        && task.durable?.executionId === started.executionId && task.state === 'queued')!
+      assert.ok(identification)
+      replies.push(acquisition)
+      assert.ok(manager.claim(identification.id))
+      await (engine as unknown as { execute(task: typeof identification): Promise<void> }).execute(identification)
+      const before = calls.length
+      replies.push({ ...route, taskContext: ['environment'] }, { taskDecision, program: { steps: [{ kind: 'vision', operation: 'select', frameId: image.id,
+        box: acquisition.candidates[0].box, description: 'keys' }] } })
+      await f.run(started.executionId)
+      const selected = dispatchEnvironmentVisualReads(f.observation.sessionId)[0]
+      assert.equal(selected.operation, 'select')
+      assert.deepEqual(selected.frame, image)
+      assert.deepEqual(selected.box, acquisition.candidates[0].box)
+      assert.equal(f.received.length, 0, 'Acquisition and selection cannot dispatch a body command')
+      assert.ok(JSON.stringify(calls.slice(before)).includes('vision_acquisition'))
+      const turns = loadBufferForUser(username, 'conversation').messages.filter(item => item.role === 'user' && item.content === instruction)
+      assert.equal(turns.length, 1, 'The original user turn must not be admitted a second time')
+    } finally { f.unsubscribe() }
+  })
+})

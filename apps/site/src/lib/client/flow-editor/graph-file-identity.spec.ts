@@ -8,8 +8,8 @@ import {
 
 test('the current loaded filename remains the default save target', () => {
   assert.equal(
-    saveDialogFileName('boredom-autonomy-mode', 'Robot Autonomy Executor'),
-    'boredom-autonomy-mode',
+    saveDialogFileName('environment-mode', 'Environment Mode'),
+    'environment-mode',
   )
 })
 

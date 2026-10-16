@@ -19,7 +19,7 @@
     { id: 'chat', label: 'Chat', icon: '💬', description: 'Conversation interface' },
     { id: 'dashboard', label: 'Dashboard', icon: '📊', description: 'System overview' },
     { id: 'projects', label: 'Projects', icon: '📁', description: 'Task graph & projects' },
-    { id: 'agency', label: 'Agency', icon: '🎯', description: 'Autonomous desires' },
+    { id: 'agency', label: 'Agency', icon: '🎯', description: 'Desires and Active Operator' },
     { id: 'persona', label: 'Persona', icon: '👤', description: 'Identity & personality' },
     { id: 'voice', label: 'Voice', icon: '🎤', description: 'Audio & training' },
     { id: 'training', label: 'AI Training', icon: '🧠', description: 'LoRA adapters' },
@@ -454,7 +454,9 @@
   }
 
   function modelDisplayName(role: string, info: ModelRoleInfo): string {
-    if (role === 'persona' && info.baseModel) return info.baseModel;
+    if (info.baseModel && (role === 'persona' || info.adapters?.length)) {
+      return info.baseModel.split('/').pop() || info.baseModel;
+    }
     return info.model || '—';
   }
 
@@ -466,8 +468,18 @@
     return Array.from(new Set(names.filter(Boolean)));
   }
 
+  function adapterLabel(model: AvailableModel): string {
+    return model.description || model.metadata?.run || model.adapters?.map(path => path.split(/[\\/]/).pop()).join(', ') || model.id;
+  }
+
+  function roleAdapterLabel(role: string, info: ModelRoleInfo): string {
+    const model = info.modelId ? findAssignedModel(info.modelId) : undefined;
+    return model ? adapterLabel(model) : modelAdapterNames(role, info).map(path => path.split(/[\\/]/).pop()).join(', ');
+  }
+
   function modelRoleTooltip(role: string, info: ModelRoleInfo): string {
     const lines = [modelRoleDescription(role), '', `Model: ${modelDisplayName(role, info)}`];
+    if (info.model) lines.push(`Serving model: ${info.model}`);
     if (info.modelId) lines.push(`Assignment: ${info.modelId}`);
     const adapters = modelAdapterNames(role, info);
     if (adapters.length > 0) lines.push(`LoRA: ${adapters.join(', ')}`);
@@ -995,7 +1007,7 @@
           <div class="mt-1 rounded border border-white/10 bg-black/20 px-2 py-2">
             <label
               for="model-configuration-mode"
-              class="flex items-center justify-between gap-2 text-[0.6875rem] text-gray-400"
+              class="flex flex-col gap-1 text-[0.6875rem] text-gray-400"
               title="View configured workflow nodes and edit their role defaults."
             >
               <span>LLM routing profile</span>
@@ -1040,14 +1052,17 @@
                 {@const info = modelRoles[role]}
                 {#if info}
                   <div class="model-role-row">
-                    <span class="activity-indicator">
-                      <span class="activity-dot"></span>
-                    </span>
-                    <span class="role-name" title={presentation.description}>{presentation.label}</span>
-                    <span class="role-arrow">→</span>
+                    <div class="model-role-label">
+                      <span class="activity-indicator" aria-hidden="true">
+                        <span class="activity-dot"></span>
+                      </span>
+                      <span class="role-name" title={presentation.description}>{presentation.label}</span>
+                    </div>
                     {#if info.needsConfig}
                 <button
                   class="role-model needs-config"
+                  aria-label={`Choose model for ${presentation.label}`}
+                  aria-expanded={Boolean(modelDropdownOpen[role])}
                   title="{info.unavailableReason || 'Model unavailable'} - Click to select an available model"
                   on:click|stopPropagation={() => toggleModelDropdown(role)}
                   disabled={loadingModelRegistry || savingModelRole === role}
@@ -1057,11 +1072,15 @@
                 </button>
                     {:else if info.error}
                 <button class="role-model error clickable" title={info.error}
+                  aria-label={`Choose model for ${presentation.label}`}
+                  aria-expanded={Boolean(modelDropdownOpen[role])}
                   on:click|stopPropagation={() => toggleModelDropdown(role)}
                   disabled={loadingModelRegistry || savingModelRole === role}>select ▼</button>
                     {:else}
                 <button
                   class="role-model clickable"
+                  aria-label={`Choose model for ${presentation.label}: ${modelDisplayName(role, info)}`}
+                  aria-expanded={Boolean(modelDropdownOpen[role])}
                   title={modelRoleTooltip(role, info)}
                   on:click|stopPropagation={() => toggleModelDropdown(role)}
                   disabled={loadingModelRegistry || savingModelRole === role}
@@ -1070,16 +1089,16 @@
                     <span class="role-model-primary">
                       {savingModelRole === role ? 'saving…' : modelDisplayName(role, info)}
                     </span>
-                    {#if role === 'persona' && modelAdapterNames(role, info).length > 0}
-                      <span class="persona-adapter-line">LoRA · {modelAdapterNames(role, info).join(', ')}</span>
+                    <span class="role-model-details">
+                      <span>{info.provider === 'llama-cpp' ? 'llama.cpp' : info.provider === 'big-brother' ? 'Big Brother' : info.provider}</span>
+                      {#if info.capabilities?.includes('image')}
+                        <span>· image input</span>
+                      {/if}
+                    </span>
+                    {#if modelAdapterNames(role, info).length > 0}
+                      <span class="role-adapter-line">LoRA · {roleAdapterLabel(role, info)}</span>
                     {/if}
                   </span>
-                  {#if role !== 'persona' && modelAdapterNames(role, info).length > 0}
-                    <span class="adapter-indicator">+LoRA</span>
-                  {/if}
-                  {#if info.capabilities?.includes('image')}
-                    <span class="vllm-badge" title="Accepts image input">image</span>
-                  {/if}
                   <span class="dropdown-arrow">▼</span>
                 </button>
                     {/if}
@@ -1097,12 +1116,13 @@
                         {@const isCurrentlySelected = isModelAssigned(role, model)}
                         <button
                           class="dropdown-item"
+                          title={[model.id, ...(model.adapters || [])].join('\n')}
                           class:selected={isCurrentlySelected}
                           class:vllm-active={model.locked}
                           on:click|stopPropagation={() => assignModelToRole(role, model.id)}
                         >
                           <span class="model-name">
-                            {model.model}
+                            {model.adapters?.length && model.baseModel ? model.baseModel.split('/').pop() : model.model}
                             {#if model.locked}
                               <span class="vllm-badge">loaded</span>
                             {/if}
@@ -1111,7 +1131,7 @@
                             {/if}
                           </span>
                           {#if model.adapters?.length}
-                            <span class="model-desc" title={model.adapters.join('\n')}>LoRA · {model.id}</span>
+                            <span class="model-desc">LoRA · {adapterLabel(model)}</span>
                           {/if}
                         </button>
                       {/each}
@@ -1169,7 +1189,7 @@
 
                   {#if modelCategories.bigBrother.length > 0}
                     <div class="dropdown-category">
-                      <span class="category-label">🛡️ Escalation</span>
+                      <span class="category-label">🤖 Big Brother</span>
                       {#each modelCategories.bigBrother as model}
                         {@const isCurrentlySelected = isModelAssigned(role, model)}
                         <button
@@ -1181,7 +1201,7 @@
                             {model.model}
                             <span class="bb-badge">🛡️</span>
                           </span>
-                          <span class="model-desc">Claude Code</span>
+                          <span class="model-desc">{model.description}</span>
                         </button>
                       {/each}
                     </div>

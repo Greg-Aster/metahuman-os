@@ -25,6 +25,58 @@ Datasets contain unwrapped messages, an independent evaluation file, and a manif
 with source hashes, selection settings and dataset hashes. The trainer applies its
 tokenizer template once and supervises only the final continuation. Human targets
 use the next recorded human reply; cognitive mode never reverses an exchange.
+Selection resolves the objective from each record's verified saved mode. The
+`data.objectivesByMode` defaults learn human continuations in Dual Consciousness
+and assistant continuations in Environment Mode. Agent and Emulation retain the
+configured `data.objective`. Records without verified mode attribution remain
+excluded. The controls, preview, automatic readiness and finite trainer share
+this policy; changing the current UI mode does not relabel historical records.
+
+Explicitly reviewed experiments may supply `reviewedDataset` to the same Core
+launcher. Core verifies objective/target author and preserves conversation or
+scenario-family splits, including previously frozen assignments. The worker
+freezes those complete messages and their per-sample system context in the same
+manifest format; it does not replace planner/executor evidence with a generic
+conversation pair or rerun preprocessing over reviewed inputs. Reviews retain
+their author, timestamp and purpose. This input is not automatic approval of raw
+memories and does not change the specialist 0.8B training path.
+
+Remote workers install the uploaded `docker/runpod-trainer/requirements.txt`
+into the template's existing training environment before checking its imports
+and CUDA. Older templates therefore receive the same pinned dependency contract
+as current image builds and local training. Installation failure is reported and
+the existing pod cleanup runs. `base_model_revision` pins a run's native snapshot
+and is retained in its adapter configuration. Reload evaluation loads that base
+revision explicitly before attaching the saved adapter, because the dependency's
+adapter-path loader can otherwise discard the revision.
+
+The remote lifecycle mounts mutable job data at `/workspace/data`, with each run
+below that directory. It does not mount over `/workspace`: current published
+trainer images install their Python environment at `/workspace/unsloth-venv`,
+which a fresh volume at `/workspace` would hide. The per-pod mount is explicit
+and does not mutate shared provider templates or other running jobs.
+
+The Environment specialist CLI also delegates explicitly approved remote fits to
+this same `runRemoteTraining` transport/lifecycle owner. Its `specialistJob` input
+carries the specialist identity, configured GPU, disk allocation and approved
+hourly/total budget. It accepts the specialist's frozen development-only reused
+recipe provenance, uploads no evaluation data, and requires an unactivated
+candidate receipt with external serving evaluation still outstanding. Artifact
+download verification and provider cleanup are shared with personalization; this
+does not change personalization dataset selection or its independent evaluation.
+
+Reviewed experiments can include `generationEvaluation` cases and inference
+settings in the launch request. The shared trainer records complete prompts,
+continuations, token counts, latency and GPU memory before optimization and after
+reloading the saved candidate in a fresh process. These native-backend results
+supplement loss; they do not establish behavioral qualification or serving parity.
+
+Frozen manifests retain the mode mapping and `systemPromptsByObjective`. Each
+sample records its resolved objective and target author; the Python consumer
+checks those objectives and the corresponding existing persona-context text
+before applying the native template. Older manifests retain their original
+single-objective and single-prompt interpretation. Source-group split history
+continues to apply across objective changes.
 
 The Training Wizard and Automatic Training share `/api/training-data` settings for
 the target, persona context, source weights, synthetic cap, evaluation split and seed.

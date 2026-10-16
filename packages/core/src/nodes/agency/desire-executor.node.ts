@@ -22,7 +22,7 @@ import { initializeStageIterations } from '../../agency/types.js';
 import type { DesireProgressCallback } from '../../agency/executor.js';
 import {
   saveExecutionToFolder,
-  saveDesireManifest,
+  saveDesireProgress,
   loadDesire,
 } from '../../agency/storage.js';
 import {
@@ -260,7 +260,7 @@ export const DesireStepPrepareNode = defineNode({
     if (!step) throw new Error('No unexecuted approved step remains')
     const prepared = { ...current, execution }
     if (step.executionTarget === 'operator' || current.execution.stepResults?.some(result => result.stepOrder === step.order)) {
-      if (!current.execution.executionId) await saveDesireManifest({ ...current, execution }, context.username)
+      if (!current.execution.executionId) await saveDesireProgress({ ...current, execution }, context.username, true)
       return { desire: prepared, invocation: null, needsRobotAction: false }
     }
     const currentTask = context.graphExecution.task()
@@ -268,7 +268,7 @@ export const DesireStepPrepareNode = defineNode({
       throw new Error('A Desire step cannot replace an unrelated execution objective')
     }
     execution.currentStep = step.order
-    await saveDesireManifest(prepared, context.username)
+    await saveDesireProgress(prepared, context.username, true)
     context.graphExecution.recordTask({
       objectiveId: `${context.graphExecution.executionId}:${current.plan.id}:${step.order}`,
       executionId: context.graphExecution.executionId,
@@ -280,7 +280,7 @@ export const DesireStepPrepareNode = defineNode({
     })
     return {
       desire: prepared, needsRobotAction: true,
-      invocation: { graph: 'boredom-autonomy', context: {
+      invocation: { graph: 'environment', context: {
         userMessage: '', cognitiveMode: 'agent',
         robotOperatorContext: { plannerDecision: {
           instruction: step.action, reason: `Satisfy approved plan step ${step.order}: ${step.expectedOutcome}`,
@@ -346,7 +346,7 @@ export const DesireExecutorNode: NodeDefinition = defineNode({
       } else {
         result = await executeStep(step, desire, username, context.onDesireProgress,
           properties?.taskPromptTemplate, context.abortSignal,
-          () => saveDesireManifest({ ...current, execution: { ...attempt, currentStep: step.order } }, username))
+          () => saveDesireProgress({ ...current, execution: { ...attempt, currentStep: step.order } }, username, true))
       }
     }
     const now = retained?.completedAt ?? new Date().toISOString()
@@ -373,19 +373,21 @@ export const DesireExecutorNode: NodeDefinition = defineNode({
         executionSuccessCount: desire.metrics.executionSuccessCount + (!hasNext && !retained && result.success ? 1 : 0),
         executionFailCount: desire.metrics.executionFailCount + (!retained && !result.success ? 1 : 0), lastActivityAt: now },
     }
-    await saveDesireManifest(updated, username)
+    await saveDesireProgress(updated, username, true)
     if (!hasNext) {
       await saveExecutionToFolder(desire.id, execution, updated.metrics.executionAttemptCount, username)
       // Checkpointed admission also runs when a physical receipt resumes this graph
       // after its initial Coordinator worker has returned.
-      const { buildDesireAgentTaskInput } = await import('../../queue/work-submission.js')
-      runtime.dispatch({ kind: 'coordinator_work', payload: buildDesireAgentTaskInput({
-        operation: 'review', username, desireId: desire.id, source: 'autonomy',
-        idempotencyKey: `desire-outcome-review:${desire.id}:execution:${execution.startedAt}`,
-        metadata: { producer: 'desire-execution-transition' },
-      }) })
+      if (updated.status !== 'archived') {
+        const { buildDesireAgentTaskInput } = await import('../../queue/work-submission.js')
+        runtime.dispatch({ kind: 'coordinator_work', payload: buildDesireAgentTaskInput({
+          operation: 'review', username, desireId: desire.id, source: 'autonomy',
+          idempotencyKey: `desire-outcome-review:${desire.id}:execution:${execution.startedAt}`,
+          metadata: { producer: 'desire-execution-transition' },
+        }) })
+      }
     }
-    return { desire: updated, execution, success: result.success, error: result.error, hasNext,
+    return { desire: updated, execution, success: result.success, error: result.error, hasNext: hasNext && updated.status !== 'archived',
       summary: hasNext ? '' : `Desire ${desire.id}: ${execution.stepsCompleted}/${plan.steps.length} steps returned successfully; outcome review must verify satisfaction.` }
   },
 })

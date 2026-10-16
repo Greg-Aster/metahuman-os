@@ -4,6 +4,9 @@ import test from 'node:test';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { get } from 'svelte/store';
+import { coordinatorSnapshot, coordinatorConnection, coordinatorError, useWorkCoordinator } from '../stores/work-coordinator.js';
+import { triggerManagerSnapshot, triggerManagerConnection, triggerManagerError, useTriggerManager } from '../stores/trigger-manager.js';
+import { policyStore, type SecurityPolicy } from '../../stores/security-policy.js';
 import { useThinkingTrace } from './composables/useThinkingTrace.js';
 
 test('thinking display uses task-supplied progress and reasoning without opening another stream', () => {
@@ -59,34 +62,63 @@ function fixture() {
   return { sources, Source };
 }
 
-test('Queue mounts immediately alongside twelve streams, receives snapshots, and owns its cleanup', () => {
+test('Queue and Trigger Manager share one stream, reconnect in place and release only their own consumers', () => {
   const { sources, Source } = fixture();
   const background = Array.from({ length: 12 }, (_, i) => new Source(`/existing-${i}`));
-  const mounts: (() => void)[] = [];
-  const destroys: (() => void)[] = [];
-  const context = vm.createContext({ EventSource: Source, connected: false, error: '', snapshot: null,
-    sourceHandle: null, onMount: (fn: () => void) => mounts.push(fn), onDestroy: (fn: () => void) => destroys.push(fn) });
-  const ast = component('QueuePanel');
-  const lifecycle = ast.statements.filter(node => ts.isExpressionStatement(node)
-    && ts.isCallExpression(node.expression) && ['onMount', 'onDestroy'].includes(node.expression.expression.getText(ast)));
-  run(lifecycle.map(node => node.getText(ast)).join('\n'), context);
-  for (let i = 0; i < 2; i++) {
-    mounts[0]();
-    const queue = sources.at(-1)!;
-    assert.equal(queue.url, '/api/queue-stream');
-    assert.equal(sources.filter(source => source.readyState !== 2).length, 13);
-    queue.open();
-    queue.send({ type: 'snapshot', snapshot: { lifecycle: 'running', tasks: [{ id: `task-${i}` }] } });
-    assert.equal(context.connected, true);
-    assert.equal(context.snapshot.tasks[0].id, `task-${i}`);
-    queue.onerror?.({});
-    assert.equal(context.connected, false);
-    queue.open();
-    queue.send({ type: 'snapshot', snapshot: { lifecycle: 'running', tasks: [] } });
-    assert.equal(context.snapshot.tasks.length, 0);
-    destroys[0]();
-    assert.equal(queue.readyState, 2);
-    assert.ok(background.every(source => source.readyState !== 2));
+  const oldSource = globalThis.EventSource;
+  const oldWindow = globalThis.window;
+  const oldPolicy = get(policyStore);
+  globalThis.EventSource = Source as unknown as typeof EventSource;
+  globalThis.window = {} as Window & typeof globalThis;
+  policyStore.set({ role: 'owner' } as SecurityPolicy);
+  const releases: (() => void)[] = [];
+  try {
+    // Start in either order, as Queue and the persistent autonomy controls do.
+    for (const triggerFirst of [false, true]) {
+      const first = triggerFirst ? useTriggerManager() : useWorkCoordinator();
+      const second = triggerFirst ? useWorkCoordinator() : useTriggerManager();
+      const anotherTrigger = useTriggerManager();
+      releases.push(first, second, anotherTrigger);
+      const queue = sources.at(-1)!;
+      assert.equal(queue.url, '/api/queue-stream');
+      assert.equal(sources.filter(source => source.readyState !== 2).length, 13);
+      queue.open();
+      queue.send({ type: 'snapshot', snapshot: { tasks: [{ id: 'work' }], triggerManager: { lifecycle: 'running' } } });
+      assert.equal(get(coordinatorSnapshot)?.tasks[0].id, 'work');
+      assert.equal(get(triggerManagerSnapshot)?.lifecycle, 'running');
+      assert.equal(get(triggerManagerConnection), 'live');
+      const count = sources.length;
+      queue.onerror?.({});
+      assert.equal(get(coordinatorConnection), 'reconnecting');
+      assert.equal(get(triggerManagerConnection), 'reconnecting');
+      queue.open();
+      assert.equal(sources.length, count, 'native reconnect must not allocate another source');
+      queue.send({ type: 'trigger-state', snapshot: { tasks: [], triggerManager: { lifecycle: 'paused' } } });
+      assert.equal(get(triggerManagerSnapshot)?.lifecycle, 'paused');
+      queue.send({ type: 'error', error: 'Coordinator unavailable' });
+      assert.equal(get(coordinatorError), 'Coordinator unavailable');
+      assert.equal(get(triggerManagerError), 'Coordinator unavailable');
+      queue.send({ type: 'reconcile', snapshot: { tasks: [], triggerManager: { lifecycle: 'running' } } });
+      assert.equal(get(coordinatorError), '');
+      assert.equal(get(triggerManagerError), '');
+      first(); first(); second();
+      assert.notEqual(queue.readyState, 2, 'the other Trigger Manager consumer still needs this stream');
+      anotherTrigger();
+      assert.equal(queue.readyState, 2);
+      assert.equal(get(coordinatorConnection), 'idle');
+      assert.equal(get(coordinatorSnapshot), null);
+      assert.equal(get(triggerManagerSnapshot), null);
+      assert.ok(background.every(source => source.readyState !== 2));
+    }
+    policyStore.set({ role: 'guest' } as SecurityPolicy);
+    const count = sources.length;
+    useTriggerManager()();
+    assert.equal(sources.length, count, 'non-owner trigger controls do not subscribe');
+  } finally {
+    releases.forEach(release => release());
+    policyStore.set(oldPolicy);
+    globalThis.EventSource = oldSource;
+    globalThis.window = oldWindow;
   }
 });
 

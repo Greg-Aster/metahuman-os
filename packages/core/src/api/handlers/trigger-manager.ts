@@ -1,9 +1,7 @@
 import { audit } from '../../audit.js';
 import {
   ensureQueueSystemStarted,
-  getQueueSystem,
   getTriggerConfigService,
-  type QueueSystem,
   type TriggerConfigPatch,
 } from '../../queue/index.js';
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
@@ -20,54 +18,6 @@ function requireOwner(req: UnifiedRequest): UnifiedResponse | null {
   if (!req.user.isAuthenticated) return failure('Authentication required', 401);
   if (req.user.role !== 'owner') return failure('Owner permission required', 403);
   return null;
-}
-
-function sse(data: object): string {
-  return `data: ${JSON.stringify(data)}\n\n`;
-}
-
-export async function* createTriggerManagerStream(
-  system: QueueSystem,
-  signal?: AbortSignal,
-): AsyncIterable<string> {
-  const pending: string[] = [];
-  let wake: (() => void) | undefined;
-  const queueSnapshot = (type: string, event?: unknown) => {
-    pending.push(sse({ type, event, snapshot: system.triggers.getSnapshot() }));
-    wake?.();
-    wake = undefined;
-  };
-  const triggerListener = (event: unknown) => queueSnapshot('trigger-state', event);
-  const queueListener = (event: unknown) => queueSnapshot('queue-state', event);
-  system.triggers.on('stateChange', triggerListener);
-  system.on('queue', queueListener);
-  try {
-    yield sse({ type: 'snapshot', snapshot: system.triggers.getSnapshot() });
-    while (!signal?.aborted) {
-      while (pending.length > 0) yield pending.shift()!;
-      await new Promise<void>(resolve => {
-        let settled = false;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          signal?.removeEventListener('abort', finish);
-          resolve();
-        };
-        const timer = setTimeout(finish, 15_000);
-        timer.unref?.();
-        wake = finish;
-        signal?.addEventListener('abort', finish, { once: true });
-      });
-      if (pending.length === 0 && !signal?.aborted) {
-        yield sse({ type: 'reconcile', snapshot: system.triggers.getSnapshot() });
-      }
-    }
-  } finally {
-    wake?.();
-    system.triggers.off('stateChange', triggerListener);
-    system.off('queue', queueListener);
-  }
 }
 
 export async function handleGetTriggerManager(req: UnifiedRequest): Promise<UnifiedResponse> {
@@ -142,25 +92,4 @@ export async function handleTriggerManagerControl(req: UnifiedRequest): Promise<
   } catch (error) {
     return failure((error as Error).message, 500);
   }
-}
-
-export async function handleTriggerManagerStream(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const authError = requireOwner(req);
-  if (authError) return authError;
-  let system: QueueSystem;
-  try {
-    system = await ensureQueueSystemStarted();
-  } catch (error) {
-    return failure((error as Error).message, 503);
-  }
-  return {
-    status: 200,
-    stream: createTriggerManagerStream(system, req.signal),
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  };
 }

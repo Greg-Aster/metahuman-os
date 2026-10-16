@@ -1,15 +1,16 @@
 /** Shared role names for profile assignments and graph model selectors. Browser-safe. */
 export const MODEL_ROLE_OPTIONS = [
-  { value: 'orchestrator', label: 'Orchestrator' },
-  { value: 'environmentIntent', label: 'Environment intent' },
-  { value: 'persona', label: 'Persona' },
-  { value: 'environmentActionSelector', label: 'Task decisions' },
-  { value: 'curator', label: 'Curator' },
-  { value: 'coder', label: 'Coder' },
-  { value: 'planner', label: 'Planner' },
-  { value: 'summarizer', label: 'Summarizer' },
-  { value: 'psychotherapist', label: 'Human insight' },
-  { value: 'embedder', label: 'Embedder' },
+  { value: 'orchestrator', label: 'Orchestrator', description: 'Interprets incoming requests and events, and selects the required workflows, tools and context.' },
+  { value: 'environmentVision', label: 'Vision', description: 'Interprets visual evidence and supports visually grounded planning.' },
+  { value: 'persona', label: 'Persona', description: "Expresses the robot's identity, personality, conversation and self-directed intentions." },
+  { value: 'autonomy', label: 'Autonomy', description: 'Selects self-directed activities and develops autonomous intentions.' },
+  { value: 'environmentActionSelector', label: 'Task Decisions', description: 'Selects concrete supported actions and task controls for a routed request.' },
+  { value: 'curator', label: 'Curator', description: 'Reviews, attributes and prepares saved records for memory and training.' },
+  { value: 'coder', label: 'Coder', description: 'Generates and analyzes code and technical solutions.' },
+  { value: 'planner', label: 'Planner', description: 'Develops and revises plans for complex or multi-step tasks.' },
+  { value: 'summarizer', label: 'Summarizer', description: 'Condenses supplied information while preserving its meaning and attribution.' },
+  { value: 'psychotherapist', label: 'Psychotherapist', description: 'Independently analyzes attributed experience, behavior and outcomes, including persona and desire review.' },
+  { value: 'embedder', label: 'Embedder', description: 'Produces vector representations for retrieval and similarity.' },
 ] as const;
 
 export type ModelRole = (typeof MODEL_ROLE_OPTIONS)[number]['value'];

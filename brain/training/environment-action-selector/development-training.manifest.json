@@ -1,26 +1,26 @@
 {
-  "version": 4,
+  "version": 18,
   "owner": "environment-action-selector",
-  "sourceCaseCount": 345,
-  "recordCount": 2304,
+  "sourceCaseCount": 763,
+  "recordCount": 6766,
   "foldCount": 4,
   "specialists": {
     "intent": {
-      "records": 1164,
-      "regressionRecords": 44,
-      "evaluationRecords": 200
+      "records": 1432,
+      "regressionRecords": 46,
+      "evaluationRecords": 297
     },
     "task": {
-      "records": 1140,
-      "regressionRecords": 132,
-      "evaluationRecords": 192
+      "records": 5334,
+      "regressionRecords": 141,
+      "evaluationRecords": 1293
     }
   },
-  "datasetDigest": "2ea4053e5e3b1a9d0789d881ac655abff2e143627b0f5a50d8efd2713f4fd351",
-  "evaluationDigest": "1de022689fc89f953369f08cf6ce1d7d29057f2da3cfb9984150827b66e2288f",
-  "regressionDigest": "aacc34a7dc4b9b5eb7f7ae31e2600ba8365d42472aa2f7be7dd251931ef620e3",
-  "developmentSourceDigest": "57654f1417216914b8fcaecfa74fc52d88c46b9cedc8c8c84e28b25615f6c575",
-  "graphPropertiesDigest": "ce120e375163680b64c76e969780abfeb69b1d48755788099dec225d896e6dff",
+  "datasetDigest": "ba012e149e1502b71652bd30d6af84974899b48e44dab9a087abc50a10928a7e",
+  "evaluationDigest": "2bdd8a69b1f391d789784f167cea3122573150d64f62e4cb8260ee20037a884e",
+  "regressionDigest": "13e11b5fa4371de89f2b7ff6991fdb90e2e510f7f4a6d453ab692ae0580a0d92",
+  "developmentSourceDigest": "26c8511138ead9ed61b5fd0516a30b78d07ef4de9276afd5667be9edda09b890",
+  "graphPropertiesDigest": "3c25007fb82cefcee854684f7ded341db49a6d82e5441b62815684c554279aee",
   "priorLockedDigest": "6735070303a1bf95e64aca7bca35c4007fc29e614ce3bcd42c49b0b88a7194f6",
   "priorLockedCaseCount": 16,
   "priorOneShotCompletedAt": "2026-08-05T19:30:14.258Z",

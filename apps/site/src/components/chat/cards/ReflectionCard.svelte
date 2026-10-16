@@ -23,6 +23,8 @@
         return { label: 'Execution Report', icon: '⚡' };
       case 'agency-executor':
         return { label: 'Agency Execution', icon: '🎯' };
+      case 'robot-autonomy-controller':
+        return { label: 'Autonomy', icon: '🤖' };
       case 'boredom-observer':
         return { label: 'Boredom Observer', icon: '👀' };
       case 'boredom-movement':

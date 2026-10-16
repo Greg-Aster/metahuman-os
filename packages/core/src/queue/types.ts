@@ -151,7 +151,7 @@ export interface WorkError {
 
 /** Identity of a checkpointed dispatch, retained beyond the dashboard history. */
 export interface DurableWorkReference {
-  scope?: 'independent';
+  scope?: 'independent' | 'invocation';
   executionId: string;
   originRuntimeId?: string;
   effectId: string;
@@ -178,7 +178,8 @@ export class WorkOutcomeUnknownError extends Error {
 }
 
 export interface TaskInput {
-  executionScope?: 'independent';
+  /** independent owns another execution; invocation owns a child checkpoint namespace in this execution. */
+  executionScope?: 'independent' | 'invocation';
   type: TaskType;
   handler?: string;
   resource?: WorkResource;
@@ -187,6 +188,7 @@ export interface TaskInput {
   username: string;
   priority?: Priority;
   cognitiveMode?: WorkCognitiveMode;
+  originatingCognitiveMode?: WorkCognitiveMode;
   notBefore?: string;
   deadline?: string;
   parentTaskId?: string;
@@ -209,6 +211,7 @@ export interface QueuedTask {
   source: WorkSource;
   username: string;
   cognitiveMode?: WorkCognitiveMode;
+  originatingCognitiveMode?: WorkCognitiveMode;
   resource: WorkResource;
   createdAt: string;
   notBefore?: string;
@@ -222,6 +225,8 @@ export interface QueuedTask {
   admissionIdentity?: string;
   /** Graph checkpoints entered by this finite work item, in call order. */
   graphExecutions?: string[];
+  /** Current graph entry only; completed child calls remain in graphExecutions. */
+  activeGraphExecutionId?: string;
   bodyLease?: BodyLease;
   maxAttempts: number;
   input: Record<string, any>;

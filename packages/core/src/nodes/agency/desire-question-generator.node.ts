@@ -86,7 +86,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     },
   );
   const response = await callLLMPrompt(
-    normalizeModelRole(properties?.role, 'curator'),
+    normalizeModelRole(properties?.role, 'persona'),
     prompt,
     { enableThinking: properties?.enableThinking === true,
       temperature: properties?.temperature ?? 0.5,
@@ -147,7 +147,7 @@ export const definition: NodeDefinition = defineNode({
   properties: {
     enableThinking: false,
     promptTemplate: DEFAULT_QUESTION_PROMPT_TEMPLATE,
-    role: 'curator',
+    role: 'persona',
     temperature: 0.5,
     maxTokens: 500,
   },
@@ -162,7 +162,7 @@ export const definition: NodeDefinition = defineNode({
     },
     role: {
       type: 'select',
-      default: 'curator',
+      default: 'persona',
       label: 'LLM Role',
       options: [...MODEL_ROLE_OPTIONS],
     },

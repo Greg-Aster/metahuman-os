@@ -34,13 +34,16 @@ import {
 export type { PsychoanalyzerConfig }
 
 const EXECUTION_STATE_VERSION = '1.0.0'
-const ANALYSIS_ALGORITHM_VERSION = 'psychoanalyzer-v2'
+const ANALYSIS_ALGORITHM_VERSION = 'psychoanalyzer-v3'
 const MAX_EXECUTION_STATE_BYTES = 2 * 1024 * 1024
 const MAX_RECEIPTS = 100
 const PSYCHOANALYZER_GRAPH_FILE = 'psychoanalyzer.json'
 const psychoanalyzerGraphCache: Record<string, CachedGraphEntry | null> = {}
 
 export interface PsychoanalyzerMemory {
+  role?: string
+  source?: string
+  cognitiveMode?: string
   id: string
   timestamp: string
   content: string
@@ -214,13 +217,19 @@ export async function selectMemories(
     if (config.memorySelection.excludeTypes.includes(eventType)) continue
     if (Date.parse(event.timestamp) < cutoff) continue
 
-    const content = config.memorySelection.userInputOnly
+    const role = typeof event.metadata?.role === 'string' ? event.metadata.role : undefined
+    const source = typeof event.metadata?.source === 'string' ? event.metadata.source : undefined
+    if (config.memorySelection.userInputOnly && role !== undefined && role !== 'user') continue
+    const content = config.memorySelection.userInputOnly && role === undefined
       ? extractUserContent(event.content)
       : event.content.trim()
     if (!content) continue
 
     selected.push({
       id: event.id,
+      ...(role !== undefined ? { role } : {}),
+      ...(source !== undefined ? { source } : {}),
+      ...(typeof event.metadata?.cognitiveMode === 'string' ? { cognitiveMode: event.metadata.cognitiveMode } : {}),
       timestamp: event.timestamp,
       content: content.slice(0, 4000),
       type: eventType,
@@ -279,6 +288,7 @@ function computeInputDigest(
 ): string {
   return hashJson({
     algorithm: ANALYSIS_ALGORITHM_VERSION,
+    subjectIdentity: persona.identity,
     memories,
     persona: learnablePersona(persona),
     config: analysisConfig(config),

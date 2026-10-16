@@ -107,6 +107,7 @@ const execute: NodeExecutor = async (inputs, context, properties = {}) => {
       idempotencyKey: idempotencyKey || undefined,
       timestamp: timestampForEntry(entry),
       metadata: {
+        ...(context.originatingCognitiveMode ? { cognitiveMode: context.originatingCognitiveMode } : {}),
         ...entry.meta,
         role: entry.role,
         source: entry.meta?.source || (entry.role === 'thought' ? 'user' : 'agent'),

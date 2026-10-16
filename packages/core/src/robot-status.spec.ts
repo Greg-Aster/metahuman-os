@@ -828,7 +828,7 @@ test('Robot Status has one editable refresh graph and is read and written by act
   assert.equal(nodeTypes.includes('environment_send_action'), false)
   assert.equal(nodeTypes.includes('robot_buffer'), false)
 
-  for (const workflow of ['environment', 'boredom-autonomy']) {
+  for (const workflow of ['environment']) {
     const consumer = JSON.parse(fs.readFileSync(
       path.join(repositoryRoot, `etc/cognitive-graphs/${workflow}-mode.json`),
       'utf8',
@@ -866,7 +866,7 @@ test('Robot task programs use the sole active executor and retain task-level cog
   const repositoryRoot = path.resolve(import.meta.dirname, '../../..')
   const readGraph = (name: string) => JSON.parse(fs.readFileSync(
     path.join(repositoryRoot, `etc/cognitive-graphs/${name}-mode.json`), 'utf8'))
-  for (const name of ['environment', 'boredom-autonomy']) {
+  for (const name of ['environment']) {
     const graph = readGraph(name)
     const active = graph.nodes.filter((node: any) => node.data?.nodeType === 'environment_active_task')
     assert.equal(active.length, 1)
@@ -885,8 +885,8 @@ test('Robot task programs use the sole active executor and retain task-level cog
   const reviewTypes = reviewGraph.nodes.map((node: any) => node.data?.nodeType)
   assert.equal(reviewTypes.filter((type: string) => type === 'model_router').length, 1)
   assert.equal(reviewTypes.filter((type: string) => type === 'robot_status_out').length, 1)
-  assert.equal(reviewTypes.filter((type: string) => type === 'active_desires').length, 1)
-  assert.equal(reviewTypes.filter((type: string) => type === 'robot_operator_environment_dispatch').length, 1)
+  assert.equal(reviewTypes.includes('robot_autonomy_task_catalog'), false)
+  assert.equal(reviewTypes.filter((type: string) => type === 'robot_operator_environment_dispatch').length, 0)
   assert.equal(reviewTypes.filter((type: string) => type === 'environment_image_input').length, 1)
   assert.equal(reviewTypes.includes('environment_send_action'), false)
   assert.equal(reviewTypes.includes('conditional_branch'), false)
@@ -901,40 +901,29 @@ test('Robot task programs use the sole active executor and retain task-level cog
     reviewGraph.nodes.find((node: any) => node.data?.nodeType === 'model_router')?.data?.properties?.role,
     'persona',
   )
-  assert.equal(reviewGraph.edges.some((edge: any) => (
-    edge.source === 'active-desires'
-    && edge.sourceHandle === 'desires'
-    && edge.target === 'context'
-    && edge.targetHandle === 'activeDesires'
-  )), true)
+  assert.equal(reviewTypes.includes('workflow_call'), false)
   assert.equal(reviewGraph.edges.some((edge: any) => (
     edge.source === 'parser'
     && edge.sourceHandle === 'executorDecision'
     && edge.target === 'prompt-out'
     && edge.targetHandle === 'decision'
-  )), true)
+  )), false)
 
   const reviewed = await robotGoalReviewParserNode.execute({
     response: JSON.stringify({
-      response: '',
-      outcome: 'continue',
+      outcome: 'wait',
+      objective: 'Find the cat near the doorway.',
+      completionCriteria: 'Identify the cat in current visual evidence.',
       reason: 'Another viewpoint may reveal the target.',
       requiredCompletionBasis: 'visual_observation',
       observationSummary: 'The last view did not contain the cat.',
       completionEvidence: '',
-      taskId: 'robot-autonomy-executor',
-      instruction: 'Inspect a different open area for the cat.',
     }),
-    availableTasks: [{ id: 'robot-autonomy-executor', name: 'Robot Autonomy Executor', kind: 'environment-executor',
-      description: 'Execute one high-level embodied intention.', handler: 'workflow.boredom-autonomy',
-      taskType: 'generic', priority: 'normal', tags: [] }],
     execution: { task: { objective: 'Find the cat.' } },
   }, {}, {})
-  assert.deepEqual(reviewed.executorDecision, {
-    observed: 'The last view did not contain the cat.',
-    instruction: 'Inspect a different open area for the cat.',
-    reason: 'Another viewpoint may reveal the target.',
-  })
+  assert.equal('invocation' in reviewed, false)
+  assert.equal(reviewed.taskDecision.objective, 'Find the cat near the doorway.')
+  assert.equal(reviewed.taskDecision.objectiveComplete, false)
 })
 
 test('speech and camera projections preserve the last body action as historical evidence', async () => {

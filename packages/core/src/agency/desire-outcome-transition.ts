@@ -8,7 +8,7 @@ import {
 import { loadConfig } from './config.js'
 import {
   addScratchpadEntryToFolder,
-  saveDesireManifest,
+  saveDesireProgress,
   saveDesireReviewToFolder,
 } from './storage.js'
 
@@ -31,7 +31,7 @@ export interface AppliedDesireOutcome {
 export interface DesireOutcomeTransitionDependencies {
   loadConfig: typeof loadConfig
   addScratchpadEntry: typeof addScratchpadEntryToFolder
-  saveManifest: typeof saveDesireManifest
+  saveManifest: typeof saveDesireProgress
   saveReview: typeof saveDesireReviewToFolder
 }
 
@@ -159,7 +159,7 @@ export async function applyDesireOutcomeReview(
   const deps: DesireOutcomeTransitionDependencies = {
     loadConfig,
     addScratchpadEntry: addScratchpadEntryToFolder,
-    saveManifest: saveDesireManifest,
+    saveManifest: saveDesireProgress,
     saveReview: saveDesireReviewToFolder,
     ...dependencies,
   }
@@ -284,6 +284,10 @@ export async function applyDesireOutcomeReview(
   )
   await deps.saveReview(updated.id, review, username)
   await deps.saveManifest(updated, username)
+  if (updated.status === 'archived' && action !== 'archived') {
+    action = 'archived'
+    summary = updated.dispositionReason || summary
+  }
 
   return { desire: updated, review, action, summary }
 }

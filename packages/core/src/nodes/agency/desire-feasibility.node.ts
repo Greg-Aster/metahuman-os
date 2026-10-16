@@ -1,4 +1,5 @@
-import { reasoningProperty } from '../llm/model-router.schema.js';
+import type { ModelRole } from '../../model-roles.js';
+import { reasoningProperty, modelRouterDefinition } from '../llm/model-router.schema.js';
 import { audit } from '../../audit.js'
 import type { Desire } from '../../agency/types.js'
 import { callLLMText } from '../../model-router.js'
@@ -106,7 +107,7 @@ ${toolCatalog}
 Return JSON only:
 {"feasible":true,"confidence":0.0,"reasoning":"brief explanation","suggestedApproach":"optional approach","blockers":["specific blocker"]}`
   const response = await dependencies.callModel({ options: { enableThinking: properties?.enableThinking === true },
-    role: 'orchestrator',
+    role: (properties?.role ?? 'psychotherapist') as ModelRole,
     messages: [{ role: 'user', content: prompt }],
     userId: typeof context.userId === 'string' ? context.userId : context.username,
   })
@@ -128,7 +129,8 @@ Return JSON only:
 }
 
 export const DesireFeasibilityNode: NodeDefinition = defineNode({
-  propertySchemas: { enableThinking: reasoningProperty },
+  propertySchemas: {
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'psychotherapist' }, enableThinking: reasoningProperty },
   id: 'desire_feasibility',
   name: 'Assess Desire Feasibility',
   category: 'agency',
@@ -144,7 +146,7 @@ export const DesireFeasibilityNode: NodeDefinition = defineNode({
     { name: 'suggestedApproach', type: 'string', optional: true },
     { name: 'blockers', type: 'array', optional: true },
   ],
-  properties: { enableThinking: false },
+  properties: { role: 'psychotherapist', enableThinking: false },
   description: 'Assesses one desire against the canonical tool catalog through the model router',
   execute: executeDesireFeasibility,
 })

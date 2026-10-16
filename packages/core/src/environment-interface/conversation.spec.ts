@@ -27,6 +27,7 @@ const { runDurableGraph, withGraphWork } = await import('../durable-execution/ru
 const { openExecutionStore } = await import('../durable-execution/storage.js')
 const { loadBufferForUser } = await import('../conversation-buffer.js')
 const { getTTSQueueState } = await import('../tts/delivery-queue.js')
+const { environmentConversationDeliveryNode } = await import('../nodes/environment/conversation.node.js')
 const username = 'conversation-work-fixture'
 createUser(username, 'fixture-only-password', 'owner')
 const { getProfilePaths } = await import('../path-builder.js')
@@ -48,7 +49,7 @@ const graph: any = { name: 'Conversation Work Fixture', version: '1.0', format: 
     { id: 'input', type: 'inputNode', position: { x: 0, y: 0 }, data: { nodeType: 'text_input', properties: {} } },
     { id: 'context', type: 'environmentNode', position: { x: 1, y: 0 }, data: { nodeType: 'environment_context_builder', properties: {} } },
     { id: 'conversation', type: 'environmentNode', position: { x: 2, y: 0 }, data: { nodeType: 'environment_conversation', properties: { role: 'persona', format: 'text' } } },
-    { id: 'result', type: 'utilityNode', position: { x: 3, y: 0 }, data: { nodeType: 'work_result_wait', properties: {} } },
+    { id: 'result', type: 'utilityNode', position: { x: 3, y: 0 }, data: { nodeType: 'environment_conversation_delivery', properties: {} } },
     { id: 'after-response', type: 'utilityNode', position: { x: 4, y: 0 }, data: { nodeType: 'execution_context', properties: {} } },
   ], edges: [
     { id: 'input-context', source: 'input', sourceHandle: 'text', target: 'context', targetHandle: 'instruction' },
@@ -77,13 +78,13 @@ async function start(request: string) {
 
 const execute = (work: any) => (engine as unknown as { execute(work: any): Promise<void> }).execute(work)
 
-async function resume(executionId: string) {
+async function resume(executionId: string, expectedStatus = 'completed') {
   const work = manager.enqueue({ type: 'generic', handler: 'graph.resume', resource: `execution:${executionId}`, username, source: 'user', input: {} })
   assert.ok(manager.claim(work.id))
   const result = await withGraphWork(work, id => manager.attachExecution(work.id, id), () => runDurableGraph({ graph,
     context: { username, userId: username }, executionId }), async input => manager.enqueue(input))
   manager.complete(work.id, result.status !== 'failed', {})
-  assert.equal(result.status, 'completed', result.error?.stack)
+  assert.equal(result.status, expectedStatus, result.error?.stack)
   assert.equal(result.nodes.get('after-response')?.status, 'completed')
   return result
 }
@@ -95,7 +96,8 @@ test('Coordinator generates without the parent lease and delivers once through t
     let entered!: () => void
     const started = new Promise<void>(resolve => { entered = resolve })
     const blocked = new Promise<void>(resolve => { release = resolve })
-    generate = async () => { entered(); await blocked; return 'A delayed response.' }
+    let calls = 0
+    generate = async () => { calls++; entered(); await blocked; return 'A delayed response.' }
     manager.claim(run.conversation.id)
     const pending = execute(run.conversation)
     await started
@@ -103,13 +105,27 @@ test('Coordinator generates without the parent lease and delivers once through t
     try {
       const record = store.get(run.state.executionId!)
       const lease = store.claim(record.executionId, record.definition)
-      store.release(lease)
-      assert.equal(store.list(username).length, 1, 'Conversation work must not create a second objective')
+      try {
+        for (const actionId of ['simulated-display', 'simulated-movement']) {
+          store.deliverEvent(record.executionId, { eventId: actionId, kind: 'physical_result', actionId,
+            payload: { feedback: { actionId, type: 'completed' } } })
+        }
+        release()
+        await pending
+        assert.equal(manager.getTask(run.conversation.id)!.state, 'completed',
+          'Finishing inference while feedback owns the execution must save the answer without waiting for a lease')
+        assert.equal(manager.getTask(run.conversation.id)!.result?.response, 'A delayed response.')
+        assert.equal(loadBufferForUser(username, 'conversation').messages.length, 0,
+          'Inference must not deliver through a competing execution writer')
+        assert.equal(store.list(username).length, 1, 'Conversation work must not create a second objective')
+      } finally { store.release(lease) }
     } finally { store.close() }
     release()
     await pending
     assert.equal(manager.getTask(run.conversation.id)!.state, 'completed', JSON.stringify(manager.getTask(run.conversation.id)!.error))
+    manager.importState(JSON.parse(JSON.stringify(manager.exportState())))
     const joined = await resume(run.state.executionId!)
+    assert.equal(calls, 1, 'Completed inference survives Coordinator reload without regeneration')
     assert.equal(joined.nodes.get('result')?.outputs?.result.result.state, 'completed')
     let entries = loadBufferForUser(username, 'conversation').messages
     assert.equal(entries.length, 1)
@@ -121,10 +137,34 @@ test('Coordinator generates without the parent lease and delivers once through t
       const speech = outputStore.dispatches(run.state.executionId!).filter(effect => effect.kind === 'local_tts')
       assert.equal(speech.length, 1)
       assert.equal((speech[0]!.payload as any).generation, run.generation)
+      for (const id of ['simulated-display', 'simulated-movement']) {
+        const event = outputStore.event(run.state.executionId!, id)
+        assert.ok(event.sequence <= outputStore.get(run.state.executionId!).lastProcessedSequence,
+          'Joining the answer retains and consumes intervening physical feedback')
+      }
     } finally { outputStore.close() }
     await execute(manager.getTask(run.conversation.id)!)
     entries = loadBufferForUser(username, 'conversation').messages
     assert.equal(entries.length, 1, 'Repeated work receipt cannot deliver a duplicate response')
+  })
+})
+
+test('cancellation after saved inference prevents delivery without regenerating its answer', async () => {
+  await withUserContext({ username, userId: username, role: 'owner' }, async () => {
+    const before = loadBufferForUser(username, 'conversation').messages.length
+    const run = await start('A request cancelled before delivery')
+    let calls = 0
+    generate = async () => { calls++; return 'Saved but cancelled.' }
+    assert.ok(manager.claim(run.conversation.id))
+    await execute(run.conversation)
+    const store = openExecutionStore(username)
+    try {
+      store.cancel(run.state.executionId!, { eventId: 'explicit-fixture-cancellation', kind: 'user_cancelled', payload: {} })
+    } finally { store.close() }
+    await assert.rejects(runDurableGraph({ graph, context: { username, userId: username }, executionId: run.state.executionId }), /Execution cancelled/)
+    assert.equal(calls, 1)
+    assert.equal(loadBufferForUser(username, 'conversation').messages.length, before)
+    assert.equal(manager.getTask(run.conversation.id)!.result?.response, 'Saved but cancelled.')
   })
 })
 
@@ -146,6 +186,49 @@ test('failed generation is a failed finite work receipt and never fabricates a r
       assert.ok(store.events(run.state.executionId!).some(event => event.kind === 'work_result' && (event.payload as any).result.state === 'failed'))
     } finally { store.close() }
   })
+})
+
+test('delivery returns persisted response evidence without deciding objective completion', async () => {
+  for (const scenario of ['delivered', 'empty', 'not-persisted', 'generation-failed', 'delivery-failed', 'cancelled', 'physical-failed', 'physical-unknown', 'visual-objective', 'agency-owned']) {
+    let task: any = { objectiveId: 'objective', executionId: 'execution', objective: 'Describe the captured image',
+      instruction: 'Take a picture and describe it', source: 'user', completionCriteria: 'Deliver its description',
+      actionId: 'capture', actionStatus: 'completed', feedback: { actionId: 'capture', type: 'completed' },
+      decision: { outcome: 'continue', objectiveComplete: false, requiredCompletionBasis: 'response' } }
+    if (scenario === 'cancelled') task.decision.outcome = 'cancel'
+    if (scenario === 'physical-failed') task.feedback.type = 'failed'
+    if (scenario === 'physical-unknown') task.feedback.type = 'outcome_unknown'
+    if (scenario === 'visual-objective') task.decision.requiredCompletionBasis = 'visual_observation'
+    if (scenario === 'agency-owned') task.desireId = 'desire'
+    const before = structuredClone(task)
+    const response = scenario === 'empty' ? '' : 'The captured frame shows a cup.'
+    const entry = { id: 'delivered-response', role: 'assistant', content: response, timestamp: 1791682728859 }
+    let delivered = false
+    const context: any = { username, graphExecution: {
+      pendingEvents: () => [], events: () => [{ eventId: 'inference-result', kind: 'work_result', payload: {
+        effectId: 'inference', result: { state: scenario === 'generation-failed' ? 'failed' : 'completed', result: { response } },
+      } }],
+      task: () => task,
+      recordTask: (value: any) => { assert.equal(delivered, true, 'Generation alone cannot establish response delivery'); task = value },
+      callGraph: async () => {
+        assert.deepEqual(task, before, 'Task must remain unchanged until delivery finishes')
+        if (scenario === 'delivery-failed') throw new Error('Simulated buffer failure')
+        delivered = scenario !== 'empty' && scenario !== 'not-persisted'
+        return { status: 'completed', nodes: new Map([['buffer', { definition: { type: 'conversation_buffer' }, status: 'completed',
+          outputs: { persisted: delivered, entries: delivered ? [entry] : [] } }]]) }
+      },
+    } }
+    const run = () => environmentConversationDeliveryNode.execute({ work: { effectId: 'inference' } }, context, {})
+    if (scenario === 'delivery-failed') await assert.rejects(run, /Simulated buffer failure/)
+    else {
+      const result = await run()
+      assert.deepEqual(result.responseEntry, delivered ? entry : undefined, scenario)
+      assert.deepEqual(task, before, 'Delivery evidence does not replace the completion assessment or physical receipts')
+      context.graphExecution.callGraph = async () => ({ status: 'completed', nodes: new Map() })
+      const repeated = await run()
+      assert.equal(repeated.responseEntry, undefined)
+      assert.deepEqual(task, before)
+    }
+  }
 })
 
 test('blocked audio rendering releases conversation, admits another reply and commits playback once', async () => {
@@ -171,6 +254,7 @@ test('blocked audio rendering releases conversation, admits another reply and co
       const first = await start('First request with audio')
       assert.ok(manager.claim(first.conversation.id))
       await execute(first.conversation)
+      await resume(first.state.executionId!, 'waiting')
       assert.equal(manager.getTask(first.conversation.id)?.state, 'completed')
       assert.equal(rendered, 0, 'Conversation delivery must only admit audio work')
       const speech = manager.getAllTasks().find(task => task.handler === 'tts.robot-speech'
@@ -194,6 +278,7 @@ test('blocked audio rendering releases conversation, admits another reply and co
         const second = await start('Second request during rendering')
         assert.ok(manager.claim(second.conversation.id))
         await execute(second.conversation)
+        await resume(second.state.executionId!, 'waiting')
         assert.equal(manager.getTask(second.conversation.id)?.state, 'completed')
         assert.ok(loadBufferForUser(username, 'conversation').messages.some(message => message.content === 'Second independently delivered response.'))
         const movement = manager.enqueue({ type: 'environment_command', handler: 'environment.command', username,
@@ -253,6 +338,7 @@ test('speech plays the first chunk while later synthesis is pending, with ordere
       const run = await start('Please tell me what you see')
       assert.ok(manager.claim(run.conversation.id))
       await execute(run.conversation)
+      await resume(run.state.executionId!, 'waiting')
       const speech = manager.getAllTasks().find(task => task.handler === 'tts.robot-speech'
         && task.durable?.executionId === run.state.executionId)!
       assert.ok(manager.claim(speech.id))
@@ -315,6 +401,7 @@ for (const cancelled of [false, true]) {
         const run = await start(response)
         assert.ok(manager.claim(run.conversation.id))
         await execute(run.conversation)
+        await resume(run.state.executionId!, 'waiting')
         const speech = manager.getAllTasks().find(task => task.handler === 'tts.robot-speech'
           && task.durable?.executionId === run.state.executionId)!
         assert.ok(manager.claim(speech.id))

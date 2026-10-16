@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getProfilePaths } from './path-builder.js';
 import { safeWriteJSON } from './safe-file.js';
+import { getUserContext } from './context.js';
+import { loadFreshOperatorConfig } from './config.js';
 import { loadBackendConfig } from './llm-backend.js';
 import { type ModelRole } from './model-roles.js';
 export { MODEL_ROLES, isModelRole, normalizeModelRole, type ModelRole } from './model-roles.js';
@@ -21,7 +23,7 @@ import {
 
 const LOG_PREFIX = '[model-resolver]';
 
-export type ModelProvider = 'llama-cpp' | 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
+export type ModelProvider = 'big-brother' | 'llama-cpp' | 'ollama' | 'openai' | 'local' | 'runpod_serverless' | 'huggingface' | 'vllm' | 'remote-server' | 'local-models';
 export type ModelCapability = 'text' | 'image';
 
 export interface ModelDefinition {
@@ -67,6 +69,19 @@ export interface ModelRegistry {
     timeout: number;
     retries: number;
   }>>;
+}
+
+/** The selectable CLI deployment follows Backend Settings; roles own its use. */
+export const BIG_BROTHER_MODEL_ID = 'big-brother.configured';
+export function configuredBigBrotherModel(username?: string): ModelDefinition {
+  const owner = username ?? getUserContext()?.username;
+  const config = owner ? loadFreshOperatorConfig(owner).bigBrotherMode : undefined;
+  const provider = config?.provider || 'claude-code';
+  return {
+    provider: 'big-brother', model: config?.model || provider, adapters: [], roles: [],
+    capabilities: provider === 'codex' ? ['text', 'image'] : ['text'],
+    description: `Big Brother (${provider})`, options: {}, metadata: { cliProvider: provider },
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -194,16 +209,36 @@ export function migrateModelRegistry(
     'image',
   ]));
 
-  // Split the request-only specialist from general orchestration without
-  // changing an existing profile's model until that new role is assigned.
-  defaults.environmentIntent ??= defaults.orchestrator ?? DEFAULT_ENVIRONMENT_ACTION_SELECTOR_MODEL_ID;
+  // Consolidate request routing under orchestrator, preserving the old Intent
+  // assignment rather than the unrelated general-orchestration assignment.
+  const hadIntentDefault = Object.hasOwn(defaults, 'environmentIntent');
+  if (hadIntentDefault) defaults.orchestrator = defaults.environmentIntent;
+  delete defaults.environmentIntent;
   for (const mapping of Object.values(mappings)) {
-    if (mapping.orchestrator && !mapping.environmentIntent) mapping.environmentIntent = mapping.orchestrator;
+    if (Object.hasOwn(mapping, 'environmentIntent')) {
+      mapping.orchestrator = mapping.environmentIntent;
+    } else if (hadIntentDefault) {
+      // An omitted old Intent assignment inherited its default even when the
+      // former general orchestrator had a mode-specific override.
+      delete mapping.orchestrator;
+    }
+    delete mapping.environmentIntent;
   }
-  for (const id of new Set([defaults.environmentIntent,
-    ...Object.values(mappings).map(mapping => mapping.environmentIntent).filter((id): id is string => Boolean(id))])) {
-    const definition = registry.models[id];
-    if (definition && !definition.roles.includes('environmentIntent')) definition.roles.push('environmentIntent');
+  if (Object.hasOwn(hierarchy, 'environmentIntent')) hierarchy.orchestrator = hierarchy.environmentIntent;
+  delete hierarchy.environmentIntent;
+  for (const definition of Object.values(registry.models)) {
+    definition.roles = Array.from(new Set(definition.roles.map(role => role === 'environmentIntent' ? 'orchestrator' : role)));
+  }
+
+  // The autonomous planners previously selected Persona. Preserve that exact
+  // assignment (including per-mode disabled/inherited choices) until reassigned.
+  if (!Object.hasOwn(defaults, 'autonomy') && Object.hasOwn(defaults, 'persona')) {
+    defaults.autonomy = defaults.persona;
+    for (const mapping of Object.values(mappings)) {
+      if (!Object.hasOwn(mapping, 'autonomy') && Object.hasOwn(mapping, 'persona')) {
+        mapping.autonomy = mapping.persona;
+      }
+    }
   }
 
   return {
@@ -224,6 +259,7 @@ function persistMigratedRegistry(registryPath: string, registry: ModelRegistry):
  * This ensures consistent behavior regardless of how cognitive mode mappings are configured
  */
 function applyBackendOverride(resolved: ResolvedModel, registry: ModelRegistry): ResolvedModel {
+  if (resolved.provider === 'big-brother') return resolved;
   const backend = loadBackendConfig();
   const { activeBackend } = backend;
   const configuredVllmModel = backend.vllm.servedModelName || backend.vllm.model;
@@ -418,7 +454,9 @@ export function resolveModel(
   }
 
   // Look up the model definition
-  const modelDef = registry.models[defaultModelId];
+  const savedModel = registry.models[defaultModelId];
+  const modelDef = savedModel?.provider === 'big-brother'
+    ? { ...configuredBigBrotherModel(username), roles: savedModel.roles } : savedModel;
   if (!modelDef) {
     throw new Error(`Model definition not found for ID: ${defaultModelId}`);
   }
@@ -465,7 +503,9 @@ export function resolveModelById(modelId: string, username?: string, useBackendO
 
   const registry = loadModelRegistry(false, username);
 
-  const modelDef = registry.models[modelId];
+  const savedModel = registry.models[modelId];
+  const modelDef = savedModel?.provider === 'big-brother'
+    ? { ...configuredBigBrotherModel(username), roles: savedModel.roles } : savedModel;
   if (!modelDef) {
     throw new Error(`Model definition not found for ID: ${modelId}`);
   }

@@ -1,8 +1,9 @@
-import { reasoningProperty } from '../llm/model-router.schema.js';
+import { modelRouterDefinition, reasoningProperty } from '../llm/model-router.schema.js';
 import {
   callLLM,
   type RouterMessage,
 } from '../../model-router.js'
+import type { ModelRole } from '../../model-resolver.js'
 import type { PersonaCore } from '../../identity.js'
 import {
   validatePersonaLearningProposal,
@@ -16,7 +17,7 @@ import { defineNode, type NodeDefinition, type NodeExecutionContext } from '../t
 
 const DEFAULT_INSTRUCTION = `You are the evidence-review stage of a persona learning system.
 
-Review only the supplied user evidence. Propose the smallest set of durable persona changes supported by repeated or explicit evidence. Identity is protected and must never be changed. Do not infer a removal merely because an item is absent from recent evidence; removals require explicit contradiction, abandonment, or completion evidence.
+Review only the supplied evidence for the active persona identified in SUBJECT IDENTITY. Keep evidence attributed to its recorded speaker, source and cognitive mode. Statements about another person do not by themselves establish the active persona's traits, goals or circumstances. Propose the smallest set of durable persona changes supported by repeated or explicit evidence. Identity is protected and must never be changed. Do not infer a removal merely because an item is absent from recent evidence; removals require explicit contradiction, abandonment, or completion evidence.
 
 Allowed paths and values:
 - personality.traits: update only, value {"trait":"openness|conscientiousness|extraversion|agreeableness|neuroticism","score":0..1}
@@ -34,6 +35,9 @@ Every change must cite one or more IDs from EVIDENCE. Return only valid JSON wit
 {"summary":"...","confidence":0.0,"changes":[{"operation":"add|remove|update","path":"allowed.path","value":"or allowed object","evidenceIds":["memory-id"],"reason":"..."}]}`
 
 interface PsychoanalyzerMemoryInput {
+  role?: string
+  source?: string
+  cognitiveMode?: string
   id: string
   timestamp: string
   type: string
@@ -91,6 +95,9 @@ function parseMemories(value: unknown, config: PsychoanalyzerConfig): Psychoanal
     }
     return {
       id: memory.id.trim(),
+      ...(typeof memory.role === 'string' ? { role: memory.role } : {}),
+      ...(typeof memory.source === 'string' ? { source: memory.source } : {}),
+      ...(typeof memory.cognitiveMode === 'string' ? { cognitiveMode: memory.cognitiveMode } : {}),
       timestamp: new Date(memory.timestamp).toISOString(),
       type: memory.type,
       tags: memory.tags as string[],
@@ -136,6 +143,9 @@ export async function executePsychoanalyzerAnalysis(
   if (instruction.length > 20000) throw new Error('Psychoanalyzer analysis instruction exceeds 20000 characters')
   const evidence = memories.map(memory => ({
     id: memory.id,
+    ...(memory.role !== undefined ? { role: memory.role } : {}),
+    ...(memory.source !== undefined ? { source: memory.source } : {}),
+    ...(memory.cognitiveMode !== undefined ? { cognitiveMode: memory.cognitiveMode } : {}),
     timestamp: memory.timestamp,
     type: memory.type,
     tags: memory.tags,
@@ -143,10 +153,10 @@ export async function executePsychoanalyzerAnalysis(
   }))
   const messages: RouterMessage[] = [{
     role: 'user',
-    content: `${instruction}\n\nCURRENT LEARNABLE PERSONA:\n${JSON.stringify(learnablePersona(persona), null, 2)}\n\nEVIDENCE:\n${JSON.stringify(evidence, null, 2)}`,
+    content: `${instruction}\n\nSUBJECT IDENTITY:\n${JSON.stringify(persona.identity, null, 2)}\n\nCURRENT LEARNABLE PERSONA:\n${JSON.stringify(learnablePersona(persona), null, 2)}\n\nEVIDENCE:\n${JSON.stringify(evidence, null, 2)}`,
   }]
   const response = await dependencies.callModel({
-    role: config.analysis.model,
+    role: (inputs.role || properties.role || config.analysis.model) as ModelRole,
     messages,
     userId: typeof context.userId === 'string' ? context.userId : context.username,
     cognitiveMode: context.cognitiveMode,
@@ -175,13 +185,15 @@ export const PsychoanalyzerAnalysisNode: NodeDefinition = defineNode({
     { name: 'memories', type: 'array' },
     { name: 'persona', type: 'object' },
     { name: 'config', type: 'object' },
+    modelRouterDefinition.inputs.find(input => input.name === 'role')!,
   ],
   outputs: [
     { name: 'proposal', type: 'object', description: 'Validated evidence-backed persona proposal' },
   ],
-  properties: { enableThinking: false, instruction: DEFAULT_INSTRUCTION },
+  properties: { enableThinking: false, instruction: DEFAULT_INSTRUCTION, role: 'psychotherapist' },
   propertySchemas: {
     enableThinking: reasoningProperty,
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'psychotherapist' },
     instruction: {
       type: 'text_multiline',
       default: DEFAULT_INSTRUCTION,

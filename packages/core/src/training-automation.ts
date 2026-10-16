@@ -312,7 +312,10 @@ export function automaticTrainingRuntimeInputs(username: string, cutoff = Date.n
   const selection = selectPersonalizationDataset(inspection, settings, {
     maxSamples: config.maxSamples, recentDays: config.useRollingWindow ? config.recentDays : undefined,
     olderSamples: config.useRollingWindow ? config.olderSamples : undefined,
-    personaContext: trainingPersonaContext(username, settings), history,
+    personaContexts: {
+      'human-continuation': trainingPersonaContext(username, settings, 'human-continuation'),
+      'assistant-continuation': trainingPersonaContext(username, settings, 'assistant-continuation'),
+    }, history,
   })
   return { config, inspection, selection, history, runs: readTrainingHistoryForUser(username),
     runningProcesses: listTrainingProcesses(), remoteCredentialsConfigured: Boolean(loadRunpodConfig(username).apiKey) }

@@ -1,50 +1,9 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onMount } from 'svelte';
+  import { coordinatorSnapshot, coordinatorConnection, coordinatorError, useWorkCoordinator,
+    type QueueSnapshot, type WorkView, type PersonResume } from '../lib/stores/work-coordinator';
   import { apiFetch } from '../lib/client/api-config';
   import TriggerManagerSummary from './TriggerManagerSummary.svelte';
-
-  interface WorkView {
-    id: string;
-    type: string;
-    handler: string;
-    resource: string;
-    state: string;
-    priority: string;
-    source: string;
-    createdAt: string;
-    startedAt?: string;
-    completedAt?: string;
-    waitingReason?: string;
-    wakeAt?: string;
-    deadline?: string;
-    attempt: number;
-    maxAttempts: number;
-    cancellationRequestedAt?: string;
-    robotSessionId?: string;
-    error?: string;
-  }
-
-  interface PersonResume {
-    sessionId: string;
-    candidateFrame?: string;
-    observedAt?: string;
-    frameExpiresAt?: string;
-    windowExpiresAt: string;
-    terminationConfirmed: boolean;
-    rejection?: string;
-  }
-
-  interface QueueSnapshot {
-    lifecycle: string;
-    running: boolean;
-    paused: boolean;
-    degraded: boolean;
-    error?: string;
-    tasks: WorkView[];
-    history: WorkView[];
-    canConfirmRobotStopped: boolean;
-    executions: { executionId: string; graph: string; status: string; waitingReason?: string; updatedAt: string; personResume?: PersonResume }[];
-  }
 
   let snapshot: QueueSnapshot | null = null;
   let connected = false;
@@ -52,7 +11,22 @@
   let actionError = '';
   let actionNotice = '';
   let busyAction = '';
-  let sourceHandle: EventSource | null = null;
+  $: snapshot = $coordinatorSnapshot;
+  $: connected = $coordinatorConnection === 'live';
+  $: error = $coordinatorError;
+
+  function priorityClasses(priority: string): string {
+    if (priority === 'critical' || priority === 'high') {
+      return 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200';
+    }
+    if (priority === 'normal') {
+      return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-200';
+    }
+    if (priority === 'low' || priority === 'background') {
+      return 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200';
+    }
+    return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200';
+  }
 
   function age(timestamp?: string): string {
     if (!timestamp) return '—';
@@ -73,7 +47,7 @@
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false) throw new Error(data.error || `Request failed: ${response.status}`);
-      if (data.snapshot) snapshot = data.snapshot;
+      if (data.snapshot) coordinatorSnapshot.set(data.snapshot);
       if (data.status === 'requested') actionNotice = 'Candidate selection requested. The execution owner must validate it before movement can resume.';
     } catch (caught) {
       actionError = (caught as Error).message;
@@ -120,22 +94,7 @@
     });
   }
 
-  onMount(() => {
-    sourceHandle = new EventSource('/api/queue-stream');
-    sourceHandle.onopen = () => { connected = true; error = ''; };
-    sourceHandle.onmessage = event => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'error') error = data.error || 'Coordinator stream failed';
-        if (data.snapshot) { snapshot = data.snapshot; error = ''; }
-      } catch (caught) {
-        error = (caught as Error).message;
-      }
-    };
-    sourceHandle.onerror = () => { connected = false; };
-  });
-
-  onDestroy(() => sourceHandle?.close());
+  onMount(useWorkCoordinator);
 </script>
 
 <div class="flex h-full flex-col overflow-hidden text-sm">
@@ -176,8 +135,9 @@
         >Cancel pending</button>
       </div>
 
+      {#if snapshot.executions.length > 0}
       <section class="mb-4 rounded border border-gray-200 dark:border-gray-800">
-        <div class="border-b border-gray-200 p-2 text-xs font-semibold dark:border-gray-800">Saved workflows</div>
+        <div class="border-b border-gray-200 p-2 text-xs font-semibold dark:border-gray-800">Unfinished workflows</div>
         <div class="p-2 text-xs text-gray-500 dark:text-gray-400">These persist between jobs. Cancelling one ends that workflow and cancels its remaining work.</div>
         {#each snapshot.executions ?? [] as execution}
           <article class="border-t border-gray-200 p-2 text-xs dark:border-gray-800">
@@ -208,6 +168,7 @@
           </article>
         {/each}
       </section>
+      {/if}
 
       <section class="mb-4 rounded border border-gray-200 dark:border-gray-800">
         <div class="border-b border-gray-200 p-2 text-xs font-semibold dark:border-gray-800">Global order</div>
@@ -218,8 +179,9 @@
             {#each snapshot.tasks as task}
               <article class="p-2 {task.state === 'leased' ? 'bg-amber-500/10' : ''}">
                 <div class="flex items-center justify-between gap-2">
-                  <div class="min-w-0 truncate text-xs font-medium text-gray-900 dark:text-gray-100">
-                    {task.type} · {task.priority}
+                  <div class="flex min-w-0 items-center gap-2 text-xs font-medium text-gray-900 dark:text-gray-100">
+                    <span class="truncate">{task.type}</span>
+                    <span class="shrink-0 rounded px-1.5 py-0.5 {priorityClasses(task.priority)}" title={`Priority: ${task.priority}`}>{task.priority}</span>
                   </div>
                   <span class="text-[0.7rem] text-gray-500 dark:text-gray-400">{age(task.startedAt || task.createdAt)}</span>
                 </div>
@@ -252,25 +214,6 @@
         {/if}
       </section>
 
-      <section class="rounded border border-gray-200 dark:border-gray-800">
-        <div class="border-b border-gray-200 p-2 text-xs font-semibold dark:border-gray-800">Recent history</div>
-        {#if snapshot.history.length === 0}
-          <div class="p-3 text-xs text-gray-500 dark:text-gray-400">No terminal history yet.</div>
-        {:else}
-          <div class="divide-y divide-gray-200 dark:divide-gray-800">
-            {#each snapshot.history.slice(0, 20) as task}
-              <div class="p-2 text-xs">
-                <div class="flex justify-between gap-2">
-                  <span class="truncate text-gray-900 dark:text-gray-100">{task.type} · {task.state}</span>
-                  <span class="shrink-0 text-gray-500 dark:text-gray-400">{age(task.completedAt)}</span>
-                </div>
-                <div class="mt-1 truncate text-[0.7rem] text-gray-500 dark:text-gray-400">{task.handler} · {task.resource}</div>
-                {#if task.error}<div class="mt-1 text-red-600 dark:text-red-300">{task.error}</div>{/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </section>
     {/if}
   </div>
 </div>

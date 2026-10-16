@@ -1,3 +1,4 @@
+import { bodyEventContextSchema, bodyEventDecisionSchema, environmentEventRequestSchema } from './environment/body-event.schemas.js';
 import { reasoningProperty } from './llm/model-router.schema.js';
 /**
  * Browser-safe Node Schemas Export
@@ -167,21 +168,17 @@ export const nodeSchemas: NodeSchema[] = [
   defineSchema({
     id: 'execution_event_wait', name: 'Wait for Continuation', category: 'utility',
     execution: { eventInput: true },
-    description: 'Keeps this execution saved until a user correction or an authorized autonomy trigger arrives. Full mode can authorize an already selected next workflow immediately.',
+    description: 'Receives user or autonomy events for an execution awaiting new input.',
     inputs: [
-      { name: 'invocation', type: 'object', optional: true, description: 'Next workflow already chosen by the LLM' },
-      { name: 'selection', type: 'object', optional: true, description: 'Finite specialist already chosen by the LLM, awaiting mode authorization before dispatch' },
       { name: 'receivedInput', type: 'object', optional: true, description: 'Input received during preceding work, delivered once before checking newer events' },
       { name: 'evidence', type: 'object', optional: true, description: 'Returned result context for input received after that result' },
     ],
     outputs: [
-      { name: 'invocation', type: 'object', description: 'Authorized next workflow with the newly received context' },
-      { name: 'selection', type: 'object', description: 'Authorized specialist selection, unchanged' },
+      { name: 'invocation', type: 'object', description: 'Next workflow with the newly received context' },
     ],
-    properties: { waitForEvent: false, drain: false, userGraph: 'environment', autonomyGraph: 'robot-autonomy-controller' },
+    properties: { drain: false, userGraph: 'environment', autonomyGraph: 'robot-autonomy-controller' },
     propertySchemas: {
       drain: { type: 'boolean', default: false, label: 'Receive Available Input Only', description: 'Handles already received input and returns immediately when none remains. A graph may select this node as its late-input entry point.' },
-      waitForEvent: { type: 'boolean', default: false, label: 'Always Await a New Event', description: 'Used when the LLM chose to wait or request input, instead of selecting a next action.' },
       userGraph: { type: 'text', default: 'environment', label: 'User Workflow', description: 'Workflow used for a user correction.' },
       autonomyGraph: { type: 'text', default: 'robot-autonomy-controller', label: 'Autonomy Workflow', description: 'Workflow used to reconsider context after an autonomy trigger.' },
     },
@@ -316,8 +313,14 @@ export const nodeSchemas: NodeSchema[] = [
     "id": "execution_context",
     "name": "Current Execution",
     "category": "context",
-    "inputs": [],
+    "inputs": [
+      { name: 'responseEntry', type: 'message', optional: true, description: 'Delivered response from this workflow pass' },
+      { name: 'instructionEntry', type: 'message', optional: true, description: 'Original admitted input for continuation' },
+      { name: 'resultContext', type: 'object', optional: true, description: 'Returned task observation context' },
+      { name: 'taskResult', type: 'object', optional: true, description: 'Current program result, including an unfinished input or planning handoff' },
+    ],
     "outputs": [
+      { name: 'reviewContext', type: 'object', description: 'Returned evidence and input provenance for the existing review workflow' },
       {
         "name": "context",
         "type": "object",
@@ -329,23 +332,16 @@ export const nodeSchemas: NodeSchema[] = [
         "description": "Checkpointed task, or null for an execution without a task"
       },
       { "name": "activeExecutions", "type": "array", "description": "Other unfinished executions available for user steering" },
+      { name: 'needsGoalReview', type: 'boolean', description: 'An unfinished objective needs assessment after this workflow pass' },
+      { name: 'awaitContext', type: 'boolean', description: 'The objective awaits relevant input' },
       {
         "name": "hasActiveTask",
         "type": "boolean",
         "description": "Whether the saved LLM decision leaves an objective unfinished"
       }
     ],
-    "properties": {
-      "eventLimit": 16
-    },
-    "propertySchemas": {
-      "eventLimit": {
-        "type": "number",
-        "default": 16,
-        "label": "Recent Events",
-        "description": "Events included in model context; the complete execution evidence remains saved."
-      }
-    },
+    "properties": {},
+    "propertySchemas": {},
     "description": "Reads this execution’s checkpointed objective and ordered events. Robot Status and conversation history do not own or replace this task."
   }),
   // INPUT NODES
@@ -403,6 +399,7 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'entries', type: 'array', description: 'Conversation entries prepared for selected storage destinations' },
       { name: 'bufferSaved', type: 'boolean', description: 'Whether conversation buffer admission completed' },
       { name: 'memorySaved', type: 'boolean', description: 'Whether long-term memory saving completed' },
+      { name: 'currentMemoryId', type: 'string', optional: true, description: 'Saved memory record ID of the current input.' },
       { name: 'inputSource', type: 'string', description: 'Input source: text, speech, or chat' },
       { name: 'instructionSource', type: 'string', description: 'Instruction provenance: user' },
       { name: 'sessionId', type: 'string', description: 'Session identifier' },
@@ -1110,10 +1107,18 @@ export const nodeSchemas: NodeSchema[] = [
     description: 'Provides optional graph-authored map and location context without baking environment data into Environment Mode.',
   }),
   defineSchema({
+    id: 'environment_visual_read', name: 'Read Latest Camera Evidence', category: 'environment',
+    inputs: [{ name: 'sessionId', type: 'string', optional: true, description: 'Selected Bridge session' }],
+    outputs: [{ name: 'work', type: 'object', optional: true, description: 'Coordinator camera read identity' }],
+    properties: {},
+    description: 'Reads the selected body camera stream cache through the existing Bridge without capturing a new photo.',
+  }),
+  defineSchema({
     "id": "environment_image_input",
     "name": "Select Camera Frames for Current Action",
     "category": "environment",
     "inputs": [
+      { name: 'work', type: 'object', optional: true, description: 'Selected camera read from the existing Coordinator' },
       { name: 'sessionId', type: 'string', optional: true, description: 'Read already received camera evidence for this Bridge session when the node runs.' },
       { name: 'observation', type: 'object', optional: true, description: 'Returned observation containing camera evidence from the execution owner' },
       {
@@ -1384,11 +1389,11 @@ export const nodeSchemas: NodeSchema[] = [
   }),
   defineSchema({
   id: 'environment_active_task', name: 'Execute Robot Task', category: 'environment',
-  execution: { timeoutOwner: 'children' },
   description: 'Owns the complete task program within the existing durable execution.',
   inputs: [{ name: 'program', type: 'object', description: 'MetaHuman-selected ordered actions and ongoing behaviors' },
     { name: 'taskDecision', type: 'object', description: 'Whole objective and completion criteria' },
-    { name: 'sessionId', type: 'string', description: 'Current body session' }],
+    { name: 'sessionId', type: 'string', description: 'Current body session' },
+    { name: 'metadata', type: 'object', optional: true, description: 'Recorded origin metadata for task-selected speech' }],
   outputs: [{ name: 'finished', type: 'boolean', description: 'Program reached completion or a reported physical failure' },
     { name: 'completed', type: 'boolean', description: 'All task phases completed' },
     { name: 'result', type: 'object', description: 'Execution progress and phase evidence' },
@@ -1464,10 +1469,10 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'response', type: 'string', description: 'Visible generation result or rejection' },
       { name: 'planSummary', type: 'object', description: 'Bounded frame and duration summary' },
     ],
-    properties: { enableThinking: false, role: 'orchestrator', executionTarget: '', maxTokens: 4096, temperature: 0.2 },
+    properties: { enableThinking: false, role: 'planner', executionTarget: '', maxTokens: 4096, temperature: 0.2 },
     propertySchemas: {
       enableThinking: reasoningProperty,
-      role: { type: 'select', default: 'orchestrator', label: 'Model Role', options: [...MODEL_ROLE_OPTIONS] },
+      role: { ...modelRouterDefinition.propertySchemas.role, default: 'planner' },
       executionTarget: { type: 'select', default: '', label: 'Execution Target',
         options: [{ value: '', label: 'Configured role backend' }, { value: 'remote', label: 'Remote' }] },
       maxTokens: { type: 'number', default: 4096, label: 'Max Tokens', min: 1024, max: 8192, step: 256 },
@@ -2101,6 +2106,7 @@ export const nodeSchemas: NodeSchema[] = [
     "name": "Robot Autonomy Controller Context",
     "category": "operator",
     "inputs": [
+      { name: 'activationState', type: 'object', optional: true },
       {
         "name": "execution",
         "type": "object",
@@ -2278,27 +2284,19 @@ export const nodeSchemas: NodeSchema[] = [
     "outputs": [
     { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of task decisions' },
       {
-        "name": "awaitContinuation", "type": "boolean", "description": "The LLM chose to wait for a new event or user input"
-      },
-      {
-        "name": "executorDecision",
-        "type": "object",
-        "description": "High-level next instruction only when the LLM chose to continue through Robot Autonomy Executor"
-      },
-      {
         "name": "taskDecision",
         "type": "object",
         "description": "Validated LLM assessment persisted to Robot Status"
       },
       {
-        "name": "response",
-        "type": "string",
-        "description": "Optional concise conversation authored by the LLM"
+        "name": "assessment",
+        "type": "object",
+        "description": "Goal assessment and evidence for the final conversation context"
       }
     ],
     "properties": {},
     "propertySchemas": {},
-    "description": "Validates one LLM goal review and exposes a next instruction only when the LLM chose continuation."
+    "description": "Validates confirmation of the current objective without selecting another activity."
   }),
   defineSchema({
     id: 'robot_autonomy_task_catalog',
@@ -2306,6 +2304,7 @@ export const nodeSchemas: NodeSchema[] = [
     category: 'operator',
     inputs: [],
     outputs: [
+      { name: 'activationState', type: 'object' },
       { name: 'tasks', type: 'array', description: 'Configured tasks that are currently executable, with their Agent Catalog descriptions' },
       { name: 'taskIds', type: 'array', description: 'Identifiers of the currently available tasks' },
       { name: 'unavailableTaskIds', type: 'array', description: 'Configured tasks that are missing, disabled, or not executable' },
@@ -2317,93 +2316,26 @@ export const nodeSchemas: NodeSchema[] = [
         type: 'multiselect',
         default: [...DEFAULT_ROBOT_AUTONOMY_TASK_IDS],
         label: 'Available Tasks',
-        description: 'Tasks the Full-mode LLM may choose. Meanings and availability come from the canonical Agent Catalog.',
+        description: 'Operations the Active Operator may select in Semi or Full mode. Meanings and availability come from the canonical Agent Catalog.',
         options: ROBOT_AUTONOMY_TASK_OPTIONS,
       },
     },
-    description: 'Loads configured Full-mode choices from the canonical Agent Catalog without choosing or starting a task.',
+    description: 'Loads configured Active Operator operations from the canonical Agent Catalog without choosing or starting a task.',
   }),
   defineSchema({
-    id: 'robot_autonomy_controller_parser',
-    name: 'Validate Autonomy Decision',
-    category: 'operator',
-    inputs: [
-    { name: 'frames', type: 'array', optional: true, description: 'Exact source images attached to the model call' },
-      { name: 'response', type: 'any', description: 'Strict JSON from the Robot Autonomy Controller LLM' },
-      { name: 'availableTasks', type: 'array', description: 'Exact task catalog supplied to the controller LLM' },
-    ],
-    outputs: [
-    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of task decisions' },
-      { name: 'decisionReceipt', type: 'object', description: 'Validated record of the LLM selection and its supplied rationale' },
-      { name: 'taskDecision', type: 'object', description: 'Catalog-backed finite agent selection' },
-      { name: 'executorDecision', type: 'object', description: 'High-level intention for Robot Autonomy Executor' },
-      { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
-    ],
-    description: 'Validates one LLM-owned Full-mode decision against the exact task catalog it received.',
+    id: 'robot_autonomy_controller_parser', name: 'Read Activation Assessment', category: 'operator',
+    inputs: [{ name: 'response', type: 'any' }, { name: 'availableTasks', type: 'array' }, { name: 'activationState', type: 'object' }],
+    outputs: [{ name: 'assessment', type: 'object' }],
+    description: 'Records model-selected activation levels and applies the Semi or Full selection rule.',
   }),
   defineSchema({
-    "id": "robot_autonomy_task_dispatch",
-    "name": "Start Selected Autonomy Task",
-    "category": "operator",
-    "inputs": [
-      {
-        "name": "decision",
-        "type": "object",
-        "description": "Validated Agent Catalog task selected by the controller"
-      },
-      {
-        "name": "robotObserver",
-        "type": "object",
-        "description": "Robot Operator cycle that owns this Full-mode decision"
-      },
-      {
-        "name": "sessionId",
-        "type": "string",
-        "optional": true,
-        "description": "Current Environment Bridge session, when available"
-      },
-      {
-        "name": "observation",
-        "type": "object",
-        "optional": true,
-        "description": "Bridge evidence already loaded by this workflow"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "queued",
-        "type": "boolean",
-        "description": "Whether the selected task was admitted"
-      },
-      {
-        "name": "taskId",
-        "type": "string",
-        "description": "Work Coordinator task ID"
-      },
-      {
-        "name": "selectedTaskId",
-        "type": "string",
-        "description": "Selected Agent Catalog task ID"
-      },
-      {
-        "name": "status",
-        "type": "string",
-        "description": "Dispatch result"
-      },
-      {
-        "name": "invocation",
-        "type": "object",
-        "description": "Selected editable Robot Operator child workflow"
-      },
-      {
-        "name": "work",
-        "type": "object",
-        "description": "Checkpointed finite-agent dispatch to await"
-      }
-    ],
-    "properties": {},
-    "propertySchemas": {},
-    "description": "Submits the one catalog-backed finite task selected by the LLM through the existing Work Coordinator handler. It does not choose a task or run an agent directly."
+    id: 'active_operator_dispatch', name: 'Request Activated Operations', category: 'operator',
+    inputs: [{ name: 'assessment', type: 'object' }, { name: 'availableTasks', type: 'array' },
+      { name: 'observation', type: 'object', optional: true }, { name: 'robotObserver', type: 'object', optional: true },
+      { name: 'frames', type: 'array', optional: true }, { name: 'currentVisualEvidence', type: 'boolean', optional: true },
+      { name: 'observationCurrent', type: 'boolean', optional: true }],
+    outputs: [{ name: 'requests', type: 'array' }, { name: 'innerEntries', type: 'array' }],
+    description: 'Stages activated operations through Work Coordinator without awaiting their completion.',
   }),
   defineSchema({
     "id": "robot_operator_environment_dispatch",
@@ -2425,6 +2357,24 @@ export const nodeSchemas: NodeSchema[] = [
         "name": "observation",
         "type": "object",
         "description": "Original correlated robot observation"
+      },
+      {
+        "name": "observationCurrent",
+        "type": "boolean",
+        "optional": true,
+        "description": "Current-run attribution from the observation input"
+      },
+      {
+        "name": "frames",
+        "type": "array",
+        "optional": true,
+        "description": "Exact camera frames supplied to the planner"
+      },
+      {
+        "name": "currentVisualEvidence",
+        "type": "boolean",
+        "optional": true,
+        "description": "Camera evidence attribution from the image selector"
       },
       {
         "name": "robotObserver",
@@ -2463,15 +2413,20 @@ export const nodeSchemas: NodeSchema[] = [
         "name": "invocation",
         "type": "object",
         "description": "Selected child workflow and its unchanged intention/evidence inputs"
+      },
+      {
+        "name": "innerEntry",
+        "type": "message",
+        "description": "Planner intention and stated reason with autonomy provenance for Inner Dialogue output"
       }
     ],
     "properties": {
-      "graph": "boredom-autonomy"
+      "graph": "environment"
     },
     "propertySchemas": {
       "graph": {
         "type": "text",
-        "default": "boredom-autonomy",
+        "default": "environment",
         "label": "Autonomy Execution Graph",
         "description": "Graph that decides how to execute the delegated high-level intention."
       }
@@ -2678,10 +2633,10 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'thought', type: 'string', description: 'Reasoning about next step' },
       { name: 'action', type: 'object', description: 'Skill to execute' },
     ],
-    properties: { enableThinking: false, model: 'default.coder', temperature: 0.2 },
+    properties: { enableThinking: false, role: 'planner', temperature: 0.2 },
     propertySchemas: {
       enableThinking: reasoningProperty,
-      model: { type: 'string', default: 'default.coder', label: 'Model' },
+      role: { ...modelRouterDefinition.propertySchemas.role, default: 'planner' },
       temperature: { type: 'slider', default: 0.2, label: 'Temperature', min: 0, max: 1, step: 0.1 },
     },
     size: [240, 180],
@@ -3230,9 +3185,10 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'suggestions', type: 'array', description: 'How to better align with persona' },
       { name: 'evaluation', type: 'string', description: 'Summary of persona alignment assessment' },
     ],
-    properties: { enableThinking: false, qualityThreshold: 0.7, strictHallucinationCheck: true },
+    properties: { enableThinking: false, role: 'psychotherapist', qualityThreshold: 0.7, strictHallucinationCheck: true },
     propertySchemas: {
       enableThinking: reasoningProperty,
+      role: { ...modelRouterDefinition.propertySchemas.role, default: 'psychotherapist' },
       qualityThreshold: { type: 'slider', default: 0.7, label: 'Alignment Threshold', min: 0.5, max: 0.95, step: 0.05 },
       strictHallucinationCheck: { type: 'toggle', default: true, label: 'Check Hallucination (when unknownSignal=true)' },
     },
@@ -3551,7 +3507,13 @@ export const nodeSchemas: NodeSchema[] = [
       { name: 'sectionCount', type: 'number' },
       { name: 'inactive', type: 'boolean' },
     ],
-    properties: { includeIdentity: true, includeBackground: true, includePersonality: true, includeValues: true, includeGoals: true },
+    properties: { includeIdentity: true, includeBackground: true, includePersonality: true, includeValues: true, includeGoals: true, goalContext: 'active' },
+    propertySchemas: {
+      goalContext: {
+        type: 'select', default: 'active', label: 'Goal Context', options: ['active', 'standing'],
+        description: 'Select active goals or recorded standing goals with their status and time horizon.',
+      },
+    },
     description: 'Formats persona data into system prompt text',
   }),
   defineSchema({
@@ -4169,9 +4131,10 @@ What grounded insights or patterns emerge?`,
       { name: 'rejectedCount', type: 'number', description: 'Number of memories rejected as irrelevant' },
       { name: 'fullResult', type: 'object', description: 'Complete result object for Context Builder' },
     ],
-    properties: { enableThinking: false, relevanceThreshold: 0.6, maxResults: 5, strictMode: true },
+    properties: { enableThinking: false, role: 'curator', relevanceThreshold: 0.6, maxResults: 5, strictMode: true },
     propertySchemas: {
       enableThinking: reasoningProperty,
+      role: { ...modelRouterDefinition.propertySchemas.role, default: 'curator' },
       relevanceThreshold: { type: 'slider', default: 0.6, label: 'Relevance Threshold', min: 0.3, max: 0.9, step: 0.05 },
       maxResults: { type: 'slider', default: 5, label: 'Max Results', min: 1, max: 10, step: 1 },
       strictMode: { type: 'toggle', default: true, label: 'Strict Mode' },
@@ -4197,6 +4160,7 @@ What grounded insights or patterns emerge?`,
     category: 'memory',
     inputs: [
       { name: 'orchestratorHints', type: 'object', description: 'LLM-selected memory routing hints from orchestrator' },
+      { name: 'currentMemoryId', type: 'string', optional: true, description: 'Saved memory record ID of the current input.' },
       { name: 'userMessage', type: 'string', description: 'User message as fallback query' },
     ],
     outputs: [{ name: 'memories', type: 'array', description: 'Retrieved memories' }, { name: 'work', type: 'object', description: 'Identified Coordinator memory lookup' }],
@@ -4346,17 +4310,18 @@ nodeSchemas.push(
       { name: 'metadata', type: 'object', description: 'Recorded origin metadata for the assistant response' }],
     description: 'Supplies the completed inference to the existing buffer, memory and speech owners.' }),
   defineSchema({ ...taskParserSchema, id: 'environment_task_planner', name: 'Resolve Task Plan',
-    execution: { timeoutOwner: 'children' },
     inputs: [...taskParserSchema.inputs,
       { name: 'planningMessages', type: 'array', description: 'The same selected context with the original task contract' },
       { name: 'planningSchema', type: 'object', description: 'Existing task schema without recursive delegation' }],
     outputs: [...taskParserSchema.outputs, { name: 'rawResponse', type: 'string', description: 'Exact final task output for continuation reuse, separate from conversational response' }],
-    properties: { ...modelRouterSchema.properties, role: 'persona', format: 'json', temperature: 0.1 },
-    propertySchemas: modelRouterSchema.propertySchemas,
+    properties: { ...modelRouterSchema.properties, role: 'planner', format: 'json', temperature: 0.1 },
+    propertySchemas: { ...modelRouterSchema.propertySchemas, role: { ...modelRouterDefinition.propertySchemas.role, default: 'planner' } },
     description: 'Resolves optional planning through Model Router, then returns the existing task parser output.' }),
 );
 const environmentContextSchema = getNodeSchema('environment_context_builder')!;
 environmentContextSchema.inputs.push(
+  { name: 'autonomy', type: 'boolean', optional: true, description: 'Select the saved autonomous-input instructions.' },
+  { name: 'goalAssessment', type: 'object', optional: true, description: 'Completed goal assessment supplied before final response generation' },
   { name: 'toolWork', type: 'object', optional: true, description: 'Attributed delegated-work identity, state, result, and error.' },
   { name: 'plannerDecision', type: 'object', optional: true, description: 'Internally authored intention with its recorded observation, reason and time' },
   { name: 'robotObserver', type: 'object', optional: true, description: 'Source and cycle identity of the internally authored intention' },
@@ -4365,6 +4330,7 @@ environmentContextSchema.inputs.push(
 );
 environmentContextSchema.properties = { ...environmentContextSchema.properties, planningDelegation: false };
 environmentContextSchema.propertySchemas = { ...environmentContextSchema.propertySchemas,
+  autonomySystemPrompt: { type: 'text_multiline', default: '', label: 'Autonomy System Prompt', rows: 16 },
   planningDelegation: { type: 'boolean', default: false, label: 'Allow Planning Delegation', description: 'Expose the approved optional larger-model planning output for task-only decisions.' } };
 environmentContextSchema.outputs.push(
   { name: 'planningMessages', type: 'array', description: 'Original task messages for optional larger-model planning' },
@@ -4372,6 +4338,15 @@ environmentContextSchema.outputs.push(
 );
 
 getNodeSchema('orchestrator_llm')!.outputs.push({ name: 'needsToolUse', type: 'boolean', description: 'Whether delegated computer tool use is selected.' });
+getNodeSchema('orchestrator_llm')!.inputs.push({ name: 'autonomy', type: 'boolean', optional: true, description: 'Select the saved autonomous-input prompts.' });
+Object.assign(getNodeSchema('orchestrator_llm')!.propertySchemas!, {
+  autonomySystemPrompt: { type: 'text_multiline', default: '', label: 'Autonomy System Prompt', rows: 16 },
+  autonomyUserPromptTemplate: { type: 'text_multiline', default: '', label: 'Autonomy Input Template', rows: 4 },
+});
+getNodeSchema('conversation_history')!.inputs.push({ name: 'includeInnerDialogue', type: 'boolean', optional: true, description: 'Input-specific selection of inner dialogue alongside conversation.' });
+
+nodeSchemas.push(...[bodyEventContextSchema, bodyEventDecisionSchema, environmentEventRequestSchema]
+  .map(schema => ({ ...schema, ...categoryColors.environment })));
 
 // Helper function to get schema by ID
 export function getNodeSchema(id: string): NodeSchema | undefined {

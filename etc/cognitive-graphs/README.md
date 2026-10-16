@@ -14,7 +14,7 @@ executor and the web editor.
 - Desire Agent remains the sole public Agency controller. `desire-executor.json`
   loads the persisted reviewed plan, prepares one finite step, and records its
   result before advancing. Digital steps use the configured operator; native
-  robot steps call `boredom-autonomy` within the same durable execution. Returned
+  robot steps call `environment` within the same durable execution. Returned
   action evidence is bound to the Desire, plan version, and step. A failed step
   stops the plan; finalization admits one outcome review through Desire Agent.
   The parent closes after that review returns. Recurring outcomes stop when the
@@ -29,18 +29,22 @@ executor and the web editor.
   Brain adapter only resolves execution identity and runs this graph; the graph
   owns cognition, both Inner Dialogue persistence effects, and optional Train
   of Thought admission.
-- Robot Autonomy Controller (`robot-autonomy-controller-mode.json`) is the one
-  general Full-mode LLM decision workflow. Its task-catalog node advertises
-  configured, currently executable finite agents with their canonical
-  descriptions. After any unresolved correlated result receives its one Goal
-  Review, one controller LLM may select one of those tasks, delegate one
-  high-level embodied intention to Robot Autonomy Executor, and optionally
-  speak.
-- Boredom Observer, Movement, and Reflection retain contextual planning. Robot
-  Autonomy Executor (`boredom-autonomy-mode.json`, stable runtime key
-  `boredom-autonomy`) routes the internal intention and authors a full task program.
-- `robot-active-task-mode.json` is the sole physical task executor used by both
-  Environment Mode and the autonomy executor. Its ordered semantic actions,
+- Active Operator (`robot-autonomy-controller-mode.json`) is the shared Semi/Full
+  activation-assessment workflow. Its catalog supplies operation meanings,
+  retained levels and dated work/execution activity. Semi requests each returned
+  update at 100; Full requests the highest returned activation, with returned
+  order resolving ties. Selected operations are independent Coordinator work.
+  The assessment records its decisions and emits selected intentions through
+  Inner Dialogue Buffer and Memory Saver; it neither waits for those operations
+  nor authors outward speech. Existing handlers and Environment Mode execute them.
+- Boredom Observer, Movement, and Reflection retain contextual planning. They and
+  the Controller send intentions to the Autonomy Input of `environment-mode.json`.
+  Human Input and Autonomy Input join before Intent in this single execution graph.
+  The join preserves origin and selects the existing editable instructions for that
+  source; a new human turn replaces inherited autonomy metadata. The separate
+  Robot Autonomy Executor graph has been removed.
+- `robot-active-task-mode.json` is the sole physical task executor called by
+  the shared Environment Mode graph. Its ordered semantic actions,
   generated gestures and ongoing behaviors run inside the existing durable parent.
   It updates an ongoing gait from fresh perception while image identification runs
   as finite Coordinator work. Identification finishes a behavior phase; remaining
@@ -48,11 +52,13 @@ executor and the web editor.
 - `robot-goal-review-mode.json` reviews an unfinished Current Execution objective
   inside the same durable parent after a correlated result. It receives
   conversation and reflection, verified outcomes, Robot Status, bridge facts,
-  and time-labelled camera evidence. It may complete, continue, wait, request
-  the user, abandon, speak, or select a catalog-backed activity. Waiting resumes
-  from a new event; it does not reconstruct the goal from Robot Status.
+  and time-labelled camera evidence. It updates the durable goal, including its
+  objective, completion criteria, completion or abandonment, and returned evidence.
+  It cannot start another workflow or publish speech. Full Auto or an appropriate
+  Semi Auto trigger supplies goal state to planning through the existing operator
+  and agent owners; Robot Status projects the durable record.
   Agency-owned steps return to their Desire plan and outcome review instead of
-  entering this general continuation workflow. Pending Desire summaries convey
+  entering this goal assessment workflow. Pending Desire summaries convey
   lifecycle work, not robot motion instructions.
 - `robot-status-mode.json` performs one bounded situational update. Its reusable
   Robot Status input node supplies supporting context without replacing fresh

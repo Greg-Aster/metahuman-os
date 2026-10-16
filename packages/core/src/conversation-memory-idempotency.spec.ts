@@ -8,7 +8,7 @@ import { setAuditEnabled } from './audit.js'
 import { loadBufferForUser } from './conversation-buffer.js'
 import { withUserContext } from './context.js'
 import { eventBus } from './infrastructure/event-bus/client.js'
-import { ConversationBufferNode } from './nodes/output/conversation-buffer.node.js'
+import { ConversationBufferNode, prepareConversationEntries } from './nodes/output/conversation-buffer.node.js'
 import { MemoryCaptureNode } from './nodes/output/memory-capture.node.js'
 import { getProfilePaths, registerProfileStorageConfigGetter, systemPaths } from './path-builder.js'
 
@@ -117,4 +117,45 @@ test('Conversation Buffer entries are saved independently and replay idempotentl
   assert.equal(hiddenContextInput.persisted, false)
   assert.equal(hiddenContextInput.skipped, true)
   assert.equal(loadBufferForUser(username, 'conversation').messages.length, 4)
+})
+
+test('distinct node admissions retain an explicit reply link through memory capture and Curator assembly', async t => {
+  const { assembleCuratorSources } = await import('./nodes/curator/source-assembler.js')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-conversation-linkage-'))
+  const username = `conversation-linkage-${process.pid}`
+  const previousEmit = eventBus.emit.bind(eventBus)
+  const previousFetch = globalThis.fetch
+  const previousRun = systemPaths.run
+  eventBus.emit = () => {}
+  systemPaths.run = path.join(root, 'run')
+  globalThis.fetch = async () => new Response(JSON.stringify({ task: { id: 'fixture-index' } }), { status: 200 })
+  registerProfileStorageConfigGetter(candidate => candidate === username ? { path: root, type: 'internal' } : undefined)
+  t.after(() => { eventBus.emit = previousEmit; globalThis.fetch = previousFetch; systemPaths.run = previousRun; fs.rmSync(root, { recursive: true, force: true }) })
+  await withUserContext({ userId: username, username, role: 'owner' }, async () => {
+    const base = { username, userId: username, cognitiveMode: 'environment' as const, recordPersonaMemory: true,
+      memoryTimestamp: '2026-10-15T00:00:00.000Z', sessionId: 'same-session' }
+    const userEntry = prepareConversationEntries({ userMessage: 'The original request' }, { ...base, graphExecution: { occurrenceId: 'execution:user-admission' } })[0]
+    const user = await ConversationBufferNode.execute({ entry: userEntry }, base, {})
+    await MemoryCaptureNode.execute({ entries: user.entries }, base, {})
+    const delivery = { ...base, graphExecution: { occurrenceId: 'execution:response-delivery' } }
+    const payload = { response: 'The answer', metadata: { inReplyTo: user.entry.meta.idempotencyKey } }
+    for (let replay = 0; replay < 2; replay++) {
+      const assistantEntry = prepareConversationEntries(payload, delivery)[0]
+      const assistant = await ConversationBufferNode.execute({ entry: assistantEntry }, base, {})
+      await MemoryCaptureNode.execute({ entries: assistant.entries }, base, {})
+    }
+    const records = jsonFiles(getProfilePaths(username).episodic).map(file => ({ ...JSON.parse(fs.readFileSync(file, 'utf8')), path: file }))
+    assert.equal(records.length, 2, 'replay must retain the original message identities')
+    const assistant = records.find(record => record.metadata.role === 'assistant')!
+    assert.equal(assistant.metadata.inReplyTo, user.entry.meta.idempotencyKey)
+    assert.notEqual(assistant.metadata.idempotencyKey, assistant.metadata.inReplyTo)
+    const assembled = assembleCuratorSources(records)
+    assert.equal(assembled.memories.length, 1)
+    assert.deepEqual(assembled.deferredPaths, [])
+    assert.equal(assembled.memories[0]!.content, 'The original request')
+    assert.equal(assembled.memories[0]!.response, 'The answer')
+    assert.equal(assembled.memories[0]!.metadata?.cognitiveMode, 'environment')
+    assert.equal(assembled.memories[0]!.metadata?.sessionId, 'same-session')
+    assert.equal(Object.keys(assembled.memories[0]!.sourceHashes!).length, 2)
+  })
 })

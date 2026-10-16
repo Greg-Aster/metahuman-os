@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { storageClient } from './storage-client.js';
 import { audit } from './audit.js';
+import { getProfilePaths } from './path-builder.js';
 
 const LOG_PREFIX = '[cognitive-mode]';
 
@@ -184,6 +185,14 @@ export function listCognitiveModes(): CognitiveModeDefinition[] {
 
 export function getModeDefinition(mode: CognitiveModeId): CognitiveModeDefinition {
   return MODE_DEFINITIONS[mode];
+}
+
+/** Read admission provenance without creating a setting or assigning a legacy default. */
+export function readRecordedCognitiveMode(username: string): CognitiveModeId | undefined {
+  const file = path.join(getProfilePaths(username).persona, 'cognitive-mode.json');
+  if (!fs.existsSync(file)) return undefined;
+  const config = JSON.parse(fs.readFileSync(file, 'utf8')) as CognitiveModeConfig;
+  return config.currentMode;
 }
 
 export function loadCognitiveMode(): CognitiveModeConfig {

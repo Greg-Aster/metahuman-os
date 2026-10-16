@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 
 SPEC = importlib.util.spec_from_file_location("train_unsloth", Path(__file__).with_name("train_unsloth.py"))
 trainer = importlib.util.module_from_spec(SPEC)
@@ -42,10 +43,26 @@ def example(source, target="The recorded answer."):
         {"role": "user", "content": "User: literal text in a question."},
         {"role": "assistant", "content": target}], "metadata": {
             "sourceIds": [source], "sourceHashes": {source: "a" * 64},
-            "objective": "assistant-continuation"}}
+            "objective": "assistant-continuation", "targetAuthor": "assistant"}}
 
 
 class TrainerContractTest(unittest.TestCase):
+    def test_adapter_reload_preserves_pinned_base_revision(self):
+        cfg = {**config(), "base_model_revision": "reviewed-commit"}
+        base, tokenizer, adapter = MagicMock(), MagicMock(), MagicMock()
+        fast = MagicMock()
+        fast.from_pretrained.return_value = (base, tokenizer)
+        peft = MagicMock()
+        peft.PeftModel.from_pretrained.return_value = adapter
+        torch = MagicMock()
+        with patch.dict(sys.modules, {"unsloth": MagicMock(FastModel=fast),
+                                     "torch": torch, "peft": peft}):
+            loaded, _, _ = trainer.load_runtime(cfg, Path("saved-adapter"))
+        self.assertIs(loaded, adapter)
+        self.assertEqual(fast.from_pretrained.call_args.kwargs["model_name"], cfg["base_model"])
+        self.assertEqual(fast.from_pretrained.call_args.kwargs["revision"], "reviewed-commit")
+        peft.PeftModel.from_pretrained.assert_called_once_with(base, "saved-adapter", is_trainable=False)
+
     def test_only_final_response_and_native_eos_receive_loss(self):
         row = example("source")
         row["messages"][:0] = [
@@ -86,6 +103,21 @@ class TrainerContractTest(unittest.TestCase):
             trainer.row_messages({"instruction": "x", "input": "y", "output": "z"})
         with self.assertRaisesRegex(ValueError, "Exact|exact"):
             trainer.row_messages({"system": "", "user": "q", "output": "a"}, True)
+
+    def test_specialist_capacity_includes_complete_native_template_and_target(self):
+        cfg = {**config(), "require_exact_messages": True}
+        short = {"system": "System", "user": "Request", "output": "Answer"}
+        long = {"system": "System", "user": "Context" * 200, "output": "Result" * 50}
+        effective, training, evaluation = trainer.prepare_sequences(TextTokenizer(), [short], [long], cfg)
+        self.assertGreater(effective["max_seq_length"], cfg["max_seq_length"])
+        self.assertEqual(effective["max_seq_length"], len(evaluation[0]["input_ids"]))
+        self.assertEqual("".join(chr(label) for label in evaluation[0]["labels"] if label != -100), long["output"] + "~")
+        self.assertEqual(cfg["max_seq_length"], 256)
+        self.assertLess(len(training[0]["input_ids"]), effective["max_seq_length"])
+
+    def test_personalization_retains_its_existing_configured_capacity(self):
+        with self.assertRaisesRegex(ValueError, "exceeding"):
+            trainer.prepare_sequences(TextTokenizer(), [example("source", "long" * 200)], [], config())
 
     def test_malformed_roles_and_empty_targets_are_rejected(self):
         for messages in ([{"role": "assistant", "content": "a"}],
@@ -151,6 +183,43 @@ class TrainerContractTest(unittest.TestCase):
         for loss in (None, "1", -1, float("nan"), float("inf")):
             with self.subTest(loss=loss), self.assertRaises(ValueError):
                 trainer.finite_loss({"eval_loss": loss})
+
+    def test_mode_objectives_bind_distinct_persona_contexts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            files = {"train": root / "train.jsonl", "evaluation": root / "evaluation.jsonl"}
+            contexts = {"human-continuation": "Human fixture context.", "assistant-continuation": "Robot fixture context."}
+            rows = {"train": example("train", "Recorded human reply."), "evaluation": example("evaluation")}
+            for split, mode, objective in (("train", "dual", "human-continuation"),
+                                           ("evaluation", "environment", "assistant-continuation")):
+                rows[split]["metadata"].update(mode=mode, objective=objective,
+                    targetAuthor="human" if objective == "human-continuation" else "assistant")
+                rows[split]["messages"].insert(0, {"role": "system", "content": contexts[objective]})
+            manifest_path = root / "manifest.json"
+
+            def freeze():
+                manifest = {"version": 2, "baseModel": config()["base_model"], "supervision": "final-assistant-only",
+                            "settings": {"objective": "human-continuation", "objectivesByMode": {
+                                "dual": "human-continuation", "environment": "assistant-continuation"}},
+                            "systemPrompt": contexts["human-continuation"], "systemPromptsByObjective": contexts,
+                            "sourceHashes": {"train": "a" * 64, "evaluation": "a" * 64}}
+                for split, file in files.items():
+                    file.write_text(json.dumps(rows[split]) + "\n")
+                    manifest[split] = {"sha256": trainer.digest(file), "count": 1, "sourceIds": [split]}
+                manifest["datasetId"] = hashlib.sha256(json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+                manifest_path.write_text(json.dumps(manifest))
+                return manifest
+
+            expected = freeze()
+            self.assertEqual(trainer.verify_manifest(manifest_path, files["train"], files["evaluation"], config()), expected)
+            for row in rows.values():
+                tokens = trainer.tokenize_row(TextTokenizer(), row, 512)
+                supervised = "".join(chr(label) for label in tokens["labels"] if label != -100)
+                self.assertEqual(supervised, row["messages"][-1]["content"] + "~")
+            rows["evaluation"]["messages"][0]["content"] = contexts["human-continuation"]
+            freeze()  # All checksums match; rejection must come from objective-specific context.
+            with self.assertRaisesRegex(ValueError, "persona context"):
+                trainer.verify_manifest(manifest_path, files["train"], files["evaluation"], config())
         self.assertEqual(trainer.finite_loss({"eval_loss": 0.2}), 0.2)
 
     def test_gguf_selection_is_confined_to_requested_conversion(self):

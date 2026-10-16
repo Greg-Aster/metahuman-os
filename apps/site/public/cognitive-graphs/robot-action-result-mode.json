@@ -222,9 +222,7 @@
       "data": {
         "label": "Current Execution",
         "nodeType": "execution_context",
-        "properties": {
-          "eventLimit": 16
-        }
+        "properties": {}
       }
     },
     {

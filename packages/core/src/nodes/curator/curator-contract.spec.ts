@@ -307,8 +307,8 @@ test('Curator commits every source record in a durably saved conversation pair',
     assert.equal(marked.markedPaths.length, 2)
     for (const sourcePath of sourcePaths) {
       const source = JSON.parse(fs.readFileSync(sourcePath, 'utf8'))
-      assert.equal(source.metadata.curatorRecordId, pair.id)
-      assert.match(source.metadata.curatorRecordFile, /pair-record\.json$/)
+      assert.ok(source.metadata.curatorReviews[pair.id])
+      assert.match(source.metadata.curatorReviews[pair.id].recordFile, /pair-record\.json$/)
     }
   } finally {
     fs.rmSync(temporaryRoot, { recursive: true, force: true })
@@ -359,9 +359,9 @@ test('Curator saves before marking, is idempotent, and leaves failed items retry
     const rejectedSource = JSON.parse(fs.readFileSync(sourcePaths[1], 'utf8'))
     const failedSource = JSON.parse(fs.readFileSync(sourcePaths[2], 'utf8'))
     assert.equal(acceptedSource.metadata.curated, true)
-    assert.equal(acceptedSource.metadata.curationStatus, 'accepted')
+    assert.equal(acceptedSource.metadata.curatorReviews.accepted.status, 'accepted')
     assert.equal(rejectedSource.metadata.curated, true)
-    assert.equal(rejectedSource.metadata.curationStatus, 'rejected')
+    assert.equal(rejectedSource.metadata.curatorReviews.rejected.status, 'rejected')
     assert.equal(failedSource.metadata.curated, undefined)
 
     const retry = markCuratedResults(results.slice(0, 2), username)
@@ -449,7 +449,7 @@ test('changed source content and missing or obsolete decisions require another r
   assert.equal(sourceCurationStatus(username, savedSource).current, true)
   assert.equal(sourceCurationStatus(username, { ...savedSource, content: 'changed' }).reason, 'source-changed')
   assert.equal(sourceCurationStatus(username, { ...savedSource,
-    metadata: { ...savedSource.metadata, curatorPolicyVersion: 1 } }).reason, 'obsolete-policy')
+    metadata: { ...savedSource.metadata, curatorReviews: { [source.id]: { ...(savedSource.metadata!.curatorReviews as any)[source.id], policyVersion: 1 } } } }).reason, 'obsolete-policy')
   fs.writeFileSync(path.join(curatedDir, curatedRecordFilename(item.curated!)), '{bad json')
   assert.equal(sourceCurationStatus(username, savedSource).reason, 'invalid-record')
   assert.equal((await UncuratedMemoryLoaderNode.execute({}, { userId: username }, {})).count, 1)

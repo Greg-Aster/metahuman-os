@@ -7,6 +7,7 @@
     aliases?: string[]
     provider: string
     model: string
+    description?: string
     roles?: string[]
     capabilities?: string[]
     options?: Record<string, any>
@@ -174,7 +175,7 @@
         <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Environment Mode model</span>
         <select class="select-field w-full" bind:value={environmentModelId} disabled={loading || savingAssignment}>
           {#each models as model}
-            <option value={model.id}>{model.model} ({model.provider}){model.capabilities?.includes('image') ? ' - image' : ''}</option>
+            <option value={model.id}>{model.description || model.model} ({model.provider}){model.capabilities?.includes('image') ? ' - image' : ''}</option>
           {/each}
         </select>
       </label>
@@ -190,7 +191,7 @@
         <span class="block font-medium text-gray-700 dark:text-gray-300 mb-1">Edit registered model options</span>
         <select class="select-field w-full" bind:value={selectedModelId} on:change={loadSelectedOptions} disabled={loading}>
           {#each models.filter(model => model.source === 'user-registry') as model}
-            <option value={model.id}>{model.model} ({model.provider})</option>
+            <option value={model.id}>{model.description || model.model} ({model.provider})</option>
           {/each}
         </select>
       </label>

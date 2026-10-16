@@ -37,7 +37,7 @@ import { withUserContext } from '../context.js';
 import { deliverDurableWorkReceipt } from '../durable-execution/work-results.js';
 import { ExecutionBusyError, ExecutionCancelledError, ExecutionConflictError } from '../durable-execution/types.js';
 import { openExecutionStore } from '../durable-execution/storage.js';
-import { executionWorkInput, relayExecutionOutbox } from '../durable-execution/coordinator-outbox.js';
+import { executionWorkInput, relayExecutionOutbox, reconcileTerminatedExecutionWork } from '../durable-execution/coordinator-outbox.js';
 import { canWriteMemory } from '../cognitive-mode.js';
 import type { GraphExecutionState } from '../graph-executor.js';
 import { GraphConfigurationError } from '../graph-streaming.js';
@@ -381,6 +381,7 @@ export class ExecutionEngine {
           type: task.input.type,
           tags: task.input.tags,
           entities: task.input.entities,
+          metadata: task.input.metadata,
           path: task.input.path,
         }, { username: task.username }));
         return { eventId: task.input.id, indexed };
@@ -408,11 +409,16 @@ export class ExecutionEngine {
 
     this.registerHandler('vector.semantic-search', async (task) => {
       const { queryIndexWithReconciliation } = await import('../vector-index.js');
+      if (task.input.memorySleepCycle === 'latest' && !task.input.sleepSessionId) return [];
       return withTaskUserContext(task, () => queryIndexWithReconciliation(
         task.input.query,
         {
           topK: task.input.limit || 10,
           memoryTypes: task.input.memoryTypes,
+          memoryOrder: task.input.memoryOrder,
+          memoryTimeRange: task.input.memoryTimeRange,
+          currentMemoryId: task.input.currentMemoryId,
+          sleepSessionId: task.input.sleepSessionId,
           username: task.username,
           reconciliationSource: task.metadata?.producer || 'vector-semantic-search',
         },
@@ -523,7 +529,7 @@ export class ExecutionEngine {
               robotOperatorConfig.boredomMovementGraph,
               robotOperatorConfig.boredomReflectionGraph,
             ].includes(graphName)
-              ? robotOperatorConfig.autonomyGraph
+              ? robotOperatorConfig.environmentGraph
               : undefined,
             abortSignal: context.signal,
             ttsGeneration: typeof task.input.ttsGeneration === 'number'
@@ -605,7 +611,30 @@ export class ExecutionEngine {
     return this.running;
   }
 
+  private attachGraphExecution(task: QueuedTask, executionId: string): () => void {
+    const release = this.queueManager.attachExecution(task.id, executionId);
+    return () => {
+      try {
+        const store = openExecutionStore(task.username);
+        try { reconcileTerminatedExecutionWork(store, executionId, this.queueManager); }
+        finally { store.close(); }
+      } finally { release(); }
+    };
+  }
+
   private onQueueEvent(event: QueueEvent): void {
+    if (event.taskId && ['task_completed', 'task_failed', 'task_cancelled', 'task_expired'].includes(event.type)) {
+      const task = this.queueManager.getTask(event.taskId);
+      // Adapter-owned work completes outside execute(), but uses the same
+      // durable receipt owner. Recovery is not its normal delivery path.
+      if (task?.durable && !this.canHandle(task)) {
+        void deliverDurableWorkReceipt(task, async input => this.queueManager.enqueue(input)).catch(error => {
+          const failure = error instanceof Error ? error : new Error(String(error));
+          this.options.onError?.(failure, task);
+          console.error('[Work Coordinator] External work receipt delivery failed:', failure);
+        });
+      }
+    }
     if (event.taskId && (event.type === 'task_cancelled' || event.type === 'task_expired')) {
       const task = this.queueManager.getTask(event.taskId);
       if (task?.input?.sleepWorkflow?.sessionId) {
@@ -727,7 +756,7 @@ export class ExecutionEngine {
         } finally { store.close(); }
       }
       const { withGraphWork } = await import('../durable-execution/runtime.js');
-      const result = await withGraphWork(task, id => this.queueManager.attachExecution(task.id, id), () => handler(task, {
+      const result = await withGraphWork(task, id => this.attachGraphExecution(task, id), () => handler(task, {
         signal: controller.signal,
         emit: chunk => this.queueManager.appendOutput(task.id, chunk),
         enqueue: this.queueManager.enqueue.bind(this.queueManager),
@@ -856,9 +885,25 @@ export class ExecutionEngine {
           MH_TASK_ID: task.id,
           MH_TASK_CREATED_AT: task.createdAt,
           MH_TASK_PAYLOAD: JSON.stringify(task.input),
+          MH_GRAPH_WORK: JSON.stringify({ id: task.id, username: task.username, handler: task.handler,
+            attempt: task.attempt, maxAttempts: task.maxAttempts, durable: task.durable, originatingCognitiveMode: task.originatingCognitiveMode }),
           ...(task.durable ? { MH_PARENT_EXECUTION: JSON.stringify(task.durable) } : {}),
         },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+      });
+      const graphAttachments = new Map<string, () => void>();
+      let graphAttachmentError: Error | undefined;
+      child.on('message', (message: any) => {
+        try {
+          if (message?.type === 'mh:graph-release') {
+            graphAttachments.get(message.requestId)?.();
+            graphAttachments.delete(message.requestId);
+          } else if (message?.type === 'mh:graph-attach') {
+            graphAttachments.set(message.requestId, this.attachGraphExecution(task, message.executionId));
+          }
+        } catch (error) {
+          graphAttachmentError = error instanceof Error ? error : new Error(String(error));
+        }
       });
       let stdout = '';
       let stderr = '';
@@ -868,9 +913,16 @@ export class ExecutionEngine {
       child.stderr?.on('data', data => { stderr += data.toString(); });
       child.on('error', reject);
       child.on('close', (code, exitSignal) => {
+        for (const release of graphAttachments.values()) {
+          try { release(); }
+          catch (error) { graphAttachmentError = error instanceof Error ? error : new Error(String(error)); }
+        }
+        graphAttachments.clear();
         signal.removeEventListener('abort', abort);
         if (signal.aborted) {
           reject(new DOMException('Work cancelled', 'AbortError'));
+        } else if (graphAttachmentError) {
+          reject(graphAttachmentError);
         } else if (code === 0) {
           resolve({ stdout, stderr });
         } else if (exitSignal) {

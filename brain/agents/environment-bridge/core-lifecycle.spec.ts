@@ -24,7 +24,7 @@ assert.equal(publicCore.ROOT, isolatedRoot);
 publicCore.setAuditEnabled(false);
 let scenario = '';
 let sent = 0;
-let speechSettingsResults: Record<string, any>[] = [];
+let behaviorSettingsResults: Record<string, any>[] = [];
 let wireUpdates: Record<string, any>[] = [];
 let acknowledgements: Record<string, unknown>[] = [];
 let finishFixture = () => {};
@@ -52,9 +52,9 @@ class FakeWebSocket extends EventEmitter {
       audioFinished();
     } else if (message.type === 'environment.observation.ack') {
       observationAcknowledged();
-    } else if (message.type === 'speech.settings.result' || message.type === 'behavior.settings.result') {
-      speechSettingsResults.push(message);
-      if (speechSettingsResults.length === 4) queueMicrotask(finishFixture);
+    } else if (message.type === 'behavior.settings.result') {
+      behaviorSettingsResults.push(message);
+      if (behaviorSettingsResults.length === 4) queueMicrotask(finishFixture);
     } else if (message.type === 'environment.action.update') {
       wireUpdates.push(message);
       if (scenario === 'update-send') throw new Error('Fixture settings send failed');
@@ -104,6 +104,70 @@ const config: BridgeConfig = {
   serviceToken: 'service-token',
   graph: 'environment',
 };
+
+test('reconnect backlog preserves every observation while independent feedback is acknowledged', async () => {
+  const keys = ['MH_ENVIRONMENT_ADAPTER_URL', 'MH_ENVIRONMENT_ADAPTER_TOKEN', 'MH_ENVIRONMENT_BRIDGE_TOKEN', 'MH_ENVIRONMENT_CORE_URL'];
+  const previous = keys.map(key => process.env[key]);
+  process.env.MH_ENVIRONMENT_ADAPTER_URL = 'ws://fixture.invalid/environment';
+  process.env.MH_ENVIRONMENT_ADAPTER_TOKEN = 'fixture-adapter';
+  process.env.MH_ENVIRONMENT_BRIDGE_TOKEN = 'fixture-core';
+  process.env.MH_ENVIRONMENT_CORE_URL = 'http://fixture.invalid';
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  const delivered: string[] = [];
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let receipt!: () => void;
+  const acknowledged = new Promise<void>(resolve => { receipt = resolve; });
+  let observationAcks = 0;
+  scenario = 'replay';
+  acknowledgements = [];
+  finishFixture = receipt;
+  observationAcknowledged = () => { if (++observationAcks === 256) controller.abort(); };
+  globalThis.fetch = async (url, options) => {
+    const pathname = new URL(String(url)).pathname;
+    if (pathname === '/api/environment-bridge/stream') {
+      return new Response(new ReadableStream<Uint8Array>({ start(stream) {
+        options?.signal?.addEventListener('abort', () => stream.close(), { once: true });
+        setImmediate(() => {
+          for (let index = 0; index < 256; index++) fixtureSocket.emit('message', JSON.stringify({
+            type: 'environment.observation', observation: { id: `replay-${index}`, environmentId: 'ainekio',
+              adapter: 'ainekio-gateway', sessionId: 'robot-session', timestamp: new Date().toISOString(), capabilities: { actions: [] } },
+          }), false);
+          fixtureSocket.emit('message', JSON.stringify({ type: 'environment.feedback', feedback: {
+            id: 'new-receipt', actionId: 'new-action', type: 'completed', timestamp: new Date().toISOString(), message: 'Done',
+          } }), false);
+        });
+      } }), { headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    if (pathname === '/api/environment-bridge/observation') {
+      const body = JSON.parse(String(options?.body));
+      delivered.push(body.id);
+      if (delivered.length === 1) await held;
+    } else if (pathname === '/api/environment-bridge/action-result') {
+      return Response.json({ success: true, action: { id: 'new-action' } });
+    } else assert.equal(pathname, '/api/environment-bridge/telemetry');
+    return Response.json({ success: true });
+  };
+  const timeout = setTimeout(() => { release(); controller.abort(new Error('Replay test timed out')); receipt(); }, 5000);
+  let run: Promise<void> | undefined;
+  try {
+    run = runEnvironmentBridgeAgent(controller.signal);
+    await acknowledged;
+    assert.equal(fixtureSocket.readyState, FakeWebSocket.OPEN);
+    assert.equal(acknowledgements.length, 1);
+    assert.equal(acknowledgements[0].feedbackId, 'new-receipt');
+    assert.equal(delivered.length, 1, 'Receipt ACK does not wait for the held observation');
+    release();
+    await run;
+    assert.deepEqual(delivered, Array.from({ length: 256 }, (_, index) => `replay-${index}`));
+    assert.equal(observationAcks, 256);
+  } finally {
+    release(); controller.abort(); await run; clearTimeout(timeout);
+    globalThis.fetch = originalFetch;
+    keys.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index]; });
+  }
+});
 
 test('speech reaches Core before its camera frame, and late frames remain separate observations', async () => {
   scenario = 'audio';
@@ -156,6 +220,19 @@ test('speech reaches Core before its camera frame, and late frames remain separa
     controller.abort(); clearTimeout(timeout); await run;
     globalThis.fetch = originalFetch;
   }
+});
+
+test('camera read uses the existing stream independently of physical action dispatch', async () => {
+  const originalFetch = globalThis.fetch;
+  const read = { type: 'environment.visual.read', version: 1, requestId: 'read-one', sessionId: 'robot-session' };
+  const reads: Record<string, unknown>[] = [];
+  globalThis.fetch = (async () => new Response(`event: visual-reads\ndata: ${JSON.stringify({ reads: [read] })}\n\n`)) as typeof fetch;
+  try {
+    await assert.rejects(consumeActionStream(config, 'robot-session', async () => {
+      throw new Error('A camera read must not dispatch a physical action');
+    }, new AbortController().signal, undefined, request => reads.push(request)), /action stream ended unexpectedly/);
+    assert.deepEqual(reads, [read]);
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 test('unexpected action stream completion fails the bridge connection', async () => {
@@ -409,7 +486,7 @@ test('the Bridge distinguishes ambiguous delivery from preparation that never se
   }
 });
 
-test('recognition delivery keeps only the newest waiting result and does not block control receipts', async () => {
+test('recognition and locomotion retain their newest evidence without blocking control receipts', async () => {
   const envKeys = ['MH_ENVIRONMENT_ADAPTER_URL', 'MH_ENVIRONMENT_ADAPTER_TOKEN', 'MH_ENVIRONMENT_BRIDGE_TOKEN', 'MH_ENVIRONMENT_CORE_URL'];
   const previous = envKeys.map(key => process.env[key]);
   process.env.MH_ENVIRONMENT_ADAPTER_URL = 'ws://fixture.invalid/environment';
@@ -419,6 +496,7 @@ test('recognition delivery keeps only the newest waiting result and does not blo
   const originalFetch = globalThis.fetch;
   const controller = new AbortController();
   const delivered: number[] = [];
+  const measured: number[] = [];
   let releaseFirst: () => void = () => {};
   let firstStarted: () => void = () => {};
   const started = new Promise<void>(resolve => { firstStarted = resolve; });
@@ -446,6 +524,7 @@ test('recognition delivery keeps only the newest waiting result and does not blo
     if (pathname === '/api/environment-bridge/telemetry' && body.perception) {
       assert.deepEqual(body.recognitionProcessing, { freshFps: 3, receivedFrames: 20 });
       delivered.push(body.perception.frameCounter);
+      if (body.locomotionMeasurement) measured.push(body.locomotionMeasurement.yaw.degrees);
       if (delivered.length === 1) {
         firstStarted();
         await new Promise<void>((resolve, reject) => {
@@ -464,6 +543,10 @@ test('recognition delivery keeps only the newest waiting result and does not blo
     const run = runEnvironmentBridgeAgent(controller.signal);
     await started;
     recognition(2); recognition(3);
+    for (const degrees of [12, 14]) fixtureSocket.emit('message', JSON.stringify({ type: 'environment.telemetry',
+      sessionId: 'robot-session', telemetry: { kind: 'robot.status', robot_id: 'body-fixture', epoch: 7,
+        locomotionMeasurement: { yaw: { available: true, source: 'body-imu', robotId: 'body-fixture',
+          referenceId: 'boot-1', observedAt: new Date().toISOString(), degrees, uncertaintyDegrees: null } } } }), false);
     fixtureSocket.emit('message', JSON.stringify({ type: 'environment.feedback', feedback: {
       id: 'fixture-status', actionId: 'fixture-action', type: 'status',
       timestamp: new Date().toISOString(), message: 'Still active' } }), false);
@@ -472,6 +555,7 @@ test('recognition delivery keeps only the newest waiting result and does not blo
     releaseFirst();
     await run;
     assert.deepEqual(delivered, [1, 3], 'intermediate recognition must not accumulate');
+    assert.deepEqual(measured, [14], 'Orientation and image evidence must survive the same coalesced delivery');
   } finally {
     controller.abort(); releaseFirst(); clearTimeout(timeout);
     globalThis.fetch = originalFetch;
@@ -526,12 +610,12 @@ test('ongoing updates preserve movement identity and lease while receipts finish
   }
 });
 
-for (const behavior of [false, true]) test(`${behavior ? 'Robot control' : 'Speech destination'} requests use the authenticated Core API and preserve correlation`, async () => {
-  const kind = behavior ? 'behavior.settings' : 'speech.settings';
-  const field = behavior ? 'enabled' : 'outputTarget';
-  const values = behavior ? [undefined, false, true, 'invalid'] : [undefined, 'robot', 'local', 'invalid'];
-  scenario = 'speech-settings';
-  speechSettingsResults = [];
+test('Robot control requests use the authenticated Core API and preserve correlation', async () => {
+  const kind = 'behavior.settings';
+  const field = 'enabled';
+  const values = [undefined, false, true, 'invalid'];
+  scenario = 'behavior-settings';
+  behaviorSettingsResults = [];
   const keys = ['MH_ENVIRONMENT_ADAPTER_URL', 'MH_ENVIRONMENT_ADAPTER_TOKEN', 'MH_ENVIRONMENT_BRIDGE_TOKEN', 'MH_ENVIRONMENT_CORE_URL'];
   const previous = keys.map(key => process.env[key]);
   const originalFetch = globalThis.fetch;
@@ -552,22 +636,22 @@ for (const behavior of [false, true]) test(`${behavior ? 'Robot control' : 'Spee
         }
       });
     } }), { headers: { 'Content-Type': 'text/event-stream' } });
-    if (pathname === (behavior ? '/api/environment-bridge/behavior-settings' : '/api/environment-bridge/speech-settings')) {
+    if (pathname === '/api/environment-bridge/behavior-settings') {
       assert.equal(new Headers(options?.headers).get('Authorization'), 'Bearer fixture-core');
       const body = JSON.parse(String(options?.body));
       forwarded.push(body);
       if (body[field] === 'invalid') return Response.json({ error: 'Invalid destination' }, { status: 400 });
-      return Response.json({ [field]: body[field] ?? (behavior ? false : 'local'), username: 'fixture-owner', provider: 'kokoro' });
+      return Response.json({ [field]: body[field] ?? false, username: 'fixture-owner', provider: 'kokoro' });
     }
     return Response.json({ success: true });
   };
-  const timeout = setTimeout(() => controller.abort(new Error('Speech settings test timed out')), 5000);
+  const timeout = setTimeout(() => controller.abort(new Error('Behavior settings test timed out')), 5000);
   try {
     await runEnvironmentBridgeAgent(controller.signal);
     assert.deepEqual(forwarded, values.map(value => value === undefined ? {} : { [field]: value }));
-    assert.deepEqual(speechSettingsResults.map(result => result.requestId), ['settings-0', 'settings-1', 'settings-2', 'settings-3']);
-    assert.deepEqual(speechSettingsResults.slice(0, 3).map(result => result[field]), behavior ? [false, false, true] : ['local', 'robot', 'local']);
-    assert.match(speechSettingsResults[3].error, /Invalid destination/);
+    assert.deepEqual(behaviorSettingsResults.map(result => result.requestId), ['settings-0', 'settings-1', 'settings-2', 'settings-3']);
+    assert.deepEqual(behaviorSettingsResults.slice(0, 3).map(result => result[field]), [false, false, true]);
+    assert.match(behaviorSettingsResults[3].error, /Invalid destination/);
   } finally {
     controller.abort(); clearTimeout(timeout); globalThis.fetch = originalFetch;
     keys.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index]; });

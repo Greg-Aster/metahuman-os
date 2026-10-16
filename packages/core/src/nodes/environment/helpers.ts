@@ -1,3 +1,6 @@
+import { normalizeLocomotionGoal } from '../../environment-interface/active-task.js'
+import { normalizeEnvironmentTargetBox } from '../../environment-interface/visual-approach.js'
+import { recognitionImageAssociation } from '../../environment-interface/perception.js'
 import { projectDesireAwareness } from '../../agency/lifecycle-policy.js'
 import type { EnvironmentTaskProgram, EnvironmentTaskStep } from '../../environment-interface/active-task.js'
 import {
@@ -49,7 +52,6 @@ export type EnvironmentTaskOutcome = typeof ENVIRONMENT_TASK_OUTCOMES[number];
 
 export const ENVIRONMENT_COMPLETION_BASES = [
   'none',
-  'response',
   'action_result',
   'visual_observation',
   'environment_state',
@@ -114,9 +116,6 @@ export interface EnvironmentTaskDecision {
 const SELECTOR_MAX_OBJECT_KEYS = 12;
 const SELECTOR_MAX_ARRAY_ITEMS = 8;
 const SELECTOR_MAX_DEPTH = 3;
-const SELECTOR_MAX_STRING_LENGTH = 180;
-const SELECTOR_STATE_FIELD_LEAF_LIMIT = 10;
-const SELECTOR_COMMAND_DESCRIPTION_BUDGET = 4_000;
 
 function projectSelectorEvidence(
   value: unknown,
@@ -127,7 +126,7 @@ function projectSelectorEvidence(
   if (budget.remaining <= 0) return undefined;
   if (typeof value === 'string') {
     budget.remaining -= 1;
-    return value.slice(0, SELECTOR_MAX_STRING_LENGTH);
+    return value;
   }
   if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
     budget.remaining -= 1;
@@ -151,43 +150,43 @@ function projectSelectorEvidence(
 }
 
 export function projectSelectorState(value: unknown): unknown {
-  if (!isRecord(value)) return projectSelectorEvidence(value, { remaining: SELECTOR_STATE_FIELD_LEAF_LIMIT });
-  // The gateway also contains other robots and the legacy joint contract. Keep
-  // the selected body's model and settings ahead of the generic state budget.
+  if (!isRecord(value)) return value;
+  // Gateway transport diagnostics stay in the observation store. Model context
+  // describes the selected body, preserving its reported state without a token
+  // or field-count cutoff. Other environment state remains intact.
+  // Recognition has one read-time projection below the environment envelope.
+  // A saved raw perception here would contradict that projection after telemetry.
+  const { perception: _perception, ...state } = value;
   const body = isRecord(value.body) ? value.body : null;
   const gateway = isRecord(value.gateway) ? value.gateway : null;
   const robots = isRecord(gateway?.robots) ? gateway.robots : null;
   const selected = typeof body?.robotId === 'string' ? robots?.[body.robotId] : null;
   const robot = isRecord(selected) ? selected : null;
-  return Object.fromEntries(
-    Object.entries(value)
-      .slice(0, SELECTOR_MAX_OBJECT_KEYS)
-      .flatMap(([key, nested]) => {
-        if (key === 'gateway' && robots) {
-          return [[key, { selectedRobot: robot ? {
-            robotId: body!.robotId,
-            model: robot.model,
-            profile: robot.profile,
-            mode: robot.mode,
-            connectionState: robot.connection_state,
-            activeWalk: projectSelectorEvidence(robot.active_walk, { remaining: 16 }),
-            posture: robot.posture ?? null,
-            lastTerminal: projectSelectorEvidence(robot.last_terminal, { remaining: 8 }),
-          } : null }]];
-        }
-        if (key === 'activeMovementUpdates' && isRecord(nested)) {
-          return [[key, { version: nested.version, available: nested.available,
-            controls: projectSelectorEvidence(nested.controls, { remaining: 8 }) }]];
-        }
-        const projected = projectSelectorEvidence(
-          nested,
-          { remaining: SELECTOR_STATE_FIELD_LEAF_LIMIT },
-          1,
-          SELECTOR_MAX_DEPTH + 1,
-        );
-        return projected === undefined ? [] : [[key, projected]];
-      }),
-  );
+  return {
+    ...state,
+    ...(gateway && robots ? {
+      gateway: { selectedRobot: robot ? {
+        robotId: body!.robotId,
+        model: robot.model,
+        profile: robot.profile,
+        mode: robot.mode,
+        connectionState: robot.connection_state,
+        activeWalk: robot.active_walk,
+        posture: robot.posture ?? null,
+        lastTerminal: robot.last_terminal,
+        motorOutput: isRecord(robot.status) ? {
+          output_ready: robot.status.output_ready ?? null,
+          output_armed: robot.status.output_armed ?? null,
+          output_fault: robot.status.output_fault ?? null,
+          timestamp: robot.status.status_received_at ?? null,
+        } : null,
+      } : null },
+    } : {}),
+    ...(isRecord(value.activeMovementUpdates) ? {
+      activeMovementUpdates: { version: value.activeMovementUpdates.version,
+        available: value.activeMovementUpdates.available, controls: value.activeMovementUpdates.controls },
+    } : {}),
+  };
 }
 
 export function projectRobotStatusContext(value: unknown): unknown {
@@ -199,13 +198,14 @@ export function projectRobotStatusContext(value: unknown): unknown {
   const task = isRecord(value.task) ? value.task : null;
   return {
     ...(value.live ? { live: value.live } : {}),
+    projection: value.projection,
     updatedAt: value.updatedAt,
     sourceUpdatedAt: value.sourceUpdatedAt,
     history: value.history,
     lastBodyAction: value.lastBodyAction ?? null,
     ...(value.latestVisualObservation ? { latestVisualObservation: value.latestVisualObservation } : {}),
     body: body
-      ? projectSelectorEvidence({
+      ? {
           sessionId: body.sessionId,
           environmentId: body.environmentId,
           connectionStatus: body.connectionStatus,
@@ -213,13 +213,13 @@ export function projectRobotStatusContext(value: unknown): unknown {
           telemetryAt: body.telemetryAt,
           battery: body.battery,
           motion: body.motion,
-        }, { remaining: 24 }, 0, 4) ?? null
+        }
       : null,
     lastAction: lastAction
-      ? projectSelectorEvidence(lastAction, { remaining: 16 }, 0, 3) ?? null
+      ? lastAction
       : null,
     task: task
-      ? projectSelectorEvidence({
+      ? {
           objectiveId: task.objectiveId,
           executionId: task.executionId,
           executionStatus: task.executionStatus,
@@ -234,17 +234,17 @@ export function projectRobotStatusContext(value: unknown): unknown {
           feedback: task.feedback,
           baselineFrame: task.baselineFrame,
           updatedAt: task.updatedAt,
-        }, { remaining: 40 }, 0, 5) ?? null
+        }
       : null,
     situation: situation
-      ? projectSelectorEvidence({
+      ? {
           situationalSummary: situation.situationalSummary,
           environmentDescription: situation.environmentDescription,
           currentGoal: situation.currentGoal,
           currentIntent: situation.currentIntent,
           userContext: situation.userContext,
           uncertainties: situation.uncertainties,
-        }, { remaining: 20 }, 0, 3) ?? null
+        }
       : null,
     agency: agency
       ? { purpose: 'Pending work for Desire Agent; never a body instruction or permission to act.',
@@ -255,27 +255,20 @@ export function projectRobotStatusContext(value: unknown): unknown {
 
 /**
  * Preserve only descriptions for currently executable exact command names. The
- * adapter owns their meaning; this projection bounds untrusted bridge input for
- * the selector prompt without attempting to choose a command in code.
+ * adapter owns their complete meaning; this projection does not choose a command
+ * or shorten its description.
  */
 export function projectRobotCommandDescriptions(
-  capabilities: Pick<EnvironmentCapabilities, 'robotCommands' | 'robotCommandDescriptions'>,
+  capabilities: Pick<EnvironmentCapabilities, 'robotCommands' | 'robotCommandDescriptions' | 'locomotion'>,
 ): Record<string, string> {
   if (!isRecord(capabilities.robotCommandDescriptions)) return {};
-  const entries = [...new Set(capabilities.robotCommands ?? [])].slice(0, 64).flatMap(command => {
+  const entries = [...new Set((capabilities.robotCommands ?? []).filter(command => !capabilities.locomotion?.commands.includes(command)))].slice(0, 64).flatMap(command => {
     const description = typeof capabilities.robotCommandDescriptions?.[command] === 'string'
-      ? capabilities.robotCommandDescriptions[command].replace(/\s+/g, ' ').trim()
+      ? capabilities.robotCommandDescriptions[command].trim()
       : '';
     return description ? [[command, description] as const] : [];
   });
-  const descriptionLimit = Math.min(
-    SELECTOR_MAX_STRING_LENGTH,
-    Math.floor(SELECTOR_COMMAND_DESCRIPTION_BUDGET / Math.max(1, entries.length)),
-  );
-  return Object.fromEntries(entries.map(([command, description]) => [
-    command,
-    description.slice(0, descriptionLimit),
-  ]));
+  return Object.fromEntries(entries);
 }
 
 /** History remains evidence, not additional system instructions. Preserve the
@@ -313,7 +306,6 @@ export interface EnvironmentSelectorEnvelopeInput {
   currentTime?: string;
   personaText?: string;
   robotStatus?: unknown;
-  liveStatus?: unknown;
   recognition?: unknown;
   replyToContent?: string;
   inputSource?: 'user' | 'autonomy';
@@ -332,12 +324,30 @@ export function buildEnvironmentSelectorSystemPrompt(
   return input.systemPrompt.trim();
 }
 
+const VISION_OPERATION_DESCRIPTIONS = {
+  acquire: 'Locate the requested target in a robot image and return candidates with their source frame and visible evidence. Candidate acquisition does not establish current tracking or task completion.',
+  search: 'Configure the detector to search camera frames for the supplied object descriptions. Matching a category does not identify a particular physical object.',
+  select: 'Use the selected region of the supplied source frame as a visual reference for the tracker. The frame ID refers to image evidence retained by this execution; box coordinates refer to that image.',
+  release: 'Release the current visual target. This changes perception configuration, not robot movement.',
+} as const;
+
+const VISION_REFERENCE_FRAME_DESCRIPTION = 'Optional ID of a previously retained image to use as a comparison reference. Omit this field when locating the target in a fresh robot image. Supply the exact retained ID when using a reference image; there is no latest or default alias.';
+
+const TASK_OUTPUT_DESCRIPTION = 'The task planner selects task state and executable actions. The conversation model receives the selected task results and generates the outward response when Intent selects needsResponse.';
+
 function selectorCapabilityRules(capabilities: EnvironmentCapabilities, state: unknown): string[] {
   const actions = new Set(capabilities.actions);
-  const commandDescriptions = projectRobotCommandDescriptions(capabilities);
+  const recognition = isRecord(state) && isRecord(state.recognition) ? state.recognition : null;
+  const visionOperations = new Set(Array.isArray(recognition?.visionOperations) ? recognition.visionOperations : []);
+  const commandDescriptions = projectRobotCommandDescriptions({ ...capabilities, robotCommands: capabilities.robotCommands?.filter(command => !capabilities.locomotion?.commands.includes(command)) });
   const gateway = isRecord(state) && isRecord(state.gateway) ? state.gateway : null;
   const robot = isRecord(gateway?.selectedRobot) ? gateway.selectedRobot : null;
   return [
+    TASK_OUTPUT_DESCRIPTION,
+    actions.has('captureImage') ? `referenceFrameId: ${VISION_REFERENCE_FRAME_DESCRIPTION}` : '',
+    ...Object.entries(VISION_OPERATION_DESCRIPTIONS)
+      .filter(([operation]) => operation === 'acquire' ? actions.has('captureImage') : visionOperations.has(operation))
+      .map(([operation, description]) => `${operation}: ${description}`),
     actions.has('faceExpression')
       ? 'faceExpression changes only the display to an expression from expressionLibrary; expression is the library identifier. It does not move the body.'
       : '',
@@ -350,11 +360,8 @@ function selectorCapabilityRules(capabilities: EnvironmentCapabilities, state: u
           ? 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects; use a generatedMotion step when a named effect cannot be identified confidently.'
           : 'robotCommand: command descriptions are unavailable, so do not infer opaque or punctuation-only command effects.'
       : '',
-    actions.has('robotCommand')
-      ? 'For ongoing named motions described by the adapter, set continuous:true. For live walking and turning together, select continuous move with forward and turn controls.'
-      : '',
-    robot?.model === 'v2-12servo' && actions.has('move')
-      ? 'V2 locomotion: speed is 0..200 for Walk/Run (above 100 selects Run), or 0..100 for Crawl/Crab; speed 0 finishes the gait. Use speed OR both stride (1..100) and rate (0.25..3), never both control modes. Forward and turn are a pair of signed percentages (-100..100); positive turn is left. Use the advertised directional Crab commands for sideways motion. For finite cycles set continuous:false and units explicitly; continuous:true runs until finished or stopped. Live updates use only the advertised activeMovementUpdates controls.'
+    actions.has('move')
+      ? 'Locomotion is selected with a locomotionGoal and gait controls. Select a distance, relativeTurn, approach, follow, or visual goal with its endpoint or continuation condition. Speed is a gait percentage, not measured velocity. Distance and angle progress use recorded estimates in metres and degrees with their source and uncertainty. Image-relative proximity is not metric distance. Bare gait starts are not available. Command acceptance, elapsed time, and gait-cycle counts do not establish arrival. The returned result distinguishes goal evidence from gait termination.'
       : '',
     actions.has('robotMotionPlan')
       ? 'robotMotionPlan: request off-script body_local motion through a generatedMotion step; never author a motion plan directly.'
@@ -404,15 +411,13 @@ export function buildEnvironmentSelectorEnvelope(
     }));
   const recognition = isRecord(input.recognition) ? input.recognition : null;
   const sourceFrame = isRecord(recognition?.sourceFrame) ? recognition.sourceFrame : null;
-  const matchingVisualFrameIds = sourceFrame ? frames.filter(frame => frame.cameraFrame
-    && ['robotId', 'gatewayInstance', 'epoch', 'counter'].every(key => sourceFrame[key] !== undefined
-      && sourceFrame[key] === (frame.cameraFrame as Record<string, unknown>)[key])).map(frame => frame.id) : [];
+  const association = recognitionImageAssociation(sourceFrame, input.visualFrames ?? []);
   const feedback = (observation?.feedback ?? []).slice(-3).map(event => ({
     type: event.type,
     actionId: event.actionId,
-    message: event.message.slice(0, SELECTOR_MAX_STRING_LENGTH),
+    message: event.message,
     command: isRecord(event.data) && typeof event.data.command === 'string'
-      ? event.data.command.slice(0, SELECTOR_MAX_STRING_LENGTH)
+      ? event.data.command
       : undefined,
   }));
   const state = observation ? projectSelectorState(observation.state ?? {}) : null;
@@ -420,7 +425,7 @@ export function buildEnvironmentSelectorEnvelope(
   const map = projectSelectorEvidence(observation?.map, { remaining: 6 });
   return JSON.stringify({
     currentTime: input.currentTime ?? new Date().toISOString(),
-    currentInstruction: input.instruction.slice(0, 4_000),
+    currentInstruction: input.instruction,
     inputSource: input.inputSource ?? 'user',
     selectedRoutes: input.routing ?? {},
     evidenceAvailability: {
@@ -430,7 +435,6 @@ export function buildEnvironmentSelectorEnvelope(
       currentVision: input.currentVisionAvailable === true,
     },
     currentEnvironment: observation ? {
-      ...(input.liveStatus ? { live: input.liveStatus } : {}),
       sessionId: observation.sessionId,
       timestamp: observation.timestamp,
       state,
@@ -442,7 +446,8 @@ export function buildEnvironmentSelectorEnvelope(
           ? { expressionLibrary: observation.capabilities.expressionLibrary ?? [] } : {}),
         ...(Object.keys(robotCommandDescriptions).length > 0
           ? { robotCommandCatalog: robotCommandDescriptions }
-          : { robotCommands: observation.capabilities.robotCommands?.slice(0, 64) ?? [] }),
+          : { robotCommands: observation.capabilities.robotCommands?.filter(command => !observation.capabilities.locomotion?.commands.includes(command)).slice(0, 64) ?? [] }),
+        ...(observation.capabilities.locomotion ? { locomotion: { goalKinds: observation.capabilities.locomotion.goalKinds, lateral: observation.capabilities.locomotion.lateral } } : {}),
         motionClasses: observation.capabilities.motionClasses ?? [],
         navigation: observation.capabilities.navigation === true,
         visual: observation.capabilities.visual === true,
@@ -452,8 +457,7 @@ export function buildEnvironmentSelectorEnvelope(
       },
       feedback,
       visualFrames: frames,
-      ...(recognition ? { recognition: { ...recognition, matchingVisualFrameIds,
-        imageAssociation: matchingVisualFrameIds.length ? 'exact_frame' : frames.length ? 'different_frame' : 'no_image' } } : {}),
+      ...(recognition ? { recognition: { ...recognition, ...association } } : {}),
       actionId: typeof observation.metadata?.actionId === 'string'
         ? observation.metadata.actionId
         : undefined,
@@ -462,13 +466,13 @@ export function buildEnvironmentSelectorEnvelope(
         : undefined,
     } : null,
     capabilityRules: observation ? selectorCapabilityRules(observation.capabilities, state) : [],
-    activePersona: input.personaText?.trim().slice(0, 2_000) || null,
+    activePersona: input.personaText?.trim() || null,
     robotStatus: projectRobotStatusContext(input.robotStatus),
     execution: input.execution ?? null,
     ...(input.activeExecutions?.length ? { activeExecutions: input.activeExecutions } : {}),
     ...(input.observationHistory?.length ? { observationHistory: input.observationHistory } : {}),
     ...(input.replyToContent?.trim()
-      ? { replyToContext: input.replyToContent.trim().slice(0, 500) }
+      ? { replyToContext: input.replyToContent.trim() }
       : {}),
     recentConversation: (input.recentConversation ?? []).map(message => ({
       role: message.role === 'assistant' ? 'assistant' : 'user',
@@ -538,6 +542,10 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
     }
   }
 
+  let locomotionGoal: EnvironmentAction['locomotionGoal'];
+  try { if (record.locomotionGoal !== undefined) locomotionGoal = normalizeLocomotionGoal(record.locomotionGoal); } catch { return null; }
+  if (type === 'move' && !locomotionGoal || type !== 'move' && locomotionGoal) return null;
+  if (locomotionGoal && (record.continuous === false || record.durationMs !== undefined && record.durationMs !== 0 || record.units !== undefined || record.amount !== undefined)) return null;
   const vector = record.vector && typeof record.vector === 'object'
     ? record.vector as EnvironmentAction['vector']
     : undefined;
@@ -547,6 +555,7 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
     sessionId: typeof record.sessionId === 'string' ? record.sessionId : sessionId,
     ...(type === 'faceExpression' ? { expression: (record.expression as string).trim() } : {}),
     type: type as EnvironmentActionType,
+    locomotionGoal,
     text: typeof record.text === 'string' ? record.text : undefined,
     direction: typeof record.direction === 'string' ? record.direction as EnvironmentAction['direction'] : undefined,
     command: typeof record.command === 'string' ? record.command : undefined,
@@ -560,6 +569,7 @@ function normalizeAction(value: unknown, sessionId?: string): Partial<Environmen
     gait: typeof record.gait === 'string' ? record.gait as EnvironmentAction['gait'] : undefined,
     forward: typeof record.forward === 'number' ? record.forward : undefined,
     turn: typeof record.turn === 'number' ? record.turn : undefined,
+    lateral: typeof record.lateral === 'number' ? record.lateral : undefined,
     target: typeof record.target === 'string' ? record.target : undefined,
     inspectionTarget,
     visualTarget,
@@ -699,6 +709,43 @@ const SELECTOR_SCHEMA_DECISION_REQUIRED = [
   'continuationPolicy',
   'requiredCompletionBasis',
 ] as const;
+const goalNumber = { type: 'number', exclusiveMinimum: 0 };
+const locomotionTargetSchema = { type: 'object', additionalProperties: false,
+  required: ['frameId', 'frameTimestamp', 'box'], properties: {
+    frameId: { type: 'string' }, frameTimestamp: { type: 'string' }, trackId: { type: 'string' }, queryId: { type: 'string' },
+    box: { type: 'object', additionalProperties: false, required: ['x', 'y', 'width', 'height'], properties:
+      Object.fromEntries(['x', 'y', 'width', 'height'].map(k => [k, { type: 'number', minimum: 0, maximum: 1 }])) },
+    groundContact: { type: 'object', additionalProperties: false, required: ['x', 'y'], properties:
+      Object.fromEntries(['x', 'y'].map(k => [k, { type: 'number', minimum: 0, maximum: 1 }])) } } };
+const proximitySchema = { anyOf: [
+  { type: 'object', additionalProperties: false, required: ['kind', 'metres', 'tolerance'], properties:
+    { kind: { const: 'metric' }, metres: goalNumber, tolerance: goalNumber } },
+  { type: 'object', additionalProperties: false, required: ['kind', 'boxHeight', 'tolerance'], properties:
+    { kind: { const: 'imageRelative' }, boxHeight: { ...goalNumber, maximum: 1 }, tolerance: goalNumber } },
+] };
+const LOCOMOTION_GOAL_SCHEMA = {
+  description: 'Requested locomotion endpoint or continuing target relationship, evaluated from attributed progress evidence.',
+  anyOf: [
+    { type: 'object', additionalProperties: false, required: ['kind', 'direction', 'metres', 'tolerance'],
+      description: 'Travel the requested metric displacement from the recorded start pose within the selected tolerance.',
+      properties: { kind: { const: 'distance' }, direction: { enum: ['forward', 'back', 'left', 'right'] }, metres: goalNumber, tolerance: goalNumber } },
+    { type: 'object', additionalProperties: false, required: ['kind', 'degrees', 'tolerance'],
+      description: 'Turn through the requested signed relative angle within the selected tolerance; positive angles turn left.',
+      properties: { kind: { const: 'relativeTurn' }, degrees: { type: 'number' }, tolerance: goalNumber } },
+    ...(['approach', 'follow'] as const).map(kind => ({
+      description: kind === 'approach' ? 'Approach the recorded target until the selected metric or image-relative proximity condition is satisfied.'
+        : 'Maintain the selected relationship to the recorded target until the selected ending condition or explicit termination.',
+      anyOf: proximitySchema.anyOf.map((proximity, index) => ({ type: 'object', additionalProperties: false,
+        required: ['kind', 'target', 'proximity', ...(kind === 'follow' ? ['endingCondition'] : [])],
+        properties: { kind: { const: kind }, target: { ...locomotionTargetSchema,
+          required: [...locomotionTargetSchema.required, ...(index === 0 ? ['groundContact'] : [])] }, proximity,
+          ...(kind === 'follow' ? { endingCondition: { type: 'string', minLength: 1 } } : {}) } })),
+    })),
+    { type: 'object', additionalProperties: false, required: ['kind', 'target', 'completionCriteria'],
+      description: 'Move while evaluating the selected target and visual completion criteria through the existing task owner.',
+      properties: { kind: { const: 'visual' }, target: { type: 'string', minLength: 1 }, completionCriteria: { type: 'string', minLength: 1 } } },
+  ],
+};
 const SELECTOR_SCHEMA_ACTION_PROPERTIES = {
   type: { type: 'string', enum: [...DIRECT_ACTION_TYPES] },
   command: SELECTOR_SCHEMA_STRING,
@@ -715,7 +762,11 @@ const SELECTOR_SCHEMA_ACTION_PROPERTIES = {
   continuous: { type: 'boolean' }, speed: { type: 'number' }, stride: { type: 'number' }, rate: { type: 'number' },
   gait: { type: 'string', enum: ['walk', 'crawl', 'run', 'crab'] },
   forward: { type: 'number', minimum: -100, maximum: 100 }, turn: { type: 'number', minimum: -100, maximum: 100 },
+  lateral: { type: 'number', minimum: -100, maximum: 100, description: 'Signed sideways gait command in percent; positive values move left.' },
+  locomotionGoal: LOCOMOTION_GOAL_SCHEMA,
 } as const;
+
+const { units: _cycleUnits, amount: _movementAmount, command: _movementCommand, ...LOCOMOTION_ACTION_PROPERTIES } = SELECTOR_SCHEMA_ACTION_PROPERTIES;
 
 function selectorActionItemSchema(
   directActionTypes: EnvironmentActionType[],
@@ -723,7 +774,7 @@ function selectorActionItemSchema(
   expressions: string[],
 ): Record<string, unknown> {
   const nonCommandTypes = directActionTypes.filter(type => type !== 'robotCommand' && type !== 'faceExpression' && type !== 'move');
-  const { command: _command, ...nonCommandProperties } = SELECTOR_SCHEMA_ACTION_PROPERTIES;
+  const { command: _command, locomotionGoal: _goal, ...nonCommandProperties } = SELECTOR_SCHEMA_ACTION_PROPERTIES;
   const nonCommandSchema = {
     type: 'object',
     additionalProperties: false,
@@ -764,8 +815,8 @@ function selectorActionItemSchema(
   if (directActionTypes.includes('move')) {
     for (const field of ['direction', 'vector']) variants.push({
       ...nonCommandSchema,
-      required: ['type', field],
-      properties: { ...nonCommandProperties, type: { type: 'string', enum: ['move'] } },
+      required: ['type', field, 'locomotionGoal'],
+      properties: { ...LOCOMOTION_ACTION_PROPERTIES, durationMs: { const: 0 }, continuous: { const: true }, locomotionGoal: { ...LOCOMOTION_GOAL_SCHEMA, anyOf: LOCOMOTION_GOAL_SCHEMA.anyOf.slice(0, 3) }, type: { type: 'string', enum: ['move'] } },
     });
   }
   if (directActionTypes.includes('robotCommand')) variants.push(robotCommandSchema);
@@ -782,7 +833,9 @@ export interface EnvironmentSelectorJsonSchemaInput {
   activeExecutions?: EnvironmentExecutionTarget[];
   actions?: readonly string[];
   robotCommands?: readonly string[];
+  locomotion?: EnvironmentCapabilities['locomotion'];
   expressions?: readonly string[];
+  visionOperations?: readonly string[];
   actionRouteSelected?: boolean;
   requireAction?: boolean;
 }
@@ -808,7 +861,7 @@ export function buildEnvironmentSelectorJsonSchema(
   const advertisedActions = new Set(input.actions ?? []);
   const actionRouteSelected = input.actionRouteSelected !== false;
   const expressions = [...new Set((input.expressions ?? []).map(name => name.trim()).filter(Boolean))];
-  const robotCommands = [...new Set((input.robotCommands ?? [])
+  const robotCommands = [...new Set((input.robotCommands ?? []).filter(command => !input.locomotion?.commands.includes(command))
     .map(command => command.trim())
     .filter(Boolean))].slice(0, 64);
   const directActionTypes = [...DIRECT_ACTION_TYPES].filter(type => (
@@ -828,7 +881,7 @@ export function buildEnvironmentSelectorJsonSchema(
       ...SELECTOR_SCHEMA_DECISION_PROPERTIES,
       outcome: {
         type: 'string',
-        enum: directActionTypes.length > 0 || movementSupported
+        enum: actionRouteSelected || directActionTypes.length > 0 || movementSupported
           ? [...ENVIRONMENT_TASK_OUTCOMES]
           : nonActionOutcomes,
       },
@@ -866,17 +919,40 @@ export function buildEnvironmentSelectorJsonSchema(
     required: ['kind', 'action'], properties: { kind: { const: 'action' }, action } });
   if (movementSupported) steps.push({ type: 'object', additionalProperties: false,
     required: ['kind', 'description'], properties: { kind: { const: 'generatedMotion' }, description: { type: 'string', minLength: 1, maxLength: 500 } } });
-  if (directActionTypes.includes('move') && (!capabilityBound || advertisedActions.has('captureImage'))) {
+  const cameraSupported = actionRouteSelected && (!capabilityBound || advertisedActions.has('captureImage'));
+  const visionOperations = new Set(input.visionOperations ?? []);
+
+  const visionFields: Record<string, Record<string, unknown>> = {
+    acquire: { target: { type: 'string' }, referenceFrameId: { type: 'string',
+      description: VISION_REFERENCE_FRAME_DESCRIPTION } },
+    search: { labels: { type: 'array', minItems: 1, items: { type: 'string' } } },
+    select: { frameId: { type: 'string' }, description: { type: 'string' },
+      box: { type: 'object', additionalProperties: false, required: ['x', 'y', 'width', 'height'],
+        properties: Object.fromEntries(['x', 'y', 'width', 'height'].map(key => [key, { type: 'number', minimum: 0, maximum: 1 }])) } },
+    release: {},
+  };
+  if (actionRouteSelected) for (const operation of ['acquire', 'search', 'select', 'release'] as const) {
+    if (operation === 'acquire' ? !cameraSupported : !visionOperations.has(operation)) continue;
+    const fields = visionFields[operation];
+    steps.push({ type: 'object', additionalProperties: false,
+      description: 'A finite vision operation. Body Control owns detector configuration; MetaHuman owns image interpretation. It does not command movement.',
+      required: ['kind', 'operation', ...Object.keys(fields).filter(key => key !== 'referenceFrameId')],
+      properties: { kind: { const: 'vision' }, operation: { const: operation, description: VISION_OPERATION_DESCRIPTIONS[operation] }, ...fields } });
+  }
+  if (cameraSupported) {
     steps.push({ type: 'object', additionalProperties: false,
       required: ['kind', 'target', 'completionCriteria', 'motion', 'candidateLabels', 'identifyEveryFrames', 'steering'],
       properties: { kind: { const: 'behavior' }, target: { type: 'string', minLength: 1 },
-        completionCriteria: { type: 'string', minLength: 1 }, motion: { type: 'object', additionalProperties: false,
-          required: ['type', 'direction', 'continuous'], properties: {
-            ...SELECTOR_SCHEMA_ACTION_PROPERTIES, type: { const: 'move' }, continuous: { const: true } } },
+        completionCriteria: { type: 'string', minLength: 1 }, motion: { anyOf: [
+          { type: 'null', description: 'Observe without issuing a movement command. Completion is evaluated against the selected target and completion criteria through the existing task owner.' },
+          ...(directActionTypes.includes('move') ? [{ type: 'object', additionalProperties: false,
+            required: ['type', 'direction', 'continuous', 'locomotionGoal'], properties: {
+              ...LOCOMOTION_ACTION_PROPERTIES, durationMs: { const: 0 }, locomotionGoal: { ...LOCOMOTION_GOAL_SCHEMA, anyOf: LOCOMOTION_GOAL_SCHEMA.anyOf.slice(3) }, type: { const: 'move' }, continuous: { const: true } } }] : [])] },
         candidateLabels: { type: 'array', items: { type: 'string' } },
         identifyEveryFrames: { type: 'integer', minimum: 1 },
         steering: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false,
-          required: ['label', 'gain'], properties: { label: { type: 'string' }, gain: { type: 'number' } } }] } } });
+          required: ['label', 'gain'], properties: { label: { type: 'string' }, gain: { type: 'number' },
+            trackId: { type: 'string', description: 'Use the selected track\'s current image position for the existing requested movement. A track ID estimates continuity and is not verified personal identity.' } } }] } } });
   }
   if (steps.length) alternatives.push(branch({ type: 'object', additionalProperties: false,
     required: ['steps'], properties: { steps: { type: 'array', minItems: 1, items: { anyOf: steps } } } },
@@ -937,7 +1013,7 @@ const SELECTOR_ACTION_FIELDS = new Set([
   'inspectionTarget',
   'visualTarget',
   'vector',
-  'metadata', 'continuous', 'speed', 'stride', 'rate', 'gait', 'forward', 'turn',
+  'locomotionGoal', 'metadata', 'continuous', 'speed', 'stride', 'rate', 'gait', 'forward', 'turn', 'lateral',
 ]);
 
 /**
@@ -1018,22 +1094,40 @@ export function validateEnvironmentSelectorOutput(
         if (!isRecord(step)) { errors.push('program step must be an object'); continue; }
         if (step.kind === 'action' && Object.keys(step).every(key => ['kind', 'action'].includes(key))) {
           const normalized = action(step.action);
+          if (normalized?.locomotionGoal && ['visual', 'follow'].includes(normalized.locomotionGoal.kind)) { errors.push('Visual and follow locomotion require a behavior step'); continue; }
           if (normalized) steps.push({ kind: 'action', action: normalized });
           else errors.push('action step requires a typed semantic action');
         } else if (step.kind === 'generatedMotion' && Object.keys(step).every(key => ['kind', 'description'].includes(key))
           && typeof step.description === 'string' && step.description.trim() && step.description.length <= 500) {
           steps.push({ kind: 'generatedMotion', description: step.description.trim() });
+        } else if (step.kind === 'vision') {
+          const fields: Record<string, string[]> = { acquire: ['target', 'referenceFrameId'], search: ['labels'], select: ['frameId', 'box', 'description'], release: [] };
+          try {
+            if (typeof step.operation !== 'string' || !fields[step.operation]
+              || Object.keys(step).some(key => !['kind', 'operation', ...fields[step.operation as string]].includes(key))) throw new Error('unsupported vision operation fields');
+            if (step.operation === 'acquire' && typeof step.target === 'string' && step.target.trim()
+              && (step.referenceFrameId === undefined || typeof step.referenceFrameId === 'string'))
+              steps.push({ kind: 'vision', operation: 'acquire', target: step.target, ...(typeof step.referenceFrameId === 'string' ? { referenceFrameId: step.referenceFrameId } : {}) });
+            else if (step.operation === 'search' && Array.isArray(step.labels) && step.labels.length
+              && step.labels.every(label => typeof label === 'string' && label.trim()))
+              steps.push({ kind: 'vision', operation: 'search', labels: step.labels as string[] });
+            else if (step.operation === 'select' && typeof step.frameId === 'string' && typeof step.description === 'string')
+              steps.push({ kind: 'vision', operation: 'select', frameId: step.frameId, description: step.description, box: normalizeEnvironmentTargetBox(step.box) });
+            else if (step.operation === 'release') steps.push({ kind: 'vision', operation: 'release' });
+            else throw new Error('vision operation requires its target, labels or source image selection');
+          } catch (error) { errors.push(String(error)); }
         } else if (step.kind === 'behavior') {
-          const motion = action(step.motion);
+          const motion = step.motion === null ? null : action(step.motion);
           const steering = step.steering;
           if (Object.keys(step).some(key => !['kind', 'target', 'completionCriteria', 'motion', 'candidateLabels', 'identifyEveryFrames', 'steering'].includes(key))
             || typeof step.target !== 'string' || !step.target.trim() || typeof step.completionCriteria !== 'string' || !step.completionCriteria.trim()
-            || motion?.type !== 'move' || motion.continuous !== true || !Array.isArray(step.candidateLabels)
+            || (step.motion !== null && (motion?.type !== 'move' || motion.continuous !== true || !motion.locomotionGoal || !['visual', 'follow'].includes(motion.locomotionGoal.kind))) || !Array.isArray(step.candidateLabels)
             || step.candidateLabels.some(label => typeof label !== 'string') || !Number.isInteger(step.identifyEveryFrames) || Number(step.identifyEveryFrames) < 1
-            || (steering !== null && (!isRecord(steering) || typeof steering.label !== 'string' || typeof steering.gain !== 'number'))) errors.push('behavior requires target, phase criteria, ongoing motion, candidate labels, frame cadence and steering');
+            || (steering !== null && (!isRecord(steering) || typeof steering.label !== 'string' || typeof steering.gain !== 'number'
+              || (steering.trackId !== undefined && typeof steering.trackId !== 'string')))) errors.push('behavior requires target, phase criteria, motion or null, candidate labels, frame cadence and steering');
           else steps.push({ kind: 'behavior', target: step.target, completionCriteria: step.completionCriteria,
             motion, candidateLabels: step.candidateLabels as string[], identifyEveryFrames: Number(step.identifyEveryFrames),
-            steering: steering as { label: string; gain: number } | null });
+            steering: steering as { label: string; gain: number; trackId?: string } | null });
         } else errors.push('program step kind is unsupported');
       }
       if (steps.length === raw.program.steps.length) program = { steps };

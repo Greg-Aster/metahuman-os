@@ -18,13 +18,13 @@ let speechError: Error | undefined
 let beforeSpeech: (() => void) | undefined
 mock.module('../../model-router.js', { namedExports: { ...router,
   callLLM: async (options: any) => {
-    if (options.role === 'persona' && options.options?.format === 'json') {
+    if (options.role === 'planner' && options.options?.format === 'json') {
       calls.push(structuredClone({ role: options.role, modelId: options.modelId, messages: options.messages, options: options.options }))
       return { content: JSON.stringify(delegatedPlan) }
     }
     if (options.role === 'persona') { beforeSpeech?.(); if (speechError) throw speechError }
     calls.push(structuredClone({ role: options.role, modelId: options.modelId, messages: options.messages, options: options.options }))
-    return { content: options.role === 'persona' ? speech : JSON.stringify(['orchestrator', 'environmentIntent'].includes(options.role) ? routing : choice) }
+    return { content: options.role === 'persona' ? speech : JSON.stringify(['orchestrator'].includes(options.role) ? routing : choice) }
   },
 } })
 const { OrchestratorLLMNode } = await import('../../nodes/llm/orchestrator-llm.node.js')
@@ -54,7 +54,7 @@ const routes = (selected: string[] = []) => {
 
 // Production graph and scheduler, actual intent/context/selector/parser/handoff nodes.
 // Replace source I/O and physical/presentation effects with observable fixtures.
-const excluded = new Set(['input-events', 'continue-user-input', 'remaining-objective', 'review-remaining-objective', 'await-objective-input', 'conversation-result'])
+const excluded = new Set(['input-events', 'continue-user-input', 'remaining-objective', 'review-remaining-objective', 'await-objective-input', 'continuation-state'])
 const graph = { ...fullGraph, nodes: fullGraph.nodes.filter(node => !excluded.has(node.id)),
   scheduler: { ...fullGraph.scheduler, eventInputNodeId: undefined },
   edges: fullGraph.edges.filter(edge => !excluded.has(edge.source) && !excluded.has(edge.target)) }
@@ -95,10 +95,11 @@ async function run(request: string, selected: string[], response = { response: '
   delegatedPlan = options.delegatedPlan
   choice = taskChoice
   speech = conversation ?? 'Hello.'
-  const parentCalls = taskChoice.delegatePlanning ? 3 : 2
+  const parentCalls = 1 + (routing.needsAction ? taskChoice.delegatePlanning ? 2 : 1 : 0)
   const expectedCalls = parentCalls + (selected.includes('needsResponse') && response.executionDisposition !== 'steer'
     && options.taskResult?.done !== false ? 1 : 0)
   const reads: string[] = []
+  const deliveredResponses: string[] = []
   beforeSpeech = () => options.beforeSpeech?.(reads)
   speechError = options.failSpeech ? new Error('Simulated speech generation failure') : undefined
   const store = new ExecutionStore(':memory:')
@@ -109,7 +110,7 @@ async function run(request: string, selected: string[], response = { response: '
   const replacements: Record<string, (...args: any[]) => Promise<any>> = {
     environment_face_expression: async (inputs: any) => ({ control: inputs.control, success: true, status: 'fixture-display' }),
     user_input: async () => ({ message: request, entry }),
-    conversation_buffer: async (inputs: any) => ({ entry, entries: [entry], response: inputs.response }),
+    conversation_buffer: async (inputs: any) => { deliveredResponses.push(inputs.response); return { entry, entries: [entry], response: inputs.response } },
     memory_capture: async (inputs: any) => ({ passthrough: inputs.passthrough }),
     conversation_history: async () => { reads.push('history'); return { history: [{ role: 'user', content: 'earlier-dialogue' }] } },
     memory_router: async (_inputs: any, context: any) => {
@@ -142,6 +143,15 @@ async function run(request: string, selected: string[], response = { response: '
     let result = await executeGraph(graph, { username: 'routing-fixture', userMessage: request, cognitiveMode: 'environment', memoryTimestamp: 123, ttsGeneration: 7,
       conversationHistory: [{ role: 'user', content: 'implicit-history-must-not-leak' }],
     }, undefined, undefined, { store, lease })
+    if (options.awaitTask && routing.taskContext.includes('vision')) {
+      // The current graph first joins its finite camera read. This fixture has
+      // no initial image; the later capture phase supplies the returned image.
+      const camera = store.pendingDispatches().find(item => (item.payload as any)?.handler === 'environment.visual-read')!
+      assert.ok(camera)
+      const event = store.appendEvent(execution.executionId, { eventId: 'initial-camera-read', kind: 'work_result',
+        payload: { effectId: camera.effectId, result: { state: 'completed', result: { visual: null } } } })
+      result = await executeGraph(graph, {}, undefined, undefined, { store, lease, resumeEventId: event.eventId })
+    }
     if (options.memoryWork) {
       assert.equal(result.status, 'waiting')
       const taskNeedsRecall = (routing.taskContext as string[]).includes('memory')
@@ -178,39 +188,43 @@ async function run(request: string, selected: string[], response = { response: '
         actionId: 'simulated-action', payload: {} })
       result = await executeGraph(graph, {}, undefined, undefined, { store, lease, resumeEventId: event.eventId })
     }
-    assert.equal(result.status, 'completed', result.error?.stack)
     const { getGraphOutput } = await import('../../graph-executor.js')
     assert.equal(getGraphOutput(result)?.response || '', '', 'Planning JSON must never become the chat response')
     assert.equal(calls.length, parentCalls, 'The parent never waits for conversation inference')
     const effects = store.pendingDispatches()
     const responseWork = effects.find(item => (item.payload as any)?.handler === 'environment.conversation')
-    let delivery: any, deliveryError: Error | undefined
+    assert.equal(result.status, responseWork ? 'waiting' : 'completed', result.error?.stack)
+    let deliveryError: Error | undefined
     if (responseWork) {
-      const { ModelRouterNode } = await import('../llm/model-router.node.js')
+      const { runEnvironmentConversationWork } = await import('../../environment-interface/conversation.js')
       const input = (responseWork.payload as any).input
       assert.equal(input.graphContext.memoryTimestamp, 123)
       assert.equal(input.graphContext.ttsGeneration, 7)
+      let receipt: Record<string, any>
       try {
-        const generated = await ModelRouterNode.execute(input.messages, input.graphContext, input.properties)
-        const namespace = `work:${responseWork.effectId}:graph:0`
-        const childOptions = { store, lease, invocationId: namespace, checkpointNamespace: namespace, externalChild: true }
-        delivery = await executeGraph(input.graph, { ...input.graphContext, environmentConversationResponse: generated.response },
-          undefined, undefined, childOptions)
-        assert.equal(delivery.status, 'completed', delivery.error?.stack)
-        const presented = reads.filter(value => value.startsWith('speech:')).length
-        await executeGraph(input.graph, input.graphContext, undefined, undefined, { ...childOptions, resume: true })
-        assert.equal(reads.filter(value => value.startsWith('speech:')).length, presented, 'Delivery replay cannot repeat speech')
-      } catch (error) { if (!options.failSpeech) throw error; deliveryError = error as Error }
+        const generated = await runEnvironmentConversationWork(input, 'routing-fixture', new AbortController().signal)
+        receipt = { state: 'completed', result: generated }
+      } catch (error) {
+        if (!options.failSpeech) throw error
+        deliveryError = error as Error
+        receipt = { state: 'failed', error: deliveryError.message }
+      }
+      const event = store.appendEvent(execution.executionId, { eventId: 'conversation-generated', kind: 'work_result',
+        payload: { effectId: responseWork.effectId, result: receipt } })
+      result = await executeGraph(graph, {}, undefined, undefined, { store, lease, resumeEventId: event.eventId })
+      assert.equal(result.status, 'completed', result.error?.stack)
     }
     assert.equal(calls.length, options.failSpeech ? parentCalls : expectedCalls)
     const count = store.pendingDispatches().length
     const physicalCount = reads.filter(value => value === 'physical-dispatch').length
+    const presented = reads.filter(value => value.startsWith('speech:')).length
     await executeGraph(graph, { userMessage: request, cognitiveMode: 'environment' }, undefined, undefined, { store, lease, resume: true })
     assert.equal(store.pendingDispatches().length, count, 'Parent replay cannot duplicate work')
+    assert.equal(reads.filter(value => value.startsWith('speech:')).length, presented, 'Delivery replay cannot repeat speech')
     assert.equal(reads.filter(value => value === 'physical-dispatch').length, physicalCount, 'Parent replay cannot repeat an action')
     assert.equal(calls.length, options.failSpeech ? parentCalls : expectedCalls, 'Parent replay cannot repeat inference')
     const dispatches = effects.filter(item => item.kind === 'execution_event').map(item => ({ kind: item.kind, payload: item.payload as Record<string, any> }))
-    return { result, delivery, deliveryError, reads, dispatches, envelope: JSON.parse(calls[1].messages[1].content) }
+    return { result, deliveredResponses, deliveryError, reads, dispatches, envelope: JSON.parse(result.nodes.get('3')!.outputs!.messages[1].content) }
   } finally {
     for (const [key, execute] of originals) nodeExecutors.set(key, execute)
     store.close()
@@ -234,7 +248,7 @@ test('request-only intent payload is unchanged by explicit or implicit history a
 
 test('ordinary greeting skips optional source reads and the editor note', async () => {
   const { result, reads, envelope } = await run('Hello', ['needsResponse'])
-  assert.deepEqual(reads.filter(value => !value.startsWith('speech:')), ['bridge', 'observations', 'status-out'])
+  assert.deepEqual(reads.filter(value => !value.startsWith('speech:')), ['bridge', 'observations'])
   for (const id of ['conversation-history', 'execution', 'memory-router', 'robot-status', '11', 'workflow-guide', 'persona-loader']) {
     assert.equal(result.nodes.get(id)?.status, 'skipped', id)
   }
@@ -248,11 +262,11 @@ test('ordinary greeting skips optional source reads and the editor note', async 
 })
 
 test('autonomy uses request-first intent and preserves the internal source attribution', async () => {
-  const autonomy = JSON.parse(fs.readFileSync(new URL('../../../../../etc/cognitive-graphs/boredom-autonomy-mode.json', import.meta.url), 'utf8'))
+  const autonomy = JSON.parse(fs.readFileSync(new URL('../../../../../etc/cognitive-graphs/environment-mode.json', import.meta.url), 'utf8'))
   const properties = autonomy.nodes.find((node: any) => node.data.nodeType === 'orchestrator_llm').data.properties
   routing = routes(['needsAction', 'needsExecutionContext', 'needsConversationHistory'])
   calls.length = 0
-  const result = await OrchestratorLLMNode.execute({ message: 'Explore the room',
+  const result = await OrchestratorLLMNode.execute({ message: 'Explore the room', autonomy: true,
     execution: { executionId: 'autonomy-task' }, conversationHistory: [{ role: 'assistant', content: 'autonomy-history' }],
   }, {}, properties)
   const prompt = JSON.stringify(calls[0].messages)
@@ -299,7 +313,7 @@ test('selected dialogue, recall and status load once and reach the second call',
 })
 
 test('steering transfers the unchanged request once without local speech, status update or physical dispatch', async () => {
-  const { reads, dispatches, result, envelope } = await run('Do that again', ['needsExecutionContext', 'needsConversationHistory'], {
+  const { reads, dispatches, result, envelope } = await run('Do that again', ['needsAction', 'needsExecutionContext', 'needsConversationHistory'], {
     response: '', program: null, taskDecision: null, executionDisposition: 'steer', targetExecutionId: 'ongoing-1',
   })
   assert.deepEqual(envelope.activeExecutions, activeExecutions)
@@ -313,7 +327,7 @@ test('steering transfers the unchanged request once without local speech, status
 })
 
 test('cancellation uses the existing execution event owner and introduces no robot command', async () => {
-  const { reads, dispatches } = await run('Stop what you are doing', ['needsExecutionContext'], {
+  const { reads, dispatches } = await run('Stop what you are doing', ['needsAction', 'needsExecutionContext'], {
     response: '', program: null, taskDecision: null, executionDisposition: 'cancel', targetExecutionId: 'ongoing-1',
   })
   assert.equal(dispatches.length, 1)
@@ -322,13 +336,13 @@ test('cancellation uses the existing execution event owner and introduces no rob
   assert.equal(reads.includes('physical-dispatch'), false)
 })
 
-test('context-selected follow-up can choose an action after an early no-action guess', async () => {
-  const { reads, envelope } = await run('Do that again', ['needsConversationHistory', 'needsResponse'], {
+test('action-selected follow-up plans from the selected conversation history', async () => {
+  const { reads, envelope } = await run('Do that again', ['needsAction', 'needsConversationHistory', 'needsResponse'], {
     response: '', program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] },
     taskDecision: { outcome: 'act', objective: 'Wave again', reason: 'Repeat the requested action', completionCriteria: 'Wave completes',
       continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
   })
-  assert.equal(envelope.selectedRoutes.needsAction, false, 'Retain the early model decision as data')
+  assert.equal(envelope.selectedRoutes.needsAction, true, 'Retain the model routing decision')
   assert.equal(envelope.recentConversation[0].content, 'earlier-dialogue')
   assert.equal(reads.filter(item => item === 'physical-dispatch').length, 1)
   const schema = calls[1].options.jsonSchema
@@ -351,15 +365,15 @@ test('LLM nodes use saved roles and leave supplied messages unchanged', async ()
 
 
 test('task and conversation are separate model calls sharing selected evidence without repeated reads', async () => {
-  const { delivery, reads } = await run('Repeat the movement and explain it',
-    ['needsResponse', 'needsPersona', 'needsConversationHistory', 'needsMemory'], {
+  const { deliveredResponses, reads } = await run('Repeat the movement and explain it',
+    ['needsAction', 'needsResponse', 'needsPersona', 'needsConversationHistory', 'needsMemory'], {
       response: 'The movement is selected.',
       program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] },
       taskDecision: { outcome: 'act', objective: 'Wave', reason: 'Requested movement', completionCriteria: 'Wave completes',
         continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
     })
   assert(calls.every(call => call.modelId === undefined))
-  assert.deepEqual(calls.map(call => call.role), ['orchestrator', 'environmentActionSelector', 'persona'])
+  assert.deepEqual(calls.map(call => call.role), [intentProperties.role, 'environmentActionSelector', 'persona'])
   assert.equal(calls[1].options.format, 'json')
   for (const branch of calls[1].options.jsonSchema.anyOf) {
     assert.equal('response' in branch.properties, false)
@@ -368,7 +382,7 @@ test('task and conversation are separate model calls sharing selected evidence w
   assert.equal(calls[2].options.format, undefined)
   assert.equal(calls[2].options.jsonSchema, undefined)
   const task = JSON.parse(calls[1].messages[1].content)
-  const conversation = JSON.parse(calls[2].messages[1].content)
+  const conversation = JSON.parse(calls.filter(call => call.role === 'persona').at(-1).messages[1].content)
   for (const field of ['currentInstruction', 'activePersona', 'recentConversation', 'memories']) {
     assert.deepEqual(conversation[field], task[field], field)
   }
@@ -378,21 +392,20 @@ test('task and conversation are separate model calls sharing selected evidence w
   assert.deepEqual(conversation.selectedTask.commandDescriptions, { wave: 'Wave one front leg.' })
   assert.equal(conversation.selectedTask.actionAdmission.admitted, true)
   assert.equal(conversation.selectedTask.taskDecision.objectiveComplete, false)
-  assert.equal(delivery.nodes.get('conversation-buffer')?.outputs?.response, 'The movement is selected.')
+  assert.deepEqual(deliveredResponses, ['The movement is selected.'])
   for (const source of ['persona', 'history', 'memory']) assert.equal(reads.filter(item => item === source).length, 1)
 })
 
 test('no-response and steering routes skip conversation inference and presentation', async () => {
   for (const [selected, choice] of [
     [[], { program: null, taskDecision: null }],
-    [['needsResponse', 'needsExecutionContext'], { program: null, taskDecision: null,
+    [['needsAction', 'needsResponse', 'needsExecutionContext'], { program: null, taskDecision: null,
       executionDisposition: 'steer', targetExecutionId: 'ongoing-1' }],
   ] as Array<[string[], any]>) {
     const { result } = await run('Current request', selected, choice)
-    assert.equal(calls.length, 2)
-    for (const id of ['conversation-context', 'conversation-model']) {
-      assert.equal(result.nodes.get(id)?.status, 'skipped', id)
-    }
+    assert.equal(calls.length, selected.includes('needsAction') ? 2 : 1)
+    assert.equal(result.nodes.get('conversation-model')?.status, 'skipped')
+    assert.equal(result.nodes.get('conversation-context')?.outputs?.messages, undefined)
   }
 })
 
@@ -419,7 +432,8 @@ test('saved interpretation feeds only the task model; conversation still perform
   assert.equal(conversation.response, speech)
   const { interpretationGraph } = await import('../../environment-interface/interpretation.js')
   const interpretation = interpretationGraph(fullGraph)
-  assert.equal(interpretation.nodes.filter(node => node.data.nodeType === 'model_router').length, 1)
+  assert.deepEqual(interpretation.nodes.filter(node => node.data.nodeType === 'model_router')
+    .map(node => node.data.properties?.role), ['environmentActionSelector', 'environmentVision'])
   assert.equal(interpretation.nodes.some(node => node.id === 'conversation-model'), false)
 })
 
@@ -447,8 +461,8 @@ test('existing saved combined graphs retain their output contract while Environm
 
 test('a capability question retains the catalog even when no program is selected', async () => {
   await run('What movements can you perform?', ['needsResponse', 'needsEnvironment'])
-  const envelope = JSON.parse(calls[2].messages[1].content)
-  assert.equal(envelope.selectedTask.program, null)
+  const envelope = JSON.parse(calls.filter(call => call.role === 'persona').at(-1).messages[1].content)
+  assert.equal(envelope.selectedTask.program, undefined)
   assert.deepEqual(envelope.currentEnvironment.capabilities.robotCommandCatalog, { wave: 'Wave one front leg.' })
 })
 
@@ -531,15 +545,41 @@ test('an unavailable selected command reaches the final response without waiting
 })
 
 
+test('Intent-selected visual planning bypasses the small Task model and uses the shared executor once', async () => {
+  const result = await run('Release the selected object without moving.', ['needsAction'], {
+    program: { steps: [{ kind: 'vision', operation: 'release' }] },
+    taskDecision: { objective: 'Release the previous selection.', completionCriteria: 'Release acknowledged.',
+      outcome: 'act', reason: 'Model-selected program.', continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
+  }, { routing: { needsResponse: false, needsAction: true, taskPlanner: 'vision', taskContext: [], conversationContext: [] },
+    observation: { ...observation, state: { recognition: { visionOperations: ['release'] } } } })
+  assert.deepEqual(calls.map(call => call.role), ['orchestrator', 'environmentVision'])
+  assert.equal(result.result.nodes.get('4')?.status, 'skipped')
+  assert.equal(result.result.nodes.get('vision-planner')?.status, 'completed')
+  assert.equal(result.result.nodes.get('6')?.outputs?.program.steps[0].operation, 'release')
+  assert.equal(result.reads.filter(value => value === 'physical-dispatch').length, 1)
+  assert.equal(calls[1].messages[0].content.includes('delegatePlanning'), false)
+})
+
+test('conversation-only routing skips both planners', async () => {
+  const result = await run('Explain the current scene without changing anything.', ['needsResponse'], undefined, {
+    routing: { needsResponse: true, needsAction: false, taskPlanner: 'specialist', taskContext: [], conversationContext: [] },
+  })
+  assert.deepEqual(calls.map(call => call.role), ['orchestrator', 'persona'])
+  assert.equal(result.result.nodes.get('vision-planner')?.status, 'skipped')
+  assert.equal(result.reads.includes('physical-dispatch'), false)
+})
+
 test('the small model can delegate the unchanged context and the larger result uses the same executor', async () => {
   const program = { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] }
   const plan = { program, taskDecision: { outcome: 'act', objective: 'Wave', reason: 'Requested gesture',
     completionCriteria: 'Wave completes', continuationPolicy: 'none', requiredCompletionBasis: 'action_result' } }
   const result = await run('Wave for me', ['needsAction'], { delegatePlanning: true }, { delegatedPlan: plan })
-  assert.deepEqual(calls.map(value => value.role), ['orchestrator', 'environmentActionSelector', 'persona'])
+  assert.deepEqual(calls.map(value => value.role), [intentProperties.role, 'environmentActionSelector', 'planner'])
   assert(calls.every(value => value.modelId === undefined))
   assert.deepEqual(calls[2].messages[1], calls[1].messages[1])
   assert.match(calls[1].messages[0].content, /delegatePlanning/)
+  assert.ok(calls[1].messages[0].content.includes('Handle nonvisual task planning here.'))
+  assert.equal(calls[2].messages[0].content.includes('Handle nonvisual task planning here.'), false)
   assert.equal(calls[2].messages[0].content.includes('delegatePlanning'), false)
   assert.ok(calls[1].options.jsonSchema.anyOf.some((branch: any) => branch.properties.delegatePlanning))
   assert.equal(calls[2].options.jsonSchema.anyOf.some((branch: any) => branch.properties.delegatePlanning), false)
@@ -550,7 +590,7 @@ test('the small model can delegate the unchanged context and the larger result u
 })
 
 test('delegation also preserves the larger model no-action choice and reports invalid or recursive results', async () => {
-  const result = await run('Consider the request', [], { delegatePlanning: true }, { delegatedPlan: { program: null, taskDecision: null } })
+  const result = await run('Consider the request', ['needsAction'], { delegatePlanning: true }, { delegatedPlan: { program: null, taskDecision: null } })
   assert.equal(result.reads.includes('physical-dispatch'), false)
   const { environmentTaskPlannerNode } = await import('./task-planner.node.js')
   const properties = fullGraph.nodes.find(node => node.id === '6')!.data.properties!
@@ -569,7 +609,7 @@ test('conversation-only context never enters task or delegated planning messages
   assert.deepEqual(envelope.memories, [])
   assert.deepEqual(envelope.recentConversation, [])
   assert.equal(envelope.robotStatus, null)
-  const conversation = JSON.parse(calls[2].messages[1].content)
+  const conversation = JSON.parse(calls.filter(call => call.role === 'persona').at(-1).messages[1].content)
   assert.equal(conversation.activePersona, 'fixture-persona')
   assert.equal(conversation.memories[0].content, 'retrieved-memory')
   assert.equal(conversation.recentConversation[0].content, 'earlier-dialogue')
@@ -579,11 +619,11 @@ test('conversation-only context never enters task or delegated planning messages
 
 test('task-only context is absent from the conversation prompt', async () => {
   const { envelope } = await run('Current request', ['needsResponse'], undefined, { routing: {
-    needsResponse: true, needsAction: false, taskContext: ['persona.values', 'memory', 'robotStatus'], conversationContext: [],
+    needsResponse: true, needsAction: true, taskContext: ['persona.values', 'memory', 'robotStatus'], conversationContext: [],
   } })
   assert.equal(envelope.activePersona, 'fixture-persona')
   assert.equal(envelope.memories[0].content, 'retrieved-memory')
-  const conversation = JSON.parse(calls[2].messages[1].content)
+  const conversation = JSON.parse(calls.filter(call => call.role === 'persona').at(-1).messages[1].content)
   assert.equal(conversation.activePersona, null)
   assert.deepEqual(conversation.memories, [])
   assert.equal(conversation.robotStatus, null)
@@ -594,7 +634,7 @@ test('conversation-selected execution context includes unfinished execution reco
     needsResponse: true, needsAction: false, taskContext: [], conversationContext: ['executionContext'],
   } })
   assert.equal(envelope.activeExecutions, undefined)
-  const conversation = JSON.parse(calls[2].messages[1].content)
+  const conversation = JSON.parse(calls.filter(call => call.role === 'persona').at(-1).messages[1].content)
   assert.deepEqual(conversation.activeExecutions, activeExecutions)
 })
 
@@ -603,15 +643,15 @@ test('conversation-only recall overlaps task work and preserves input across dur
     needsResponse: true, needsAction: false, taskContext: [], conversationContext: ['memory'],
   } })
   assert.deepEqual(envelope.memories, [])
-  const conversation = JSON.parse(calls[2].messages[1].content)
+  const conversation = JSON.parse(calls.filter(call => call.role === 'persona').at(-1).messages[1].content)
   assert.equal(conversation.memories[0].content, 'retrieved-memory')
 })
 
 test('shared recall is joined before task inference and reused by conversation', async () => {
   const { envelope } = await run('Current request', ['needsResponse'], undefined, { memoryWork: true, routing: {
-    needsResponse: true, needsAction: false, taskContext: ['memory'], conversationContext: ['memory'],
+    needsResponse: true, needsAction: true, taskContext: ['memory'], conversationContext: ['memory'],
   } })
-  const conversation = JSON.parse(calls[2].messages[1].content)
+  const conversation = JSON.parse(calls.filter(call => call.role === 'persona').at(-1).messages[1].content)
   assert.deepEqual(conversation.memories, envelope.memories)
   assert.equal(envelope.memories[0].content, 'retrieved-memory')
 })
@@ -630,6 +670,8 @@ test('finite ongoing-task interpretation reuses synchronous recall inside its ex
   assert.equal(graph.nodes.some(node => node.id === 'conversation-context'), false)
   assert.equal(graph.nodes.some(node => ['environment_expression_feedback', 'environment_face_expression'].includes(node.data.nodeType)), false)
   assert.ok(graph.edges.some(edge => edge.source === 'user-input' && edge.sourceHandle === 'message'
+    && edge.target === 'event-request' && edge.targetHandle === 'message'))
+  assert.ok(graph.edges.some(edge => edge.source === 'event-request' && edge.sourceHandle === 'message'
     && edge.target === 'intent-orchestrator' && edge.targetHandle === 'message'))
 })
 
@@ -646,4 +688,100 @@ test('input received during task recall reaches execution as well as final conti
     taskDecision: { outcome: 'act', objective: 'Wave', reason: 'Requested gesture', completionCriteria: 'Wave completes',
       continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
   }, { memoryWork: true, routing: { needsResponse: false, needsAction: true, taskContext: ['memory'], conversationContext: [] } })
+})
+
+// Visual evidence selected by Intent belongs to the vision planner even if its
+// separate planner label contradicts that selection. No text keyword policy.
+test('selected task images route to vision while nonvisual task planning keeps the specialist', async () => {
+  for (const taskContext of [['environment', 'vision'], ['environment']]) {
+    routing = { needsResponse: false, needsAction: true, needsToolUse: false,
+      taskPlanner: 'specialist', taskContext, conversationContext: [] }
+    const result = await OrchestratorLLMNode.execute({ message: 'Requested activity' }, {}, intentProperties)
+    assert.equal(result.useVisionPlanner, taskContext.includes('vision'))
+    assert.deepEqual(result.analysis, routing)
+  }
+  routing = { needsResponse: true, needsAction: true, needsToolUse: false,
+    taskPlanner: 'specialist', taskContext: ['environment'], conversationContext: ['vision'] }
+  const result = await OrchestratorLLMNode.execute({ message: 'Requested activity' }, {}, intentProperties)
+  assert.equal(result.useVisionPlanner, false, 'conversation has its own 9B image consumer')
+})
+
+
+test('conversation-only introduction bypasses the erroneous visual task and delivers one conversational response', async () => {
+  const request = 'My name is Sam. I am 40 years old and we are in a workshop right now, and I built you'
+  const result = await run(request, ['needsResponse'], {
+    response: 'Hello, Sam.',
+    taskDecision: { objective: 'Configure stationary visual tracking of the user in the provided image.',
+      completionCriteria: 'The intended user is recognized with a track ID and updated visual evidence.',
+      outcome: 'act', reason: 'The current request selects this activity.', continuationPolicy: 'none', requiredCompletionBasis: 'visual_observation' },
+    program: { steps: [{ kind: 'vision', operation: 'acquire', target: 'user', referenceFrameId: 'None' }] },
+  }, { routing: { needsResponse: true, needsAction: false, needsToolUse: false, taskContext: [],
+    conversationContext: ['persona.personality', 'persona.goals', 'persona.background'], taskPlanner: 'specialist' } })
+  assert.deepEqual(calls.map(call => call.role), ['orchestrator', 'persona'])
+  assert.equal(JSON.parse(calls[1].messages[1].content).currentInstruction, request)
+  for (const id of ['4', 'vision-planner', '6', 'active-task']) assert.equal(result.result.nodes.get(id)?.status, 'skipped', id)
+  assert.equal(result.reads.includes('physical-dispatch'), false)
+  assert.deepEqual(result.deliveredResponses, ['Hello, Sam.'])
+  assert.deepEqual(result.reads.filter(read => read.startsWith('speech:')), ['speech:7:123'])
+})
+
+
+test('missing-frame evidence reaches the requested conversation without reporting physical success', async () => {
+  const identificationError = 'Requested reference frame is not retained by this execution'
+  const result = await run('Find the user in the reference image and explain the result.', ['needsAction', 'needsResponse'], {
+    response: 'The reference image is unavailable.',
+    program: { steps: [{ kind: 'vision', operation: 'acquire', target: 'user', referenceFrameId: 'None' }] },
+    taskDecision: { outcome: 'act', objective: 'Locate the user', reason: 'Requested', completionCriteria: 'User located',
+      continuationPolicy: 'none', requiredCompletionBasis: 'visual_observation' },
+  }, { awaitTask: true, taskResult: { done: true, objectiveComplete: false, stepIndex: 0, evidence: [], identificationError } })
+  const envelope = JSON.parse(calls.at(-1).messages[1].content)
+  assert.equal(envelope.taskResult.identificationError, identificationError)
+  assert.equal(envelope.taskResult.objectiveComplete, false)
+  assert.equal(envelope.taskResult.failure, undefined)
+  assert.deepEqual(result.deliveredResponses, ['The reference image is unavailable.'])
+})
+
+
+test('ongoing instruction interpretation returns an intent-only result when no action is selected', async () => {
+  const { interpretInstructions } = await import('../../environment-interface/interpretation.js')
+  const { openExecutionStore } = await import('../../durable-execution/storage.js')
+  fs.writeFileSync(path.join(isolatedRoot, 'etc/cognitive-graphs/environment-mode.json'), JSON.stringify(fullGraph))
+  const store = openExecutionStore('routing-fixture')
+  const execution = store.create('routing-fixture', executionDefinition(fullGraph))
+  const replacements: Record<string, any> = {
+    environment_bridge_input: async () => ({ observation, sessionId: 'robot-1', isTriggeringObservation: false }),
+    observation_history: async () => ({ observations: [] }),
+  }
+  const originals = new Map(Object.keys(replacements).map(key => [key, nodeExecutors.get(key)!]))
+  for (const [key, execute] of Object.entries(replacements)) nodeExecutors.set(key, execute)
+  calls.length = 0
+  routing = routes(['needsResponse'])
+  try {
+    const result = await interpretInstructions({ identity: { executionId: execution.executionId,
+      sessionId: 'robot-1', revision: 1, stepIndex: 0, body: 'fixture' },
+      context: { cognitiveMode: 'environment' }, turns: [{ userMessage: 'Hello again.' }] },
+    'routing-fixture', new AbortController().signal)
+    assert.equal(result.route?.needsAction, false)
+    assert.equal(result.route?.needsResponse, true)
+    assert.equal(result.response, undefined)
+    assert.deepEqual(calls.map(call => call.role), ['orchestrator'])
+    assert.equal(store.events(execution.executionId).length, 0, 'Read-only interpretation cannot dispatch effects')
+  } finally {
+    for (const [key, execute] of originals) nodeExecutors.set(key, execute)
+    store.close()
+  }
+})
+
+test('recorded spoken response has one Persona output even when Intent also selects Task', async () => {
+  const response = "You know, that look on your face is giving off serious 'I'm one bug away from enlightenment' vibes. Or maybe you're just trying to decide if you should stare at the screen or stare at the wall. Either way, I'm rooting for you."
+  for (let turn = 0; turn < 2; turn++) {
+    const result = await run('Formulate a conversational response acknowledging the changed gesture.',
+      ['needsResponse', 'needsAction', 'needsEnvironment'], { response, program: null, taskDecision: null })
+    assert.deepEqual(calls.map(call => call.role), ['orchestrator', 'environmentActionSelector', 'persona'])
+    assert.deepEqual(result.deliveredResponses, [response])
+    assert.equal(result.reads.includes('physical-dispatch'), false)
+    assert.equal(result.reads.filter(read => read.startsWith('speech:')).length, 1)
+    const taskSchema = JSON.stringify(calls[1].options.jsonSchema)
+    assert.equal(taskSchema.includes('"const":"speech"'), false)
+  }
 })

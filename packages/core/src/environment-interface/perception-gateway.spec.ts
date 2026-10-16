@@ -10,7 +10,7 @@ import { monitorEventLoopDelay } from 'node:perf_hooks'
 import { fixture, route, decision, replies, core, manager, username, withUserContext,
   openExecutionStore, queuedInterpretation, executeWork, instruction } from './active-task.spec.js'
 
-const endings = ['loss-confirmed', 'loss-unknown', 'feedback-expired', 'explicit-cancel'] as const
+const endings = ['loss-confirmed', 'loss-unknown', 'explicit-cancel'] as const
 for (const ending of endings) test(`recorded YOLO frames: ${ending}`, { timeout: 90000 }, async () => {
   assert.ok(process.env.AINEKIO_SOFTWARE_TEST_GATEWAY)
   assert.ok(process.env.AINEKIO_SOFTWARE_TEST_PYTHON)
@@ -62,7 +62,7 @@ for (const ending of endings) test(`recorded YOLO frames: ${ending}`, { timeout:
         if (event.type === 'environment.telemetry' && event.telemetry.kind === 'vision.recognition') {
           const perception = event.telemetry.perception
           assert.equal(await core.recordEnvironmentPerception(snapshot.observation.sessionId, perception,
-            async input => manager.enqueue(input)), true, JSON.stringify({ frame: perception.frameCounter, ageMs: Date.now() - Date.parse(perception.observedAt), observation: core.getLatestEnvironmentObservation(snapshot.observation.sessionId) }))
+            async input => manager.enqueue(input), username), true, JSON.stringify({ frame: perception.frameCounter, ageMs: Date.now() - Date.parse(perception.observedAt), observation: core.getLatestEnvironmentObservation(snapshot.observation.sessionId) }))
           evidence.frames.push({ counter: perception.frameCounter, objects: perception.objects,
             observedAt: perception.observedAt, expiresAt: perception.expiresAt, receivedAt: Date.now(),
             coreReadAt, coreAdmissionMs: Date.now() - coreReadAt, eventLoopMaxMs: eventLoop.max / 1e6,
@@ -241,7 +241,6 @@ for (const ending of endings) test(`recorded YOLO frames: ${ending}`, { timeout:
       }
       assert.ok(manager.findTask(task => task.input?.id === motion.id)?.cancellationRequestedAt,
         'Loss of required recognition still requests owned termination while interpretation is blocked')
-      evidence.deadlineRequestedCancellation = ending === 'feedback-expired'
       evidence.cancelRequestedAt ??= Date.now()
       evidence.expiryToCancellationMs = evidence.cancelRequestedAt - Date.parse(evidence.frames.at(-1).expiresAt)
       evidence.pendingAtCancellation = { interpretation: manager.getTask(interpretation.id)?.state, conversation: manager.getTask(speechJob.id)?.state }

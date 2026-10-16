@@ -78,7 +78,7 @@ function queueSnapshot(user: UnifiedUser) {
   const system = getQueueSystem();
   const state = system.getState();
   const manager = getQueueManager();
-  const executions = system.getExecutions(user.username);
+  const executions = system.getExecutions(user.username, 0);
   const visible = (tasks: QueuedTask[]) => tasks.filter(task => canReadTask(task, user)).map(taskView);
   return {
     success: true,
@@ -91,11 +91,8 @@ function queueSnapshot(user: UnifiedUser) {
     stats: state.stats,
     resourceCapacity: state.resourceCapacity,
     tasks: visible(manager.getAllTasks()),
-    history: visible(manager.getHistory()),
     canConfirmRobotStopped: user.role === 'owner',
-    executions: executions.filter(execution => ['running', 'waiting'].includes(execution.status))
-      .concat(executions.filter(execution => !['running', 'waiting'].includes(execution.status))
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 20)),
+    executions,
     inFlightRemote: user.role === 'owner' ? state.inFlightRemote : [],
     nextTriggers: user.role === 'owner' ? state.nextTriggers : [],
     lastActivity: user.role === 'owner' ? state.lastActivity : undefined,
@@ -318,26 +315,35 @@ export async function handleQueueStream(req: UnifiedRequest): Promise<UnifiedRes
   if (!req.user.isAuthenticated) return failure('Authentication required', 401);
   async function* stream(): AsyncIterable<string> {
     const system = getQueueSystem();
-    const pending: string[] = [];
-    let readFailed = false;
+    const pending: (QueueEvent | { type: 'trigger-state' })[] = [];
     let wake: (() => void) | undefined;
-    const listener = (event: QueueEvent) => {
-      if (readFailed) return;
-      try {
-        pending.push(sse({ type: event.type, event, snapshot: queueSnapshot(req.user) }));
-      } catch (error) {
-        readFailed = true;
-        pending.push(sse({ type: 'error', error: (error as Error).message }));
-      }
+    const listener = (event: QueueEvent | { type: 'trigger-state' }) => {
+      // Observation must not synchronously load execution history inside the
+      // coordinator's command/receipt callback. The reader owns its projection.
+      pending.push(event);
       wake?.();
       wake = undefined;
     };
+    const triggerListener = () => listener({ type: 'trigger-state' });
     system.on('queue', listener);
+    if (req.user.role === 'owner') system.triggers.on('stateChange', triggerListener);
     try {
       yield sse({ type: 'snapshot', snapshot: queueSnapshot(req.user), timestamp: new Date().toISOString() });
       while (!req.signal?.aborted) {
-        while (pending.length > 0) yield pending.shift()!;
-        if (readFailed) return;
+        if (pending.length > 0) {
+          const events = pending.splice(0);
+          let snapshot: ReturnType<typeof queueSnapshot>;
+          try { snapshot = queueSnapshot(req.user); }
+          catch (error) {
+            yield sse({ type: 'error', error: (error as Error).message });
+            return;
+          }
+          for (const [index, event] of events.entries()) {
+            yield sse({ type: event.type, event,
+              ...(index === events.length - 1 ? { snapshot } : {}) });
+          }
+          continue;
+        }
         await new Promise<void>(resolve => {
           const finish = () => {
             clearTimeout(timer);
@@ -349,11 +355,16 @@ export async function handleQueueStream(req: UnifiedRequest): Promise<UnifiedRes
           req.signal?.addEventListener('abort', finish, { once: true });
           if (req.signal?.aborted) finish();
         });
-        if (pending.length === 0 && !req.signal?.aborted) yield ': heartbeat\n\n';
+        if (pending.length === 0 && !req.signal?.aborted) {
+          yield req.user.role === 'owner'
+            ? sse({ type: 'reconcile', snapshot: queueSnapshot(req.user) })
+            : ': heartbeat\n\n';
+        }
       }
     } finally {
       wake?.();
       system.off('queue', listener);
+      if (req.user.role === 'owner') system.triggers.off('stateChange', triggerListener);
     }
   }
   return { status: 200, stream: stream(), headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' } };

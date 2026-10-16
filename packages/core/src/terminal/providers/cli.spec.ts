@@ -87,3 +87,17 @@ test('diagnostic invocation selects full access, high reasoning and the exact re
     assert.equal(parseBigBrotherTerminalEvent('codex', JSON.stringify({ type: 'thread.started', thread_id: 'fixture-thread' })).threadId, 'fixture-thread')
   } finally { await fs.rm(invocation.tempDir, { recursive: true, force: true }) }
 })
+
+test('per-call reasoning requests high while unchecked and absent retain configured effort', async () => {
+  const { saveUserConfig } = await import('../../config.js')
+  saveUserConfig('operator.json', { bigBrotherMode: {
+    provider: 'codex', model: 'gpt-6-luna', reasoningEffort: 'medium',
+  } }, 'reasoning-fixture')
+  for (const enableThinking of [true, false, undefined]) {
+    const invocation = buildBigBrotherCLIInvocation('codex', 'Hello', { username: 'reasoning-fixture', enableThinking })
+    try {
+      const overrides = invocation.args.filter(arg => arg.startsWith('model_reasoning_effort='))
+      assert.deepEqual(overrides, [`model_reasoning_effort="${enableThinking === true ? 'high' : 'medium'}"`])
+    } finally { await fs.rm(invocation.tempDir, { recursive: true, force: true }) }
+  }
+})

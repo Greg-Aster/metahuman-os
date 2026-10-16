@@ -144,7 +144,6 @@ import {
   handleGetTriggerManager,
   handlePatchTriggerManagerConfig,
   handleTriggerManagerControl,
-  handleTriggerManagerStream,
 } from './handlers/trigger-manager.js';
 import {
   handleAgentCatalogControl,
@@ -229,13 +228,13 @@ import { handleStt } from './handlers/stt.js';
 import { handleAgentsControl, handleRunAgent } from './handlers/agent.js';
 import {
   handleEnvironmentBridgeActionResult,
+  handleEnvironmentBridgeVisualResult,
   handleEnvironmentBridgeControl,
   handleEnvironmentBridgeDiagnosticAudio,
   handleEnvironmentBridgeDiagnosticMedia,
   handleEnvironmentBridgeDiagnostics,
   handleEnvironmentBridgeObservation,
   handleEnvironmentBridgeStatus,
-  handleEnvironmentBridgeSpeechSettings,
   handleEnvironmentBridgeBehaviorSettings,
   handleEnvironmentBridgeStream,
   handleEnvironmentBridgeTelemetry,
@@ -248,7 +247,7 @@ import { handleGetEnvironmentTraining, handleReviewEnvironmentTraining } from '.
 import { handleGetIndex, handleBuildIndex } from './handlers/vector-index.js';
 import { handleFileOperation, handleFileOperationsStatus } from './handlers/file-operations.js';
 import { handleGetModelRegistry, handleAssignModelRole, handleUpdateModelSettings } from './handlers/model-registry.js';
-import { handlePersonaChat, handleClearPersonaChat, handleCancelPersonaChat, handleCancelChatAlias } from './handlers/persona-chat.js';
+import { handleClearPersonaChat, handleCancelPersonaChat, handleCancelChatAlias } from './handlers/persona-chat.js';
 import { handleGetServerUpdate, handlePostServerUpdate, handleRestartServer } from './handlers/server-update.js';
 import {
   handleRemoteServerHealth,
@@ -589,7 +588,6 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/agents/run', handler: handleRunAgent, requiresAuth: true, guard: 'owner' },
 
   // Environment bridge
-  { method: 'POST', pattern: '/api/environment-bridge/speech-settings', handler: handleEnvironmentBridgeSpeechSettings, public: true, publicReason: 'service-token authenticated speech destination preferences for the active owner' },
   { method: 'POST', pattern: '/api/environment-bridge/behavior-settings', handler: handleEnvironmentBridgeBehaviorSettings, public: true, publicReason: 'service-token authenticated robot control for the active owner' },
   { method: 'GET', pattern: '/api/environment-bridge/status', handler: handleEnvironmentBridgeStatus, requiresAuth: true },
   { method: 'GET', pattern: '/api/environment-bridge/diagnostics', handler: handleEnvironmentBridgeDiagnostics, requiresAuth: true, guard: 'owner' },
@@ -598,6 +596,7 @@ const routes: RouteDefinition[] = [
   { method: 'POST', pattern: '/api/environment-bridge/telemetry', handler: handleEnvironmentBridgeTelemetry, public: true, publicReason: 'service-token authenticated bounded diagnostic telemetry ingestion' },
   { method: 'POST', pattern: '/api/environment-bridge/observation', handler: handleEnvironmentBridgeObservation, public: true, publicReason: 'service-token authenticated environment observation ingestion' },
   { method: 'GET', pattern: '/api/environment-bridge/stream', handler: handleEnvironmentBridgeStream, public: true, publicReason: 'service-token authenticated environment action stream' },
+  { method: 'POST', pattern: '/api/environment-bridge/visual-result', handler: handleEnvironmentBridgeVisualResult, public: true, publicReason: 'service-token authenticated selected camera read result' },
   { method: 'POST', pattern: '/api/environment-bridge/action-result', handler: handleEnvironmentBridgeActionResult, public: true, publicReason: 'service-token authenticated environment action result ingestion' },
   { method: 'POST', pattern: '/api/environment-bridge/control', handler: handleEnvironmentBridgeControl, requiresAuth: true, guard: 'owner' },
 
@@ -619,7 +618,6 @@ const routes: RouteDefinition[] = [
   { method: 'DELETE', pattern: /^\/api\/conversation-buffer/, handler: handleClearBuffer, requiresAuth: true },
 
   // Persona Chat (full cognitive graph pipeline - SAME for web and mobile)
-  { method: ['GET', 'POST'], pattern: '/api/persona_chat', handler: handlePersonaChat, requiresAuth: true },
   { method: 'DELETE', pattern: '/api/persona_chat', handler: handleClearPersonaChat, requiresAuth: true },
   { method: 'POST', pattern: '/api/persona_chat/cancel', handler: handleCancelPersonaChat, requiresAuth: true },
   { method: 'POST', pattern: '/api/cancel-chat', handler: handleCancelChatAlias, requiresAuth: true },
@@ -784,7 +782,6 @@ const routes: RouteDefinition[] = [
 
   // Trigger Manager
   { method: 'GET', pattern: '/api/trigger-manager', handler: handleGetTriggerManager, requiresAuth: true, guard: 'owner' },
-  { method: 'GET', pattern: '/api/trigger-manager/stream', handler: handleTriggerManagerStream, requiresAuth: true, guard: 'owner' },
   { method: 'POST', pattern: '/api/trigger-manager/control', handler: handleTriggerManagerControl, requiresAuth: true, guard: 'owner' },
   { method: 'PATCH', pattern: '/api/trigger-manager/config', handler: handlePatchTriggerManagerConfig, requiresAuth: true, guard: 'owner' },
 

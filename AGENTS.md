@@ -7,6 +7,18 @@ short pointers here; keep personal agent/editor settings in local configuration.
 
 - `docs/technical/MAINTAINED_SURFACE.md` owns executable source policy and critical
   runtime ownership. Read the policy and ownership boundaries relevant to the task.
+- For robot and companion work, read the relevant sections of
+  [`docs/robot/ROBOT_BIBLE.md`](docs/robot/ROBOT_BIBLE.md). It records the
+  Installation Owner's intended functions, agent responsibilities, model-category
+  definitions, and observed qualification limits. Keep those specifications current
+  when an authorized repair changes or clarifies behavior. The Bible describes
+  product intent; Maintained Surface retains code ownership, and
+  `packages/core/src/model-roles.ts` is the shared executable category catalog.
+  Start with the Bible's agent/service reference in section 4 and model/learning
+  definitions in section 10; use the Agent Catalog and graph inventory for current
+  registrations rather than treating documentation examples as live configuration.
+  Dated diary entries are historical evidence, not standing work orders or proof
+  that an earlier fault remains present.
 - `docs/technical/REFACTOR_BLUEPRINT.md` owns architecture and refactor principles.
   Its repository-wide program applies only when that scope is explicitly requested.
 - `docs/technical/AUDIT_PROTOCOL.md` applies to an explicitly requested maintained-source
@@ -43,6 +55,16 @@ Preserve requested information and model-selected context. Provider and hardware
 capacity are real constraints to report, not permission to add application limits
 or conceal missing information. Fix the underlying ownership and data flow rather
 than layering another limiter, retry loop, or fallback over a broken path.
+
+Do not add code-imposed waits, blocking task dependencies, artificial delays, or
+blanket task-completion requirements that prevent the robot from operating at its
+fullest and fastest supported capability. Do not impose hardcoded elapsed-time
+cutoffs on inference or graph execution. Keep speech, sensing, movement, and new
+command admission asynchronous and concurrent wherever the body supports them.
+The LLM owns requested behavioral ordering; do not impose a fixed sequence in
+code. Completion receipts report actual progress and outcomes without becoming
+a global execution barrier. Report real hardware or protocol serialization limits
+explicitly rather than inventing additional restrictions.
 
 The LLM owns interpretation, goals, and behavior selection. The system presents
 accurate information with its source, speaker, time, and uncertainty, exposes
@@ -128,6 +150,13 @@ blocker; do not fix unrelated code or claim a passing full baseline.
   canonical owner per responsibility. Discover and reuse before creating.
 - Do not route around a broken owner with another service, manager, queue,
   scheduler, store, registry, validator, process manager, or execution path.
+  Trace repeated downstream failures to the producer and lifecycle transition
+  that creates them; repair that owner and its affected consumers. Do not mask
+  faulty production or recovery with downstream filters, limits, retries, or
+  duplicate suppression. Preserve required delivery identity and acknowledgement
+  contracts. Prove the repair across the failing boundary, including repeated
+  invocation or reconnect when relevant; passing a downstream check alone is
+  not evidence that the originating defect is fixed.
 - New abstractions, compatibility layers, flags, and fallbacks need a concrete
   explanation of why the existing owner cannot implement the requirement. A
   second active path requires explicit approval and an old-path removal condition.

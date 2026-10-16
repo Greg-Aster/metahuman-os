@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import test, { after } from 'node:test'
+import test, { after, mock } from 'node:test'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -537,7 +537,7 @@ test('output correction cannot replace a decision already evaluated by another b
   }
 })
 
-test('actual child graphs wait and recover in the same parent thread without repeating a dispatch', async () => {
+test('actual child graphs retain their template across waits and recover without repeating a dispatch', async () => {
   let plans = 0
   let reviews = 0
   const plan = testNode('test_child_plan', [], [{ name: 'action', type: 'object' }], async (_inputs, context) => {
@@ -546,15 +546,18 @@ test('actual child graphs wait and recover in the same parent thread without rep
     return { action }
   })
   const wait = testNode('test_child_wait', [{ name: 'action', type: 'object' }], [{ name: 'result', type: 'object' }], async (_inputs, context) => ({ result: context.graphExecution.waitForEvent() }))
-  const review = testNode('test_child_result', [{ name: 'result', type: 'object' }], [{ name: 'response', type: 'string' }], async (inputs, context) => {
+  const review = testNode('test_child_result', [{ name: 'result', type: 'object' }], [{ name: 'response', type: 'string' }], async (inputs, context, properties) => {
     reviews++
-    return { response: `${context.userMessage}:${inputs.result.payload.evidence}` }
+    return { response: `${context.userMessage}:${inputs.result.payload.evidence}:${properties?.prompt}` }
   })
+  review.properties = { prompt: 'original' }
+  review.propertySchemas = { prompt: { type: 'text', default: 'original', label: 'Fixture prompt' } }
   const child = graph([{ id: 'plan', nodeType: plan.id }, { id: 'wait', nodeType: wait.id }, { id: 'review', nodeType: review.id }], [
     { id: 'plan-wait', source: 'plan', sourceHandle: 'action', target: 'wait', targetHandle: 'action' },
     { id: 'wait-review', source: 'wait', sourceHandle: 'result', target: 'review', targetHandle: 'result' },
   ])
   child.name = 'child-workflow'
+  child.nodes.find(node => node.id === 'review')!.data.properties = { prompt: 'original' }
   const call = testNode('test_parent_call', [], [{ name: 'response', type: 'string' }], async (_inputs, context) => {
     const result = await context.graphExecution.callGraph(child, { userMessage: context.userMessage })
     return result.nodes.get('review').outputs
@@ -576,12 +579,13 @@ test('actual child graphs wait and recover in the same parent thread without rep
     assert.ok(namespaces.some(row => row.checkpoint_ns !== ''))
     store.release(lease)
     store.close()
+    child.nodes.find(node => node.id === 'review')!.data.properties = { prompt: 'edited' }
     store = new ExecutionStore(filename)
     lease = store.claim(execution.executionId, definition)
     store.appendEvent(execution.executionId, { eventId: 'physical-result', kind: 'physical_result', actionId: 'child-action', payload: { evidence: 'observed' } })
     const resumed = await executeGraph(parent, { userMessage: 'unrelated replacement' }, undefined, undefined, { store, lease, resumeEventId: 'physical-result' })
     assert.equal(resumed.status, 'completed')
-    assert.equal(resumed.nodes.get('call')?.outputs?.response, 'locate object:observed')
+    assert.equal(resumed.nodes.get('call')?.outputs?.response, 'locate object:observed:original')
     assert.equal(plans, 1)
     assert.equal(reviews, 1)
     assert.equal(store.get(execution.executionId).lastProcessedSequence, 1)
@@ -708,6 +712,62 @@ test('scheduler invokes only the selected branch and reports the other branch as
     assert.equal(state.nodes.get('right')?.status, 'skipped')
     assert.match(state.nodes.get('right')?.skipReason ?? '', /inactive/i)
     assert.ok(events.includes('node_skip:right'))
+  })
+})
+
+test('context join receives all selected results, waits for the slow result, and never runs an unselected producer', async () => {
+  let release!: () => void
+  let started!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  const slowStarted = new Promise<void>(resolve => { started = resolve })
+  let joins = 0
+  const nodes = [
+    testNode('test_join_intent', [], [{ name: 'analysis', type: 'object' }], async () => ({
+      analysis: { history: true, memory: true, vision: false },
+    })),
+    testNode('test_join_history', [], [{ name: 'result', type: 'object' }], async () => ({ result: { history: 'recent conversation' } })),
+    testNode('test_join_memory', [], [{ name: 'result', type: 'object' }], async () => {
+      started()
+      await pending
+      return { result: { memory: 'dated recalled fact' } }
+    }),
+    testNode('test_join_vision', [], [{ name: 'result', type: 'object' }], async () => {
+      assert.fail('Unselected vision must never start or await a camera')
+    }),
+    testNode('test_join_context', [
+      { name: 'routingAnalysis', type: 'object' },
+      { name: 'history', type: 'object', optional: true },
+      { name: 'memory', type: 'object', optional: true },
+      { name: 'vision', type: 'object', optional: true },
+    ], [{ name: 'context', type: 'object' }], async inputs => {
+      joins++
+      return { context: inputs }
+    }),
+  ]
+  await withTestNodes(nodes, async () => {
+    const selected = (output: string) => ({ mode: 'always', when: [{ nodeId: 'intent', output: `analysis.${output}`, equals: true }] })
+    const workflow = graph([
+      { id: 'context', nodeType: 'test_join_context' },
+      { id: 'intent', nodeType: 'test_join_intent' },
+      { id: 'history', nodeType: 'test_join_history', activation: selected('history') },
+      { id: 'memory', nodeType: 'test_join_memory', activation: selected('memory') },
+      { id: 'vision', nodeType: 'test_join_vision', activation: selected('vision') },
+    ], [
+      { id: 'routes', source: 'intent', sourceHandle: 'analysis', target: 'context', targetHandle: 'routingAnalysis' },
+      ...['history', 'memory', 'vision'].map(source => ({ id: source, source, sourceHandle: 'result', target: 'context', targetHandle: source })),
+    ])
+    const running = executeGraph(workflow, {})
+    await slowStarted
+    assert.equal(joins, 0, 'The context builder cannot run while selected memory is pending')
+    release()
+    const state = await running
+    assert.equal(state.status, 'completed')
+    assert.equal(joins, 1)
+    assert.equal(state.nodes.get('vision')?.status, 'skipped')
+    assert.deepEqual(state.nodes.get('context')?.outputs?.context, {
+      routingAnalysis: { history: true, memory: true, vision: false },
+      history: { history: 'recent conversation' }, memory: { memory: 'dated recalled fact' },
+    })
   })
 })
 
@@ -937,5 +997,31 @@ test('node completion events include the measured node duration', async () => {
     const completed = events.find(event => event.type === 'node_complete')
     assert.equal(typeof completed?.data?.durationMs, 'number')
     assert(completed.data.durationMs >= 0)
+  })
+})
+
+
+test('elapsed wall-clock time cannot cancel a running graph node', async () => {
+  let entered!: () => void
+  const ready = new Promise<void>(resolve => { entered = resolve })
+  let finish!: () => void
+  const pending = new Promise<void>(resolve => { finish = resolve })
+  const node = testNode('test_unlimited_node', [], [{ name: 'result', type: 'string' }], async (_inputs, context) => {
+    entered()
+    await pending
+    context.abortSignal.throwIfAborted()
+    return { result: 'completed after former deadlines' }
+  })
+  await withTestNodes([node], async () => {
+    mock.timers.enable({ apis: ['setTimeout'] })
+    try {
+      const execution = executeGraph(graph([{ id: 'slow', nodeType: node.id }], []), {})
+      await ready
+      mock.timers.tick(16 * 60 * 1000)
+      finish()
+      const result = await execution
+      assert.equal(result.status, 'completed')
+      assert.equal(result.nodes.get('slow')?.outputs?.result, 'completed after former deadlines')
+    } finally { finish(); mock.timers.reset() }
   })
 })

@@ -6,7 +6,7 @@ import {
   audit, systemPaths, inspectTrainingDataset, readTrainingDataSettings,
   selectPersonalizationDataset, trainingPersonaContext,
   readTrainingDatasetHistory, trainingSampleContentHash,
-  type TrainingDatasetInspection,
+  selectReviewedPersonalizationDataset, type ReviewedPersonalizationDataset, type TrainingDatasetInspection,
 } from '@metahuman/core'
 import type { CognitiveMode, TrainingDataSettings } from '@metahuman/core/training-schema'
 
@@ -36,6 +36,7 @@ export interface PreparePersonalizationDatasetOptions {
   username: string
   cutoff?: string
   signal?: AbortSignal
+  reviewedDataset?: ReviewedPersonalizationDataset
 }
 
 export interface PreparedPersonalizationDataset {
@@ -159,16 +160,25 @@ export async function preparePersonalizationDataset(
   if (fs.existsSync(manifestPath)) throw new Error('This run already has a frozen dataset; use a new run directory')
   const runProgram = dependencies.runProgram ?? runPersonalizationProgram
   const settings = dependencies.settings ?? readTrainingDataSettings(options.username)
-  if (!options.skipPreprocessing) {
+  if (!options.skipPreprocessing && !options.reviewedDataset) {
     await requireSuccessfulProgram('organizer', ['--username', options.username, '--all', '--limit', '500'], options, runProgram)
     await requireSuccessfulProgram('curator', ['--username', options.username, '--all', '--cutoff', cutoff], options, runProgram)
   }
-  const inspection = dependencies.inspection ?? inspectTrainingDataset(options.username, Date.parse(cutoff))
+  const inspection = dependencies.inspection ?? (options.reviewedDataset
+    ? { records: [], sources: [], cutoff, errors: [] }
+    : inspectTrainingDataset(options.username, Date.parse(cutoff)))
   options.signal?.throwIfAborted()
   if (Date.parse(inspection.cutoff) !== Date.parse(cutoff)) throw new Error('Dataset inspection does not match its source cutoff')
   const systemPrompt = dependencies.personaContext ?? trainingPersonaContext(options.username, settings)
-  const selected = selectPersonalizationDataset(inspection, settings, { ...options, personaContext: systemPrompt,
-    history: dependencies.inspection ? undefined : readTrainingDatasetHistory(options.username) })
+  const personaContexts = {
+    'human-continuation': dependencies.personaContext ?? trainingPersonaContext(options.username, settings, 'human-continuation'),
+    'assistant-continuation': dependencies.personaContext ?? trainingPersonaContext(options.username, settings, 'assistant-continuation'),
+  }
+  const selected = options.reviewedDataset
+    ? selectReviewedPersonalizationDataset(options.reviewedDataset, settings, cutoff,
+      dependencies.inspection ? undefined : readTrainingDatasetHistory(options.username))
+    : selectPersonalizationDataset(inspection, settings, { ...options, personaContexts,
+      history: dependencies.inspection ? undefined : readTrainingDatasetHistory(options.username) })
   if (selected.train.length === 0) throw new Error('No eligible training examples for the selected objective and source weights')
   if (selected.evaluation.length === 0) throw new Error('No independent evaluation group is available; collect more reviewed sessions before training')
 
@@ -188,6 +198,12 @@ export async function preparePersonalizationDataset(
       recentDays: options.recentDays ?? 36500, olderSamples: options.olderSamples ?? 0 },
     supervision: 'final-assistant-only',
     systemPrompt: systemPrompt ?? null,
+    systemPromptsByObjective: Object.fromEntries(Object.entries(personaContexts).map(([objective, prompt]) => [objective, prompt ?? null])),
+    ...(options.reviewedDataset ? {
+      review: options.reviewedDataset.review,
+      systemPromptsBySample: Object.fromEntries([...selected.train, ...selected.evaluation]
+        .map(row => [row.id, row.messages.find(message => message.role === 'system')?.content ?? null])),
+    } : {}),
     train: { sha256: sha256(trainingText), count: selected.train.length, sourceIds: trainSourceIds,
       sampleIds: selected.train.map(row => row.id), groups: [...new Set(selected.train.map(row => row.metadata.group))], contentHashes: selected.train.map(trainingSampleContentHash) },
     evaluation: { sha256: sha256(evaluationText), count: selected.evaluation.length, sourceIds: evaluationSourceIds,

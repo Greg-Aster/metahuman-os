@@ -74,13 +74,15 @@ function detectBigBrotherAvailability(username?: string): { available: boolean; 
   try {
     const config = loadOperatorConfig(username);
     const bigBrotherConfig = config.bigBrotherMode || { enabled: false, provider: 'claude-code' };
+    const registry = loadModelRegistry(false, username);
 
     // Big Brother is available if we're not on mobile (mobile has no terminal)
     // For now, always mark as available since server-side can't detect mobile
     // The UI will hide it on mobile if needed
     return {
       available: true,
-      enabled: bigBrotherConfig.enabled ?? false,
+      enabled: [registry.defaults, ...Object.values(registry.cognitiveModeMappings ?? {})]
+        .some(mapping => Object.values(mapping).some(id => typeof id === 'string' && registry.models[id]?.provider === 'big-brother')),
       provider: bigBrotherConfig.provider || 'claude-code',
     };
   } catch {

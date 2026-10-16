@@ -14,6 +14,7 @@ export * from './path-builder';  // Core path functions (no dependencies)
 export * from './paths';  // Path utilities (systemPaths, getProfilePaths, ROOT)
 export * from './deployment';  // Deployment mode configuration (local vs server)
 export * from './identity';
+export { getStandingPersonaGoals } from './persona-summary';
 export * from './memory';
 export {
   readEnvironmentTrainingBank, readEnvironmentTrainingReviews,

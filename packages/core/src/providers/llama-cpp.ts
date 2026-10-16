@@ -1,4 +1,6 @@
 /** Transport for an externally managed llama-server. Process ownership stays with its launcher. */
+import { request as requestHttp } from 'node:http'
+import { request as requestHttps } from 'node:https'
 import {
   inspectProviderMessages,
   providerImagePolicyFromOptions,
@@ -24,7 +26,7 @@ export const DEFAULT_LLAMA_CPP_CONFIG: LlamaCppConfig = {
   endpoint: 'http://127.0.0.1:8080',
   model: '',
   contextWindow: 4096,
-  maxTokens: 512,
+  maxTokens: -1,
   temperature: 0.7,
   topP: 0.9,
   enableThinking: false,
@@ -43,8 +45,8 @@ export function validateLlamaCppConfig(config: LlamaCppConfig): void {
   if (!Number.isInteger(config.contextWindow) || config.contextWindow < 256 || config.contextWindow > 1048576) {
     throw new Error('llama.cpp contextWindow must be an integer between 256 and 1048576')
   }
-  if (!Number.isInteger(config.maxTokens) || config.maxTokens < 1 || config.maxTokens >= config.contextWindow) {
-    throw new Error('llama.cpp maxTokens must be positive and smaller than contextWindow')
+  if (!Number.isInteger(config.maxTokens) || (config.maxTokens !== -1 && (config.maxTokens < 1 || config.maxTokens >= config.contextWindow))) {
+    throw new Error('llama.cpp maxTokens must be -1 (unlimited) or positive and smaller than contextWindow')
   }
   if (!Number.isFinite(config.temperature) || config.temperature < 0 || config.temperature > 5
     || !Number.isFinite(config.topP) || config.topP < 0 || config.topP > 1) {
@@ -57,18 +59,37 @@ export function validateLlamaCppConfig(config: LlamaCppConfig): void {
   }
 }
 
-async function requestJson(endpoint: string, route: string, init: RequestInit, timeoutMs: number): Promise<any> {
-  const signal = init.signal
-    ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
-    : AbortSignal.timeout(timeoutMs)
+async function requestJson(endpoint: string, route: string, init: {
+  signal?: AbortSignal | null; method?: string; headers?: Record<string, string>; body?: string
+}, timeoutMs?: number): Promise<any> {
+  // Inference lifetime belongs to its caller. Health/discovery retain their own deadlines.
+  // Native HTTP avoids fetch's independent response-header deadline during long prefill.
+  const deadline = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs)
+  const signal = deadline && init.signal ? AbortSignal.any([init.signal, deadline]) : deadline ?? init.signal ?? undefined
   try {
-    const response = await fetch(`${endpoint.replace(/\/$/, '')}${route}`, { ...init, signal })
-    const text = await response.text()
-    if (!response.ok) throw new Error(`llama.cpp ${route} returned HTTP ${response.status}: ${text.slice(0, 512)}`)
+    signal?.throwIfAborted()
+    const url = new URL(`${endpoint.replace(/\/$/, '')}${route}`)
+    const text = await new Promise<string>((resolve, reject) => {
+      const request = (url.protocol === 'https:' ? requestHttps : requestHttp)(url, {
+        method: init.method, headers: init.headers, signal,
+      }, response => {
+        response.setEncoding('utf8')
+        void (async () => {
+          let body = ''
+          for await (const chunk of response) body += chunk
+          if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
+            throw new Error(`llama.cpp ${route} returned HTTP ${response.statusCode}: ${body.slice(0, 512)}`)
+          }
+          resolve(body)
+        })().catch(reject)
+      })
+      request.on('error', reject)
+      request.end(init.body)
+    })
     try { return JSON.parse(text) } catch { throw new Error(`llama.cpp ${route} returned invalid JSON`) }
   } catch (error) {
     init.signal?.throwIfAborted()
-    if (signal.aborted) throw new Error(`llama.cpp ${route} timed out after ${timeoutMs}ms`)
+    if (deadline?.aborted) throw new Error(`llama.cpp ${route} timed out after ${timeoutMs}ms`)
     throw new Error(`llama.cpp ${route} failed: ${(error as Error).message}`, { cause: error })
   }
 }
@@ -105,8 +126,8 @@ export async function callLlamaCpp(
     throw new ProviderInputError(`llama.cpp model ${config.model} is not configured for image input`)
   }
   const maxTokens = options.maxTokens ?? config.maxTokens
-  if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens >= config.contextWindow) {
-    throw new ProviderInputError('Requested output tokens must be positive and smaller than the llama.cpp context window')
+  if (!Number.isInteger(maxTokens) || (maxTokens !== -1 && (maxTokens < 1 || maxTokens >= config.contextWindow))) {
+    throw new ProviderInputError('Requested output tokens must be -1 (unlimited) or positive and smaller than the llama.cpp context window')
   }
   onProgress?.({ phase: 'running', message: `Generating with llama.cpp (${config.model})` })
   // Server IDs may change when adapters are reloaded in a different order.
@@ -134,12 +155,14 @@ export async function callLlamaCpp(
       ...(options.repeatPenalty !== undefined ? { repeat_penalty: options.repeatPenalty } : {}),
       ...(options.seed !== undefined ? { seed: options.seed } : {}),
       chat_template_kwargs: { enable_thinking: options.enableThinking ?? config.enableThinking },
+      // Some chat templates treat an empty schema as no output constraint.
+      // Preserve JSON-object mode with an explicit object schema, without applying field constraints.
       ...(options.jsonSchema ? { response_format: options.jsonSchemaMode === 'json-object'
-          ? { type: 'json_object' }
+          ? { type: 'json_object', schema: { type: 'object' } }
           : { type: 'json_schema', json_schema: { name: 'response', schema: options.jsonSchema } } }
-        : options.format === 'json' ? { response_format: { type: 'json_object' } } : {}),
+        : options.format === 'json' ? { response_format: { type: 'json_object', schema: { type: 'object' } } } : {}),
     }),
-  }, 120000)
+  })
   const choice = response?.choices?.[0]
   const message = choice?.message
   if (typeof message?.content !== 'string' || !message.content.trim()) {

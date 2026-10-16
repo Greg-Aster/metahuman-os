@@ -38,7 +38,7 @@ const router = await import('../../model-router.js')
 mock.module(new URL('../../model-router.ts', import.meta.url).href, { namedExports: { ...router,
   callLLM: async (input: any) => {
     modelInputs.push(input)
-    if (fullGraphRun && input.role === 'orchestrator') return { content: JSON.stringify({
+    if (fullGraphRun && ['orchestrator'].includes(input.role)) return { content: JSON.stringify({
       needsResponse: true, needsAction: false, needsToolUse: true, taskContext: [], conversationContext: ['persona.personality'],
     }) }
     const evidence = JSON.parse(input.messages[1].content)

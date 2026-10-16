@@ -6,14 +6,12 @@ import { AGENT_CATALOG_DEFINITIONS } from './agent-catalog-definitions.js'
 import { ROOT } from './path-builder.js'
 import {
   beginEnvironmentPerceptionCycle,
-  hasActiveRobotAutonomyCycle,
   isRobotStatusEnabled,
   isBoredomObserverEnabled,
   isBoredomReflectionEnabled,
   isBoredomMovementEnabled,
   nextRobotObserverCycle,
   isRobotAutonomyWorkItem,
-  randomizedRobotOperatorIdleMs,
   readRobotObserverCycle,
   robotObserverSourceAllowed,
   robotOperatorChildGraph,
@@ -29,13 +27,6 @@ import { getAgentCatalogSnapshot } from './agent-catalog.js'
 import { buildRobotOperatorManualTaskInput } from './queue/queue-system.js'
 import { summarizeEnvironmentGraphEffect } from './queue/execution-engine.js'
 
-test('robot operator idle timing is five minutes plus or minus one minute', () => {
-  const config = { inactivityThresholdSeconds: 300, jitterMs: 60_000 }
-  assert.equal(randomizedRobotOperatorIdleMs(config, () => 0), 240_000)
-  assert.equal(randomizedRobotOperatorIdleMs(config, () => 0.5), 300_000)
-  assert.equal(randomizedRobotOperatorIdleMs(config, () => 1), 360_000)
-})
-
 test('manual observer cycles remain available while autonomous cycles require semi or full', () => {
   assert.equal(robotObserverSourceAllowed('reactive', 'user'), true)
   assert.equal(robotObserverSourceAllowed('reactive', 'autonomy'), false)
@@ -44,10 +35,10 @@ test('manual observer cycles remain available while autonomous cycles require se
 })
 
 test('full autonomy admits the controller instead of rotating child workflows', () => {
-  const serviceSource = fs.readFileSync(path.join(ROOT, 'brain/services/robot-operator.ts'), 'utf8')
-  assert.match(serviceSource, /FULL_CONTROLLER[^\n]+robot-autonomy-controller/)
+  const serviceSource = fs.readFileSync(path.join(ROOT, 'brain/agents/active-operator/index.ts'), 'utf8')
+  assert.match(serviceSource, /CONTROLLER[^\n]+robot-autonomy-controller/)
   assert.match(serviceSource, /activeRobotExecutions/)
-  assert.match(serviceSource, /handler: 'graph.signal'/)
+  assert.doesNotMatch(serviceSource, /armSemiChild|randomizedChildIdleMs|RETRY_DELAY_MS/)
   assert.doesNotMatch(serviceSource, /nextRobotOperatorFullChild|fullCursor|FULL_CYCLE_POLL_MS|nextFullRobotOperatorChild|loadRobotStatus/)
 })
 
@@ -103,108 +94,7 @@ test('robot autonomy activity follows the canonical correlated work chain', () =
   assert.equal(isRobotAutonomyWorkItem(command), true)
   assert.equal(isRobotAutonomyWorkItem(returnedResult), true)
   assert.equal(isRobotAutonomyWorkItem(unrelated), false)
-  assert.equal(hasActiveRobotAutonomyCycle([child, observation, command, unrelated]), true)
-  assert.equal(hasActiveRobotAutonomyCycle([controller, selectedAgent]), true)
-  assert.equal(
-    hasActiveRobotAutonomyCycle([controller, selectedAgent], selectedAgent.id, 'cycle-2'),
-    false,
-    'the parent and selected child are one correlated autonomy cycle',
-  )
-  assert.equal(
-    hasActiveRobotAutonomyCycle([
-      controller,
-      { ...selectedAgent, id: 'other-cycle', correlationId: 'cycle-3' },
-    ], selectedAgent.id, 'cycle-2'),
-    true,
-    'a different correlated cycle still blocks competing autonomy',
-  )
-  assert.equal(hasActiveRobotAutonomyCycle([{ ...command, state: 'completed' }]), false)
-  assert.equal(hasActiveRobotAutonomyCycle([child], child.id), false)
 
-  const receipts = summarizeRobotAutonomyActivity([
-    {
-      id: 'desire-result',
-      handler: 'agent.desire-generator',
-      state: 'failed',
-      source: 'autonomy',
-      username: 'owner',
-      createdAt: '2026-09-05T00:01:00.000Z',
-      completedAt: '2026-09-05T00:01:02.000Z',
-      correlationId: 'cycle-5',
-      metadata: {
-        decisionInstruction: 'Consider whether a new desire is useful.',
-        decisionReason: 'No objective is active.',
-        observationSummary: 'The robot is idle.',
-      },
-      input: {
-        agentId: 'desire-agent',
-        triggeredBy: 'robot-autonomy-controller',
-      },
-      error: { code: 'handler_failed', message: 'Typed output was invalid', retryable: true },
-    },
-    {
-      id: 'executor-result',
-      handler: 'environment.observation',
-      state: 'completed',
-      source: 'autonomy',
-      username: 'owner',
-      createdAt: '2026-09-05T00:00:00.000Z',
-      completedAt: '2026-09-05T00:00:03.000Z',
-      correlationId: 'cycle-4',
-      input: {
-        robotOperatorContext: {
-          robotObserver: { requestedBy: 'robot-autonomy-controller' },
-          plannerDecision: {
-            instruction: 'Look toward the open side of the room.',
-            reason: 'The previous view was obstructed.',
-            observed: 'The robot is beside furniture.',
-          },
-        },
-      },
-      result: {
-        graph: 'boredom-autonomy',
-        recorded: true,
-        effect: {
-          actionQueue: {
-            status: 'coordinated_for_adapter',
-            queuedCount: 1,
-            rejectedCount: 0,
-            commands: [{ id: 'turn-1', type: 'robotCommand', command: 'turn-right', status: 'pending' }],
-          },
-        },
-      },
-    },
-    {
-      id: 'old-reflection',
-      handler: 'agent.reflector',
-      state: 'completed',
-      source: 'autonomy',
-      username: 'owner',
-      createdAt: '2026-09-04T23:59:00.000Z',
-      completedAt: '2026-09-04T23:59:02.000Z',
-      correlationId: 'cycle-3',
-      input: {
-        agentId: 'reflector',
-        triggeredBy: 'robot-autonomy-controller',
-        robotOperatorContext: {
-          controllerDecision: {
-            instruction: 'Reflect on recent events.',
-            reason: 'The system had time to reflect.',
-            observationSummary: 'The robot is idle.',
-          },
-        },
-      },
-      result: { status: 'completed' },
-    },
-  ] as any, 'owner')
-  assert.deepEqual(receipts.map(receipt => receipt.capabilityId), [
-    'reflector',
-    'robot-autonomy-executor',
-    'desire-agent',
-  ])
-  assert.equal(receipts[1].result?.recorded, true)
-  assert.equal((receipts[1].result?.effect as any)?.actionQueue.commands[0].command, 'turn-right')
-  assert.equal(receipts[2].error?.message, 'Typed output was invalid')
 })
 
 test('Environment graph receipts distinguish queued work from physical completion', () => {
@@ -388,12 +278,12 @@ test('each boredom child keeps its specialized policy in the editable workflow',
   assert.match(movement, /do not select a technical command/i)
   assert.doesNotMatch(movement, /exactly one safe robotCommand/i)
 
-  const executive = message('boredom-autonomy', 'executive-policy')
-  assert.match(executive, /advertised action whose description implements the intention/i)
-  assert.match(executive, /generatedMotion handles uncovered body-local gestures/i)
-  assert.match(executive, /instruction describes the intended effect/i)
-  assert.match(executive, /accepting or starting work is not completion/i)
-  assert.match(executive, /active executor advances from physical receipts without per-movement model review/i)
+  const shared = graph('environment')
+  const taskContext = shared.nodes.find((node: any) => node.id === '3')
+  assert.match(taskContext.data.properties.autonomySystemPrompt, /internally authored planner intention/)
+  assert.ok(shared.nodes.some((node: any) => node.data.nodeType === 'robot_operator_input'))
+  assert.ok(shared.nodes.some((node: any) => node.data.nodeType === 'user_input'))
+  assert.equal(fs.existsSync(new URL('../../../etc/cognitive-graphs/boredom-autonomy-mode.json', import.meta.url)), false)
 
   const observer = message('boredom-observer', 'planner-policy')
   assert.match(observer, /fresh correlated camera image as current evidence/i)
@@ -421,7 +311,7 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   assert.equal(AGENT_CATALOG_DEFINITIONS['boredom-reflection'].lifecycle, 'workflow')
   assert.equal(AGENT_CATALOG_DEFINITIONS['boredom-reflection'].handler, 'workflow.boredom-reflection')
   assert.equal(AGENT_CATALOG_DEFINITIONS['robot-operator'].lifecycle, 'service')
-  assert.equal(AGENT_CATALOG_DEFINITIONS['robot-operator'].servicePath, 'services/robot-operator.ts')
+  assert.equal(AGENT_CATALOG_DEFINITIONS['robot-operator'].servicePath, 'agents/active-operator/index.ts')
 
   const agents = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc', 'agents.json'), 'utf8'))
   const services = JSON.parse(fs.readFileSync(path.join(ROOT, 'etc', 'services.json'), 'utf8'))
@@ -462,7 +352,7 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
     assert.equal(task.metadata?.childAgent, child)
 
     const childVariables = buildAgentDescriptor(child, agents.agents[child], catalogItem).variables
-    assert.equal(childVariables.find(variable => variable.key === 'runtimeOwner')?.value, 'Robot Operator')
+    assert.equal(childVariables.find(variable => variable.key === 'runtimeOwner')?.value, 'Active Operator')
     assert.equal(childVariables.find(variable => variable.key === 'workflowHandler')?.value, `workflow.${child}`)
   }
   assert.throws(
@@ -473,16 +363,6 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
     'robot-operator',
     services.services['robot-operator'],
   ).variables
-  assert.equal(variables.find(variable => variable.key === 'boredomObserverInactivityThreshold')?.value, 300)
-  assert.equal(variables.find(variable => variable.key === 'robotStatusInactivityThreshold')?.value, 300)
-  assert.equal(variables.find(variable => variable.key === 'robotStatusJitterMs')?.value, 60_000)
-  assert.equal(variables.find(variable => variable.key === 'robotGoalReviewInactivityThreshold')?.value, 60)
-  assert.equal(variables.find(variable => variable.key === 'robotGoalReviewJitterMs')?.value, 0)
-  assert.equal(variables.find(variable => variable.key === 'boredomObserverJitterMs')?.value, 60_000)
-  assert.equal(variables.find(variable => variable.key === 'boredomMovementInactivityThreshold')?.value, 600)
-  assert.equal(variables.find(variable => variable.key === 'boredomMovementJitterMs')?.value, 120_000)
-  assert.equal(variables.find(variable => variable.key === 'boredomReflectionInactivityThreshold')?.value, 900)
-  assert.equal(variables.find(variable => variable.key === 'boredomReflectionJitterMs')?.value, 180_000)
   assert.equal(variables.some(variable => variable.key === 'maxCycleSteps'), false)
   assert.equal(variables.some(variable => variable.key === 'graph'), false)
   assert.equal(variables.find(variable => variable.key === 'robotStatusGraph')?.value, 'robot-status')
@@ -491,7 +371,7 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   assert.equal(variables.find(variable => variable.key === 'boredomObserverGraph')?.value, 'boredom-observer')
   assert.equal(variables.find(variable => variable.key === 'boredomMovementGraph')?.value, 'boredom-movement')
   assert.equal(variables.find(variable => variable.key === 'boredomReflectionGraph')?.value, 'boredom-reflection')
-  assert.equal(variables.find(variable => variable.key === 'autonomyGraph')?.value, 'boredom-autonomy')
+  assert.equal(variables.some(variable => variable.key === 'autonomyGraph'), false)
   assert.equal(variables.find(variable => variable.key === 'environmentGraph')?.value, 'environment')
   const config = loadRobotOperatorConfig()
   assert.equal('maxCycleSteps' in config, false)
@@ -501,7 +381,7 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   assert.equal(config.boredomObserverGraph, 'boredom-observer')
   assert.equal(config.boredomMovementGraph, 'boredom-movement')
   assert.equal(config.boredomReflectionGraph, 'boredom-reflection')
-  assert.equal(config.autonomyGraph, 'boredom-autonomy')
+  assert.equal(Object.hasOwn(config, 'autonomyGraph'), false)
   assert.equal(config.environmentGraph, 'environment')
   assert.equal(robotOperatorChildGraph(config, 'robot-status'), 'robot-status')
   assert.equal(robotOperatorChildGraph(config, 'robot-autonomy-controller'), 'robot-autonomy-controller')
@@ -510,14 +390,14 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
 
   const engine = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/execution-engine.ts'), 'utf8')
   const observerHandler = fs.readFileSync(path.join(ROOT, 'packages/core/src/queue/robot-autonomy-trigger-handler.ts'), 'utf8')
-  const controller = fs.readFileSync(path.join(ROOT, 'brain/services/robot-operator.ts'), 'utf8')
+  const controller = fs.readFileSync(path.join(ROOT, 'brain/agents/active-operator/index.ts'), 'utf8')
   assert.equal(fs.existsSync(path.join(ROOT, 'packages/core/src/queue/boredom-movement-handler.ts')), false)
   assert.match(engine, /workflow\.robot-status/)
   assert.match(engine, /workflow\.robot-goal-review/)
   assert.match(engine, /workflow\.boredom-observer/)
   assert.match(engine, /workflow\.boredom-movement/)
   assert.match(engine, /workflow\.boredom-reflection/)
-  assert.match(observerHandler, /hasActiveRobotAutonomyCycle/)
+  assert.doesNotMatch(observerHandler, /hasActiveRobotAutonomyCycle/)
   assert.match(observerHandler, /const observation = session\.latestObservation/)
   assert.match(observerHandler, /actions\.includes\('robotMotionPlan'\)/)
   assert.doesNotMatch(observerHandler, /actions\.filter\(/)
@@ -531,9 +411,9 @@ test('Robot Operator owns scheduling while Robot Status and boredom children own
   assert.match(controller, /isSleepRuntimeActive\(\)/)
   assert.match(controller, /loadQueueState\(\)\?\.items/)
   assert.match(controller, /getQueueStateDir\(\)/)
-  assert.match(controller, /watchFile\(WORK_COORDINATOR_STATE/)
-  assert.match(controller, /\$\{SERVICE_ID\}:full-cycle/)
-  assert.match(controller, /watchFullCycle\('cycle-active'\)/)
+  assert.match(controller, /fs\.watch\(getQueueStateDir\(\)/)
+  assert.match(controller, /\$\{SERVICE_ID\}:assessment:/)
+  assert.match(controller, /execution.stimulusAgent === CONTROLLER/)
   assert.doesNotMatch(controller, /cooldownMs|lastFullCycleCompletedAt|robotOperatorFullDueAt|FULL_IDLE_CONFIRMATIONS|cycle-settling/)
   assert.doesNotMatch(controller, /getQueueManager|addEventListener/)
   assert.doesNotMatch(controller, /operatorInstruction:/)
@@ -606,7 +486,7 @@ test('Robot Operator Input supplies cycle correlation for optional conversation 
       cycleId: 'episode-response',
       step: 3,
       triggerSource: 'autonomy',
-      graph: 'boredom-autonomy',
+      graph: 'environment',
       requestedBy: 'boredom-observer',
       },
     },
@@ -625,10 +505,10 @@ test('Active Operator dashboard exposes Robot Operator children without private 
     assert.match(dashboard, new RegExp(child))
     assert.match(reflectionCard, new RegExp(child))
   }
-  assert.match(dashboard, /Robot Operator/)
-  assert.match(dashboard, /Next:/)
-  assert.match(dashboard, /Last admitted:/)
-  assert.match(dashboard, /Recent boredom episodes/)
+  assert.match(dashboard, /Active Operator/)
+  assert.match(dashboard, /activationPoints/)
+  assert.match(dashboard, /lastAssessment/)
+  assert.match(dashboard, /Recent autonomy activity/)
   assert.match(statusHandler, /readRobotOperatorRuntimeState/)
   assert.doesNotMatch(statusHandler, /operatorInstruction|memoryContext|visuals|dataUrl/)
 })

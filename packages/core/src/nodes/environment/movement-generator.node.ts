@@ -313,7 +313,7 @@ export const movementGeneratorNode = defineNode({
   ],
   properties: {
     enableThinking: false,
-    role: 'orchestrator',
+    role: 'planner',
     executionTarget: '',
     maxTokens: 4096,
     temperature: 0.2,
@@ -324,7 +324,7 @@ export const movementGeneratorNode = defineNode({
       options: [{ value: '', label: 'Configured role backend' }, { value: 'remote', label: 'Remote' }] },
     role: {
       type: 'select',
-      default: 'orchestrator',
+      default: 'planner',
       label: 'Model Role',
       options: [...MODEL_ROLE_OPTIONS],
     },
@@ -332,9 +332,9 @@ export const movementGeneratorNode = defineNode({
       type: 'number',
       default: 4096,
       label: 'Max Tokens',
-      min: 1024,
-      max: 8192,
-      step: 256,
+      description: 'Use -1 for unlimited generation on llama.cpp; positive values request an explicit output limit.',
+      min: -1,
+      step: 1,
     },
     temperature: {
       type: 'slider',
@@ -397,7 +397,7 @@ export const movementGeneratorNode = defineNode({
       const callGenerator = (generatorMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => callLLM({
         signal: context.abortSignal,
         executionTarget: properties?.executionTarget === 'remote' ? 'remote' : undefined,
-        role: properties?.role || 'orchestrator',
+        role: properties?.role || 'planner',
         messages: generatorMessages,
         userId: context.userId || context.username,
         cognitiveMode: 'environment',

@@ -9,5 +9,6 @@ export { robotOperatorEnvironmentDispatchNode } from './environment-dispatch.nod
 export { robotGoalReviewParserNode } from './goal-review-parser.node.js';
 export { robotAutonomyControllerParserNode } from './autonomy-controller-parser.node.js';
 export { robotAutonomyTaskCatalogNode } from './task-catalog.node.js';
-export { robotAutonomyTaskDispatchNode } from './task-dispatch.node.js';
 export { robotAutonomyActivityHistoryNode } from './autonomy-activity-history.node.js';
+
+export { activeOperatorDispatchNode } from './activation-dispatch.node.js';

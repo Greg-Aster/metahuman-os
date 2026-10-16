@@ -1,3 +1,4 @@
+import { readRecordedCognitiveMode } from '../cognitive-mode.js';
 /**
  * Configured proactive work producer.
  *
@@ -451,26 +452,27 @@ export class TriggerManager extends EventEmitter {
       : fireContext.admissionKey ?? this.idempotencyKey(agentId, state, now);
     const dueKey = admissionKey || `manual:${agentId}:${now}`;
     if (admissionKey && state.lastAdmissionKey === admissionKey) return this.suppress(agentId, state, 'duplicate', dueKey);
-    const taskInput: TaskInput = {
-      type: agentTaskType(agentId),
-      handler: state.config.handler || agentHandlerId(agentId),
-      resource: state.config.resource,
-      source: triggerType === 'manual' ? 'user' : triggerType === 'event' ? 'system' : 'timer',
-      priority: triggerType === 'manual' ? state.config.priority : priorityForTriggeredWork(state.config.priority),
-      input: {
-        agentId,
-        args,
-        configuredAgentPath: state.config.agentPath,
-        triggeredBy: triggerType,
-        usesLLM: state.config.usesLLM ?? true,
-        triggerData: fireContext.triggerData || {},
-      },
-      username: fireContext.username || username,
-      maxAttempts: Math.max(1, (state.config.maxRetries ?? 0) + 1),
-      idempotencyKey: admissionKey,
-      metadata: { producer: 'trigger-manager', triggerId: agentId, triggerType },
-    };
     try {
+      const taskInput: TaskInput = {
+        type: agentTaskType(agentId),
+        handler: state.config.handler || agentHandlerId(agentId),
+        resource: state.config.resource,
+        source: triggerType === 'manual' ? 'user' : triggerType === 'event' ? 'system' : 'timer',
+        priority: triggerType === 'manual' ? state.config.priority : priorityForTriggeredWork(state.config.priority),
+        input: {
+          agentId,
+          args,
+          configuredAgentPath: state.config.agentPath,
+          triggeredBy: triggerType,
+          usesLLM: state.config.usesLLM ?? true,
+          triggerData: fireContext.triggerData || {},
+        },
+        username: fireContext.username || username,
+        originatingCognitiveMode: readRecordedCognitiveMode(fireContext.username || username),
+        maxAttempts: Math.max(1, (state.config.maxRetries ?? 0) + 1),
+        idempotencyKey: admissionKey,
+        metadata: { producer: 'trigger-manager', triggerId: agentId, triggerType },
+      };
       const task = this.queueManager.enqueue(taskInput);
       state.lastAdmissionKey = admissionKey;
       state.lastRun = new Date(now);

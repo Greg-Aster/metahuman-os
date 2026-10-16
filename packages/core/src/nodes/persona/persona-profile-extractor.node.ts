@@ -1,4 +1,5 @@
-import { reasoningProperty } from '../llm/model-router.schema.js';
+import type { ModelRole } from '../../model-roles.js';
+import { reasoningProperty, modelRouterDefinition } from '../llm/model-router.schema.js';
 import { callLLM } from '../../model-router.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext, type NodeExecutor } from '../types.js'
 
@@ -279,7 +280,7 @@ export async function executePersonaProfileExtractor(
   const messages = validateMessages(inputs.messages)
   const conversationText = messages.map(message => `${message.role}: ${message.content}`).join('\n\n')
   const response = await dependencies.callModel({
-    role: 'curator',
+    role: (properties?.role ?? 'psychotherapist') as ModelRole,
     userId: typeof context.userId === 'string' ? context.userId : context.username,
     cognitiveMode: typeof context.cognitiveMode === 'string' ? context.cognitiveMode : undefined,
     messages: [
@@ -308,7 +309,8 @@ export const PersonaTranscriptInputNode: NodeDefinition = defineNode({
 })
 
 export const PersonaProfileExtractorNode: NodeDefinition = defineNode({
-  propertySchemas: { enableThinking: reasoningProperty },
+  propertySchemas: {
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'psychotherapist' }, enableThinking: reasoningProperty },
   id: 'persona_profile_extractor',
   name: 'Extract Persona Profile',
   category: 'persona',
@@ -317,7 +319,7 @@ export const PersonaProfileExtractorNode: NodeDefinition = defineNode({
     { name: 'persona', type: 'object' },
     { name: 'confidence', type: 'object' },
   ],
-  properties: { enableThinking: false },
+  properties: { role: 'psychotherapist', enableThinking: false },
   description: 'Extracts a validated persona draft from a graph-supplied interview transcript',
   execute: executePersonaProfileExtractor,
 })

@@ -33,14 +33,14 @@ import {
   withUserContext,
   submitInnerReflection,
   loadPersonaCore,
+  readDesireOperationalContext,
+  getStandingPersonaGoals,
   listActiveTasks,
   listEpisodicFiles,
   getActiveBackend,
   loadGraphFile,
-  proposeGoalFromDesire,
   requireGraphNodeOutput,
   runGraph,
-  GOAL_PROPOSAL_THRESHOLDS,
   loadTrustLevel,
   curiosityQuestionStore,
   getUserContext,
@@ -86,7 +86,9 @@ import {
   listDesiresByStatus,
   incrementMetric,
   initializeAgencyStorage,
-  reinforceDesire,
+  applyDesireRelevance,
+  listAllDesires,
+  OPEN_DESIRE_STATUSES,
   depreciateDesire,
   filterUnanalyzedGeneratorInputs,
   markGeneratorInputsAnalyzed,
@@ -100,7 +102,6 @@ const LOG_PREFIX = '[desire-agent]';
 const GRAPH_FILE = 'desire-generator.json';
 const graphCache: Record<string, CachedGraphEntry | null> = {};
 const MAX_USER_REQUESTS = 20;
-const MAX_USER_REQUEST_CHARS = 1_000;
 
 /** Equivalent outcomes share one intention even when their titles differ. */
 export function selectUniqueDesireCandidates(candidates: DesireCandidate[], existing: DesireSummary[]): DesireCandidate[] {
@@ -159,12 +160,6 @@ interface AgencyActivation {
   threshold: number;
 }
 
-interface AgencyGoalProposal {
-  desireId: string;
-  title: string;
-  goalId: string;
-}
-
 interface AgencyCreatedDesire {
   desireId: string;
   title: string;
@@ -179,7 +174,6 @@ interface NurtureResult {
   reinforced: AgencyStrengthChange[];
   decayed: AgencyStrengthChange[];
   archived: AgencyStrengthChange[];
-  goalsProposed: AgencyGoalProposal[];
 }
 
 export interface AgencyReviewReport {
@@ -187,12 +181,12 @@ export interface AgencyReviewReport {
   freshEvidenceCount: number;
   evidenceBySource: Record<string, number>;
   modelCalls: AgencyModelCallReport[];
+  assessments?: DesireReinforcementDecision[];
   reinforced: AgencyStrengthChange[];
   decayed: AgencyStrengthChange[];
   archived: AgencyStrengthChange[];
   activated: AgencyActivation[];
   created: AgencyCreatedDesire[];
-  goalsProposed: AgencyGoalProposal[];
   candidatesRejectedAsDuplicates: number;
   candidatesBlockedByCapacity: number;
   generationSkippedReason: string | null;
@@ -224,8 +218,7 @@ function auditCycleOutcome(result: DesireGeneratorResult, username?: string): vo
 /**
  * Load persona goals from core.json
  */
-export async function loadPersonaGoals(): Promise<PersonaGoal[]> {
-    const persona = await loadPersonaCore();
+function selectFreshPersonaGoals(persona: Awaited<ReturnType<typeof loadPersonaCore>>): PersonaGoal[] {
     if (!persona?.goals) return [];
 
     const goals: PersonaGoal[] = [];
@@ -254,6 +247,22 @@ export async function loadPersonaGoals(): Promise<PersonaGoal[]> {
     }
 
     return goals;
+}
+
+export async function loadPersonaGoals(): Promise<PersonaGoal[]> {
+  return selectFreshPersonaGoals(await loadPersonaCore());
+}
+
+async function loadPersonaGoalContext(): Promise<{ fresh: PersonaGoal[]; standing: PersonaGoal[] }> {
+  const persona = await loadPersonaCore();
+  const fresh = selectFreshPersonaGoals(persona);
+  const priorities = { shortTerm: 'short', midTerm: 'mid', longTerm: 'long' } as const;
+  const standing = getStandingPersonaGoals(persona).map((goal, index) => {
+    const priority = priorities[goal.tier];
+    const existing = fresh.find(item => item.goal === goal.goal && item.status === goal.status && item.priority === priority);
+    return { id: goal.id ?? existing?.id ?? `standing-goal-${goal.tier}-${index}`, goal: goal.goal, status: goal.status, priority };
+  });
+  return { fresh, standing };
 }
 
 /**
@@ -312,12 +321,19 @@ export async function loadRecentMemories(days: number = 7): Promise<MemorySummar
     if (['inner_dialogue', 'reflection', 'dream'].includes(String(document.type))) return [];
     const timestamp = typeof document.timestamp === 'string' ? Date.parse(document.timestamp) : NaN;
     if (!Number.isFinite(timestamp) || timestamp < cutoff) return [];
+    const attribution: NonNullable<MemorySummary['attribution']> = {};
+    if (isRecord(document.metadata)) {
+      for (const field of ['role', 'source', 'dialogueSource', 'cognitiveMode', 'executionId', 'correlationId'] as const) {
+        if (typeof document.metadata[field] === 'string') attribution[field] = document.metadata[field];
+      }
+    }
     return [{
       id: typeof document.id === 'string' ? document.id : document.__file.split('/').pop()!,
-      content: typeof document.content === 'string' ? document.content.substring(0, 500) : '',
+      content: typeof document.content === 'string' ? document.content : '',
       type: typeof document.type === 'string' ? document.type : 'unknown',
       timestamp: document.timestamp as string,
       tags: Array.isArray(document.tags) ? document.tags.filter(tag => typeof tag === 'string') : [],
+      ...(Object.keys(attribution).length ? { attribution } : {}),
     }];
   }).sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)).slice(0, 50);
 }
@@ -519,7 +535,7 @@ export async function loadReflections(count: number = 5): Promise<ReflectionSumm
     }
     return [{
       id: typeof document.id === 'string' ? document.id : document.__file.split('/').pop()!,
-      content: typeof document.content === 'string' ? document.content.substring(0, 500) : '',
+      content: typeof document.content === 'string' ? document.content : '',
       timestamp: document.timestamp,
       tags,
     }];
@@ -541,7 +557,7 @@ export async function loadDreams(count: number = 3): Promise<DreamSummary[]> {
       : [];
     return [{
       id: typeof document.id === 'string' ? document.id : document.__file.split('/').pop()!,
-      content: typeof document.content === 'string' ? document.content.substring(0, 500) : '',
+      content: typeof document.content === 'string' ? document.content : '',
       timestamp: document.timestamp,
       themes: tags.filter(tag => !['dream', 'sleep'].includes(tag)),
     }];
@@ -562,7 +578,7 @@ export function selectRecentUserRequests(
     .filter(({ message }) => message.role === 'user' && message.content.trim().length > 0)
     .slice(-Math.max(1, limit))
     .map(({ message, index }) => {
-      const content = message.content.trim().slice(0, MAX_USER_REQUEST_CHARS);
+      const content = message.content.trim();
       const persistedId = isRecord(message.meta) && typeof message.meta.idempotencyKey === 'string'
         ? message.meta.idempotencyKey.trim()
         : '';
@@ -628,7 +644,7 @@ export async function gatherInputs(enabledSources: DesireSource[]): Promise<Desi
   console.log(`${LOG_PREFIX} Gathering inputs from enabled sources:`, enabledSources);
 
   const [
-    personaGoals,
+    goalContext,
     tasks,
     recentMemories,
     curiosityQuestions,
@@ -637,7 +653,7 @@ export async function gatherInputs(enabledSources: DesireSource[]): Promise<Desi
     userRequests,
     existingDesires,
   ] = await Promise.all([
-    enabledSources.includes('persona_goal') ? loadPersonaGoals() : Promise.resolve([]),
+    enabledSources.includes('persona_goal') ? loadPersonaGoalContext() : Promise.resolve({ fresh: [], standing: [] }),
     enabledSources.includes('urgent_task') || enabledSources.includes('task')
       ? loadTasks()
       : Promise.resolve({ urgent: [], regular: [] }),
@@ -649,14 +665,22 @@ export async function gatherInputs(enabledSources: DesireSource[]): Promise<Desi
     loadExistingDesires(),
   ]);
 
+  const target = getTargetUser()
+  if (!target) throw new Error('Desire context requires an authenticated profile')
+  const operationalContext = await readDesireOperationalContext(target.username, {
+    executionIds: [...new Set(recentMemories.flatMap(memory => memory.attribution?.executionId ? [memory.attribution.executionId] : []))],
+  })
+
   // Detect patterns from loaded memories
   const memoryPatterns = enabledSources.includes('memory_pattern')
     ? detectMemoryPatterns(recentMemories)
     : [];
 
   return {
+    operationalContext,
+    standingContext: { personaGoals: goalContext.standing },
     userRequests,
-    personaGoals,
+    personaGoals: goalContext.fresh,
     urgentTasks: tasks.urgent,
     activeTasks: tasks.regular,
     recentMemories,
@@ -780,10 +804,11 @@ async function identifyReinforcedDesires(
   for (const item of output.reinforcements) {
     if (!item || typeof item !== 'object' || Array.isArray(item)
       || typeof item.id !== 'string' || !validDesireIds.has(item.id)
+      || typeof item.targetStrength !== 'number' || !Number.isFinite(item.targetStrength) || item.targetStrength < 0 || item.targetStrength > 1
       || result.has(item.id) || typeof item.reason !== 'string' || !item.reason.trim()
-      || !Array.isArray(item.evidenceIds) || item.evidenceIds.length === 0
+      || !Array.isArray(item.evidenceIds)
       || item.evidenceIds.some((id: unknown) => typeof id !== 'string' || !id.trim())
-      || !Array.isArray(item.evidence) || item.evidence.length === 0
+      || !Array.isArray(item.evidence)
       || item.evidence.some((evidence: unknown) => (
         !isRecord(evidence)
         || typeof evidence.source !== 'string'
@@ -793,20 +818,34 @@ async function identifyReinforcedDesires(
       ))) {
       throw new Error('Desire Generator graph returned an invalid reinforcement')
     }
+    if (item.targetStrength !== existingDesires.find(desire => desire.id === item.id)!.strength && item.evidence.length === 0) throw new Error('Changed desire strength requires evidence')
     result.set(item.id, item as DesireReinforcementDecision)
   }
+  if (result.size !== existingDesires.length) throw new Error('Desire relevance review omitted an open desire')
   return {
     reinforcements: result,
     modelCall: readModelCallReport(output, 'reinforce'),
   }
 }
 
-function inputEvidenceToken(prefix: string, item: { id: string }): string {
+function inputEvidenceToken(prefix: string, item: { id: string; attribution?: MemorySummary['attribution'] }): string {
+  // Attribution enriches an existing memory; it is not newly observed evidence.
+  const { attribution: _attribution, ...originalMemory } = item;
   const contentHash = createHash('sha256')
-    .update(JSON.stringify(item))
+    .update(JSON.stringify(prefix === 'memory_pattern' ? originalMemory : item))
     .digest('hex')
     .slice(0, 20)
   return `${prefix}:${item.id}:${contentHash}`
+}
+
+function operationalEvidenceTokens(inputs: DesireGeneratorInputs): Array<{ reference: string; token: string }> {
+  return (inputs.operationalContext?.executions ?? []).flatMap(execution => {
+    if (!execution.task?.objectiveId) return []
+    return execution.events.filter(event => event.kind === 'physical_result' || event.kind === 'action_accepted').map(event => {
+      const reference = `operational:execution:${execution.executionId}:event:${event.eventId}`
+      return { reference, token: `execution_task:${execution.task!.objectiveId}:${event.eventId}:${createHash('sha256').update(JSON.stringify(event)).digest('hex').slice(0, 20)}` }
+    })
+  })
 }
 
 function inputEvidenceTokens(inputs: DesireGeneratorInputs): string[] {
@@ -826,7 +865,8 @@ async function filterFreshGeneratorInputs(
   username: string,
   inputs: DesireGeneratorInputs,
 ): Promise<{ inputs: DesireGeneratorInputs; tokens: string[] }> {
-  const allTokens = inputEvidenceTokens(inputs)
+  const operational = operationalEvidenceTokens(inputs)
+  const allTokens = [...inputEvidenceTokens(inputs), ...operational.map(item => item.token)]
   const freshTokens = await filterUnanalyzedGeneratorInputs(allTokens, username)
   const fresh = new Set(freshTokens)
   const filter = <T extends { id: string }>(prefix: string, items: T[]): T[] =>
@@ -836,6 +876,7 @@ async function filterFreshGeneratorInputs(
     tokens: freshTokens,
     inputs: {
       ...inputs,
+      ...(inputs.operationalContext ? { operationalContext: { ...inputs.operationalContext, freshEventReferences: operational.filter(item => fresh.has(item.token)).map(item => item.reference) } } : {}),
       userRequests: filter('user_request', inputs.userRequests),
       personaGoals: filter('persona_goal', inputs.personaGoals),
       urgentTasks: filter('urgent_task', inputs.urgentTasks),
@@ -860,13 +901,18 @@ function reinforcementEvidenceFingerprint(decision: DesireReinforcementDecision)
  * Load the only Desire states governed by reinforcement and decay.
  */
 async function loadNurturableDesires(username: string): Promise<Desire[]> {
-  const [nascentDesires, pendingDesires, questioningDesires, attentionDesires] = await Promise.all([
-    listNascentDesires(username),
-    listPendingDesires(username),
-    listDesiresByStatus('questioning', username),
-    listDesiresByStatus('needs_attention', username),
-  ])
-  return [...nascentDesires, ...pendingDesires, ...questioningDesires, ...attentionDesires]
+  return (await listAllDesires(username)).filter(desire => OPEN_DESIRE_STATUSES.includes(desire.status))
+}
+
+async function reconcileSavedZeroDesires(username: string): Promise<void> {
+  for (const desire of await listAllDesires(username)) {
+    if (desire.strength === 0 && (desire.status === 'archived' || OPEN_DESIRE_STATUSES.includes(desire.status))) {
+      await submitDesireAgent({ operation: 'archive', desireId: desire.id,
+        reason: desire.dispositionReason || 'Desire strength is zero',
+        idempotencyKey: `desire-archive:${desire.id}:${desire.completedAt || desire.updatedAt}`,
+        username, source: 'system' })
+    }
+  }
 }
 
 function projectedArchiveCount(
@@ -875,16 +921,18 @@ function projectedArchiveCount(
   config: Awaited<ReturnType<typeof loadConfig>>,
   now: string,
 ): number {
-  if (!config.thresholds.decay.enabled) return 0
   return desires.filter(desire => {
-    if (reinforcements.has(desire.id)) return false
+    if (desire.strength === 0) return true
+    const decision = reinforcements.get(desire.id)
+    if (decision) return decision.targetStrength === 0
+    if (!config.thresholds.decay.enabled) return false
     const reduction = calculateElapsedDecay(
       desire.lastDecayAt || desire.lastReviewedAt || desire.updatedAt,
       now,
       desire.decayRate ?? config.thresholds.decay.ratePerDay,
     )
     return reduction > 0
-      && Math.max(0, desire.strength - reduction) <= config.thresholds.decay.minStrength
+      && Math.max(0, desire.strength - reduction) === 0
   }).length
 }
 
@@ -901,119 +949,41 @@ async function applyNurtureDecisions(
 ): Promise<NurtureResult> {
   if (desires.length === 0) {
     console.log(`${LOG_PREFIX} No existing desires to nurture`)
-    return { reinforced: [], decayed: [], archived: [], goalsProposed: [] }
+    return { reinforced: [], decayed: [], archived: [] }
   }
 
   console.log(`${LOG_PREFIX} Nurturing ${desires.length} existing desires...`)
   const reinforced: AgencyStrengthChange[] = [];
   const decayed: AgencyStrengthChange[] = [];
   const archived: AgencyStrengthChange[] = [];
-  const goalsProposed: AgencyGoalProposal[] = [];
 
   for (const desire of desires) {
+    if (desire.strength === 0) continue
     const decision = reinforcements.get(desire.id)
 
     if (decision) {
       const primaryEvidence = decision.evidence[0]
-      if (!primaryEvidence) {
-        throw new Error(`Reinforcement for desire ${desire.id} has no validated evidence`)
-      }
-      const evidenceFingerprint = reinforcementEvidenceFingerprint(decision)
-      const updated = await reinforceDesire(desire.id, {
-        boost: config.thresholds.decay.reinforcementBoost,
-        reason: decision.reason,
-        sourceInput: decision.evidenceIds.join(', '),
-        evidence: {
-          id: `generator:${desire.id}:${evidenceFingerprint}`,
-          kind: 'reinforcement',
-          source: primaryEvidence.source,
-          sourceId: primaryEvidence.sourceId,
-          summary: decision.reason,
-          observedAt: now,
-        },
-      }, username);
-      if (!updated || updated.metrics.reinforcementCount === (desire.metrics?.reinforcementCount || 0)) {
-        continue;
-      }
-      const newStrength = updated.strength;
-
-      console.log(`${LOG_PREFIX} ✓ Reinforced "${desire.title}" → ${newStrength.toFixed(2)} (${updated.reinforcements} times)`);
-      reinforced.push({
-        desireId: desire.id,
-        title: desire.title,
-        previousStrength: desire.strength,
-        newStrength,
-        change: newStrength - desire.strength,
-        reason: decision.reason,
-        evidence: decision.evidence,
-      });
-
-      audit({
-        category: 'agent',
-        level: 'info',
-        event: 'desire_reinforced',
-        actor: 'desire-agent',
-        details: {
-          desireId: desire.id,
-          title: desire.title,
-          newStrength,
-          reinforcements: updated.reinforcements,
+      if (primaryEvidence) {
+        const evidenceId = `generator:${desire.id}:${reinforcementEvidenceFingerprint(decision)}`
+        const alreadyReviewed = desire.evidence?.some(item => item.id === evidenceId)
+        const updated = await applyDesireRelevance(desire.id, {
+          targetStrength: decision.targetStrength,
           reason: decision.reason,
-          evidenceIds: decision.evidenceIds,
-          username,
-        },
-      });
-
-      // =========================================================================
-      // Goal-Task-Desire Integration: Strong Desire → Goal Proposal
-      // When a desire reaches high strength (>0.9) with 5+ reinforcements,
-      // it represents a genuine, persistent want that should become a goal.
-      // =========================================================================
-      if (
-        isDesireActivationEligible(updated) &&
-        newStrength >= GOAL_PROPOSAL_THRESHOLDS.minStrength &&
-        updated.reinforcements >= GOAL_PROPOSAL_THRESHOLDS.minReinforcements
-      ) {
-        console.log(`${LOG_PREFIX} 🎯 Desire "${desire.title}" qualifies for goal promotion!`);
-
-        const proposalResult = proposeGoalFromDesire({
-          id: desire.id,
-          title: desire.title,
-          description: desire.description,
-          reason: desire.reason,
-          strength: newStrength,
-          reinforcements: updated.reinforcements,
-          source: desire.source,
-        });
-
-        if (proposalResult.proposed) {
-          if (!proposalResult.goalId) {
-            throw new Error(`Goal proposal for desire ${desire.id} did not return a goal ID`)
+          evidence: { id: evidenceId, kind: 'relevance', source: primaryEvidence.source,
+            sourceId: primaryEvidence.sourceId, summary: decision.reason, observedAt: now },
+        }, username)
+        if (updated?.strength === 0) {
+          await submitDesireAgent({ operation: 'archive', desireId: updated.id, reason: decision.reason, idempotencyKey: `desire-archive:${updated.id}:${updated.completedAt || updated.updatedAt}`, username, source: 'system' })
+        }
+        if (updated && !alreadyReviewed && updated.strength !== desire.strength) {
+          const change = {
+            desireId: desire.id, title: desire.title, previousStrength: desire.strength,
+            newStrength: updated.strength, change: updated.strength - desire.strength,
+            reason: decision.reason, evidence: decision.evidence,
           }
-          goalsProposed.push({
-            desireId: desire.id,
-            title: desire.title,
-            goalId: proposalResult.goalId,
-          });
-          console.log(`${LOG_PREFIX} 🎯 ${proposalResult.message}`);
-
-          audit({
-            category: 'agent',
-            level: 'info',
-            event: 'goal_proposed_from_desire',
-            actor: 'desire-agent',
-            details: {
-              desireId: desire.id,
-              desireTitle: desire.title,
-              goalId: proposalResult.goalId,
-              strength: newStrength,
-              reinforcements: updated.reinforcements,
-              source: desire.source,
-              username,
-            },
-          });
-        } else {
-          console.log(`${LOG_PREFIX}    (Not proposed: ${proposalResult.message})`);
+          if (updated.status === 'archived' && desire.status !== 'archived') archived.push(change)
+          else if (change.change > 0) reinforced.push(change)
+          else decayed.push(change)
         }
       }
     } else {
@@ -1025,15 +995,15 @@ async function applyNurtureDecisions(
       );
       if (reduction <= 0) continue;
       const finalStrength = Math.max(0, desire.strength - reduction);
-      const shouldAbandon = finalStrength <= config.thresholds.decay.minStrength;
+      const shouldAbandon = finalStrength === 0;
       const updated = await depreciateDesire(desire.id, {
         reduction,
         reason: `Elapsed-time decay through ${now}`,
-        terminalStatus: shouldAbandon ? 'archived' : undefined,
       }, username);
       if (!updated) continue;
 
       if (shouldAbandon) {
+        await submitDesireAgent({ operation: 'archive', desireId: desire.id, reason: `Elapsed-time decay through ${now} reduced strength to zero`, idempotencyKey: `desire-archive:${desire.id}:${updated.completedAt || updated.updatedAt}`, username, source: 'system' })
         archived.push({
           desireId: desire.id,
           title: desire.title,
@@ -1065,9 +1035,9 @@ async function applyNurtureDecisions(
     }
   }
 
-  console.log(`${LOG_PREFIX} Nurture complete: ${reinforced.length} reinforced, ${decayed.length} decayed, ${archived.length} archived, ${goalsProposed.length} goals proposed`);
+  console.log(`${LOG_PREFIX} Nurture complete: ${reinforced.length} reinforced, ${decayed.length} decayed, ${archived.length} archived`);
   if (archived.length > 0) await incrementMetric('totalAbandoned', archived.length, username)
-  return { reinforced, decayed, archived, goalsProposed };
+  return { reinforced, decayed, archived };
 }
 
 // ============================================================================
@@ -1187,6 +1157,8 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
   // Initialize storage if needed
   await initializeAgencyStorage(username);
 
+  await reconcileSavedZeroDesires(username)
+
   // Get enabled sources
   const enabledSources = await getEnabledSources(username);
   if (enabledSources.length === 0) {
@@ -1208,7 +1180,8 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
     inputs.memoryPatterns.length > 0 ||
     inputs.pendingCuriosityQuestions.length > 0 ||
     inputs.recentReflections.length > 0 ||
-    inputs.recentDreams.length > 0;
+    inputs.recentDreams.length > 0 ||
+    (inputs.operationalContext?.freshEventReferences?.length ?? 0) > 0;
 
   // =========================================================================
   // DECISION PHASE: all model output is obtained and validated before mutation.
@@ -1218,8 +1191,8 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
     loadNurturableDesires(username),
     listActiveDesires(username),
   ])
-  const hasFreshEvidence = inputEvidenceTokens(inputs).length > 0
-  const desiresToReinforce = nurturableDesires.filter(desire => ['nascent', 'pending'].includes(desire.status))
+  const hasFreshEvidence = fresh.tokens.length > 0
+  const desiresToReinforce = nurturableDesires
   const reinforcementDecision = desiresToReinforce.length > 0 && hasFreshEvidence
     ? await identifyReinforcedDesires(desiresToReinforce, inputs, signal)
     : { reinforcements: new Map<string, DesireReinforcementDecision>(), modelCall: null }
@@ -1228,11 +1201,11 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
   const currentNascentCount = nurturableDesires.filter(desire => desire.status === 'nascent').length
   const projectedOpenCount = currentActiveDesires.length
     + currentNascentCount
-    - projectedArchiveCount(nurturableDesires, reinforcements, config, cycleNow)
+    - projectedArchiveCount([...currentActiveDesires, ...nurturableDesires.filter(desire => desire.status === 'nascent')], reinforcements, config, cycleNow)
   const maxOpenDesires = config.limits.maxActiveDesires + config.limits.maxPendingDesires
   const canGenerate = projectedOpenCount < maxOpenDesires
   const generationDecision = hasGenerationInputs && canGenerate
-    ? await identifyDesires(inputs, signal)
+    ? await identifyDesires({ ...inputs, activeDesires: nurturableDesires.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength, outcomeKey: d.outcomeKey, completionCriteria: d.completionCriteria })), relevanceAssessments: [...reinforcements.values()] }, signal)
     : { candidates: [] as DesireCandidate[], modelCall: null }
   const candidates = generationDecision.candidates
 
@@ -1257,17 +1230,15 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
     console.log(`${LOG_PREFIX} No new desires identified`)
   }
 
-  const [updatedNascent, updatedPending, updatedActive] = await Promise.all([
+  const [updatedNascent, updatedActive] = await Promise.all([
     listNascentDesires(username),
-    listPendingDesires(username),
     listActiveDesires(username),
   ])
   const updatedTotal = updatedActive.length + updatedNascent.length
+  const committedOpenDesires = await loadNurturableDesires(username)
   const existingSummaries = [
-    ...inputs.activeDesires,
     ...inputs.recentlyRejected,
-    ...updatedNascent.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength, outcomeKey: d.outcomeKey, completionCriteria: d.completionCriteria })),
-    ...updatedPending.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength, outcomeKey: d.outcomeKey, completionCriteria: d.completionCriteria })),
+    ...committedOpenDesires.map(d => ({ id: d.id, title: d.title, source: d.source, status: d.status, strength: d.strength, outcomeKey: d.outcomeKey, completionCriteria: d.completionCriteria })),
   ];
   const uniqueCandidates = selectUniqueDesireCandidates(candidates, existingSummaries)
   const availableSlots = Math.max(0, maxOpenDesires - updatedTotal)
@@ -1334,7 +1305,9 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
   if (created.length > 0) {
     await incrementMetric('totalGenerated', created.length, username);
   }
-  await markGeneratorInputsAnalyzed(fresh.tokens, username)
+  if (reinforcementDecision.modelCall || generationDecision.modelCall) {
+    await markGeneratorInputsAnalyzed(fresh.tokens, username)
+  }
 
   // Log to inner dialogue if enabled
   if (config.logging.logToInnerDialogue) {
@@ -1349,12 +1322,12 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
       evidenceBySource: countEvidenceBySource(inputs),
       modelCalls: [reinforcementDecision.modelCall, generationDecision.modelCall]
         .filter((call): call is AgencyModelCallReport => call !== null),
+      assessments: [...reinforcements.values()],
       reinforced: nurtureResult.reinforced,
       decayed: nurtureResult.decayed,
       archived: nurtureResult.archived,
       activated,
       created,
-      goalsProposed: nurtureResult.goalsProposed,
       candidatesRejectedAsDuplicates: candidates.length - uniqueCandidates.length,
       candidatesBlockedByCapacity: uniqueCandidates.length - candidatesToCreate.length,
       generationSkippedReason,
@@ -1375,7 +1348,6 @@ export async function generateDesiresForUser(username: string, signal?: AbortSig
       desiresDecayed: nurtureResult.decayed.length,
       desiresAbandoned: nurtureResult.archived.length,
       desiresActivated: activated.length,
-      goalsProposed: nurtureResult.goalsProposed.length,
       sources: [...new Set(candidatesToCreate.map(c => c.source))],
     });
   }
@@ -1419,7 +1391,7 @@ export async function runCycle(options: DesireGeneratorOptions = {}): Promise<De
 
     console.log(`${LOG_PREFIX} Processing user: ${user.username}`);
 
-    const lock = acquireLock(`desire-agent:${user.username}`, { exitOnSignal: false });
+    const lock = acquireLock(`desire-agent-${createHash('sha256').update(user.username).digest('hex')}`, { exitOnSignal: false });
     try {
       const created = await withUserContext(
         { userId: user.userId, username: user.username, role: user.role },

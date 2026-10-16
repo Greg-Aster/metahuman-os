@@ -1,4 +1,5 @@
-import { reasoningProperty } from '../llm/model-router.schema.js';
+import type { ModelRole } from '../../model-roles.js';
+import { reasoningProperty, modelRouterDefinition } from '../llm/model-router.schema.js';
 /**
  * Quality Scorer Node (Persona Values Alignment)
  *
@@ -156,7 +157,7 @@ ${styleText ? `\nSTYLE: ${styleText}` : ''}
     ];
 
     const llmResponse = await callLLM({
-      role: 'orchestrator',
+      role: (properties?.role ?? 'psychotherapist') as ModelRole,
       messages,
       cognitiveMode: context.cognitiveMode,
       options: {
@@ -268,6 +269,7 @@ export const QualityScorerNode: NodeDefinition = defineNode({
     { name: 'evaluation', type: 'string', description: 'Summary of persona alignment assessment' },
   ],
   properties: {
+    role: 'psychotherapist',
     enableThinking: false,
     qualityThreshold: 0.7,
     strictHallucinationCheck: true,
@@ -275,6 +277,7 @@ export const QualityScorerNode: NodeDefinition = defineNode({
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'psychotherapist' },
     enableThinking: reasoningProperty,
     qualityThreshold: {
       type: 'slider',

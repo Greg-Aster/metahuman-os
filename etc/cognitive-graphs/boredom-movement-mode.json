@@ -173,8 +173,8 @@
         "label": "Author Embodied Intention",
         "nodeType": "model_router",
         "properties": {
-          "role": "persona",
-          "maxTokens": 384,
+          "role": "autonomy",
+          "maxTokens": -1,
           "temperature": 0.7,
           "format": "json"
         }
@@ -204,7 +204,7 @@
         "label": "Send Intention to Robot Autonomy Executor",
         "nodeType": "robot_operator_environment_dispatch",
         "properties": {
-          "graph": "boredom-autonomy"
+          "graph": "environment"
         }
       }
     },
@@ -218,9 +218,7 @@
       "data": {
         "label": "Current Execution",
         "nodeType": "execution_context",
-        "properties": {
-          "eventLimit": 16
-        }
+        "properties": {}
       }
     },
     {
@@ -248,6 +246,60 @@
         "nodeType": "observation_history",
         "properties": {
           "limit": 5
+        }
+      }
+    },
+    {
+      "id": "autonomy-inner-output",
+      "type": "genericNode",
+      "position": {
+        "x": 2060,
+        "y": 440
+      },
+      "data": {
+        "nodeType": "inner_dialogue_buffer",
+        "label": "Inner Dialogue: Autonomy Intention",
+        "properties": {
+          "tags": [
+            "autonomy",
+            "autonomy-intention",
+            "inner"
+          ],
+          "role": "reflection"
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "entry"
+          ]
+        }
+      }
+    },
+    {
+      "id": "autonomy-intention-memory",
+      "type": "genericNode",
+      "position": {
+        "x": 2280,
+        "y": 440
+      },
+      "data": {
+        "nodeType": "inner_dialogue_saver",
+        "label": "Memory: Autonomy Intention",
+        "properties": {
+          "tags": [
+            "autonomy",
+            "autonomy-intention",
+            "inner"
+          ],
+          "roles": [
+            "reflection"
+          ]
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "entries"
+          ]
         }
       }
     }
@@ -474,17 +526,6 @@
       }
     },
     {
-      "id": "durable-environment-dispatch-invocation-selected-workflow-invocation",
-      "source": "environment-dispatch",
-      "target": "selected-workflow",
-      "sourceHandle": "invocation",
-      "targetHandle": "invocation",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
       "id": "visual-history-observation-observation-observation-history-observation",
       "source": "observation",
       "sourceHandle": "observation",
@@ -504,6 +545,73 @@
       "type": "default",
       "data": {
         "type": "array"
+      }
+    },
+    {
+      "id": "environment-dispatch-innerEntry-autonomy-inner-output-entry",
+      "source": "environment-dispatch",
+      "sourceHandle": "innerEntry",
+      "target": "autonomy-inner-output",
+      "targetHandle": "entry",
+      "type": "default",
+      "data": {
+        "type": "message"
+      }
+    },
+    {
+      "id": "environment-dispatch-invocation-autonomy-inner-output-passthrough",
+      "source": "environment-dispatch",
+      "sourceHandle": "invocation",
+      "target": "autonomy-inner-output",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "autonomy-inner-output-entries-autonomy-intention-memory-entries",
+      "source": "autonomy-inner-output",
+      "sourceHandle": "entries",
+      "target": "autonomy-intention-memory",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "autonomy-inner-output-passthrough-selected-workflow-invocation",
+      "source": "autonomy-inner-output",
+      "sourceHandle": "passthrough",
+      "target": "selected-workflow",
+      "targetHandle": "invocation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "autonomy-intention-memory-saved-selected-workflow-control",
+      "source": "autonomy-intention-memory",
+      "sourceHandle": "saved",
+      "target": "selected-workflow",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control"
+      }
+    },
+    {
+      "id": "observation-isTriggeringObservation-environment-dispatch-observationCurrent",
+      "source": "observation",
+      "sourceHandle": "isTriggeringObservation",
+      "target": "environment-dispatch",
+      "targetHandle": "observationCurrent",
+      "type": "default",
+      "data": {
+        "type": "boolean"
       }
     }
   ]

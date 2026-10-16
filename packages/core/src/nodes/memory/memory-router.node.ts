@@ -9,6 +9,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { selectedEnvironmentRoutes } from '../environment/context-routing.js';
 import { workResultWaitNode } from '../utility/work-result-wait.node.js';
 import { queryIndexWithReconciliation } from '../../vector-index.js';
+import { readSleepRuntimeState } from '../../sleep-runtime.js';
 
 export function normalizeRequestedMemoryTypes(value: unknown): string[] | undefined {
   const values = Array.isArray(value)
@@ -22,12 +23,17 @@ export function normalizeRequestedMemoryTypes(value: unknown): string[] | undefi
   return normalized.length > 0 ? [...new Set(normalized)] : undefined;
 }
 
-function formatMemoryResults(results: Awaited<ReturnType<typeof queryIndexWithReconciliation>>, threshold: number, memoryTypes?: string[]) {
+function formatMemoryResults(results: Awaited<ReturnType<typeof queryIndexWithReconciliation>>, threshold: number, memoryTypes?: string[], memoryOrder?: 'relevance' | 'newest') {
   const aboveThreshold = results.filter(result => result.score >= threshold);
   // Preserve the existing scoped-recall selection contract.
-  const selected = memoryTypes?.length && !aboveThreshold.length && results.length ? results.slice(0, 1) : aboveThreshold;
+  const selected = memoryOrder === 'newest' ? results
+    : memoryTypes?.length && !aboveThreshold.length && results.length ? results.slice(0, 1) : aboveThreshold;
   return selected.map(({ item, score }) => ({
-    content: item.text || '', timestamp: item.timestamp, type: item.memoryType || item.type || 'observation', score, id: item.id,
+    content: item.text || '', timestamp: item.timestamp, type: item.memoryType || item.type || 'observation', id: item.id,
+    ...(memoryOrder !== 'newest' ? { score } : {}),
+    ...(item.role !== undefined ? { role: item.role } : {}),
+    ...(item.source !== undefined ? { source: item.source } : {}),
+    ...(item.sleepSessionId !== undefined ? { sleepSessionId: item.sleepSessionId } : {}),
   }));
 }
 
@@ -36,7 +42,8 @@ export async function resolveMemoryWork(work: Record<string, any>, context: Para
   const result = await workResultWaitNode.execute({ work }, context, {});
   const receipt = result.result.result;
   if (receipt.state !== 'completed') throw new Error(`Memory search ${receipt.state}: ${JSON.stringify(receipt.error ?? '')}`);
-  return { memories: formatMemoryResults(receipt.result, work.threshold, work.memoryTypes), receivedInput: result.userInput };
+  return { memories: formatMemoryResults(receipt.result, work.threshold, work.memoryTypes, work.memoryOrder),
+    ...(work.selectedSleepCycle !== undefined ? { selectedSleepCycle: work.selectedSleepCycle } : {}), receivedInput: result.userInput };
 }
 
 const execute: NodeExecutor = async (inputs, context, properties) => {
@@ -118,25 +125,45 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     if (!username || username === 'anonymous') {
       throw new Error('Memory Router requires an authenticated profile username');
     }
+    const currentMemoryId = inputs.currentMemoryId;
+    const memoryOrder = orchestratorHints.memoryOrder;
+    const memoryTimeRange = orchestratorHints.memoryTimeRange;
+    const memorySleepCycle = orchestratorHints.memorySleepCycle;
+    let selectedSleepCycle;
+    if (memorySleepCycle === 'latest') {
+      const runtime = readSleepRuntimeState();
+      const latest = [runtime.currentSession, ...runtime.recentSessions]
+        .filter(session => session?.username === username)
+        .sort((a, b) => Date.parse(b!.startedAt) - Date.parse(a!.startedAt))[0];
+      selectedSleepCycle = latest ? { id: latest.id, startedAt: latest.startedAt,
+        ...(latest.completedAt !== undefined ? { completedAt: latest.completedAt } : {}), state: latest.state } : null;
+    }
+    const sleepSessionId = selectedSleepCycle?.id;
     if (properties?.dispatch === true) {
       const work = context.graphExecution!.dispatch({ kind: 'coordinator_work', payload: {
         type: 'semantic_search', username, source: 'environment', maxAttempts: 1,
-        input: { query, limit: searchTopK, memoryTypes },
+        input: { query, limit: searchTopK, currentMemoryId, memoryTypes, memoryOrder, memoryTimeRange, memorySleepCycle, sleepSessionId },
         metadata: { producer: 'memory-router' },
       } });
-      return { work: { effectId: work.effectId, threshold, memoryTypes }, query, searchPerformed: false };
+      return { work: { effectId: work.effectId, threshold, memoryTypes, memoryOrder,
+        ...(selectedSleepCycle !== undefined ? { selectedSleepCycle } : {}) }, query, searchPerformed: false };
     }
-    const results = await queryIndexWithReconciliation(query, {
+    const results = memorySleepCycle === 'latest' && !selectedSleepCycle ? [] : await queryIndexWithReconciliation(query, {
       topK: searchTopK,
       username,
       memoryTypes,
+      memoryOrder,
+      memoryTimeRange,
+      sleepSessionId,
+      currentMemoryId,
       reconciliationSource: 'memory-router',
     });
 
-    const memories = formatMemoryResults(results, threshold, memoryTypes);
+    const memories = formatMemoryResults(results, threshold, memoryTypes, memoryOrder);
 
     return {
       memories,
+      ...(selectedSleepCycle !== undefined ? { selectedSleepCycle } : {}),
       searchPerformed: true,
       query,
       resultCount: memories.length,
@@ -156,6 +183,7 @@ export const MemoryRouterNode: NodeDefinition = defineNode({
   inputs: [
     { name: 'orchestratorHints', type: 'object', optional: true, description: 'LLM-selected memory routing hints (needsMemory, memoryTier, memoryQuery, memoryTypes)' },
     { name: 'userMessage', type: 'string', description: 'User message as fallback query' },
+    { name: 'currentMemoryId', type: 'string', optional: true, description: 'Saved memory record ID of the current input.' },
   ],
   outputs: [
     { name: 'work', type: 'object', description: 'Identified Coordinator memory lookup for a selected context consumer' },

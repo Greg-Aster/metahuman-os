@@ -12,24 +12,20 @@
 
 import { defineNode, type NodeDefinition } from '../types.js';
 import { audit } from '../../audit.js';
-import { queueTTS, type TTSQueueItem } from '../../tts/delivery-queue.js';
+import { queueTTS, getTTSQueueState, type TTSQueueItem } from '../../tts/delivery-queue.js';
 import {
   getSpeechOutputSettings,
   getRobotSpeakerSession,
   renderRobotSpeech,
   type RobotSpeechDelivery,
   type SpeechOutputSettings,
+  type TTSOutputDelivery,
 } from '../../tts/robot-speech.js';
 import { prepareEnvironmentCommand } from '../../environment-interface/store.js';
 import type { GraphNodeExecution } from '../../durable-execution/graph-contract.js';
 import { loadGraphForMode } from '../../graph-streaming.js';
 
-export interface TTSOutputDelivery {
-  accepted: boolean;
-  deliveryId: string;
-  route: 'local' | 'robot';
-  reason?: string;
-}
+export type { TTSOutputDelivery } from '../../tts/robot-speech.js';
 
 interface TTSOutputDependencies {
   getSettings: (username: string) => SpeechOutputSettings;
@@ -44,7 +40,6 @@ interface TTSOutputDependencies {
 
 const ROBOT_SPEECH_WORKFLOW_SOURCES = new Set([
   'environment-mode',
-  'boredom-autonomy',
 ]);
 
 const defaultTTSOutputDependencies: TTSOutputDependencies = {
@@ -83,6 +78,9 @@ export async function deliverTTSOutput(
   // by the visible Inner view. Outward robot speech remains limited to the two
   // explicit robot execution workflows rather than becoming a general TTS path.
   if (route === 'robot') {
+    if (request.generation !== undefined && request.generation !== getTTSQueueState(request.username).generation) {
+      return { accepted: false, deliveryId: '', route, reason: 'Speech belongs to an interrupted user turn' };
+    }
     if (!ROBOT_SPEECH_WORKFLOW_SOURCES.has(request.source)) {
       return {
         accepted: false,
@@ -107,7 +105,7 @@ export async function deliverTTSOutput(
         const loaded = await loadGraphForMode('robot-speech', request.username);
         request.signal?.throwIfAborted();
         const work = request.execution.dispatch({ kind: 'coordinator_work', payload: {
-          type: 'generic', handler: 'tts.robot-speech', resource: 'robot-speech-render', source: 'system',
+          type: 'generic', handler: 'tts.robot-speech', resource: 'robot-speech-render', executionScope: 'invocation', source: 'system',
           username: request.username, maxAttempts: 1,
           input: { text: request.text, sessionId, requestId: request.execution.occurrenceId,
             generation: request.generation, graph: loaded.graph },
@@ -260,6 +258,7 @@ export const TTSNode: NodeDefinition = defineNode({
     let queued = false;
     let itemId = '';
     let spokenText = '';
+    let lastDelivery: TTSOutputDelivery | undefined;
 
     console.log('[TTS Node] Parsed inputs:', {
       conversationLength: conversationStr?.length || 0,
@@ -284,6 +283,7 @@ export const TTSNode: NodeDefinition = defineNode({
           ? context.ttsGeneration
           : undefined,
       });
+      lastDelivery = delivery;
       if (!delivery.accepted) {
         console.warn(`[TTS Node] ${delivery.route} delivery skipped: ${delivery.reason}`);
         return delivery;
@@ -315,6 +315,7 @@ export const TTSNode: NodeDefinition = defineNode({
         text: conversationStr,
         conversationQueued: false,
         innerQueued: delivery.accepted,
+        delivery,
       };
     }
 
@@ -355,6 +356,7 @@ export const TTSNode: NodeDefinition = defineNode({
       text: spokenText,
       conversationQueued: !!conversationStr?.trim(),
       innerQueued: !!innerStr?.trim(),
+      delivery: lastDelivery,
     };
   },
 });

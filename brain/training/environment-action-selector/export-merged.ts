@@ -17,22 +17,25 @@ interface FinalProvenance {
   baseModel?: string
   priorHeldOutUsed?: boolean
   selectionEvidence?: { digest?: string; checkpointPolicy?: string }
+  settingsSource?: { baseModel?: string; selectionEvidence?: { digest?: string; checkpointPolicy?: string }; [key: string]: unknown }
   reviewedDataDigest?: string
 }
 
-function parseOptions(arguments_: string[]): { root: string; loraOnly: boolean } {
+function parseOptions(arguments_: string[]): { root: string; loraOnly: boolean; stage: 'final' | 'reviewed' } {
   let root = ''
   let loraOnly = false
+  let stage: 'final' | 'reviewed' | undefined
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index]
     const value = arguments_[index + 1]
     if (argument === '--') continue
     if (argument === '--root' && value) { root = resolve(value); index += 1 }
     else if (argument === '--lora-only') loraOnly = true
+    else if (argument === '--stage' && (value === 'final' || value === 'reviewed')) { stage = value; index += 1 }
     else throw new Error(`Unknown or incomplete argument: ${argument}`)
   }
-  if (!root) throw new Error('Usage: --root out/environment-action-selector/training/<run> [--lora-only]')
-  return { root, loraOnly }
+  if (!root) throw new Error('Usage: --root out/environment-action-selector/training/<run> [--lora-only] [--stage final|reviewed]')
+  return { root, loraOnly, stage: stage ?? (loraOnly ? 'reviewed' : 'final') }
 }
 
 async function fileDigest(path: string): Promise<string> {
@@ -61,22 +64,23 @@ async function runExporter(adapterPath: string, outputPath: string, loraOnly = f
 }
 
 export async function main(arguments_: string[] = process.argv.slice(2)): Promise<void> {
-  const { root, loraOnly } = parseOptions(arguments_)
+  const { root, loraOnly, stage } = parseOptions(arguments_)
   if (!root.startsWith(`${OUTPUT_ROOT}${sep}`)) {
     throw new Error(`Export root must remain under ${OUTPUT_ROOT}`)
   }
-  const finalPath = resolve(root, loraOnly ? 'reviewed' : 'final')
+  const finalPath = resolve(root, stage)
   const adapterPath = resolve(finalPath, 'adapter')
   const outputPath = resolve(finalPath, 'merged-gguf')
   const trainingConfig = JSON.parse(await readFile(resolve(finalPath, 'training-config.json'), 'utf8'))
   const provenance = JSON.parse(await readFile(resolve(finalPath, 'run-provenance.json'), 'utf8')) as FinalProvenance
   if (
     provenance.owner !== 'environment-action-selector'
-    || provenance.mode !== (loraOnly ? 'reviewed-training' : 'final-development-training')
-    || provenance.baseModel !== 'unsloth/Qwen3.5-0.8B'
+    || (stage === 'reviewed' ? provenance.mode !== 'reviewed-training' : !['final-development-training', 'reused-development-settings-training'].includes(provenance.mode ?? ''))
+    || !['unsloth/Qwen3.5-0.8B', 'unsloth/Qwen3.5-2B'].includes(provenance.baseModel ?? '')
+    || trainingConfig.base_model !== provenance.baseModel
     || provenance.priorHeldOutUsed !== false
-    || (!loraOnly && !provenance.selectionEvidence?.digest)
-    || (loraOnly && !provenance.reviewedDataDigest)
+    || (stage === 'final' && !(provenance.mode === 'reused-development-settings-training' ? provenance.settingsSource?.selectionEvidence?.digest : provenance.selectionEvidence?.digest))
+    || (stage === 'reviewed' && !provenance.reviewedDataDigest)
   ) throw new Error('Final action-selector provenance is invalid')
   await Promise.all([
     access(resolve(adapterPath, 'adapter_model.safetensors')),
@@ -91,13 +95,15 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
     if (loraFiles.length !== 1) throw new Error('Expected one GGUF LoRA export')
     const loraPath = resolve(loraDirectory, loraFiles[0]!)
     await writeFile(resolve(outputPath, 'export-provenance.json'), `${JSON.stringify({
-      version: 1, owner: 'environment-action-selector', purpose: 'reviewed-runtime-lora',
+      version: 1, owner: 'environment-action-selector', purpose: stage === 'reviewed' ? 'reviewed-runtime-lora' : 'development-runtime-lora',
       specialist: provenance.specialist, baseModel: provenance.baseModel,
       reviewedDataDigest: provenance.reviewedDataDigest,
+      selectionEvidence: provenance.selectionEvidence,
+      ...(provenance.settingsSource ? { settingsSource: provenance.settingsSource } : {}),
       loraArtifact: `adapter-gguf/${loraFiles[0]}`,
       loraSha256: await fileDigest(loraPath), exportedAt: new Date().toISOString(),
     }, null, 2)}\n`)
-    console.log(`Reviewed action-selector GGUF LoRA: ${loraPath}`)
+    console.log(`Action-selector GGUF LoRA: ${loraPath}`)
     return
   }
 
@@ -118,9 +124,10 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
       owner: 'environment-action-selector',
       purpose: 'merged-quantized-runtime-artifact',
       specialist: provenance.specialist,
-      model: `environment-${provenance.specialist}-0.8b`,
+      model: `environment-${provenance.specialist}-${provenance.baseModel === 'unsloth/Qwen3.5-2B' ? '2b' : '0.8b'}`,
       baseModel: provenance.baseModel,
       selectionEvidence: provenance.selectionEvidence,
+      ...(provenance.settingsSource ? { settingsSource: provenance.settingsSource } : {}),
       quantization: 'Q4_K_M',
       artifact,
       artifactBytes: artifactStat.size,

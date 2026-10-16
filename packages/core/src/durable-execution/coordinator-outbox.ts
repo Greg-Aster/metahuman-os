@@ -1,3 +1,4 @@
+import type { UnifiedQueueManager } from '../queue/unified-queue-manager.js'
 import { submitCoordinatorWork } from '../queue/work-submission.js'
 import type { QueuedTask, TaskInput } from '../queue/types.js'
 import type { ExecutionStore } from './store.js'
@@ -11,7 +12,7 @@ import { getAuthenticatedRuntimeId, getCurrentlyActiveUser } from '../sessions.j
 /** The same admission contract is used by relay and by an early accepting worker. */
 export function executionWorkInput(store: ExecutionStore, effect: DispatchRecord): TaskInput {
   const input: TaskInput = effect.kind === 'graph_resume' ? {
-    type: 'generic', handler: 'graph.resume', resource: (effect.payload as { resource?: string }).resource ?? 'local-llm',
+    type: 'generic', handler: 'graph.resume', resource: `execution:${effect.executionId}`,
     source: 'system', priority: 'high',
     input: effect.payload as Record<string, unknown>, username: store.get(effect.executionId).username,
     metadata: { producer: 'durable-execution' },
@@ -23,6 +24,25 @@ export function executionWorkInput(store: ExecutionStore, effect: DispatchRecord
       originRuntimeId: store.get(effect.executionId).originRuntimeId,
       recovery: input.executionScope === 'independent' || input.type === 'environment_command' || input.handler?.startsWith('agent.') ? 'reconcile' : 'resume' },
   }
+}
+
+/** Reconcile terminal execution intent with the Coordinator's actual admission receipt. */
+export function reconcileTerminatedExecutionWork(store: ExecutionStore, executionId: string,
+  manager: UnifiedQueueManager): QueuedTask[] {
+  if (!['failed', 'cancelled'].includes(store.get(executionId).status)) return []
+  const cancelled: QueuedTask[] = []
+  for (const effect of store.dispatches(executionId).filter(effect =>
+    effect.kind === 'coordinator_work' && ['pending', 'admitted', 'cancelled'].includes(effect.status))) {
+    // Enqueue may have committed before its acknowledgement. The admission
+    // owner alone can establish that the command never started.
+    const receipt = manager.cancelAdmission(executionWorkInput(store, effect), 'Parent execution ended before work started')
+    if (!effect.workItemId) store.acknowledgeAdmission(effect.effectId, receipt.id)
+    if (receipt.state === 'cancelled' && !receipt.startedAt && !receipt.bodyLease) {
+      store.confirmUndispatched(effect.effectId, receipt)
+      cancelled.push(receipt)
+    }
+  }
+  return cancelled
 }
 
 /** SQLite commits intent first; the Coordinator durably deduplicates admission before we attach its receipt. */

@@ -1,4 +1,5 @@
-import { reasoningProperty } from '../llm/model-router.schema.js';
+import type { ModelRole } from '../../model-roles.js';
+import { reasoningProperty, modelRouterDefinition } from '../llm/model-router.schema.js';
 /**
  * Search Interpreter Node
  *
@@ -137,7 +138,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     ];
 
     const response = await callLLM({
-      role: 'orchestrator',
+      role: (properties?.role ?? 'curator') as ModelRole,
       messages,
       cognitiveMode: context.cognitiveMode,
       options: {
@@ -289,6 +290,7 @@ export const SearchInterpreterNode: NodeDefinition = defineNode({
     { name: 'fullResult', type: 'object', description: 'Complete result object for downstream nodes' },
   ],
   properties: {
+    role: 'curator',
     enableThinking: false,
     relevanceThreshold: 0.6,
     maxResults: 10,
@@ -296,6 +298,7 @@ export const SearchInterpreterNode: NodeDefinition = defineNode({
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'curator' },
     enableThinking: reasoningProperty,
     relevanceThreshold: {
       type: 'slider',

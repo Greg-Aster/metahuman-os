@@ -1,4 +1,4 @@
-import { listDesiresByStatus, loadDesire } from './storage.js'
+import { listDesiresByStatus, loadDesire, saveDesireManifest } from './storage.js'
 import {
   reviewDesireOutcomeViaGraph,
   type DesireOutcomeReviewGraphResult,
@@ -125,3 +125,53 @@ export function createDesireOutcomeReviewer(
 }
 
 export const reviewPendingDesireOutcomes = createDesireOutcomeReviewer()
+
+
+export interface DesireArchiveResult {
+  operation: 'archive'
+  desireId: string
+  archived: boolean
+  cancellationRequestedTaskIds: string[]
+  executionId?: string
+}
+
+/** Archive relevance-exhausted work through the existing outcome lifecycle owner. */
+export async function archiveDesireWork(
+  username: string,
+  desireId: string,
+  reason: string,
+  currentTaskId: string,
+  coordinator: Pick<import('../queue/queue-system.js').QueueSystem, 'getAllTasks' | 'cancelTask' | 'cancelExecution'>,
+  storage = { loadDesire, saveDesireManifest },
+): Promise<DesireArchiveResult> {
+  const desire = await storage.loadDesire(desireId, username)
+  if (!desire) throw new Error(`Desire not found: ${desireId}`)
+  const result: DesireArchiveResult = { operation: 'archive', desireId, archived: false, cancellationRequestedTaskIds: [] }
+  // A newer relevance assessment may have changed this queued request's premise.
+  if (desire.strength !== 0) return result
+  if (desire.status !== 'archived') {
+    const { isOpenDesire } = await import('./lifecycle-policy.js')
+    if (!isOpenDesire(desire)) return result
+    const now = new Date().toISOString()
+    await storage.saveDesireManifest({ ...desire, status: 'archived', currentStage: 'archived',
+      dispositionReason: reason, completedAt: now, updatedAt: now }, username)
+  }
+  result.archived = true
+  const executionId = desire.execution?.executionId
+  if (executionId) {
+    coordinator.cancelExecution(username, executionId, reason)
+    result.executionId = executionId
+  }
+  for (const task of coordinator.getAllTasks()) {
+    if (task.id === currentTaskId || task.username !== username
+      || !['queued', 'waiting', 'leased'].includes(task.state)) continue
+    const args = Array.isArray(task.input.args) ? task.input.args : []
+    const argumentIndex = args.indexOf('--desire-id')
+    const matches = task.input.desireId === desireId
+      || (task.handler === 'agent.desire-planner' && argumentIndex >= 0 && args[argumentIndex + 1] === desireId)
+    if (!matches) continue
+    coordinator.cancelTask(task.id, reason)
+    result.cancellationRequestedTaskIds.push(task.id)
+  }
+  return result
+}

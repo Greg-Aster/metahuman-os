@@ -31,6 +31,16 @@ CLEANING_UP=false
 # Prevent the shutdown handler from running more than once.
 START_LOCK_HELD=false
 # Track whether this launcher owns the startup lock.
+APP_ONLY=false
+APP_RESTART=false
+WEB_PID=""
+LAUNCHER_PID_FILE="$RUN_LOG_DIR/web-launcher.pid"
+LAUNCH_MODE="${1:-}"
+case "$LAUNCH_MODE" in
+  ""|--restart-app) ;;
+  --app-only) APP_ONLY=true ;;
+  *) echo "Usage: ./start.sh [--app-only|--restart-app]" >&2; exit 2 ;;
+esac
 
 RED='\033[0;31m'
 # Terminal color for errors.
@@ -375,6 +385,16 @@ cleanup() {
 
   CLEANING_UP=true
   trap '' INT TERM HUP
+  if [ -n "${WEB_PID:-}" ]; then
+    kill -TERM "$WEB_PID" 2>/dev/null || true
+    wait "$WEB_PID" 2>/dev/null || true
+  fi
+  if [ -n "${LAUNCHER_PID_FILE:-}" ]; then rm -f "$LAUNCHER_PID_FILE"; fi
+  if [ "${APP_ONLY:-false}" = true ]; then
+    print_status "MetaHuman application stopped; background services unchanged"
+    release_start_lock
+    return
+  fi
   # Mark cleanup active so repeated Ctrl+C/TERM signals do not stack.
   echo
   # Separate shutdown output from the running server log.
@@ -410,12 +430,46 @@ cleanup() {
   release_start_lock
 }
 
+request_app_restart() {
+  verify_site_runtime || return 0
+  APP_RESTART=true
+  if [ -n "$WEB_PID" ]; then kill -TERM "$WEB_PID"; fi
+}
+
+run_web_server() {
+  local status=0
+  while true; do
+    APP_RESTART=false
+    (exec 9>&-; exec node "$SERVER_ENTRY") > >(exec 9>&-; tee "$SERVER_LOG") 2>&1 &
+    WEB_PID=$!
+    status=0
+    wait "$WEB_PID" || status=$?
+    if [ "$APP_RESTART" != true ]; then return "$status"; fi
+    # A trapped signal interrupts wait before the terminated child is reaped.
+    wait "$WEB_PID" 2>/dev/null || true
+    WEB_PID=""
+    print_status "Restarting application; background services unchanged"
+  done
+}
+
 trap cleanup EXIT
 # Run cleanup when the shell exits normally or because the web server exits.
 trap 'cleanup; exit 130' INT
 # Run cleanup on Ctrl+C and exit with the conventional interrupt code.
 trap 'cleanup; exit 143' TERM HUP
 # Run cleanup on termination/hangup and exit with a signal-style code.
+trap request_app_restart USR1
+
+if [ "$LAUNCH_MODE" = --restart-app ]; then
+  launcher_pid="$(cat "$LAUNCHER_PID_FILE")"
+  if ! is_repo_process "$launcher_pid" || [[ "$(process_command "$launcher_pid")" != *start.sh* ]]; then
+    print_error "No repository launcher owns the saved application PID"
+    exit 1
+  fi
+  kill -USR1 "$launcher_pid"
+  print_status "Application restart requested"
+  exit 0
+fi
 
 echo -e "${BLUE}================================${NC}"
 # Print banner top border.
@@ -490,14 +544,17 @@ configure_exposure_mode
 # Resolve the request boundary before background services and the web server
 # inherit their environment. Tunnel-derived sharing remains loopback-bound.
 
-print_status "Starting background services"
-# Announce the non-blocking service trigger.
-if ! (exec 9>&-; "$REPO_ROOT/bin/start-services" --background) >> "$RUN_LOG_DIR/background-services.trigger.log" 2>&1; then
-  print_warning "One or more background service launchers could not be started"
+if [ "$APP_ONLY" != true ]; then
+  print_status "Starting background services"
+  # Announce the non-blocking service trigger.
+  if ! (exec 9>&-; "$REPO_ROOT/bin/start-services" --background) >> "$RUN_LOG_DIR/background-services.trigger.log" 2>&1; then
+    print_warning "One or more background service launchers could not be started"
+  fi
 fi
 # Start each service launcher before the web server, while the long-running
 # services themselves continue in the background.
 STARTED=true
+printf '%s\n' "$$" > "$LAUNCHER_PID_FILE"
 # Mark that cleanup should run when this launcher exits.
 
 print_status "Starting web server"
@@ -512,5 +569,5 @@ echo
 
 cd "$REPO_ROOT/apps/site"
 # Run the server from the site package directory.
-(exec 9>&-; node "$SERVER_ENTRY" 2>&1) | (exec 9>&-; tee "$SERVER_LOG")
+run_web_server
 # Start the web server in the foreground and mirror output to logs/server.log.

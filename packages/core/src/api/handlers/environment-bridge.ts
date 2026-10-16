@@ -1,5 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
-import { readOrUpdateSpeechOutput } from './voice-settings.js';
+import { timingSafeEqual, randomUUID } from 'node:crypto';
 import {
   badRequestResponse,
   errorResponse,
@@ -12,6 +11,9 @@ import {
 } from '../types.js';
 import {
   dispatchEnvironmentActions,
+  dispatchEnvironmentVisualReads,
+  recordEnvironmentVisualReadResult,
+  releaseEnvironmentStreamWork,
   pendingEnvironmentCancellations,
   attachEnvironmentObservationTiming,
   getEnvironmentBridgeDiagnosticMedia,
@@ -23,6 +25,7 @@ import {
   recordEnvironmentBridgeDiagnosticObservation,
   recordEnvironmentRobotStatus,
   recordEnvironmentPerception,
+  recordEnvironmentLocomotionMeasurement,
   recordEnvironmentBridgeTelemetry,
   recordEnvironmentActionResult,
   sanitizeEnvironmentBridgeObservation,
@@ -60,7 +63,8 @@ const FEEDBACK_TYPES = new Set<EnvironmentFeedback['type']>([
 const ROBOT_STATUS_KEYS = new Set([
   'robot_id', 'epoch', 'vbat', 'rssi', 'state', 'uptime', 'heap', 'sd',
   'camera_ready', 'cam_drops', 'spk_underruns', 'mic_drops', 'wake_enabled',
-  'wake_model', 'wake_ready',
+  'wake_model', 'wake_ready', 'imu', 'balance', 'timestamp',
+  'output_ready', 'output_armed', 'output_fault', 'power_monitor_ready', 'status_received_at',
 ]);
 
 function requestHeader(req: UnifiedRequest, name: string): string | undefined {
@@ -99,6 +103,13 @@ function isObservation(value: Record<string, unknown>): boolean {
   );
 }
 
+export function isBodyTriggerObservation(observation: EnvironmentObservation): boolean {
+  const event = observation.state?.bodyEvent as Record<string, unknown> | undefined;
+  return observation.metadata?.perceptionEvent === 'body_event'
+    && event?.name === 'body_event' && typeof event.event_id === 'string'
+    && !environmentObservationStartsUserTurn(observation);
+}
+
 export function environmentObservationNeedsCognition(
   observation: EnvironmentObservation,
 ): boolean {
@@ -112,7 +123,7 @@ export function environmentObservationNeedsCognition(
   const hasPerceptionMetadata = Boolean(
     observation.metadata?.perceptionEvent,
   );
-  if (hasText || hasVisual || hasFeedback || hasPerceptionMetadata) {
+  if (hasText || hasVisual || hasFeedback || hasPerceptionMetadata || isBodyTriggerObservation(observation)) {
     return true;
   }
   return false;
@@ -182,23 +193,6 @@ export function resolveEnvironmentObservationUser(): string | null {
   return activeUser?.role === 'owner' ? activeUser.username : null;
 }
 
-/** Body Control edits only the active owner's existing speech destination. */
-export async function handleEnvironmentBridgeSpeechSettings(req: UnifiedRequest): Promise<UnifiedResponse> {
-  const authorizationFailure = bridgeAuthorizationFailure(req);
-  if (authorizationFailure) return authorizationFailure;
-  const username = resolveEnvironmentObservationUser();
-  if (!username) return errorResponse('Sign in to MetaHuman as the owner to choose speech output', 409);
-  const { outputTarget } = bodyRecord(req);
-  if (outputTarget !== undefined && outputTarget !== 'local' && outputTarget !== 'robot') {
-    return badRequestResponse('outputTarget must be local or robot');
-  }
-  try {
-    return successResponse(readOrUpdateSpeechOutput(username, outputTarget));
-  } catch (error) {
-    return errorResponse(`Unable to access speech settings: ${(error as Error).message}`, 500);
-  }
-}
-
 /** Body Control uses the existing bridge setting and Coordinator cancellation owner. */
 export async function handleEnvironmentBridgeBehaviorSettings(req: UnifiedRequest): Promise<UnifiedResponse> {
   const authorizationFailure = bridgeAuthorizationFailure(req);
@@ -260,13 +254,18 @@ export async function handleEnvironmentBridgeObservation(
     const observation = sanitizeEnvironmentBridgeObservation(timedObservation);
     recordEnvironmentBridgeDiagnosticObservation(observation);
     const username = resolveUsername()?.trim() ?? '';
-    const graph = requestHeader(req, 'x-metahuman-environment-graph')?.trim() || 'environment';
+    const graph = isBodyTriggerObservation(observation) ? 'body-event-trigger'
+      : requestHeader(req, 'x-metahuman-environment-graph')?.trim() || 'environment';
     const stateOnly = !environmentObservationNeedsCognition(observation);
     const graphQueued = Boolean(username)
       && /^[a-zA-Z0-9_-]{1,80}$/.test(graph)
       && !stateOnly;
     if (!graphQueued) {
       const bridge = recordEnvironmentObservation(observation);
+      if (observation.state?.locomotionMeasurement !== undefined) {
+        await recordEnvironmentLocomotionMeasurement(observation.sessionId,
+          observation.state.locomotionMeasurement, undefined, username);
+      }
       return successResponse({
         success: true,
         bridge,
@@ -295,6 +294,17 @@ export async function handleEnvironmentBridgeObservation(
     return successResponse({ success: true, bridge: published.summary, graphQueued: true, workId: published.workId });
   } catch (error) {
     return errorResponse((error as Error).message);
+  }
+}
+
+export async function handleEnvironmentBridgeVisualResult(req: UnifiedRequest): Promise<UnifiedResponse> {
+  const authorizationFailure = bridgeAuthorizationFailure(req);
+  if (authorizationFailure) return authorizationFailure;
+  try {
+    recordEnvironmentVisualReadResult(bodyRecord(req));
+    return successResponse({ success: true });
+  } catch (error) {
+    return badRequestResponse((error as Error).message);
   }
 }
 
@@ -330,8 +340,13 @@ export async function handleEnvironmentBridgeTelemetry(req: UnifiedRequest): Pro
       }, `${token}:${update.stage}`);
       return successResponse({ success: true, workId: work.id });
     }
+    const locomotionAccepted = body.locomotionMeasurement !== undefined
+      ? await recordEnvironmentLocomotionMeasurement(body.sessionId, body.locomotionMeasurement,
+        undefined, resolveEnvironmentObservationUser())
+      : undefined;
     if (body.perception !== undefined) {
-      const perceptionAccepted = await recordEnvironmentPerception(body.sessionId, body.perception);
+      const perceptionAccepted = await recordEnvironmentPerception(body.sessionId, body.perception,
+        undefined, resolveEnvironmentObservationUser());
       if (perceptionAccepted && body.recognitionProcessing && typeof body.recognitionProcessing === 'object') {
         const perception = body.perception as { observedAt: string; robotId: string; epoch: number; gatewayInstance: string };
         const processing = Object.fromEntries(Object.entries(body.recognitionProcessing).filter(([key, value]) =>
@@ -341,8 +356,10 @@ export async function handleEnvironmentBridgeTelemetry(req: UnifiedRequest): Pro
         recordEnvironmentBridgeTelemetry({ sessionId: body.sessionId, recognition: { reportedAt: typeof body.recognitionReportedAt === 'string' ? body.recognitionReportedAt : new Date().toISOString(), observedAt: perception.observedAt, robotId: perception.robotId, epoch: perception.epoch, gatewayInstance: perception.gatewayInstance,
           processing: processing as Record<string, number | null> } });
       }
-      return successResponse({ success: true, perceptionAccepted });
+      return successResponse({ success: true, perceptionAccepted,
+        ...(locomotionAccepted !== undefined ? { locomotionAccepted } : {}) });
     }
+    if (locomotionAccepted !== undefined) return successResponse({ success: true, locomotionAccepted });
     const diagnostics = recordEnvironmentBridgeTelemetry({
       sessionId: body.sessionId,
       timestamp: typeof body.timestamp === 'string' ? body.timestamp : undefined,
@@ -552,6 +569,7 @@ async function* streamEnvironmentActions(
   signal: AbortSignal | undefined,
 ): AsyncGenerator<string> {
   const queue: string[] = [];
+  const readOwner = `environment-adapter:${sessionId}:${randomUUID()}`;
   let wake: (() => void) | undefined;
   let closed = false;
 
@@ -583,7 +601,9 @@ async function* streamEnvironmentActions(
       return;
     }
 
-    const actions = dispatchEnvironmentActions(sessionId, limit);
+    const reads = dispatchEnvironmentVisualReads(sessionId, readOwner);
+    if (reads.length) push('visual-reads', { reads });
+    const actions = dispatchEnvironmentActions(sessionId, limit, readOwner);
     if (actions.length > 0) {
       push('actions', { enabled: true, actions });
     }
@@ -622,10 +642,14 @@ async function* streamEnvironmentActions(
         }
         continue;
       }
+      // Active traffic can continually displace idle heartbeats. Delivery on
+      // this same connection is also evidence that the session is live.
+      if (!closed) touchEnvironmentSession(sessionId);
       yield queue.shift()!;
     }
   } finally {
     unsubscribe();
+    releaseEnvironmentStreamWork(sessionId, readOwner);
     signal?.removeEventListener('abort', close);
     close();
   }

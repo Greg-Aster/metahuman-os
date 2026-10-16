@@ -94,7 +94,7 @@
         "label": "Editable Observer Planner Policy",
         "nodeType": "text_input",
         "properties": {
-          "message": "You are Ainekio's Boredom Observer planner. Use the fresh correlated camera image as current evidence, together with the active persona, recent conversation and reflection, current state, and verified prior actions, to form one high-level interest, question, or concern worth pursuing now. Interpret the scene rather than merely captioning it. Historical narrative may influence meaning but cannot prove current physical facts. Darkness, blur, shadow, or occlusion is missing evidence, not evidence of hidden activity, a target, heat, or a sensor reading; claim only sensing modalities explicitly present in current evidence and capabilities. Do not select a technical command, completion rule, or execution sequence. Return only the configured JSON decision.\n\nObservation History supplies earlier image interpretations with their source times. Optional visualObservation records an interpretation of attached images independently of speech and goals.",
+          "message": "You are Ainekio's Boredom Observer planner. Use the fresh correlated camera image as current evidence, together with the active persona, recent conversation and reflection, current state, and verified prior actions, to form one high-level interest, question, or concern worth pursuing now. Interpret the scene rather than merely captioning it. Historical narrative may influence meaning but cannot prove current physical facts. Darkness, blur, shadow, or occlusion is missing evidence, not evidence of hidden activity, a target, heat, or a sensor reading; claim only sensing modalities explicitly present in current evidence and capabilities. Do not select a technical command, completion rule, or execution sequence. Return only the configured JSON decision.\n\nObservation History supplies earlier image interpretations with their source times. Optional visualObservation records an interpretation of attached images independently of speech and goals.\n\nInvestigate or play with the observed environment according to your current interests, persona and available capabilities. Your intention may involve visually tracking an object, approaching it to inspect it, following it, or another supported interaction. Describe the intended outcome and the particular target when one is relevant; do not reduce an ongoing activity to taking a photograph. Target acquisition, detector configuration, tracking feedback and body actions are executed through Robot Autonomy Executor. Camera evidence and returned execution results establish what happened; an intention or a spoken claim does not.",
           "inputKey": ""
         }
       }
@@ -202,7 +202,7 @@
         "nodeType": "model_router",
         "properties": {
           "role": "persona",
-          "maxTokens": 384,
+          "maxTokens": -1,
           "temperature": 0.7,
           "format": "json"
         }
@@ -232,7 +232,7 @@
         "label": "Send Intention to Robot Autonomy Executor",
         "nodeType": "robot_operator_environment_dispatch",
         "properties": {
-          "graph": "boredom-autonomy"
+          "graph": "environment"
         }
       }
     },
@@ -294,9 +294,7 @@
       "data": {
         "label": "Current Execution",
         "nodeType": "execution_context",
-        "properties": {
-          "eventLimit": 16
-        }
+        "properties": {}
       }
     },
     {
@@ -399,6 +397,60 @@
           "mode": "required-inputs",
           "requiredInputs": [
             "visualObservation"
+          ]
+        }
+      }
+    },
+    {
+      "id": "autonomy-inner-output",
+      "type": "genericNode",
+      "position": {
+        "x": 2330,
+        "y": 410
+      },
+      "data": {
+        "nodeType": "inner_dialogue_buffer",
+        "label": "Inner Dialogue: Autonomy Intention",
+        "properties": {
+          "tags": [
+            "autonomy",
+            "autonomy-intention",
+            "inner"
+          ],
+          "role": "reflection"
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "entry"
+          ]
+        }
+      }
+    },
+    {
+      "id": "autonomy-intention-memory",
+      "type": "genericNode",
+      "position": {
+        "x": 2550,
+        "y": 410
+      },
+      "data": {
+        "nodeType": "inner_dialogue_saver",
+        "label": "Memory: Autonomy Intention",
+        "properties": {
+          "tags": [
+            "autonomy",
+            "autonomy-intention",
+            "inner"
+          ],
+          "roles": [
+            "reflection"
+          ]
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "entries"
           ]
         }
       }
@@ -714,17 +766,6 @@
       }
     },
     {
-      "id": "durable-environment-dispatch-invocation-selected-workflow-invocation",
-      "source": "environment-dispatch",
-      "target": "selected-workflow",
-      "sourceHandle": "invocation",
-      "targetHandle": "invocation",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
       "id": "durable-parse-capture-data-capture-image-action",
       "source": "parse-capture",
       "target": "capture-image",
@@ -904,6 +945,95 @@
       "data": {
         "type": "object",
         "kind": "control"
+      }
+    },
+    {
+      "id": "environment-dispatch-innerEntry-autonomy-inner-output-entry",
+      "source": "environment-dispatch",
+      "sourceHandle": "innerEntry",
+      "target": "autonomy-inner-output",
+      "targetHandle": "entry",
+      "type": "default",
+      "data": {
+        "type": "message"
+      }
+    },
+    {
+      "id": "environment-dispatch-invocation-autonomy-inner-output-passthrough",
+      "source": "environment-dispatch",
+      "sourceHandle": "invocation",
+      "target": "autonomy-inner-output",
+      "targetHandle": "passthrough",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "autonomy-inner-output-entries-autonomy-intention-memory-entries",
+      "source": "autonomy-inner-output",
+      "sourceHandle": "entries",
+      "target": "autonomy-intention-memory",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "autonomy-inner-output-passthrough-selected-workflow-invocation",
+      "source": "autonomy-inner-output",
+      "sourceHandle": "passthrough",
+      "target": "selected-workflow",
+      "targetHandle": "invocation",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "autonomy-intention-memory-saved-selected-workflow-control",
+      "source": "autonomy-intention-memory",
+      "sourceHandle": "saved",
+      "target": "selected-workflow",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "type": "boolean",
+        "kind": "control"
+      }
+    },
+    {
+      "id": "captured-observation-isTriggeringObservation-environment-dispatch-observationCurrent",
+      "source": "captured-observation",
+      "sourceHandle": "isTriggeringObservation",
+      "target": "environment-dispatch",
+      "targetHandle": "observationCurrent",
+      "type": "default",
+      "data": {
+        "type": "boolean"
+      }
+    },
+    {
+      "id": "image-input-frames-environment-dispatch-frames",
+      "source": "image-input",
+      "sourceHandle": "frames",
+      "target": "environment-dispatch",
+      "targetHandle": "frames",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "image-input-current-environment-dispatch-currentVisualEvidence",
+      "source": "image-input",
+      "sourceHandle": "current",
+      "target": "environment-dispatch",
+      "targetHandle": "currentVisualEvidence",
+      "type": "default",
+      "data": {
+        "type": "boolean"
       }
     }
   ]

@@ -1,4 +1,5 @@
-import { reasoningProperty } from '../llm/model-router.schema.js';
+import type { ModelRole } from '../../model-roles.js';
+import { reasoningProperty, modelRouterDefinition } from '../llm/model-router.schema.js';
 /**
  * Response LLM Node (Big Brother Integrated)
  *
@@ -25,6 +26,7 @@ import { reasoningProperty } from '../llm/model-router.schema.js';
 
 import { defineNode, type NodeDefinition } from '../types.js';
 import { callLLM } from '../../model-router.js';
+import { resolveModelForCognitiveMode } from '../../model-resolver.js';
 import { loadOperatorConfig } from '../../config.js';
 import type { Desire } from '../../agency/types.js';
 import { renderPromptTemplate } from '../prompt-template.js';
@@ -320,7 +322,7 @@ async function callLocalLLM(
   );
 
   const result = await callLLM({
-    role: 'orchestrator',
+    role: (properties?.role ?? 'persona') as ModelRole,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -356,6 +358,7 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
     { name: 'usedBigBrother', type: 'boolean', description: 'Whether Big Brother was used' },
   ],
   properties: {
+    role: 'persona',
     enableThinking: false,
     temperature: 0.7,
     maxTokens: 1024,
@@ -367,6 +370,7 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
     localUserPromptTemplate: DEFAULT_LOCAL_USER_PROMPT_TEMPLATE,
   },
   propertySchemas: {
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'persona' },
     enableThinking: reasoningProperty,
     temperature: {
       type: 'slider',
@@ -446,9 +450,9 @@ export const ResponseLLMNode: NodeDefinition = defineNode({
     console.log(`${LOG_PREFIX} Card context length: ${cardContext.length}`);
     console.log(`${LOG_PREFIX} Message: "${message.substring(0, 50)}..."`);
 
-    // Check if Big Brother is enabled
+    // The same Persona assignment selects the card response provider.
     const operatorConfig = username ? loadOperatorConfig(username, true) : null; // Skip cache for fresh config
-    const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
+    const bigBrotherEnabled = resolveModelForCognitiveMode(context.cognitiveMode || 'dual', 'persona', username).provider === 'big-brother';
     const useBigBrotherProp = properties?.useBigBrother ?? true;
     const preferredBackend = operatorConfig?.bigBrotherMode?.provider;
 

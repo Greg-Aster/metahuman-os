@@ -1,3 +1,4 @@
+import type { SvelteFlowGraph } from '../cognitive-graph-schema.js'
 import Database from 'better-sqlite3'
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
@@ -15,6 +16,8 @@ type ClaimedActionReceipt = Pick<import('../queue/types.js').QueuedTask,
   'id' | 'type' | 'handler' | 'state' | 'username' | 'input' | 'durable' | 'startedAt' | 'bodyLease'>
 
 interface ActionResultEvidence {
+  /** The command's execution ended even when its physical result was not observed. */
+  executionEnded?: boolean
   /** Compare-and-set against a specifically identified local delivery conclusion. */
   reconcilesEventId?: string
   /** A late transport diagnostic cannot replace a verified physical result. */
@@ -89,7 +92,8 @@ export class ExecutionStore {
       );
       CREATE TABLE IF NOT EXISTS execution_graphs (
         execution_id TEXT NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
-        invocation_id TEXT NOT NULL, definition TEXT NOT NULL,
+        invocation_id TEXT NOT NULL, definition TEXT NOT NULL, graph TEXT,
+        owner TEXT, owner_generation INTEGER NOT NULL DEFAULT 0, lease_until INTEGER,
         PRIMARY KEY(execution_id, invocation_id)
       );
       CREATE TABLE IF NOT EXISTS execution_entries (
@@ -135,6 +139,10 @@ export class ExecutionStore {
         ON execution_observations(username, environment_id, adapter, robot_id, interpreted_at);
     `)
     this.db.transaction(() => {
+      const graphColumns = this.db.pragma('table_info(execution_graphs)') as { name: string }[]
+      for (const [name, type] of [['graph', 'TEXT'], ['owner', 'TEXT'], ['owner_generation', 'INTEGER NOT NULL DEFAULT 0'], ['lease_until', 'INTEGER']]) {
+        if (!graphColumns.some(column => column.name === name)) this.db.exec(`ALTER TABLE execution_graphs ADD COLUMN ${name} ${type}`)
+      }
       if (!(this.db.pragma('table_info(executions)') as { name: string }[]).some(column => column.name === 'origin_runtime_id')) {
         this.db.exec('ALTER TABLE executions ADD COLUMN origin_runtime_id TEXT')
       }
@@ -159,6 +167,12 @@ export class ExecutionStore {
 
   acknowledgeRetirement(executionId: string): void {
     this.db.prepare('DELETE FROM execution_retirements WHERE execution_id=?').run(executionId)
+  }
+
+  admittedExecutionId(username: string, admissionKey: string): string | null {
+    const row = this.db.prepare('SELECT execution_id FROM execution_entries WHERE admission_key = ?')
+      .get(`${username}:${admissionKey}`) as { execution_id: string } | undefined
+    return row?.execution_id ?? null
   }
 
   enter(username: string, definition: ExecutionDefinition, admissionKey: string, bootstrap: unknown): ExecutionRecord {
@@ -189,11 +203,12 @@ export class ExecutionStore {
 
   /** Dashboard selection only. Task meaning remains in the execution checkpoint. */
   projectedTask(username: string): import('./types.js').ExecutionObjective | null {
-    const candidates = this.list(username).flatMap(record => {
-      const task = this.task(record.executionId)
-      if (!task) return []
-      return [{ record, task: { ...task, executionStatus: record.status } }]
-    })
+    const rows = this.db.prepare(`SELECT e.status, t.task FROM executions e
+      JOIN execution_task t USING(execution_id) WHERE e.username = ? ORDER BY e.created_at`)
+      .all(username) as { status: ExecutionRecord['status']; task: string }[]
+    const candidates = rows.map(record => ({ record,
+      task: { ...this.decodeDocument(record.task) as import('./types.js').ExecutionObjective, executionStatus: record.status },
+    }))
     candidates.sort((a, b) => {
       const active = (candidate: typeof a) => ['running', 'waiting'].includes(candidate.record.status)
         && !candidate.task.decision.objectiveComplete && !['abandon', 'cancel'].includes(candidate.task.decision.outcome)
@@ -277,8 +292,17 @@ export class ExecutionStore {
   }
 
   get(executionId: string): ExecutionRecord {
-    const row = this.db.prepare('SELECT e.*, w.reason AS waiting_reason FROM executions e LEFT JOIN execution_waits w USING(execution_id) WHERE e.execution_id = ?').get(executionId) as any
-    if (!row) throw new Error(`Unknown execution ${executionId}`)
+    const record = this.find(executionId)
+    if (!record) throw new Error(`Unknown execution ${executionId}`)
+    return record
+  }
+
+  find(executionId: string): ExecutionRecord | null {
+    const row = this.db.prepare('SELECT e.*, w.reason AS waiting_reason FROM executions e LEFT JOIN execution_waits w USING(execution_id) WHERE e.execution_id=?').get(executionId) as any
+    return row ? this.executionRecord(row) : null
+  }
+
+  private executionRecord(row: any): ExecutionRecord {
     return {
       executionId: row.execution_id, username: row.username, definition: this.codec.decode(row.definition),
       originRuntimeId: row.origin_runtime_id ?? undefined,
@@ -290,10 +314,42 @@ export class ExecutionStore {
   }
 
   list(username?: string): ExecutionRecord[] {
-    const rows = (username
-      ? this.db.prepare('SELECT execution_id FROM executions WHERE username = ? ORDER BY created_at').all(username)
-      : this.db.prepare('SELECT execution_id FROM executions ORDER BY created_at').all()) as any[]
-    return rows.map(row => this.get(row.execution_id))
+    return [...this.iterate(username)]
+  }
+
+  /** Decode history on demand so a latest-state reader can stop at its record. */
+  *iterate(username?: string, newestFirst = false): Generator<ExecutionRecord> {
+    const query = 'SELECT e.*, w.reason AS waiting_reason FROM executions e LEFT JOIN execution_waits w USING(execution_id)'
+    const order = newestFirst ? 'DESC' : 'ASC'
+    const rows = username
+      ? this.db.prepare(`${query} WHERE e.username = ? ORDER BY e.created_at ${order}`).iterate(username)
+      : this.db.prepare(`${query} ORDER BY e.created_at ${order}`).iterate()
+    for (const row of rows) yield this.executionRecord(row)
+  }
+
+  /** Queue projection: read history and its optional task selection together. */
+  summaries(username: string, terminalHistoryCount?: number) {
+    // Apply the Queue UI's existing history window before decoding records.
+    // Live work is always included; this never prunes saved execution state.
+    const history = terminalHistoryCount === undefined ? '' : `AND (e.status IN ('running', 'waiting')
+      OR e.execution_id IN (SELECT execution_id FROM executions WHERE username = ?
+        AND status NOT IN ('running', 'waiting') ORDER BY updated_at DESC LIMIT ?))`
+    const rows = this.db.prepare(`SELECT e.execution_id, e.definition, e.status, e.updated_at,
+      e.owner, e.lease_until, w.reason, t.task,
+      (SELECT MAX(g.lease_until) FROM execution_graphs g WHERE g.execution_id=e.execution_id AND g.owner IS NOT NULL) AS child_lease_until
+      FROM executions e
+      LEFT JOIN execution_waits w USING(execution_id)
+      LEFT JOIN execution_task t USING(execution_id)
+      WHERE e.username = ? ${history} ORDER BY e.created_at`)
+      .all(...(terminalHistoryCount === undefined ? [username] : [username, username, terminalHistoryCount])) as any[]
+    const now = Date.now()
+    return rows.map(row => ({
+      executionId: row.execution_id as string, graph: this.codec.decode(row.definition).graphId as string,
+      status: row.status as ExecutionRecord['status'], waitingReason: row.reason ?? undefined,
+      updatedAt: new Date(row.updated_at).toISOString(),
+      personResume: row.task ? (this.decodeDocument(row.task) as import('./types.js').ExecutionObjective).personResume : undefined,
+      liveWriter: Boolean(row.owner && (row.lease_until ?? 0) > now || (row.child_lease_until ?? 0) > now),
+    }))
   }
 
   assertDefinition(executionId: string, executable: ExecutionDefinition): void {
@@ -302,8 +358,14 @@ export class ExecutionStore {
     }
   }
 
+  graphSnapshot(executionId: string, invocationId: string): SvelteFlowGraph | null {
+    const row = this.db.prepare('SELECT graph FROM execution_graphs WHERE execution_id=? AND invocation_id=?')
+      .get(executionId, invocationId) as { graph: string | null } | undefined
+    return row?.graph ? this.decodeDocument(row.graph) : null
+  }
+
   /** Child invocations share this execution; each pins the actual executable it first enters. */
-  pinGraph(lease: ExecutionLease, invocationId: string, executable: ExecutionDefinition): void {
+  pinGraph(lease: ExecutionLease, invocationId: string, executable: ExecutionDefinition, graph?: SvelteFlowGraph): void {
     this.db.transaction(() => {
       this.assertLease(lease)
       const previous = this.db.prepare('SELECT definition FROM execution_graphs WHERE execution_id = ? AND invocation_id = ?')
@@ -313,8 +375,8 @@ export class ExecutionStore {
           throw new ExecutionConflictError('Saved child graph does not match its executable definition')
         }
       } else {
-        this.db.prepare('INSERT INTO execution_graphs VALUES (?, ?, ?)')
-          .run(lease.executionId, invocationId, this.codec.encode(executable))
+        this.db.prepare('INSERT INTO execution_graphs (execution_id, invocation_id, definition, graph) VALUES (?, ?, ?, ?)')
+          .run(lease.executionId, invocationId, this.codec.encode(executable), graph ? this.encodeDocument(lease.executionId, graph) : null)
       }
     }).immediate()
   }
@@ -344,9 +406,47 @@ export class ExecutionStore {
     }).immediate()
   }
 
+  /** A finite worker writes its own graph namespace, not the parent's checkpoint head. */
+  claimGraph(executionId: string, invocationId: string, executable: ExecutionDefinition,
+    owner = randomUUID(), leaseMs = 30_000, graph?: SvelteFlowGraph): ExecutionLease {
+    return this.db.transaction(() => {
+      const state = this.get(executionId)
+      if (state.cancelledAt !== null) throw new ExecutionCancelledError(executionId)
+      if (state.status === 'completed' || state.status === 'failed') throw new ExecutionConflictError('Execution is terminal')
+      this.db.prepare(`INSERT INTO execution_graphs (execution_id, invocation_id, definition, graph)
+        VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`).run(executionId, invocationId, this.codec.encode(executable), graph ? this.encodeDocument(executionId, graph) : null)
+      const writer = this.db.prepare('SELECT * FROM execution_graphs WHERE execution_id=? AND invocation_id=?')
+        .get(executionId, invocationId) as any
+      if (canonicalJSON(this.codec.decode(writer.definition)) !== canonicalJSON(executable)) {
+        throw new ExecutionConflictError('Saved child graph does not match its executable definition')
+      }
+      const now = Date.now()
+      if (writer.owner && writer.lease_until > now) throw new ExecutionBusyError(writer.lease_until)
+      const generation = writer.owner_generation + 1
+      this.db.prepare(`UPDATE execution_graphs SET owner=?, owner_generation=?, lease_until=?
+        WHERE execution_id=? AND invocation_id=?`).run(owner, generation, now + leaseMs, executionId, invocationId)
+      return { executionId, invocationId, owner, generation }
+    }).immediate()
+  }
+
+  hasLiveWriter(executionId: string): boolean {
+    const now = Date.now()
+    return Boolean(this.db.prepare(`SELECT 1 FROM executions WHERE execution_id=? AND owner IS NOT NULL AND lease_until>?
+      UNION ALL SELECT 1 FROM execution_graphs WHERE execution_id=? AND owner IS NOT NULL AND lease_until>? LIMIT 1`)
+      .get(executionId, now, executionId, now))
+  }
+
+  private writerLocation(lease: ExecutionLease) {
+    return lease.invocationId
+      ? { table: 'execution_graphs', where: 'execution_id=? AND invocation_id=?', keys: [lease.executionId, lease.invocationId] }
+      : { table: 'executions', where: 'execution_id=?', keys: [lease.executionId] }
+  }
+
   assertLease(lease: ExecutionLease): void {
-    const state = this.get(lease.executionId)
-    if (state.owner !== lease.owner || state.ownerGeneration !== lease.generation || (state.leaseUntil ?? 0) <= Date.now()) {
+    const writer = this.writerLocation(lease)
+    const state = this.db.prepare(`SELECT owner, owner_generation, lease_until FROM ${writer.table} WHERE ${writer.where}`)
+      .get(...writer.keys) as any
+    if (!state || state.owner !== lease.owner || state.owner_generation !== lease.generation || (state.lease_until ?? 0) <= Date.now()) {
       throw new ExecutionConflictError('Stale execution writer')
     }
   }
@@ -354,15 +454,18 @@ export class ExecutionStore {
   renew(lease: ExecutionLease, leaseMs = 30_000): void {
     this.db.transaction(() => {
       this.assertLease(lease)
-      this.db.prepare('UPDATE executions SET lease_until = ? WHERE execution_id = ?')
-        .run(Date.now() + leaseMs, lease.executionId)
+      const writer = this.writerLocation(lease)
+      this.db.prepare(`UPDATE ${writer.table} SET lease_until=? WHERE ${writer.where}`)
+        .run(Date.now() + leaseMs, ...writer.keys)
     }).immediate()
   }
 
   release(lease: ExecutionLease): void {
-    this.db.prepare(`UPDATE executions SET owner = NULL, lease_until = NULL
-      WHERE execution_id = ? AND owner = ? AND owner_generation = ?`)
-      .run(lease.executionId, lease.owner, lease.generation)
+    const writer = this.writerLocation(lease)
+    this.db.prepare(`UPDATE ${writer.table} SET owner=NULL, lease_until=NULL
+      WHERE ${writer.where} AND owner=? AND owner_generation=?`)
+      .run(...writer.keys, lease.owner, lease.generation)
+    this.settleEffectDelivery(lease.executionId)
   }
 
   appendEvent(executionId: string, event: NewExecutionEvent): ExecutionEvent {
@@ -531,18 +634,24 @@ export class ExecutionStore {
     'id' | 'state' | 'durable' | 'startedAt' | 'bodyLease'>): ExecutionEvent {
     return this.db.transaction(() => {
       const effect = this.dispatch(effectId)
-      if (!['failed', 'cancelled'].includes(this.get(effect.executionId).status)
-        || effect.kind !== 'coordinator_work' || !['pending', 'admitted', 'cancelled'].includes(effect.status)) {
-        throw new ExecutionConflictError('Execution intent is not eligible for non-dispatch confirmation')
-      }
       if (!receipt.id || receipt.state !== 'cancelled' || receipt.startedAt || receipt.bodyLease
         || receipt.durable?.executionId !== effect.executionId || receipt.durable.effectId !== effectId
         || effect.workItemId && effect.workItemId !== receipt.id) {
         throw new ExecutionConflictError('Coordinator receipt does not prove this intent was never dispatched')
       }
+      const recorded = this.findEvent(effect.executionId, `work:${receipt.id}:undispatched`)
+      if (recorded) return recorded
+      const speech = (effect.payload as { input?: { type?: string } }).input?.type === 'speak'
+      if ((!['failed', 'cancelled'].includes(this.get(effect.executionId).status) && !this.isDisplayDispatch(effect) && !speech)
+        || effect.kind !== 'coordinator_work' || !['pending', 'admitted', 'cancelled'].includes(effect.status)) {
+        throw new ExecutionConflictError('Execution intent is not eligible for non-dispatch confirmation')
+      }
       const event = this.insertEvent(effect.executionId, {
         eventId: `work:${receipt.id}:undispatched`, kind: 'dispatch_cancelled', workItemId: receipt.id,
-        payload: { effectId, reason: 'Execution ended before work started' },
+        payload: this.findEvent(effect.executionId, `work:${receipt.id}:undispatched`)?.payload
+          ?? { effectId, reason: this.isDisplayDispatch(effect)
+            ? 'Display delivery cancelled before work started' : speech
+              ? 'Speech delivery cancelled before work started' : 'Execution ended before work started' },
       })
       this.db.prepare(`UPDATE execution_outbox SET work_item_id = ?, status = 'cancelled'
         WHERE effect_id = ? AND (work_item_id IS NOT ? OR status != 'cancelled')`)
@@ -666,15 +775,18 @@ export class ExecutionStore {
           throw new ExecutionConflictError('Physical reconciliation does not match the current delivery conclusion')
         }
       }
+      const firstDisplayReceipt = receipt && this.isDisplayDispatch(dispatch) && dispatch.status === 'completed'
+        && !uncertain && event.kind === 'physical_result'
+        && !this.events(executionId).some(previous => previous.actionId === actionId && previous.kind === 'physical_result')
       if (!['accepted', 'outcome_unknown'].includes(dispatch.status)
         && !(receipt && ['admitted', 'cancelled'].includes(dispatch.status))
         && !(notExecuted && ['pending', 'admitted', 'cancelled'].includes(dispatch.status))
-        && !evidence?.reconcilesEventId) {
+        && !evidence?.reconcilesEventId && !firstDisplayReceipt) {
         throw new ExecutionConflictError('Action is not waiting for a result')
       }
       const result = this.insertEvent(executionId, event)
       this.db.prepare('UPDATE execution_outbox SET status = ? WHERE effect_id = ?')
-        .run(uncertain ? 'outcome_unknown' : 'completed', row.effect_id)
+        .run(uncertain && !evidence?.executionEnded && !this.isDisplayDispatch(dispatch) ? 'outcome_unknown' : 'completed', row.effect_id)
       // A physical result is evidence, never semantic completion of an objective.
       return result
     }).immediate()
@@ -685,7 +797,8 @@ export class ExecutionStore {
     receipt?: ClaimedActionReceipt, evidence?: ActionResultEvidence): ExecutionEvent {
     return this.db.transaction(() => {
       const result = this.recordResult(executionId, actionId, event, uncertain, notExecuted, receipt, evidence)
-      if (result.kind !== 'delivery_result') this.scheduleResume(result)
+      this.settleEffectDelivery(executionId)
+      if (result.kind !== 'delivery_result' && !this.finishedEffectDelivery(executionId)) this.scheduleResume(result)
       return result
     }).immediate()
   }
@@ -727,21 +840,78 @@ export class ExecutionStore {
     }).immediate()
   }
 
+  private isDisplayDispatch(effect: DispatchRecord): boolean {
+    const payload = effect.payload as { type?: string; input?: { type?: string } }
+    return effect.kind === 'coordinator_work' && payload.type === 'environment_command'
+      && payload.input?.type === 'faceExpression'
+  }
+
+  private finishedEffectDelivery(executionId: string): boolean {
+    const record = this.get(executionId)
+    if (record.status !== 'waiting' || record.waitingReason !== 'effect_delivery') return false
+    const head = this.db.prepare(`SELECT c.checkpoint FROM execution_heads h JOIN checkpoints c
+      ON c.thread_id=h.execution_id AND c.checkpoint_ns=h.namespace AND c.checkpoint_id=h.checkpoint_id
+      WHERE h.execution_id=? AND h.namespace=''`).get(executionId) as { checkpoint: Uint8Array } | undefined
+    if (!head) return false
+    const queue = this.decodeDocument(Buffer.from(head.checkpoint).toString('utf8'), ['json', 'channel_values', 'queue'])
+    return Array.isArray(queue) && queue.length === 0
+  }
+
+  /** Finish delivery of an already-exhausted graph without re-running its executable. */
+  settleEffectDelivery(executionId: string): boolean {
+    return this.db.transaction(() => {
+      const record = this.get(executionId)
+      if (!this.finishedEffectDelivery(executionId) || this.hasPendingInput(executionId)
+        || record.owner && (record.leaseUntil ?? 0) > Date.now()) return false
+      const pending = this.dispatches(executionId).some(effect => effect.kind !== 'graph_resume'
+        && ['pending', 'admitted', 'accepted', 'outcome_unknown'].includes(effect.status)
+        && !(effect.kind === 'coordinator_work' && effect.status !== 'pending'
+          && (effect.payload as { executionScope?: string }).executionScope === 'independent'))
+      if (pending) return false
+      this.db.prepare("UPDATE executions SET status='completed', updated_at=? WHERE execution_id=?")
+        .run(Date.now(), executionId)
+      this.db.prepare('DELETE FROM execution_waits WHERE execution_id=?').run(executionId)
+      this.settleFinishedDispatches(executionId)
+      return true
+    }).immediate()
+  }
+
   private scheduleResume(event: ExecutionEvent): void {
     const execution = this.get(event.executionId)
     if (execution.cancelledAt !== null || ['completed', 'failed'].includes(execution.status)
       || event.sequence <= execution.lastProcessedSequence) return
+    if (this.coalescePendingEventResumes(event.executionId, event.sequence)) return
     const effectId = `${event.executionId}:resume:${event.eventId}`
     const previous = this.db.prepare('SELECT payload FROM execution_outbox WHERE effect_id=?').get(effectId) as { payload: string } | undefined
     this.insertDispatch(event.executionId, `event:${event.sequence}`, {
       effectId, kind: 'graph_resume',
-      payload: previous ? this.decodeDocument(previous.payload) : { executionId: event.executionId, eventId: event.eventId,
-        ...(execution.waitingReason?.startsWith('active_task:') ? { resource: `execution:${event.executionId}` } : {}) },
+      payload: previous ? this.decodeDocument(previous.payload) : { executionId: event.executionId, eventId: event.eventId },
     })
+  }
+
+  /** One unstarted wake covers the pending event range; the event log retains every input. */
+  private coalescePendingEventResumes(executionId: string, throughSequence = 0): boolean {
+    const pending = this.db.prepare(`SELECT effect_id, checkpoint_id FROM execution_outbox
+      WHERE execution_id=? AND kind='graph_resume' AND status IN ('pending','admitted')
+        AND checkpoint_id LIKE 'event:%' ORDER BY rowid`)
+      .all(executionId) as { effect_id: string; checkpoint_id: string }[]
+    if (!pending.length) return false
+    // event:N is the wake's processed-sequence boundary, not its immutable
+    // admission payload. Extending it never changes an admitted work identity.
+    const through = Math.max(throughSequence, ...pending.map(row => Number(row.checkpoint_id.slice(6))))
+    this.db.prepare('UPDATE execution_outbox SET checkpoint_id=? WHERE effect_id=?')
+      .run(`event:${through}`, pending[0].effect_id)
+    // Older runtimes admitted one wake per event. Their unstarted deliveries
+    // are covered by the retained wake and settle through normal receipt recovery.
+    for (const row of pending.slice(1)) {
+      this.db.prepare("UPDATE execution_outbox SET status='completed' WHERE effect_id=?").run(row.effect_id)
+    }
+    return true
   }
 
   private settleFinishedDispatches(executionId: string): void {
     const execution = this.get(executionId)
+    this.coalescePendingEventResumes(executionId)
     if (execution.status === 'failed') {
       // A terminal graph cannot deliver its remaining local projections. Keep
       // Coordinator intents: a pending receipt may conceal enqueue-before-ack,
@@ -755,7 +925,10 @@ export class ExecutionStore {
     for (const row of rows) {
       const effect = this.dispatch(row.effect_id)
       const payload = effect.payload as { eventId?: string }
-      const consumed = payload.eventId && this.event(executionId, payload.eventId).sequence <= execution.lastProcessedSequence
+      const throughSequence = effect.checkpointId.startsWith('event:')
+        ? Number(effect.checkpointId.slice(6))
+        : payload.eventId ? this.event(executionId, payload.eventId).sequence : undefined
+      const consumed = throughSequence !== undefined && throughSequence <= execution.lastProcessedSequence
       // An accepted wake owns an invocation that may still be reviewing the
       // consumed input. Its terminal work receipt settles that invocation;
       // only unstarted wakes are redundant merely because input was consumed.
@@ -789,7 +962,7 @@ export class ExecutionStore {
     return this.db.transaction(() => {
       const effect = this.dispatch(effectId)
       if (effect.workItemId !== workItemId) throw new ExecutionConflictError('Result has a different Coordinator receipt')
-      if (effect.actionId) throw new ExecutionConflictError('Physical actions require a correlated physical result')
+      if (effect.actionId && !this.isDisplayDispatch(effect)) throw new ExecutionConflictError('Physical actions require a correlated physical result')
       if (effect.kind === 'graph_resume') {
         const alreadyRecorded = this.findEvent(effect.executionId, `work:${workItemId}:terminal`)
         const result = this.insertEvent(effect.executionId, {
@@ -799,9 +972,13 @@ export class ExecutionStore {
         const receipt = payload as { state: string; error?: unknown }
         const record = this.get(effect.executionId)
         const wake = effect.payload as { eventId?: string }
-        const unfinished = effect.status === 'accepted' || (wake.eventId
-          ? this.event(effect.executionId, wake.eventId).sequence > record.lastProcessedSequence
-          : effect.checkpointId === `recovery:${record.checkpointVersion}`)
+        const throughSequence = effect.checkpointId.startsWith('event:')
+          ? Number(effect.checkpointId.slice(6))
+          : wake.eventId ? this.event(effect.executionId, wake.eventId).sequence : undefined
+        const unfinished = !['completed', 'cancelled'].includes(effect.status)
+          && (effect.status === 'accepted' || (throughSequence !== undefined
+            ? throughSequence > record.lastProcessedSequence
+            : effect.checkpointId === `recovery:${record.checkpointVersion}`))
         // A terminal wake receipt must settle its saved position, not just the
         // delivery row. A late receipt cannot overwrite a newer/live writer.
         if (!alreadyRecorded && unfinished && !['completed', 'failed', 'cancelled'].includes(record.status)
@@ -852,7 +1029,8 @@ export class ExecutionStore {
         work_result_identity = ? WHERE effect_id = ?
         AND (status NOT IN ('cancelled', 'completed') OR work_result_identity IS NOT ?)`)
         .run(contentHash(payload), effectId, contentHash(payload))
-      this.scheduleResume(result)
+      this.settleEffectDelivery(effect.executionId)
+      if (!this.finishedEffectDelivery(effect.executionId)) this.scheduleResume(result)
       return result
     }).immediate()
   }
@@ -932,19 +1110,23 @@ export class ExecutionStore {
     return document.encoded
   }
 
-  decodeDocument(value: string): any {
+  decodeDocument(value: string, path: readonly (string | number)[] = []): any {
     const documents = new Map<string, any>()
+    const dereference = (item: any): any => {
+      if (typeof item !== 'string' || !item.startsWith('\u0000mh-blob:')) return item
+      const hash = item.slice('\u0000mh-blob:'.length)
+      if (!documents.has(hash)) {
+        const row = this.db.prepare('SELECT value FROM execution_blobs WHERE hash = ?').get(hash) as any
+        if (!row) throw new Error('Execution evidence blob is missing')
+        documents.set(hash, this.codec.decode(row.value))
+      }
+      return documents.get(hash)
+    }
     const unpack = (item: any): any => {
       if (typeof item === 'string') {
         if (item.startsWith('\u0000mh-literal:')) return item.slice('\u0000mh-literal:'.length)
         if (item.startsWith('\u0000mh-blob:')) {
-          const hash = item.slice('\u0000mh-blob:'.length)
-          if (!documents.has(hash)) {
-            const row = this.db.prepare('SELECT value FROM execution_blobs WHERE hash = ?').get(hash) as any
-            if (!row) throw new Error('Execution evidence blob is missing')
-            documents.set(hash, this.codec.decode(row.value))
-          }
-          const packed = documents.get(hash)
+          const packed = dereference(item)
           return packed && typeof packed === 'object' ? unpack(packed) : packed
         }
         return item
@@ -953,6 +1135,10 @@ export class ExecutionStore {
       if (item && typeof item === 'object') return Object.fromEntries(Object.entries(item).map(([key, entry]) => [key, unpack(entry)]))
       return item
     }
-    return unpack(this.codec.decode(value))
+    // Status projections read only their owned checkpoint fields. Resolve the
+    // path before expanding descendants; unrelated model context stays saved.
+    let selected = this.codec.decode(value)
+    for (const key of path) selected = dereference(selected)?.[key]
+    return unpack(selected)
   }
 }

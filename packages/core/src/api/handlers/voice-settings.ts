@@ -571,21 +571,6 @@ function ensureVoiceConfig(
   return config;
 }
 
-/** The same profile preference used by Voice Settings and TTS delivery. */
-export function readOrUpdateSpeechOutput(username: string, outputTarget?: 'local' | 'robot') {
-  const storage = storageClient.getProfileRoot(username);
-  if (!storage.success || !storage.profileRoot) throw new Error('Failed to resolve profile storage');
-  const voiceConfigPath = path.join(storage.profileRoot, 'etc', 'voice.json');
-  const config = ensureVoiceConfig(voiceConfigPath, systemPaths.voiceModels, systemPaths.root,
-    getAvailableVoices(systemPaths.voiceModels));
-  if (outputTarget !== undefined) {
-    config.tts.outputTarget = outputTarget;
-    persistVoiceConfig(voiceConfigPath, config);
-  }
-  return { username, outputTarget: config.tts.outputTarget, provider: config.tts.provider,
-    speechDisabled: config.tts.speechDisabled === true };
-}
-
 function persistVoiceConfig(voiceConfigPath: string, config: VoiceConfig): void {
   const tempPath = `${voiceConfigPath}.tmp`;
   fs.writeFileSync(tempPath, JSON.stringify(config, null, 2), 'utf8');

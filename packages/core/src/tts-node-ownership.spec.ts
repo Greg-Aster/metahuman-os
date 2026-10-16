@@ -58,7 +58,7 @@ assert.match(
 );
 assert.match(
   chat,
-  /syncSpeechDisabledPreference\(!ttsEnabled\)/,
+  /JSON\.stringify\(speechOutputSettings\(next\)\)/,
   'the main chat speech button must synchronize its disable state for server-owned robot speech',
 );
 assert.match(
@@ -68,7 +68,7 @@ assert.match(
 );
 assert.match(
   chat,
-  /function toggleAssistantSpeech\(\): void \{[\s\S]*?ttsEnabled = !ttsEnabled;[\s\S]*?interruptAssistantSpeech\('speech-disabled'\)[\s\S]*?saveChatPrefs\(\);[\s\S]*?\}/,
+  /async function toggleAssistantSpeech\(\): Promise<void> \{[\s\S]*?if \(!response\.ok\) throw[\s\S]*?ttsEnabled = next !== 'off';[\s\S]*?saveChatPrefs\(\);[\s\S]*?interruptAssistantSpeech\('speech-disabled'\)/,
   'disabling speech from the main chat must stop current audio, cancel synthesis, and persist the choice',
 );
 assert.doesNotMatch(
@@ -226,7 +226,7 @@ for (const entry of fs.readdirSync(apiHandlerRoot, { withFileTypes: true })) {
 }
 
 const environmentGraph = JSON.parse(
-  read('etc/cognitive-graphs/environment-mode.json'),
+  read('etc/cognitive-graphs/environment-conversation-mode.json'),
 ) as {
   nodes: Array<{
     id: string;

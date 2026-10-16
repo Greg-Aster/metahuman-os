@@ -10,6 +10,7 @@ test('session-options view omits stored observation payloads', () => {
     sessionCount: 1,
     pendingCommandCount: 2,
     sessions: [{
+      pendingCommandCount: 0,
       sessionId: 'robot-1',
       environmentId: 'ainekio',
       adapter: 'ainekio-gateway',

@@ -163,8 +163,6 @@ export interface NodeExecutionPolicy {
   activation: NodeActivationMode;
   /** Stable input handles that must all receive active data. */
   requiredInputs: string[];
-  /** Child workflows enforce their own node deadlines; cancellation still propagates. */
-  timeoutOwner?: 'node' | 'children';
   /** Pure model output that can be regenerated after downstream validation feedback. */
   modelOutput?: string;
   /** This node can receive ordered execution input without replaying earlier work. */
@@ -204,6 +202,7 @@ export interface NodeExecutionContext {
   /** Original admission identity when this user input is forwarded between workflows. */
   userMessageEntry?: ConversationMessage;
   cognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
+  originatingCognitiveMode?: 'dual' | 'agent' | 'emulation' | 'environment';
   conversationHistory?: any[];
   contextPackage?: any;
   contextInfo?: string;
@@ -412,7 +411,6 @@ export function defineNode(
       activation: definition.execution?.activation
         ?? (requiredInputs.length > 0 ? 'required-inputs' : 'any-input'),
       requiredInputs,
-      ...(definition.execution?.timeoutOwner ? { timeoutOwner: definition.execution.timeoutOwner } : {}),
       ...(definition.execution?.modelOutput ? { modelOutput: definition.execution.modelOutput } : {}),
       ...(definition.execution?.eventInput ? { eventInput: true } : {}),
     },

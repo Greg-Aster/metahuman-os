@@ -1,4 +1,5 @@
 import { defineNode } from '../types.js';
+import { workResultWaitNode } from '../utility/work-result-wait.node.js';
 import {
   getLatestEnvironmentVisual,
   validEnvironmentJpegDataUrl,
@@ -30,11 +31,29 @@ function cleanText(value: unknown): string {
   return typeof value === 'string' ? value.trim().slice(0, 200) : '';
 }
 
+export const environmentVisualReadNode = defineNode({
+  id: 'environment_visual_read', name: 'Read Latest Camera Evidence', category: 'environment',
+  inputs: [{ name: 'sessionId', type: 'string', optional: true, description: 'Selected Bridge session' }],
+  outputs: [{ name: 'work', type: 'object', optional: true, description: 'Coordinator camera read identity' }],
+  properties: {},
+  description: 'Reads the selected body camera stream cache through the existing Bridge without capturing a new photo.',
+  async execute(inputs, context) {
+    const sessionId = cleanText(inputs.sessionId);
+    if (!sessionId) return { work: null };
+    const work = context.graphExecution!.dispatch({ kind: 'coordinator_work', payload: {
+      type: 'generic', handler: 'environment.visual-read', resource: `environment-visual-read:${sessionId}`,
+      source: 'environment', username: context.username, maxAttempts: 1, input: { sessionId },
+    } });
+    return { work: { effectId: work.effectId } };
+  },
+});
+
 export const environmentImageInputNode = defineNode({
   id: 'environment_image_input',
   name: 'Select Available Camera Evidence',
   category: 'environment',
   inputs: [
+    { name: 'work', type: 'object', optional: true, description: 'Selected camera read from the existing Coordinator' },
     { name: 'sessionId', type: 'string', optional: true, description: 'Read already received camera evidence for this Bridge session when the node runs.' },
     { name: 'observation', type: 'object', optional: true, description: 'Returned observation containing camera evidence from the execution owner' },
     { name: 'visual', label: 'Current camera frame', type: 'object', optional: true, description: 'The latest camera frame received from the robot bridge.' },
@@ -67,8 +86,16 @@ export const environmentImageInputNode = defineNode({
   async execute(inputs, context) {
     const supplied = framesFromInputs(inputs.visual ?? inputs.observation?.visual, inputs.visuals ?? inputs.observation?.visuals);
     const sessionId = cleanText(inputs.sessionId);
-    const available = sessionId ? getLatestEnvironmentVisual(sessionId) : undefined;
-    const candidates = framesFromInputs(undefined, [...supplied, ...(available ? [available] : [])]);
+    let candidates: EnvironmentVisualFrame[];
+    if (inputs.work) {
+      const joined = await workResultWaitNode.execute({ work: inputs.work }, context, {});
+      const result = joined.result.result;
+      if (result.state !== 'completed') throw new Error(result.error?.message || result.error || 'Camera read failed');
+      candidates = framesFromInputs(result.result.visual, undefined);
+    } else {
+      const available = sessionId ? getLatestEnvironmentVisual(sessionId) : undefined;
+      candidates = framesFromInputs(undefined, [...supplied, ...(available ? [available] : [])]);
+    }
     const valid = candidates.filter(frame => validEnvironmentJpegDataUrl(frame.dataUrl));
     const observationCurrent = inputs.observationCurrent !== false;
     const status = isRecord(inputs.execution) ? inputs.execution : null;

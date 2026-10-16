@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import { validateSvelteFlowGraph, type SvelteFlowGraph } from '../cognitive-graph-schema.js'
 import { getNode, materializeNodeProperties } from '../nodes/index.js'
 import { contentHash, type ExecutionStore } from './store.js'
@@ -60,13 +59,10 @@ export function executionDefinition(graph: SvelteFlowGraph): ExecutionDefinition
 }
 
 /** Discovery, input delivery and resume validate the same executable definition. */
-export function resolveExecutionGraph(store: ExecutionStore, executionId: string, invokedGraph?: SvelteFlowGraph) {
+export function resolveExecutionGraph(store: ExecutionStore, executionId: string) {
   const saved = store.entry(executionId)
-  // Saved files are resolved afresh. Direct graph calls validate the supplied
-  // definition; discovery uses the saved graph when no caller supplies one.
-  const graph: SvelteFlowGraph = saved.graphSource
-    ? validateSvelteFlowGraph(JSON.parse(readFileSync(saved.graphSource, 'utf8')))
-    : invokedGraph ?? saved.graph
+  // The admission owns its graph; template paths are provenance, not resume inputs.
+  const graph: SvelteFlowGraph = validateSvelteFlowGraph(saved.graph)
   const definition = executionDefinition(graph)
   store.assertDefinition(executionId, definition)
   return { graph, definition }
@@ -96,6 +92,7 @@ export interface GraphNodeExecution {
   waitForEvent(reason?: string): import('./types.js').ExecutionEvent
   activeExecutions(): Array<{ executionId: string; status: string; graphId: string;
     waitingReason?: string; instruction: string; canSteer: boolean; resumeError?: string;
+    sourceObservation?: { id?: string; sessionId: string; timestamp: string; bodyEvent?: unknown };
     task: import('./types.js').ExecutionObjective | null }>
   task(): import('./types.js').ExecutionObjective | null
   recordTask(task: import('./types.js').ExecutionObjective): void

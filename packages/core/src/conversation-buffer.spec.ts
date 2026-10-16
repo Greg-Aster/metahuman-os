@@ -143,9 +143,21 @@ try {
   assert.equal(robotMessages.length, 1, 'replayed bridge feedback must remain idempotent');
   assert.equal(robotMessages[0]?.content, 'Robot action completed: done');
   assert.equal(robotMessages[0]?.meta?.direction, 'inbound');
-  await assert.rejects(submitRobotBridgeRecord(username, { ...completedRecord, message: 'Conflicting result.' }),
-    /robot buffer admission failed/, 'A successful staging node cannot conceal failed checkpoint/outbox delivery');
-  assert.deepEqual(loadBufferForUser(username, 'robot').messages, robotMessages, 'A conflicting stable receipt never changes the published message');
+  assert.equal(await submitRobotBridgeRecord(username, {
+    ...completedRecord, action: { type: 'robotCommand', command: 'stop' },
+  }), true, 'Adding the command label to a replay must not prevent acknowledgement of the same receipt');
+  assert.deepEqual(loadBufferForUser(username, 'robot').messages, robotMessages,
+    'A receipt replay preserves the original entry instead of rewriting or duplicating it');
+  const replayExecutions = openExecutionStore(username);
+  try {
+    assert.ok(replayExecutions.list().every(execution => execution.status === 'completed'));
+    assert.equal(replayExecutions.pendingDispatches().length, 0);
+  } finally { replayExecutions.close(); }
+  await submitRobotBridgeRecord(username, {
+    ...completedRecord, feedback: { ...completedRecord.feedback, id: 'feedback-2' },
+  });
+  assert.equal(loadBufferForUser(username, 'robot').messages.length, 2,
+    'Different receipt identities remain separate even when their rendered text is identical');
 
   const replayed = { role: 'assistant' as const, content: 'One committed reply.',
     meta: { idempotencyKey: 'buffer-replay', executionId: 'buffer-execution' } };
@@ -153,10 +165,12 @@ try {
   const conversationPath = getBufferPathForUser(username, 'conversation');
   const legacyBuffer = JSON.parse(fs.readFileSync(conversationPath, 'utf8'));
   legacyBuffer.executionAdmissions['buffer-replay'] = { executionId: 'buffer-execution',
-    contentHash: legacyBuffer.executionAdmissions['buffer-replay'].contentHash };
+    contentHash: 'obsolete-rendered-text-hash' };
   fs.writeFileSync(conversationPath, JSON.stringify(legacyBuffer));
   assert.deepEqual(loadBufferForUser(username, 'conversation').executionAdmissions?.['buffer-replay'].executionIds,
     ['buffer-execution'], 'Existing persisted singular receipts migrate at the buffer owner');
+  assert.deepEqual(loadBufferForUser(username, 'conversation').executionAdmissions?.['buffer-replay'],
+    { executionIds: ['buffer-execution'] }, 'Old text hashes are no longer part of admission state');
   for (let index = 0; index < 8; index++) await writeBufferEntry(username, 'conversation', { role: 'assistant', content: `later-${index}` });
   const beforeReplay = loadBufferForUser(username, 'conversation').messages;
   assert.equal(beforeReplay.some(message => message.content === replayed.content), false);
@@ -168,7 +182,9 @@ try {
   await retireBufferAdmissions(username, 'buffer-execution');
   assert.deepEqual(loadBufferForUser(username, 'conversation').executionAdmissions?.['buffer-replay'].executionIds,
     ['another-execution'], 'Retiring one execution cannot erase another execution\'s admission receipt');
-  await assert.rejects(writeBufferEntry(username, 'conversation', { ...replayed, content: 'Conflicting reply.' }), /conflicts/);
+  await writeBufferEntry(username, 'conversation', { ...referencedAgain, content: 'Updated display wording.' });
+  assert.deepEqual(loadBufferForUser(username, 'conversation').messages, beforeReplay,
+    'Changed display wording cannot republish an evicted admission');
   await clearBufferForUser(username, 'conversation');
   await writeBufferEntry(username, 'conversation', referencedAgain);
   assert.deepEqual(loadBufferForUser(username, 'conversation').messages, [], 'Clearing the feed does not replay an old execution');

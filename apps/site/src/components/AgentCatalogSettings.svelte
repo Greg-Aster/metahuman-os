@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ActiveOperatorSettings from './ActiveOperatorSettings.svelte';
   import { onDestroy, onMount } from 'svelte';
   import { apiFetch } from '../lib/client/api-config';
   import {
@@ -46,7 +47,7 @@
 
   function ownerLabel(agent: AgentCatalogItem): string {
     if (agent.owner === 'agent-monitor') return 'Agent Monitor service';
-    if (agent.owner === 'robot-operator') return 'Robot Operator · manual and autonomous';
+    if (agent.owner === 'robot-operator') return 'Active Operator · manual and autonomous';
     if (agent.owner === 'trigger-manager') return agent.triggerType === 'manual' ? 'Trigger Manager · manual' : `Trigger Manager · ${agent.triggerType}`;
     if (agent.parentIds.length > 0) return `Workflow child · ${agent.parentIds.join(', ')}`;
     return 'Installed · not scheduled';
@@ -136,7 +137,7 @@
       const response = await apiFetch('/api/psychoanalyzer-config');
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false || !data.config) {
-        throw new Error(data.error || 'Psychoanalyzer settings could not be loaded');
+        throw new Error(data.error || 'Psychotherapist settings could not be loaded');
       }
       preserveManualPersonaEdits = data.config.updateStrategy?.preserveUserEdits === true;
     } catch (error) {
@@ -157,7 +158,7 @@
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || data.success === false || !data.config) {
-        throw new Error(data.error || 'Psychoanalyzer settings could not be updated');
+        throw new Error(data.error || 'Psychotherapist settings could not be updated');
       }
       preserveManualPersonaEdits = data.config.updateStrategy?.preserveUserEdits === true;
       feedback = `Manual persona edit protection ${preserveManualPersonaEdits ? 'enabled' : 'disabled'}.`;
@@ -217,6 +218,9 @@
                 {#if agent.usesLLM}<span class="rounded bg-violet-500/10 px-2 py-0.5 text-[0.68rem] text-violet-700 dark:text-violet-300">LLM</span>{/if}
               </div>
               <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">{agent.description}</p>
+              {#if agent.id === 'robot-operator'}
+                <div class="mt-3"><ActiveOperatorSettings /></div>
+              {/if}
               {#if agent.id === 'psychoanalyzer'}
                 <div class="mt-3 rounded border border-gray-200 p-3 dark:border-gray-700">
                   <label class="flex items-start gap-2 text-sm">
@@ -229,7 +233,7 @@
                     />
                     <span>
                       <span class="font-medium">Preserve manual persona edits</span>
-                      <span class="mt-0.5 block text-xs text-gray-500">When enabled, Psychoanalyzer may update or remove only values it previously learned. This is off by default.</span>
+                      <span class="mt-0.5 block text-xs text-gray-500">When enabled, Psychotherapist may update or remove only values it previously learned. This is off by default.</span>
                     </span>
                   </label>
                   {#if psychoanalyzerConfigError}

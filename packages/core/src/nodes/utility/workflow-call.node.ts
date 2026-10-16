@@ -4,7 +4,6 @@ import { collectNodeOutputs, extractGraphOutput } from '../../graph-runtime.js'
 
 export const workflowCallNode = defineNode({
   id: 'workflow_call', name: 'Run Child Workflow', category: 'utility',
-  execution: { timeoutOwner: 'children' },
   description: 'Runs the selected editable workflow inside this execution and returns its outputs. A waiting child releases the worker and resumes here when its result arrives.',
   inputs: [
     { name: 'invocation', type: 'object', optional: true, description: 'Selected workflow name and its input context' },

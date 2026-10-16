@@ -324,7 +324,7 @@ export async function runDesireOutcomeReview(
   ];
 
   const response = await call({
-    role: options.role ?? 'persona',
+    role: options.role ?? 'psychotherapist',
     messages,
     userId,
     cognitiveMode: options.cognitiveMode,
@@ -361,7 +361,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       enableThinking: properties?.enableThinking === true,
       systemPrompt: properties?.systemPrompt ?? SYSTEM_PROMPT,
       userPromptTemplate: properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE,
-      role: normalizeModelRole(properties?.role, 'persona'),
+      role: normalizeModelRole(properties?.role, 'psychotherapist'),
       temperature: properties?.temperature ?? 0.3,
       cognitiveMode: typeof context.cognitiveMode === 'string' ? context.cognitiveMode : undefined,
   });
@@ -468,7 +468,7 @@ export const DesireOutcomeReviewerNode: NodeDefinition = defineNode({
   properties: {
     enableThinking: false,
     temperature: 0.3,
-    role: 'persona',
+    role: 'psychotherapist',
     systemPrompt: SYSTEM_PROMPT,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
@@ -482,7 +482,7 @@ export const DesireOutcomeReviewerNode: NodeDefinition = defineNode({
     },
     role: {
       type: 'select',
-      default: 'persona',
+      default: 'psychotherapist',
       label: 'LLM Role',
       options: [...MODEL_ROLE_OPTIONS],
     },

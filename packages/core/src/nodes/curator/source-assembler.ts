@@ -23,9 +23,14 @@ function sourceIds(memory: EpisodicMemory): string[] {
   return memory.sourceMemoryIds?.length ? memory.sourceMemoryIds : [memory.id]
 }
 
-function conversationKey(memory: EpisodicMemory): string | undefined {
+function conversationKey(memory: EpisodicMemory, explicitReplies: Set<string>): string | undefined {
+  const replyTo = memory.metadata?.inReplyTo
+  if (memory.metadata?.role === 'assistant' && typeof replyTo === 'string' && replyTo.trim()) {
+    return `reply:${replyTo}`
+  }
   const idempotencyKey = memory.metadata?.idempotencyKey
   if (typeof idempotencyKey === 'string' && idempotencyKey.trim()) {
+    if (memory.metadata?.role === 'user' && explicitReplies.has(idempotencyKey)) return `reply:${idempotencyKey}`
     return `turn:${idempotencyKey.trim().replace(/:(?:user|assistant)$/i, '')}`
   }
   const sessionId = memory.metadata?.sessionId
@@ -111,6 +116,10 @@ export function assembleCuratorSources(
 ): CuratorSourceAssembly {
   const memories: Array<EpisodicMemory & { path: string }> = []
   const deferredPaths: string[] = []
+  const explicitReplies = new Set(sources.flatMap(source =>
+    source.type === 'conversation' && source.metadata?.role === 'assistant'
+      && typeof source.metadata.inReplyTo === 'string' && source.metadata.inReplyTo.trim()
+      ? [source.metadata.inReplyTo] : []))
   const conversations = new Map<string, Array<EpisodicMemory & { path: string }>>()
   const ordered = [...sources].sort((left, right) => {
     const time = Date.parse(left.timestamp) - Date.parse(right.timestamp)
@@ -125,7 +134,7 @@ export function assembleCuratorSources(
       continue
     }
 
-    const key = conversationKey(source)
+    const key = conversationKey(source, explicitReplies)
     if (!key) {
       deferredPaths.push(...sourcePaths(source))
       continue
@@ -136,6 +145,20 @@ export function assembleCuratorSources(
   }
 
   for (const [key, group] of conversations) {
+    if (key.startsWith('reply:')) {
+      const users = group.filter(source => source.metadata?.role === 'user')
+      const assistants = group.filter(source => source.metadata?.role === 'assistant')
+      if (users.length !== 1) {
+        deferredPaths.push(...group.flatMap(sourcePaths))
+        continue
+      }
+      for (const assistant of assistants) {
+        if (Date.parse(users[0]!.timestamp) <= Date.parse(assistant.timestamp)) {
+          memories.push(pairConversation(users[0]!, assistant))
+        } else deferredPaths.push(...sourcePaths(assistant))
+      }
+      continue
+    }
     if (key.startsWith('turn:')) {
       const users = group.filter(source => source.metadata?.role === 'user')
       const assistants = group.filter(source => source.metadata?.role === 'assistant')

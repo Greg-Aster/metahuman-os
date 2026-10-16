@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { compareEnvironmentSpecialistReports, getProfilePaths, getTargetUser, promoteEnvironmentSpecialist,
   resolveModelForCognitiveMode, withUserContext } from '@metahuman/core'
 
@@ -16,6 +16,7 @@ import { activateReviewedLora, withTrainingGpuCapacity } from '../../training/en
 type Specialist = 'intent' | 'task'
 interface CycleResult {
   specialist: Specialist
+  baseModel: string
   root: string
   reviewedDataDigest: string
   frozenEvaluationDigest: string
@@ -52,16 +53,31 @@ async function evaluate(root: string, label: 'candidate' | 'current', adapter: s
   return report
 }
 
+/** Native training identity follows the selected exported adapter, including reviewed cycles. */
+export async function readSelectedTrainingSource(current: { adapters: string[]; baseModel?: string }) {
+  const artifact = current.adapters[0]
+  if (!artifact) throw new Error('Active model has no comparable PEFT adapter')
+  // Both maintained exporters place the GGUF under <stage>/<export>/adapter-gguf/.
+  const stage = dirname(dirname(dirname(artifact)))
+  const adapter = resolve(stage, 'adapter')
+  const provenance = JSON.parse(await readFile(resolve(stage, 'run-provenance.json'), 'utf8'))
+  const config = JSON.parse(await readFile(resolve(stage, 'training-config.json'), 'utf8'))
+  const native = JSON.parse(await readFile(resolve(adapter, 'adapter_config.json'), 'utf8'))
+  const baseModel = provenance.baseModel
+  if (baseModel !== current.baseModel || config.base_model !== baseModel
+    || native.base_model_name_or_path !== baseModel) {
+    throw new Error('Selected adapter and native training base provenance disagree')
+  }
+  return { adapter, baseModel: baseModel as string }
+}
+
 async function runSpecialist(username: string, specialist: Specialist, reviewedFile: string,
   evaluation: string[], runLabel: string): Promise<CycleResult | null> {
   const reviewed = await readFile(reviewedFile, 'utf8')
   if (!reviewed.trim()) return null
-  const role = specialist === 'intent' ? 'environmentIntent' : 'environmentActionSelector'
+  const role = specialist === 'intent' ? 'orchestrator' : 'environmentActionSelector'
   const current = resolveModelForCognitiveMode('environment', role, username)
-  const currentRun = current.metadata?.run
-  if (typeof currentRun !== 'string' || !currentRun) throw new Error(`${specialist}: active model has no comparable PEFT run`)
-  const currentAdapter = resolve(TRAINING_ROOT, currentRun, 'final/adapter')
-  await access(resolve(currentAdapter, 'adapter_config.json'))
+  const { adapter: currentAdapter, baseModel } = await readSelectedTrainingSource(current)
 
   const root = resolve(TRAINING_ROOT, `${specialist}-reviewed-${runLabel}`)
   const evaluated = evaluation.filter(line => JSON.parse(line).metadata.specialist === specialist)
@@ -69,7 +85,7 @@ async function runSpecialist(username: string, specialist: Specialist, reviewedF
   await mkdir(root, { recursive: true })
   const records = resolve(root, 'frozen-evaluation.jsonl')
   await writeFile(records, `${evaluated.join('\n')}\n`)
-  await train(['--specialist', specialist, '--reviewed-data', reviewedFile, '--output', root])
+  await train(['--specialist', specialist, '--base-model', baseModel, '--reviewed-data', reviewedFile, '--output', root])
 
   const config = resolve(root, 'reviewed/training-config.json')
   const candidateAdapter = resolve(root, 'reviewed/adapter')
@@ -87,7 +103,7 @@ async function runSpecialist(username: string, specialist: Specialist, reviewedF
   if (typeof previousPath !== 'string' || typeof endpoint !== 'string') {
     throw new Error(`${specialist}: active shared-server LoRA binding is incomplete`)
   }
-  const result: CycleResult = { specialist, root, reviewedDataDigest: sha256(reviewed),
+  const result: CycleResult = { specialist, baseModel, root, reviewedDataDigest: sha256(reviewed),
     frozenEvaluationDigest: sha256(evaluated), currentModelId: current.id,
     previousPath, endpoint, currentReport, candidateReport, artifact, comparison,
     promotedModelId: null }
@@ -126,7 +142,7 @@ async function main(): Promise<void> {
     for (const result of results) {
       if (!result.comparison.promote) continue
       result.promotedModelId = await activateReviewedLora({
-        previousPath: result.previousPath, nextPath: result.artifact, endpoint: result.endpoint,
+        baseModel: result.baseModel, previousPath: result.previousPath, nextPath: result.artifact, endpoint: result.endpoint,
         commit: () => promoteEnvironmentSpecialist({ username: user.username,
           specialist: result.specialist, previousModelId: result.currentModelId,
           artifactPath: result.artifact, run: result.root.split('/').at(-1)!,
@@ -138,4 +154,6 @@ async function main(): Promise<void> {
   })
 }
 
-main().catch(error => { console.error(error); process.exitCode = 1 })
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(error => { console.error(error); process.exitCode = 1 })
+}

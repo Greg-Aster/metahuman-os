@@ -19,6 +19,33 @@ export interface SpeechOutputSettings {
   speechDisabled: boolean;
 }
 
+export interface TTSOutputDelivery {
+  accepted: boolean;
+  deliveryId: string;
+  route: 'local' | 'robot';
+  reason?: string;
+}
+
+/** Read existing receipts without taking a lease or delaying another channel. */
+export function robotSpeechDeliveryProgress(
+  delivery: { deliveryId: string; route: 'local' | 'robot' },
+  events: import('../durable-execution/types.js').ExecutionEvent[],
+): { deliveryId: string; status: string; actionIds: string[]; error?: unknown } {
+  const base = { deliveryId: delivery.deliveryId, actionIds: [] as string[] }
+  if (delivery.route !== 'robot') return { ...base, status: 'submitted_to_local_playback' }
+  const receipt = events.find(event => event.kind === 'work_result'
+    && (event.payload as any)?.effectId === delivery.deliveryId)?.payload as any
+  if (!receipt) return { ...base, status: 'rendering' }
+  if (receipt.result.state !== 'completed') return { ...base, status: receipt.result.state, error: receipt.result.error }
+  const actionIds: string[] = receipt.result.result?.actionIds ?? []
+  const feedback = actionIds.map(actionId => events.filter(event => event.kind === 'physical_result'
+    && event.actionId === actionId).map(event => (event.payload as any).feedback).at(-1))
+  const failure = feedback.find(item => item && ['failed', 'rejected', 'cancelled', 'expired', 'outcome_unknown'].includes(item.type))
+  return { ...base, actionIds,
+    status: failure?.type ?? (actionIds.length > 0 && feedback.every(item => item?.type === 'completed') ? 'completed' : 'playing'),
+    ...(failure ? { error: failure.message } : {}) }
+}
+
 export interface RobotSpeechDelivery {
   actionId: string;
   requestId: string;

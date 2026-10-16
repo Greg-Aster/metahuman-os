@@ -25,10 +25,20 @@ test('imports the old ledger once, preserving receipts, ordering and body owners
   fs.writeFileSync(legacy, JSON.stringify(original));
   assert.deepEqual(loadQueueState(), original);
   assert.equal(fs.existsSync(legacy), false);
-  assert.equal(fs.existsSync(`${legacy}.migrated`), true);
+  assert.equal(fs.existsSync(`${legacy}.migrated`), false);
   original.items![0]!.state = 'completed';
   saveQueueState(original);
   assert.deepEqual(loadQueueState(), original);
+});
+
+test('retires an inert migration snapshot without changing the live ledger', () => {
+  clearQueueState();
+  const original = state();
+  saveQueueState(original);
+  const obsolete = path.join(getQueueStateDir(), 'work-items.json.migrated');
+  fs.writeFileSync(obsolete, 'obsolete snapshot');
+  assert.deepEqual(loadQueueState(), original);
+  assert.equal(fs.existsSync(obsolete), false);
 });
 
 test('updates only changed tasks and atomically rolls back a failed commit', () => {

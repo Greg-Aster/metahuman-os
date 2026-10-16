@@ -22,6 +22,7 @@ export interface SleepSessionRuntime {
   id: string
   parentTaskId: string
   username: string
+  originatingCognitiveMode?: QueuedTask['originatingCognitiveMode']
   source: QueuedTask['source']
   reason: string
   state: 'running' | 'completed' | 'cancelled' | 'interrupted'
@@ -97,6 +98,7 @@ export function isSleepRuntimeActive(state = readSleepRuntimeState()): boolean {
 export function beginSleepSession(input: {
   parentTaskId: string
   username: string
+  originatingCognitiveMode?: QueuedTask['originatingCognitiveMode']
   source: QueuedTask['source']
   reason: string
   stages: readonly SleepStageDefinition[]
@@ -109,6 +111,7 @@ export function beginSleepSession(input: {
     parentTaskId: input.parentTaskId,
     username: input.username,
     source: input.source,
+    ...(input.originatingCognitiveMode ? { originatingCognitiveMode: input.originatingCognitiveMode } : {}),
     reason: input.reason,
     state: 'running',
     startedAt: now,

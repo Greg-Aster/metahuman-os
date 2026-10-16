@@ -33,6 +33,155 @@ async function checkpoint(f: ReturnType<typeof fixture>, transition?: Checkpoint
   }, { source: 'loop', step: 0, parents: {} })
 }
 
+test('execution listing preserves full records and waits with one database query', () => {
+  const store = new ExecutionStore(':memory:');
+  try {
+    const first = store.create('first-user', definition);
+    const second = store.create('second-user', definition);
+    store.db.prepare('INSERT INTO execution_waits VALUES (?, ?)').run(first.executionId, 'physical_result');
+    const expected = [store.get(first.executionId), store.get(second.executionId)];
+    const prepare = store.db.prepare.bind(store.db);
+    let queries = 0;
+    store.db.prepare = ((sql: string) => { queries++; return prepare(sql); }) as typeof store.db.prepare;
+    assert.deepEqual(store.list(), expected);
+    assert.equal(queries, 1, 'listing must not issue one more query for each historical execution');
+    queries = 0;
+    assert.deepEqual(store.list('first-user'), [expected[0]]);
+    assert.equal(queries, 1);
+    assert.deepEqual(store.list('unknown-user'), []);
+    const personResume = { status: 'candidate', sessionId: 'robot-session', candidateFrame: 'frame-1' };
+    prepare('INSERT INTO execution_task VALUES (?, ?, ?)').run(first.executionId, 'checkpoint',
+      store.codec.encode({ personResume }));
+    queries = 0;
+    assert.deepEqual(store.summaries('first-user'), [{
+      executionId: first.executionId, graph: definition.graphId, status: first.status,
+      waitingReason: 'physical_result', updatedAt: new Date(first.updatedAt).toISOString(),
+      personResume, liveWriter: false,
+    }]);
+    assert.equal(queries, 1, 'queue projection reads optional task state in the same query');
+    const old = store.create('first-user', definition);
+    const latest = store.create('first-user', definition);
+    prepare("UPDATE executions SET status='completed', updated_at=1 WHERE execution_id=?").run(old.executionId);
+    prepare("UPDATE executions SET status='completed', updated_at=2 WHERE execution_id=?").run(latest.executionId);
+    assert.deepEqual(store.summaries('first-user', 1).map(row => row.executionId), [first.executionId, latest.executionId]);
+    assert.deepEqual(store.summaries('first-user', 0).map(row => row.executionId), [first.executionId],
+      'the work queue excludes terminal workflows while retaining unfinished work');
+    assert.equal(store.summaries('first-user').length, 3, 'history projection must not delete older executions');
+  } finally { store.close(); }
+});
+
+test('event bursts share one pending wake without losing inputs or changing admitted payloads', async () => {
+  const f = fixture()
+  try {
+    const id = f.execution.executionId
+    const first = f.store.deliverEvent(id, { eventId: 'event-0', kind: 'observation_received', payload: { index: 0 } })
+    const wake = f.store.pendingDispatches()[0]
+    f.store.acknowledgeAdmission(wake.effectId, 'queued-wake')
+    for (let index = 1; index < 100; index++) {
+      f.store.deliverEvent(id, { eventId: `event-${index}`, kind: index === 50 ? 'user_steering' : 'observation_received', payload: { index } })
+    }
+    assert.equal(f.store.dispatches(id).length, 1)
+    assert.deepEqual(f.store.dispatch(wake.effectId).payload, wake.payload)
+    assert.equal(f.store.dispatch(wake.effectId).workItemId, 'queued-wake')
+    assert.equal(f.store.dispatch(wake.effectId).checkpointId, 'event:100')
+    assert.deepEqual(f.store.events(id).map(event => event.payload), Array.from({ length: 100 }, (_, index) => ({ index })))
+    const config = await checkpoint(f, { transitionId: 'first-event', processedEventIds: [first.eventId] })
+    assert.equal(f.store.dispatch(wake.effectId).status, 'admitted', 'consuming the original anchor must not lose later inputs')
+    const reopened = new ExecutionStore(f.filename)
+    try {
+      reopened.deliverEvent(id, { eventId: 'event-100', kind: 'observation_received', payload: { index: 100 } })
+      assert.equal(reopened.dispatches(id).length, 1, 'coalescing survives reopening the store')
+      assert.equal(reopened.dispatch(wake.effectId).checkpointId, 'event:101')
+    } finally { reopened.close() }
+    await checkpoint(f, { transitionId: 'rest', processedEventIds: f.store.events(id, 1).map(event => event.eventId) }, config)
+    assert.equal(f.store.dispatch(wake.effectId).status, 'completed')
+    f.store.deliverEvent(id, { eventId: 'next', kind: 'user_steering', payload: { text: 'next request' } })
+    assert.equal(f.store.pendingDispatches().length, 1, 'new inputs still wake the execution after the previous batch settles')
+  } finally { f.store.close(); fs.rmSync(f.directory, { recursive: true, force: true }) }
+})
+
+test('events arriving during an accepted wake share one follow-up without altering the running wake', () => {
+  const f = fixture()
+  try {
+    const id = f.execution.executionId
+    f.store.deliverEvent(id, { eventId: 'initial', kind: 'user_steering', payload: {} })
+    const wake = f.store.pendingDispatches()[0]
+    f.store.acknowledgeAdmission(wake.effectId, 'running-wake')
+    f.store.release(f.lease)
+    f.store.acceptAction(wake.effectId)
+    const accepted = f.store.dispatch(wake.effectId)
+    for (let index = 0; index < 100; index++) {
+      f.store.deliverEvent(id, { eventId: `incoming-${index}`, kind: 'observation_received', payload: { index } })
+    }
+    assert.deepEqual(f.store.dispatch(wake.effectId), accepted)
+    assert.equal(f.store.dispatches(id).length, 2)
+    assert.equal(f.store.pendingDispatches().length, 1)
+    assert.equal(f.store.events(id).length, 101)
+  } finally { f.store.close(); fs.rmSync(f.directory, { recursive: true, force: true }) }
+})
+
+test('legacy unstarted wakes consolidate without cancellation receipts interrupting their objective', () => {
+  const f = fixture()
+  try {
+    const id = f.execution.executionId
+    f.store.release(f.lease)
+    f.store.deliverEvent(id, { eventId: 'first', kind: 'observation_received', payload: {} })
+    const first = f.store.pendingDispatches()[0]
+    f.store.acknowledgeAdmission(first.effectId, 'first-work')
+    f.store.acceptAction(first.effectId)
+    f.store.deliverEvent(id, { eventId: 'second', kind: 'user_steering', payload: { text: 'stop' } })
+    const second = f.store.pendingDispatches()[0]
+    f.store.acknowledgeAdmission(second.effectId, 'second-work')
+    // Reproduce two unstarted admissions written by the previous runtime.
+    f.store.db.prepare("UPDATE execution_outbox SET status='admitted' WHERE effect_id=?").run(first.effectId)
+    f.store.deliverEvent(id, { eventId: 'third', kind: 'observation_received', payload: {} })
+    assert.equal(f.store.dispatch(first.effectId).checkpointId, 'event:3')
+    assert.equal(f.store.dispatch(second.effectId).status, 'completed')
+    const before = f.store.get(id)
+    f.store.deliverWorkResult(second.effectId, 'second-work', { state: 'cancelled' })
+    assert.equal(f.store.get(id).status, before.status)
+    assert.equal(f.store.get(id).waitingReason, before.waitingReason)
+    assert.equal(f.store.dispatches(id).filter(effect => ['pending', 'admitted'].includes(effect.status)).length, 1)
+    assert.deepEqual(f.store.events(id).slice(0, 3).map(event => event.eventId), ['first', 'second', 'third'])
+    assert.equal(f.store.acceptAction(first.effectId).status, 'accepted')
+  } finally { f.store.close(); fs.rmSync(f.directory, { recursive: true, force: true }) }
+})
+
+test('Robot Status selects the same current task without decoding unrelated execution history', () => {
+  const store = new ExecutionStore(':memory:');
+  try {
+    const add = (username: string, status: string, updatedAt: string, outcome = 'continue', objectiveComplete = false) => {
+      const record = store.create(username, definition);
+      store.db.prepare('UPDATE executions SET status=? WHERE execution_id=?').run(status, record.executionId);
+      const task = { executionId: record.executionId, updatedAt, decision: { outcome, objectiveComplete } };
+      store.db.prepare('INSERT INTO execution_task VALUES (?, ?, ?)').run(record.executionId, 'checkpoint', store.codec.encode(task));
+      return { ...task, executionStatus: status };
+    };
+    assert.equal(store.projectedTask('first-user'), null);
+    const active = add('first-user', 'waiting', '2026-01-01T00:00:01.000Z');
+    const complete = add('first-user', 'completed', '2026-01-01T00:00:09.000Z', 'continue', true);
+    add('first-user', 'running', '2026-01-01T00:00:08.000Z', 'abandon');
+    add('first-user', 'waiting', '2026-01-01T00:00:07.000Z', 'cancel');
+    add('first-user', 'waiting', '2026-01-01T00:00:06.000Z', 'continue', true);
+    add('second-user', 'running', '2026-01-01T00:00:10.000Z');
+    for (let i = 0; i < 100; i++) store.create('first-user', definition);
+    const prepare = store.db.prepare.bind(store.db);
+    const decode = store.codec.decode.bind(store.codec);
+    let queries = 0;
+    let decodes = 0;
+    store.db.prepare = ((sql: string) => { queries++; return prepare(sql); }) as typeof store.db.prepare;
+    store.codec.decode = ((value: string) => { decodes++; return decode(value); }) as typeof store.codec.decode;
+    assert.deepEqual(store.projectedTask('first-user'), active);
+    assert.equal(queries, 1);
+    assert.equal(decodes, 5, "only this profile's task records need decoding");
+    const latest = add('first-user', 'running', '2026-01-01T00:00:02.000Z');
+    assert.deepEqual(store.projectedTask('first-user'), latest);
+    prepare("UPDATE executions SET status='completed' WHERE username=?").run('first-user');
+    assert.deepEqual(store.projectedTask('first-user'), complete, 'newest task wins when no unfinished task remains');
+    assert.equal(store.projectedTask('unknown-user'), null);
+  } finally { store.close(); }
+});
+
 for (const firstDelivery of ['timed', 'untimed', 'legacy'] as const) {
   test(`camera evidence remains identical across delivery timing changes (${firstDelivery})`, async () => {
     const f = fixture()
@@ -251,12 +400,12 @@ test('consuming a result retires queued wakes but not the runner that must still
     f.store.settle(f.lease, 'waiting', 'robot_result')
     f.store.release(f.lease)
     const result = f.store.deliverEvent(f.execution.executionId, { eventId: 'physical-result', kind: 'physical_result', payload: {} })
-    const observation = f.store.deliverEvent(f.execution.executionId, { eventId: 'observation', kind: 'observation_received', payload: {} })
     const runner = `${f.execution.executionId}:resume:${result.eventId}`
-    const queued = `${f.execution.executionId}:resume:${observation.eventId}`
     f.store.acknowledgeAdmission(runner, 'runner')
-    f.store.acknowledgeAdmission(queued, 'queued')
     f.store.acceptAction(runner)
+    const observation = f.store.deliverEvent(f.execution.executionId, { eventId: 'observation', kind: 'observation_received', payload: {} })
+    const queued = `${f.execution.executionId}:resume:${observation.eventId}`
+    f.store.acknowledgeAdmission(queued, 'queued')
     const lease = f.store.claim(f.execution.executionId, definition, undefined, undefined, { effectId: runner, workItemId: 'runner' })
     const saver = new ExecutionCheckpointer(f.store, lease)
     config = await saver.put(config, {
@@ -722,6 +871,27 @@ test('staging repeated evidence avoids duplicate encoding without caching later 
   } finally { store.close() }
 })
 
+test('checkpoint field projection resolves references without expanding unrelated evidence', () => {
+  const unrelated = 'unrelated retained camera bytes '.repeat(10_000)
+  let unrelatedReads = 0
+  const store = new ExecutionStore(':memory:', {
+    encode: JSON.stringify,
+    decode(value) { const result = JSON.parse(value); if (result === unrelated) unrelatedReads++; return result },
+  })
+  try {
+    const execution = store.create('test-user', definition)
+    const context = { activeTaskSessionId: 'selected-body', activeProgram: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'bow' } }] }, unrelated }
+    const document = { json: { channel_values: { contextSnapshot: context, modelOutput: { unrelated } } } }
+    const encoded = store.encodeDocument(execution.executionId, document)
+    assert.equal(store.decodeDocument(encoded, ['json', 'channel_values', 'contextSnapshot', 'activeTaskSessionId']), 'selected-body')
+    assert.deepEqual(store.decodeDocument(encoded, ['json', 'channel_values', 'contextSnapshot', 'activeProgram']), context.activeProgram)
+    assert.equal(store.decodeDocument(encoded, ['json', 'channel_values', 'missing', 'nested']), undefined)
+    assert.equal(unrelatedReads, 0, 'Reading status facts must not load unrelated model or camera blobs')
+    assert.deepEqual(store.decodeDocument(encoded), document, 'The full original evidence remains available')
+    assert.ok(unrelatedReads > 0)
+  } finally { store.close() }
+})
+
 test('structured node outputs are shared across checkpoints without losing active execution evidence', async () => {
   const f = fixture()
   const output = { records: Array.from({ length: 24 }, (_, index) => ({ index, detail: 'verified detail '.repeat(30) })) }
@@ -852,4 +1022,134 @@ test('admitted independent work can finish after its parent turn without reopeni
     assert.equal(f.store.pendingDispatches().filter(e => e.kind === 'graph_resume').length, 0)
     assert.equal(f.store.dispatch('tool-effect').status, 'completed')
   } finally { f.store.close() }
+})
+
+test('delivery settlement preserves unfinished root work, new inputs, and uncertain physical motion', async () => {
+  for (const scenario of ['unfinished', 'new-input', 'physical-unknown', 'finished']) {
+    const f = fixture()
+    const effectId = 'delivery-effect'
+    try {
+      await f.saver.put(f.config, { v: 4, id: randomUUID(), ts: new Date().toISOString(),
+        channel_values: { queue: scenario === 'unfinished' ? ['next'] : [],
+          executionTransition: { transitionId: 'display', dispatches: [{ effectId, kind: 'coordinator_work', actionId: 'action',
+            payload: { type: 'environment_command', input: { type: scenario === 'physical-unknown' ? 'move' : 'faceExpression' } } }] } },
+        channel_versions: {}, versions_seen: {},
+      }, { source: 'loop', step: 0, parents: {} })
+      f.store.acknowledgeAdmission(effectId, 'receipt')
+      f.store.acceptAction(effectId)
+      f.store.settle(f.lease, 'completed')
+      f.store.release(f.lease)
+      if (scenario === 'new-input') f.store.deliverEvent(f.execution.executionId,
+        { eventId: 'new-input', kind: 'user_steering', payload: { message: 'New request' } })
+      if (scenario === 'physical-unknown') f.store.deliverActionResult(f.execution.executionId, 'action',
+        { eventId: 'motion-unknown', kind: 'physical_result', actionId: 'action', payload: { status: 'outcome_unknown' } }, true)
+      else f.store.deliverWorkResult(effectId, 'receipt', { state: 'failed', error: { code: 'outcome_unknown' } })
+      f.store.settleEffectDelivery(f.execution.executionId)
+      assert.equal(f.store.get(f.execution.executionId).status, scenario === 'finished' ? 'completed' : 'waiting', scenario)
+      if (scenario === 'physical-unknown') assert.equal(f.store.dispatch(effectId).status, 'outcome_unknown')
+      if (scenario === 'new-input') assert.equal(f.store.hasPendingInput(f.execution.executionId), true)
+    } finally { f.store.close() }
+  }
+})
+
+
+test('parent and finite child writers own separate heads within one execution', () => {
+  const { store, execution, lease } = fixture()
+  try {
+    const child = store.claimGraph(execution.executionId, 'work:speech:graph:0', definition)
+    const sibling = store.claimGraph(execution.executionId, 'work:speech:graph:1', definition)
+    store.assertLease(lease)
+    store.assertLease(child)
+    store.assertLease(sibling)
+    assert.throws(() => store.claim(execution.executionId, definition), /live writer/)
+    assert.throws(() => store.claimGraph(execution.executionId, child.invocationId!, definition), /live writer/)
+    store.renew(child)
+    store.release(child)
+    const replacement = store.claimGraph(execution.executionId, child.invocationId!, definition)
+    assert.throws(() => store.assertLease(child), /Stale execution writer/)
+    store.release(child)
+    store.assertLease(replacement)
+    store.assertLease(lease)
+    store.assertLease(sibling)
+    store.release(replacement)
+    assert.throws(() => store.claimGraph(execution.executionId, child.invocationId!, { ...definition, graphHash: 'changed' }), /child graph/)
+    store.release(lease)
+    assert.equal(store.summaries('test-user')[0].liveWriter, true, 'Queue still sees the child writer')
+    store.cancel(execution.executionId, { eventId: 'cancel', kind: 'user_cancelled', payload: {} })
+    const saver = new ExecutionCheckpointer(store, sibling)
+    assert.throws(() => saver.resetProfileHistory('test-user'), /active worker/)
+    store.release(sibling)
+    assert.equal(store.hasLiveWriter(execution.executionId), false)
+    assert.throws(() => store.claimGraph(execution.executionId, 'work:speech:graph:2', definition), /cancelled/)
+    assert.throws(() => store.db.transaction(() => store.commitTransition(execution.executionId, 'cancelled-chunk', {
+      transitionId: 'cancelled-chunk', dispatches: [{ effectId: 'late-speech', kind: 'coordinator_work', payload: {} }],
+    }))(), /terminal execution/)
+  } finally { store.close() }
+})
+
+test('child writer ownership migrates existing graph records and recovers expired writers', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-child-writer-'))
+  const filename = path.join(directory, 'execution.sqlite')
+  let store = new ExecutionStore(filename)
+  try {
+    const execution = store.create('test-user', definition)
+    const lease = store.claim(execution.executionId, definition)
+    store.pinGraph(lease, 'saved-child', definition)
+    store.release(lease)
+    store.db.exec('ALTER TABLE execution_graphs DROP COLUMN owner; ALTER TABLE execution_graphs DROP COLUMN owner_generation; ALTER TABLE execution_graphs DROP COLUMN lease_until')
+    store.close()
+    store = new ExecutionStore(filename)
+    const expired = store.claimGraph(execution.executionId, 'saved-child', definition, randomUUID(), -1)
+    const recovered = store.claimGraph(execution.executionId, 'saved-child', definition, randomUUID())
+    assert.throws(() => store.assertLease(expired), /Stale execution writer/)
+    store.release(expired)
+    store.assertLease(recovered)
+    assert.equal(store.get(execution.executionId).owner, null)
+    assert.equal(store.get(execution.executionId).ownerGeneration, 1, 'Child recovery does not replace parent ownership')
+  } finally { store.close(); fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('child graph snapshots survive reopen and preserve legacy definition-only admissions', () => {
+  const f = fixture()
+  const graph = { name: 'saved-child', nodes: [], edges: [], format: 'svelte-flow', version: '1.0',
+    scheduler: { version: 1, activation: 'demand', skippedState: 'explicit', sideEffectOrder: 'serial-topological', maxLoopIterations: 5 } } as const
+  const edited = { ...graph, name: 'edited-child' }
+  try {
+    f.store.pinGraph(f.lease, 'saved', definition, graph as any)
+    f.store.pinGraph(f.lease, 'legacy', definition)
+    f.store.pinGraph(f.lease, 'legacy', definition, graph as any)
+    assert.equal(f.store.graphSnapshot(f.execution.executionId, 'legacy'), null, 'No implicit legacy migration')
+    f.store.release(f.lease)
+    const child = f.store.claimGraph(f.execution.executionId, 'worker', definition, undefined, undefined, graph as any)
+    f.store.release(child)
+    f.store.close()
+    const reopened = new ExecutionStore(f.filename)
+    try {
+      assert.deepEqual(reopened.graphSnapshot(f.execution.executionId, 'saved'), graph)
+      assert.deepEqual(reopened.graphSnapshot(f.execution.executionId, 'worker'), graph)
+      const retry = reopened.claimGraph(f.execution.executionId, 'worker', definition, undefined, undefined, edited as any)
+      assert.deepEqual(reopened.graphSnapshot(f.execution.executionId, 'worker'), graph, 'Retry cannot replace the admitted graph')
+      reopened.release(retry)
+      assert.throws(() => reopened.claimGraph(f.execution.executionId, 'legacy', { ...definition, graphHash: 'changed' }), /does not match/)
+      assert.equal(reopened.graphSnapshot(f.execution.executionId, 'legacy'), null)
+    } finally { reopened.close() }
+  } finally { if (f.store.db.open) f.store.close(); fs.rmSync(f.directory, { recursive: true, force: true }) }
+})
+
+test('latest execution readers decode only consumed records and lookup preserves missing identity', () => {
+  const store = new ExecutionStore(':memory:')
+  try {
+    const older = store.create('fixture', definition)
+    const latest = store.create('fixture', definition)
+    store.db.prepare('UPDATE executions SET created_at=1 WHERE execution_id=?').run(older.executionId)
+    store.db.prepare('UPDATE executions SET created_at=2 WHERE execution_id=?').run(latest.executionId)
+    const decode = store.codec.decode.bind(store.codec)
+    let decoded = 0
+    store.codec.decode = (value: string) => { decoded++; return decode(value) }
+    for (const record of store.iterate('fixture', true)) { assert.equal(record.executionId, latest.executionId); break }
+    assert.equal(decoded, 1)
+    assert.equal(store.find('not-retained'), null)
+    assert.throws(() => store.get('not-retained'), /Unknown execution not-retained/)
+    assert.deepEqual(store.list('fixture').map(record => record.executionId), [older.executionId, latest.executionId])
+  } finally { store.close() }
 })

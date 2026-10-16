@@ -71,7 +71,7 @@
     <span class="text-base font-semibold text-white">Active Operator</span>
     <span class="rounded bg-white/10 px-2 py-1 text-xs font-semibold uppercase text-white">{autonomyMode}</span>
   </div>
-  <p class="mb-4 text-sm text-gray-500">Controls proactive admission above the deterministic work coordinator. It does not own or reorder the queue.</p>
+  <p class="mb-4 text-sm text-gray-500">Select how the Active Operator agent coordinates robot activity. Reactive keeps it dormant; Semi triggers operations at 100%; Full selects the highest returned activation.</p>
 
   {#if error}<div class="banner banner-error mb-4">{error}</div>{/if}
 

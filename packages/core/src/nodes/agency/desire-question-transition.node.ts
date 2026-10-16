@@ -1,5 +1,5 @@
 import type { Desire } from '../../agency/types.js'
-import { saveDesireManifest } from '../../agency/storage.js'
+import { saveDesireProgress } from '../../agency/storage.js'
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 
 const execute: NodeExecutor = async (inputs, context) => {
@@ -10,7 +10,7 @@ const execute: NodeExecutor = async (inputs, context) => {
     || !desire.clarifyingQuestions || desire.clarifyingQuestions.questions.length === 0) {
     throw new Error('Desire question persistence requires a questioning desire with generated questions')
   }
-  await saveDesireManifest(desire, username)
+  await saveDesireProgress(desire, username)
   return {
     success: true,
     desire,

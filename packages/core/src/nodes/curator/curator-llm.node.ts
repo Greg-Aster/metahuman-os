@@ -282,7 +282,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         messages,
         userId: username,
         cognitiveMode: context.cognitiveMode || 'dual',
-        options: { enableThinking: properties?.enableThinking === true, temperature, response_format: { type: 'json_object' } },
+        options: { enableThinking: properties?.enableThinking === true, temperature, format: 'json' },
         keepAlive: 0, // Unload model immediately - background agent shouldn't hog VRAM
       });
 

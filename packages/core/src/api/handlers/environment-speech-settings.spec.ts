@@ -17,50 +17,41 @@ const { eventBus } = await import('../../infrastructure/event-bus/client.js');
 eventBus.disconnect();
 const { createUser } = await import('../../users.js');
 const { beginAuthenticatedRuntime, createSession, selectAuthenticatedSession } = await import('../../sessions.js');
-const { handleEnvironmentBridgeSpeechSettings, handleEnvironmentBridgeBehaviorSettings } = await import('./environment-bridge.js');
+const { handleEnvironmentBridgeBehaviorSettings } = await import('./environment-bridge.js');
 const { handleSaveVoiceSettings } = await import('./voice-settings.js');
 const { getSpeechOutputSettings } = await import('../../tts/robot-speech.js');
 const owner = createUser('speech-owner', 'fixture-password', 'owner');
 beginAuthenticatedRuntime();
 const session = createSession(owner.id, 'owner');
 const request = (body = {}, token = 'speech-fixture-token'): UnifiedRequest => ({
-  path: '/api/environment-bridge/speech-settings', method: 'POST', body,
+  path: '/api/environment-bridge/behavior-settings', method: 'POST', body,
   headers: { authorization: `Bearer ${token}` },
   user: { userId: '', username: '', role: 'guest', isAuthenticated: false },
 });
 
-test('bridge requires its service token and the authenticated owner before accessing preferences', async () => {
-  assert.equal((await handleEnvironmentBridgeSpeechSettings(request({}, 'wrong'))).status, 401);
-  assert.equal((await handleEnvironmentBridgeSpeechSettings(request())).status, 409);
+test('Voice Settings persists each main UI speech state without changing voice preferences', async () => {
   selectAuthenticatedSession(session.id);
-  assert.equal((await handleEnvironmentBridgeSpeechSettings(request({ outputTarget: 'invalid' }))).status, 400);
-});
-
-test('Body Control and Voice Settings share one saved destination and preserve other preferences', async () => {
-  selectAuthenticatedSession(session.id);
-  let response = await handleEnvironmentBridgeSpeechSettings(request());
-  assert.equal(response.status, 200);
+  const voiceRequest = (body: object): UnifiedRequest => ({ ...request(body),
+    user: { userId: owner.id, username: owner.username, role: 'owner', isAuthenticated: true } });
+  assert.equal((await handleSaveVoiceSettings(voiceRequest({ outputTarget: 'local' }))).status, 200);
   const filename = getProfilePaths(owner.username).voiceConfig;
   const original = JSON.parse(fs.readFileSync(filename, 'utf8'));
   original.tts.provider = 'kokoro';
   original.tts.kokoro.voice = 'af_heart';
   original.tts.robotVolumePercent = 23;
   fs.writeFileSync(filename, JSON.stringify(original));
-  for (const target of ['robot', 'local']) {
-    response = await handleEnvironmentBridgeSpeechSettings(request({ outputTarget: target, username: 'ignored-other-user' }));
-    assert.equal(response.status, 200);
-    assert.equal(response.data.outputTarget, target);
-    assert.equal(response.data.username, owner.username);
+  for (const [body, target, disabled] of [
+    [{ outputTarget: 'robot', speechDisabled: false }, 'robot', false],
+    [{ speechDisabled: true }, 'robot', true],
+    [{ outputTarget: 'local', speechDisabled: false }, 'local', false],
+  ] as const) {
+    assert.equal((await handleSaveVoiceSettings(voiceRequest(body))).status, 200);
     assert.equal(getSpeechOutputSettings(owner.username).outputTarget, target);
-    assert.deepEqual(JSON.parse(fs.readFileSync(filename, 'utf8')), {
-      ...original, tts: { ...original.tts, outputTarget: target },
-    });
-    assert.equal((await handleEnvironmentBridgeSpeechSettings(request())).data.outputTarget, target);
+    assert.equal(getSpeechOutputSettings(owner.username).speechDisabled, disabled);
+    const saved = JSON.parse(fs.readFileSync(filename, 'utf8'));
+    assert.equal(saved.tts.kokoro.voice, 'af_heart');
+    assert.equal(saved.tts.robotVolumePercent, 23);
   }
-  const saved = await handleSaveVoiceSettings({ ...request({ outputTarget: 'robot' }),
-    user: { userId: owner.id, username: owner.username, role: 'owner', isAuthenticated: true } });
-  assert.equal(saved.status, 200);
-  assert.equal((await handleEnvironmentBridgeSpeechSettings(request())).data.outputTarget, 'robot');
 });
 
 test('robot control persists, cancels its existing execution, and preserves unknown commands and unrelated work', async () => {

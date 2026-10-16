@@ -566,7 +566,7 @@ export interface DesireClarifyingQuestions {
 /** One immutable observation that affected a desire. */
 export interface DesireEvidence {
   id: string;
-  kind: 'origin' | 'reinforcement' | 'contradiction' | 'withdrawal' | 'completion';
+  kind: 'origin' | 'reinforcement' | 'relevance' | 'contradiction' | 'withdrawal' | 'completion';
   source: DesireSource;
   sourceId?: string;
   summary: string;
@@ -1005,6 +1005,10 @@ export interface AgencyConfig {
  * Inputs gathered for desire generation.
  */
 export interface DesireGeneratorInputs {
+  operationalContext?: Awaited<ReturnType<typeof import('./operational-context.js').readDesireOperationalContext>>;
+  relevanceAssessments?: Array<{ id: string; targetStrength: number; reason: string; evidenceIds: string[] }>;
+  /** Standing goals provide context, not fresh evidence or reinforcement. */
+  standingContext?: { personaGoals: PersonaGoal[] };
   /** Explicit user wants admitted from persisted conversation turns. */
   userRequests: Array<{ id: string; content: string; timestamp: string }>;
   /** Explicit goals from persona */
@@ -1062,6 +1066,14 @@ export interface MemorySummary {
   type?: string;
   timestamp: string;
   tags?: string[];
+  attribution?: {
+    role?: string;
+    source?: string;
+    dialogueSource?: string;
+    cognitiveMode?: string;
+    executionId?: string;
+    correlationId?: string;
+  };
 }
 
 /**

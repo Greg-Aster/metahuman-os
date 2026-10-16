@@ -31,6 +31,7 @@ export interface DreamerOptions {
   username?: string
   executionId?: string
   executionTimestamp?: string
+  sleepSessionId?: string
   signal?: AbortSignal
 }
 
@@ -102,6 +103,7 @@ export function buildDreamerGraphContext(
     maxDreams,
     idempotencyKey: `dreamer:${username}:${identity.executionId}`,
     memoryTimestamp: identity.executionTimestamp,
+    ...(options.sleepSessionId ? { sleepSessionId: options.sleepSessionId } : {}),
     signal: options.signal,
   }
 }
@@ -296,14 +298,17 @@ export async function generateUserDreams(
 export function parseDreamerArgs(
   args: string[],
   environment: NodeJS.ProcessEnv = process.env,
-): Pick<DreamerOptions, 'forceRun' | 'username' | 'executionId' | 'executionTimestamp'> {
-  const options: Pick<DreamerOptions, 'forceRun' | 'username' | 'executionId' | 'executionTimestamp'> = {}
+): Pick<DreamerOptions, 'forceRun' | 'username' | 'executionId' | 'executionTimestamp' | 'sleepSessionId'> {
+  const options: Pick<DreamerOptions, 'forceRun' | 'username' | 'executionId' | 'executionTimestamp' | 'sleepSessionId'> = {}
   const username = environment.MH_TRIGGER_USERNAME?.trim() || environment.MH_TRIGGER_PROFILE?.trim()
   const executionId = environment.MH_TASK_ID?.trim()
   const executionTimestamp = environment.MH_TASK_CREATED_AT?.trim()
   if (username) options.username = username
   if (executionId) options.executionId = executionId
   if (executionTimestamp) options.executionTimestamp = executionTimestamp
+  const payload = parseTaskPayload(environment.MH_TASK_PAYLOAD)
+  const sleepSessionId = payload?.sleepWorkflow?.sessionId
+  if (typeof sleepSessionId === 'string' && sleepSessionId.trim()) options.sleepSessionId = sleepSessionId
   for (const argument of args) {
     if (argument === '--force') {
       options.forceRun = true
@@ -314,7 +319,7 @@ export function parseDreamerArgs(
   return options
 }
 
-export function taskTriggerKind(payload = process.env.MH_TASK_PAYLOAD): string | null {
+function parseTaskPayload(payload?: string): Record<string, any> | null {
   if (!payload) return null
   let parsed: unknown
   try {
@@ -323,7 +328,11 @@ export function taskTriggerKind(payload = process.env.MH_TASK_PAYLOAD): string |
     throw new Error('MH_TASK_PAYLOAD must contain valid JSON')
   }
   if (!parsed || typeof parsed !== 'object') return null
-  const triggeredBy = (parsed as Record<string, unknown>).triggeredBy
+  return parsed as Record<string, any>
+}
+
+export function taskTriggerKind(payload = process.env.MH_TASK_PAYLOAD): string | null {
+  const triggeredBy = parseTaskPayload(payload)?.triggeredBy
   return typeof triggeredBy === 'string' && triggeredBy.trim() ? triggeredBy.trim() : null
 }
 
@@ -366,6 +375,7 @@ export async function runCycle(options: DreamerOptions = {}): Promise<DreamerRes
         forceRun,
         executionId: options.executionId,
         executionTimestamp: options.executionTimestamp,
+        sleepSessionId: options.sleepSessionId,
         signal: options.signal,
       }),
     )

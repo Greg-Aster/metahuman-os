@@ -15,9 +15,11 @@ export type CheckpointConfig = Parameters<SqliteSaver['put']>[0]
  */
 export class ExecutionCheckpointer extends SqliteSaver {
   private readonly documents = new WeakMap<Uint8Array, { blobs: Map<string, string> }>()
+  private readonly checkpointSerde: SqliteSaver['serde']
   constructor(readonly store: ExecutionStore, readonly lease: ExecutionLease, private readonly afterCommit?: () => Promise<void>, private readonly namespaceRoot = '') {
     super(store.db)
     const base = this.serde
+    this.checkpointSerde = base
     this.serde = {
       dumpsTyped: async (value) => {
         const [type, bytes] = await base.dumpsTyped(value)
@@ -70,21 +72,61 @@ export class ExecutionCheckpointer extends SqliteSaver {
 
   /** Read-only view of the existing active behavior checkpoint; never resumes it. */
   async activeBehaviorSnapshot(sessionId: string) {
-    const heads = this.store.db.prepare('SELECT namespace FROM execution_heads WHERE execution_id = ?')
-      .all(this.lease.executionId) as Array<{ namespace: string }>
+    if (!['running', 'waiting'].includes(this.store.get(this.lease.executionId).status)) return null
+    const heads = this.store.db.prepare(`SELECT c.checkpoint FROM execution_heads h
+      JOIN checkpoints c ON c.thread_id = h.execution_id AND c.checkpoint_ns = h.namespace AND c.checkpoint_id = h.checkpoint_id
+      WHERE h.execution_id = ?`).all(this.lease.executionId) as Array<{ checkpoint: Uint8Array }>
     const candidates: Array<{ at: number; state: import('../environment-interface/active-task.js').ActiveTaskState;
       program: import('../environment-interface/active-task.js').EnvironmentTaskProgram }> = []
     for (const head of heads) {
-      const saved = await this.getTuple({ configurable: { thread_id: this.lease.executionId, checkpoint_ns: head.namespace } })
-      const values = saved?.checkpoint.channel_values
-      const context = values?.contextSnapshot as Record<string, any> | undefined
-      if (context?.activeTaskSessionId !== sessionId || !context.activeProgram) continue
-      for (const [, node] of (values?.nodeEntries ?? []) as Array<[string, import('../graph-executor.js').NodeExecutionState]>) {
+      const encoded = Buffer.from(head.checkpoint).toString('utf8')
+      const channels = ['json', 'channel_values']
+      if (this.store.decodeDocument(encoded, [...channels, 'contextSnapshot', 'activeTaskSessionId']) !== sessionId) continue
+      const program = this.store.decodeDocument(encoded, [...channels, 'contextSnapshot', 'activeProgram'])
+      if (!program) continue
+      const values = await this.checkpointSerde.loadsTyped('json', Buffer.from(JSON.stringify({
+        program, nodeEntries: this.store.decodeDocument(encoded, [...channels, 'nodeEntries']),
+      })))
+      for (const [, node] of (values.nodeEntries ?? []) as Array<[string, import('../graph-executor.js').NodeExecutionState]>) {
         if (!['environment_active_task_step', 'environment_active_task_wait'].includes(node.definition?.type ?? '') || !node.outputs?.state) continue
-        candidates.push({ at: node.endTime ?? node.startTime ?? 0, state: node.outputs.state, program: context.activeProgram })
+        candidates.push({ at: node.endTime ?? node.startTime ?? 0, state: node.outputs.state, program: values.program })
       }
     }
     return candidates.sort((a, b) => b.at - a.at)[0] ?? null
+  }
+
+  /** Read selected completed node outputs without loading unrelated channels or pending writes. */
+  async completedNodeOccurrences(outputFields: Record<string, readonly string[]>) {
+    const rows = this.store.db.prepare(`SELECT checkpoint_ns, checkpoint_id, checkpoint FROM checkpoints
+      WHERE thread_id = ? ORDER BY checkpoint_id DESC`).all(this.lease.executionId) as Array<{
+        checkpoint_ns: string; checkpoint_id: string; checkpoint: Uint8Array;
+      }>
+    const occurrences = new Set<string>()
+    const snapshots = []
+    for (const row of rows) {
+      const encoded = Buffer.from(row.checkpoint).toString('utf8')
+      const entries = ['json', 'channel_values', 'nodeEntries']
+      const count = this.store.decodeDocument(encoded, [...entries, 'length']) ?? 0
+      const nodes: Array<[string, { definition: { type: string }; status: string; startTime?: number;
+        endTime?: number; outputs: Record<string, any> }]> = []
+      for (let index = 0; index < count; index++) {
+        const nodePath = [...entries, index, 1]
+        const read = (...path: (string | number)[]) => this.store.decodeDocument(encoded, [...nodePath, ...path])
+        const type = read('definition', 'type')
+        if (!Object.hasOwn(outputFields, type) || read('status') !== 'completed') continue
+        const nodeId = this.store.decodeDocument(encoded, [...entries, index, 0])
+        const startTime = read('startTime')
+        const identity = JSON.stringify([row.checkpoint_ns, nodeId, startTime])
+        if (occurrences.has(identity)) continue
+        occurrences.add(identity)
+        const outputs = Object.fromEntries(outputFields[type].map(field => [field, read('outputs', field)]))
+        const values = await this.checkpointSerde.loadsTyped('json', Buffer.from(JSON.stringify(outputs)))
+        nodes.push([nodeId, { definition: { type }, status: 'completed', startTime,
+          endTime: read('endTime'), outputs: values }])
+      }
+      if (nodes.length) snapshots.push({ namespace: row.checkpoint_ns, checkpointId: row.checkpoint_id, nodes })
+    }
+    return snapshots
   }
 
   /** Read the saved returns of finite child graphs belonging to one dispatch. */
@@ -234,7 +276,7 @@ export class ExecutionCheckpointer extends SqliteSaver {
       const state = this.store.get(threadId)
       // An abandoned owner ID is not a live writer after assertLease rejects it.
       if (!['completed', 'failed', 'cancelled'].includes(state.status)
-        || state.owner && (state.leaseUntil ?? 0) > Date.now()) {
+        || this.store.hasLiveWriter(state.executionId)) {
         throw new ExecutionConflictError('Cannot prune an active execution')
       }
       if (this.store.db.prepare(`SELECT 1 FROM execution_outbox WHERE execution_id = ?
@@ -254,7 +296,7 @@ export class ExecutionCheckpointer extends SqliteSaver {
   assertProfileHistoryCanBeReset(username: string): void {
     for (const state of this.store.list()) {
       if (state.username !== username) throw new ExecutionConflictError('Execution storage contains another profile')
-      if (state.owner && (state.leaseUntil ?? 0) > Date.now()) {
+      if (this.store.hasLiveWriter(state.executionId)) {
         throw new ExecutionConflictError(`${state.definition.graphId} has an active worker. Finish or cancel it in Queue before resetting memory`)
       }
       if (this.store.dispatches(state.executionId).some(effect =>
@@ -276,7 +318,7 @@ export class ExecutionCheckpointer extends SqliteSaver {
   async pruneTerminal(before: number, unfinishedWork = new Set<string>()): Promise<number> {
     const candidates = this.store.list().filter(state =>
       ['completed', 'failed', 'cancelled'].includes(state.status)
-        && (!state.owner || (state.leaseUntil ?? 0) <= Date.now()) && state.updatedAt < before
+        && !this.store.hasLiveWriter(state.executionId) && state.updatedAt < before
         && !unfinishedWork.has(state.executionId))
     let count = 0
     for (const state of candidates) {

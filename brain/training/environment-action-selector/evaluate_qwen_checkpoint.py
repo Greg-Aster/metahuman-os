@@ -80,16 +80,22 @@ def main() -> None:
 
     if config.get("owner") != "environment-action-selector":
         raise ValueError("config owner must be environment-action-selector")
-    if config.get("base_model") != "unsloth/Qwen3.5-0.8B":
-        raise ValueError("evaluator is locked to the selected Qwen3.5-0.8B base")
+    if config.get("base_model") not in {"unsloth/Qwen3.5-0.8B", "unsloth/Qwen3.5-2B"}:
+        raise ValueError("evaluator requires a recorded supported Qwen3.5 base")
     if not args.base and (not adapter_path.is_dir() or not (adapter_path / "adapter_config.json").is_file()):
         raise ValueError(f"adapter checkpoint is incomplete: {adapter_path}")
 
     dtype = torch.bfloat16 if config.get("dtype") == "bfloat16" else torch.float16
+    from transformers import AutoTokenizer
+    native_tokenizer = AutoTokenizer.from_pretrained(config["base_model"])
+    prompts = [prompt(record, native_tokenizer) for record in records]
+    prompt_token_ids = native_tokenizer(prompts, add_special_tokens=False, truncation=False)["input_ids"]
+    max_new_tokens = int(config.get("generation_max_new_tokens", 384))
+    max_sequence_length = max(len(token_ids) for token_ids in prompt_token_ids) + max_new_tokens
     model, tokenizer = FastModel.from_pretrained(
         model_name=config["base_model"] if args.base else str(adapter_path),
         text_only=True,
-        max_seq_length=int(config.get("max_seq_length", 1536)),
+        max_seq_length=max_sequence_length,
         load_in_4bit=False,
         load_in_16bit=True,
         full_finetuning=False,
@@ -106,16 +112,6 @@ def main() -> None:
     tokenizer.padding_side = "left"
 
     batch_size = int(config.get("generation_batch_size", 4))
-    max_new_tokens = int(config.get("generation_max_new_tokens", 384))
-    max_sequence_length = int(config.get("max_seq_length", 1536))
-    prompts = [prompt(record, tokenizer) for record in records]
-    prompt_token_ids = tokenizer(prompts, add_special_tokens=False, truncation=False)["input_ids"]
-    prompt_width = max(len(token_ids) for token_ids in prompt_token_ids)
-    if prompt_width + max_new_tokens > max_sequence_length:
-        raise ValueError(
-            f"prompt width {prompt_width} plus generation budget {max_new_tokens} "
-            f"exceeds max sequence length {max_sequence_length}"
-        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     model_name = config["base_model"] if args.base else str(adapter_path)

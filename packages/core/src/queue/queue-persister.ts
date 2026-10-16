@@ -90,11 +90,13 @@ export function loadQueueState(): PersistedQueueState | null {
       saveQueueState(legacy);
     }).immediate();
   }
-  // The committed database is the sole owner. The old snapshot is retained as
-  // an inert migration backup, never a second live persistence path.
-  if (fs.existsSync(LEGACY_FILE)) db.transaction(() => {
-    if (db.prepare('SELECT 1 FROM work_state WHERE id=1').get() && fs.existsSync(LEGACY_FILE)) {
-      fs.renameSync(LEGACY_FILE, `${LEGACY_FILE}.migrated`);
+  // The committed database owns all migrated records. Retire the superseded
+  // snapshot, including inert copies left by earlier versions.
+  db.transaction(() => {
+    if (db.prepare('SELECT 1 FROM work_state WHERE id=1').get()) {
+      for (const file of [LEGACY_FILE, `${LEGACY_FILE}.migrated`]) {
+        fs.rmSync(file, { force: true });
+      }
     }
   }).immediate();
   return db.transaction(() => {

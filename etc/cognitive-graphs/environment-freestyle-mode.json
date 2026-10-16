@@ -22,7 +22,7 @@
       "id": "generator",
       "type": "environmentNode",
       "position": { "x": 430, "y": 160 },
-      "data": { "label": "Movement Generator", "nodeType": "movement_generator", "properties": { "role": "orchestrator", "executionTarget": "remote", "maxTokens": 4096, "temperature": 0.2 } }
+      "data": { "label": "Movement Generator", "nodeType": "movement_generator", "properties": { "role": "planner", "executionTarget": "remote", "maxTokens": -1, "temperature": 0.2 } }
     },
     {
       "id": "save-freestyle-decision",

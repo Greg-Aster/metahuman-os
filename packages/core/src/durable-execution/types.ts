@@ -72,6 +72,8 @@ export interface NewExecutionEvent {
 }
 
 export interface ExecutionLease {
+  /** External child writers own their checkpoint namespace within the same execution. */
+  invocationId?: string
   executionId: string
   owner: string
   generation: number

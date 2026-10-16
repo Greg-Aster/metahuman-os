@@ -23,7 +23,7 @@ test('serial task queue preserves adapter message order', async () => {
   const first = deferred();
   const order: string[] = [];
   const errors: unknown[] = [];
-  const queue = createSerialTaskQueue(error => errors.push(error), 2);
+  const queue = createSerialTaskQueue(error => errors.push(error));
 
   queue.enqueue(async () => {
     order.push('first:start');
@@ -47,7 +47,7 @@ test('serial task queue reports the first failure and skips queued work', async 
   const expected = new Error('invalid adapter message');
   const errors: unknown[] = [];
   let ranAfterFailure = false;
-  const queue = createSerialTaskQueue(error => errors.push(error), 2);
+  const queue = createSerialTaskQueue(error => errors.push(error));
 
   queue.enqueue(async () => {
     throw expected;
@@ -65,7 +65,7 @@ test('independent actions progress while each action and its dependent observati
   const held = deferred();
   const order: string[] = [];
   const errors: unknown[] = [];
-  const queue = createSerialTaskQueue(error => errors.push(error), 8);
+  const queue = createSerialTaskQueue(error => errors.push(error));
   queue.enqueue(async () => { order.push('face:start'); await held.promise; order.push('face:end'); }, 'face');
   queue.enqueue(async () => { order.push('face:next'); }, 'face');
   queue.enqueue(async () => { order.push('observation'); }, 'adapter', queue.pending('face'));
@@ -80,41 +80,23 @@ test('independent actions progress while each action and its dependent observati
   assert.deepEqual(errors, []);
 });
 
-test('independent message ordering still shares the existing pending-work bound', async () => {
+test('a reconnect backlog drains in order without blocking independent receipts', async () => {
   const held = deferred();
   const errors: unknown[] = [];
-  const queue = createSerialTaskQueue(error => errors.push(error), 2);
-  queue.enqueue(async () => { await held.promise; }, 'one');
-  queue.enqueue(async () => { await held.promise; }, 'two');
-  await Promise.resolve();
-  await queue.enqueue(async () => assert.fail('Overflow must not execute'), 'three');
-  assert.equal(errors.length, 1);
-  assert.match(String(errors[0]), /exceeded 2 pending tasks/);
-  held.resolve(); await queue.drain();
-});
-
-test('serial task queue rejects overflow without accumulating more work', async () => {
-  const first = deferred();
-  const errors: unknown[] = [];
-  let ranQueuedTask = false;
-  const queue = createSerialTaskQueue(error => errors.push(error), 2);
-
-  queue.enqueue(async () => {
-    await first.promise;
-  });
-  await Promise.resolve();
-  queue.enqueue(async () => {
-    ranQueuedTask = true;
-  });
-  queue.enqueue(async () => {
-    throw new Error('overflow task must not be accepted');
-  });
-
-  assert.equal(errors.length, 1);
-  assert.match(String(errors[0]), /exceeded 2 pending tasks/);
-  first.resolve();
+  const order: number[] = [];
+  const queue = createSerialTaskQueue(error => errors.push(error));
+  queue.enqueue(async () => { await held.promise; });
+  for (let index = 0; index < 7200; index++) {
+    queue.enqueue(async () => { order.push(index); });
+  }
+  let acknowledged = false;
+  await queue.enqueue(async () => { acknowledged = true; }, 'action:new');
+  assert.equal(acknowledged, true);
+  assert.deepEqual(order, []);
+  held.resolve();
   await queue.drain();
-  assert.equal(ranQueuedTask, false);
+  assert.deepEqual(order, Array.from({ length: 7200 }, (_, index) => index));
+  assert.deepEqual(errors, []);
 });
 
 test('coalesced runner bounds repeated requests to one pending task', async () => {

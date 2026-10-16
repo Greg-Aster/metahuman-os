@@ -4,7 +4,7 @@ import { getCurrentlyActiveUser, getAuthenticatedRuntimeId } from '../sessions.j
 import { resolvePath } from '../storage-client.js'
 import type { UnifiedQueueManager } from '../queue/unified-queue-manager.js'
 import { openExecutionStore } from './storage.js'
-import { executionWorkInput, relayExecutionOutbox } from './coordinator-outbox.js'
+import { relayExecutionOutbox, reconcileTerminatedExecutionWork } from './coordinator-outbox.js'
 import { deliverDurableWorkReceipt } from './work-results.js'
 import { ExecutionCheckpointer } from './checkpointer.js'
 import { retireBufferAdmissions } from '../conversation-buffer.js'
@@ -83,22 +83,13 @@ export async function recoverDurableExecutions(manager: UnifiedQueueManager, ret
         if (!stillActive()) break recovery
         await retire(id)
       }
-      for (const execution of store.list()) {
+      for (const savedExecution of store.list()) {
         if (!stillActive()) break recovery
         try {
-          if (['failed', 'cancelled'].includes(execution.status)) {
-            for (const effect of store.dispatches(execution.executionId).filter(effect =>
-              effect.kind === 'coordinator_work' && ['pending', 'admitted', 'cancelled'].includes(effect.status))) {
-              // The ledger may already own this work even when SQLite has no
-              // admission acknowledgement. Persist one non-dispatch receipt at
-              // that owner; a claimed job is not evidence of non-dispatch.
-              const receipt = manager.cancelAdmission(executionWorkInput(store, effect), 'Parent execution ended before work started')
-              if (!effect.workItemId) store.acknowledgeAdmission(effect.effectId, receipt.id)
-              if (receipt.state === 'cancelled' && !receipt.startedAt && !receipt.bodyLease) {
-                store.confirmUndispatched(effect.effectId, receipt)
-                await deliverDurableWorkReceipt(receipt, enqueue, store, stillActive)
-              }
-            }
+          store.settleEffectDelivery(savedExecution.executionId)
+          const execution = store.get(savedExecution.executionId)
+          for (const receipt of reconcileTerminatedExecutionWork(store, execution.executionId, manager)) {
+            await deliverDurableWorkReceipt(receipt, enqueue, store, stillActive)
           }
           if (execution.cancelledAt !== null) {
             for (const task of tasks.filter(task => task.durable?.executionId === execution.executionId
@@ -111,7 +102,7 @@ export async function recoverDurableExecutions(manager: UnifiedQueueManager, ret
             if (!claimed) store.requestRecovery(execution.executionId)
             await relayExecutionOutbox(store, execution.executionId, enqueue, stillActive)
           }
-        } catch (error) { failures.push(new Error(`Execution recovery failed for ${username}/${execution.executionId}`, { cause: error })) }
+        } catch (error) { failures.push(new Error(`Execution recovery failed for ${username}/${savedExecution.executionId}`, { cause: error })) }
         await yieldToIO()
         dispatchReady()
       }

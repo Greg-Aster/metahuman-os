@@ -60,16 +60,6 @@ export const SERVICE_LIFECYCLE_FIELDS = new Set([
   'graph',
   'environmentGraph',
   'jitterMs',
-  'robotStatusInactivityThreshold',
-  'robotStatusJitterMs',
-  'robotGoalReviewInactivityThreshold',
-  'robotGoalReviewJitterMs',
-  'boredomObserverInactivityThreshold',
-  'boredomObserverJitterMs',
-  'boredomMovementInactivityThreshold',
-  'boredomMovementJitterMs',
-  'boredomReflectionInactivityThreshold',
-  'boredomReflectionJitterMs',
   'robotStatusGraph',
   'robotAutonomyControllerGraph',
   'robotGoalReviewGraph',
@@ -127,7 +117,7 @@ function labelFromId(id: string): string {
 function catalogOwnershipVariables(catalogItem?: AgentCatalogItem): AgentVariableDescriptor[] {
   if (!catalogItem) return [];
   const owner = catalogItem.owner === 'robot-operator'
-    ? 'Robot Operator'
+    ? 'Active Operator'
     : catalogItem.owner === 'trigger-manager'
       ? 'Trigger Manager'
       : catalogItem.owner === 'agent-monitor'
@@ -165,6 +155,8 @@ function inferKind(id: string, config?: AgentCatalogEntry): AgentKind {
 }
 
 function defaultAgentPath(id: string): string {
+  const configured = getAgentCatalogDefinition(id)?.servicePath;
+  if (configured) return configured.replace(/^agents\//, '');
   const servicePath = path.join(systemPaths.brain, 'services', `${id}.ts`);
   if (fs.existsSync(servicePath)) return `services/${id}.ts`;
   const modularCli = path.join(systemPaths.agents, id, 'cli.ts');
@@ -324,116 +316,6 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
   if (id === 'robot-operator') {
     variables.push(
       {
-        key: 'robotStatusInactivityThreshold',
-        label: 'Robot Status Idle Seconds',
-        type: 'number',
-        value: typeof effective.robotStatusInactivityThreshold === 'number'
-          ? effective.robotStatusInactivityThreshold
-          : 300,
-        applyMode: 'restart',
-        writable: true,
-        description: 'Semi-autonomous idle threshold for refreshing the reusable Robot Status snapshot.',
-      },
-      {
-        key: 'robotStatusJitterMs',
-        label: 'Robot Status Jitter Milliseconds',
-        type: 'number',
-        value: typeof effective.robotStatusJitterMs === 'number'
-          ? effective.robotStatusJitterMs
-          : 60000,
-        applyMode: 'restart',
-        writable: true,
-        description: 'Random variation around the Robot Status refresh threshold.',
-      },
-      {
-        key: 'robotGoalReviewInactivityThreshold',
-        label: 'Robot Goal Review Idle Seconds',
-        type: 'number',
-        value: typeof effective.robotGoalReviewInactivityThreshold === 'number'
-          ? effective.robotGoalReviewInactivityThreshold
-          : 60,
-        applyMode: 'restart',
-        writable: true,
-        description: 'Semi-autonomous idle threshold for resuming an execution with an unfinished objective.',
-      },
-      {
-        key: 'robotGoalReviewJitterMs',
-        label: 'Robot Goal Review Jitter Milliseconds',
-        type: 'number',
-        value: typeof effective.robotGoalReviewJitterMs === 'number'
-          ? effective.robotGoalReviewJitterMs
-          : 0,
-        applyMode: 'restart',
-        writable: true,
-        description: 'Random variation around the unfinished-goal review threshold.',
-      },
-      {
-        key: 'boredomObserverInactivityThreshold',
-        label: 'Boredom Observer Idle Seconds',
-        type: 'number',
-        value: typeof effective.boredomObserverInactivityThreshold === 'number'
-          ? effective.boredomObserverInactivityThreshold
-          : 300,
-        applyMode: 'restart',
-        writable: true,
-        description: 'Semi-autonomous idle threshold for one current camera observation.',
-      },
-      {
-        key: 'boredomObserverJitterMs',
-        label: 'Boredom Observer Jitter Milliseconds',
-        type: 'number',
-        value: typeof effective.boredomObserverJitterMs === 'number'
-          ? effective.boredomObserverJitterMs
-          : 60000,
-        applyMode: 'restart',
-        writable: true,
-        description: 'Random variation around the observation idle threshold.',
-      },
-      {
-        key: 'boredomMovementInactivityThreshold',
-        label: 'Boredom Movement Idle Seconds',
-        type: 'number',
-        value: typeof effective.boredomMovementInactivityThreshold === 'number'
-          ? effective.boredomMovementInactivityThreshold
-          : 600,
-        applyMode: 'restart',
-        writable: true,
-        description: 'How long the robot must remain idle before a boredom and engagement stimulus becomes due.',
-      },
-      {
-        key: 'boredomMovementJitterMs',
-        label: 'Boredom Movement Jitter Milliseconds',
-        type: 'number',
-        value: typeof effective.boredomMovementJitterMs === 'number'
-          ? effective.boredomMovementJitterMs
-          : 120000,
-        applyMode: 'restart',
-        writable: true,
-        description: 'Random variation around the boredom and engagement stimulus threshold.',
-      },
-      {
-        key: 'boredomReflectionInactivityThreshold',
-        label: 'Boredom Reflection Idle Seconds',
-        type: 'number',
-        value: typeof effective.boredomReflectionInactivityThreshold === 'number'
-          ? effective.boredomReflectionInactivityThreshold
-          : 900,
-        applyMode: 'restart',
-        writable: true,
-        description: 'Semi-autonomous idle threshold for a memory-inspired robot reflection.',
-      },
-      {
-        key: 'boredomReflectionJitterMs',
-        label: 'Boredom Reflection Jitter Milliseconds',
-        type: 'number',
-        value: typeof effective.boredomReflectionJitterMs === 'number'
-          ? effective.boredomReflectionJitterMs
-          : 180000,
-        applyMode: 'restart',
-        writable: true,
-        description: 'Random variation around the reflection idle threshold.',
-      },
-      {
         key: 'robotStatusGraph',
         label: 'Robot Status Graph',
         type: 'text',
@@ -450,7 +332,7 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
           : 'robot-autonomy-controller',
         applyMode: 'restart',
         writable: true,
-        description: 'Finite Full-mode contextual decision graph admitted after a settled chain that does not require Robot Goal Review.',
+        description: 'Editable activation assessment graph for Semi and Full modes.',
       },
       {
         key: 'robotGoalReviewGraph',
@@ -485,22 +367,13 @@ function serviceLifecycleVariables(config: AgentCatalogEntry | undefined, id: st
         writable: true,
       },
       {
-        key: 'autonomyGraph',
-        label: 'Robot Autonomy Executor Graph',
-        type: 'text',
-        value: typeof effective.autonomyGraph === 'string' ? effective.autonomyGraph : 'boredom-autonomy',
-        applyMode: 'restart',
-        writable: true,
-        description: 'One-pass action-selection graph used by boredom planners and unfinished-goal review.',
-      },
-      {
         key: 'environmentGraph',
         label: 'Environment Execution Graph',
         type: 'text',
         value: typeof effective.environmentGraph === 'string' ? effective.environmentGraph : 'environment',
         applyMode: 'restart',
         writable: true,
-        description: 'General Environment graph used for user-originated perception and commands.',
+        description: 'Shared Environment graph for human requests and autonomous intentions.',
       },
       {
         key: 'sessionId',

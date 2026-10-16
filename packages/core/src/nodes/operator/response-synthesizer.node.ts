@@ -8,7 +8,6 @@ import { reasoningProperty } from '../llm/model-router.schema.js';
 
 import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js';
 import { callLLM } from '../../model-router.js';
-import { loadFreshOperatorConfig } from '../../config.js';
 import { renderPromptTemplate } from '../prompt-template.js';
 // NOTE: getIdentitySummary import REMOVED (2025-12-18)
 // Persona injection should ONLY come from graph nodes (persona_loader → persona_formatter)
@@ -120,13 +119,6 @@ async function applyPersonaVoice(
 const execute: NodeExecutor = async (inputs, context, properties = {}) => {
   // Extract username for LLM calls
   const username = context.username || context.userId;
-
-  // Check Big Brother hybrid mode - use Big Brother for central thinking when enabled but not delegateAll
-  const operatorConfig = username ? loadFreshOperatorConfig(username) : null;
-  const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
-  const bigBrotherDelegateAll = operatorConfig?.bigBrotherMode?.delegateAll ?? false;
-  // If Big Brother is enabled, request Big Brother for central thinking
-  const useBigBrother = bigBrotherEnabled;
 
   // Named inputs from graph edges:
   // - goal: from orchestrator_llm (node 24)
@@ -385,7 +377,6 @@ Respond conversationally to help refine this goal.
           maxTokens,
           repeatPenalty: properties.contextRepeatPenalty ?? 1.3,
           temperature,
-          useBigBrother, // Use Big Brother in hybrid mode for central thinking
         },
         onProgress: context.emitProgress,
       });
@@ -395,7 +386,7 @@ Respond conversationally to help refine this goal.
         contextBased: true,
         unknownSignal,
         memoriesUsed: memories.length,
-        usedBigBrother: useBigBrother,
+        usedBigBrother: response.provider === 'big-brother',
       };
     } catch (error) {
       console.error('[ResponseSynthesizer] Error in context-based generation:', error);
@@ -482,7 +473,6 @@ Respond conversationally to help refine this goal.
           maxTokens,
           repeatPenalty: properties.legacyRepeatPenalty ?? 1.3,
           temperature,
-          useBigBrother, // Use Big Brother in hybrid mode for central thinking
         },
         onProgress: context.emitProgress,
       });
@@ -491,7 +481,7 @@ Respond conversationally to help refine this goal.
         response: response.content,
         orchestratorGuidance: true,
         responseStyle: loopResult.responseStyle,
-        usedBigBrother: useBigBrother,
+        usedBigBrother: response.provider === 'big-brother',
       };
     } catch (error) {
       console.error('[ResponseSynthesizer] Error generating response from orchestrator guidance:', error);
@@ -689,7 +679,6 @@ Respond conversationally to help refine this goal.
               maxTokens: properties.unknownResponseMaxTokens ?? 512,
               repeatPenalty: properties.unknownResponseRepeatPenalty ?? 1.2,
               temperature: properties.unknownResponseTemperature ?? 0.7,
-              useBigBrother, // Use Big Brother in hybrid mode for central thinking
             },
             onProgress: context.emitProgress,
           });
@@ -698,7 +687,7 @@ Respond conversationally to help refine this goal.
             response: response.content,
             unknownResponse: true,
             personaSynthesized: true,
-            usedBigBrother: useBigBrother,
+            usedBigBrother: response.provider === 'big-brother',
           };
         } catch (error) {
           console.error('[ResponseSynthesizer] Error generating response:', error);
@@ -763,7 +752,6 @@ Observation: ${s.observation || 'N/A'}
         maxTokens: properties.scratchpadMaxTokens ?? 2048,
         repeatPenalty: properties.scratchpadRepeatPenalty ?? 1.2,
         temperature: properties.scratchpadTemperature ?? 0.7,
-        useBigBrother, // Hybrid mode: use Big Brother for central thinking
       },
       onProgress: context.emitProgress,
     });

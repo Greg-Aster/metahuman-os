@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getProfilePaths, systemPaths } from '../path-builder.js';
 import { assertProfileMemoryAvailable } from '../locks.js';
+import { getQueueManager } from '../queue/unified-queue-manager.js';
 
 export const TTS_DELIVERY_LEASE_MS = 20_000;
 export const TTS_DELIVERY_RETRY_DELAY_MS = 5_000;
@@ -555,7 +556,9 @@ export function interruptTTSQueue(
   options: { advanceGeneration?: boolean } = {},
 ): TTSQueueInterruptionResult | null {
   if (!username || username === 'anonymous') return null;
-  return createTTSDeliveryQueueStore(username).interrupt(reason, options);
+  const interruption = createTTSDeliveryQueueStore(username).interrupt(reason, options);
+  getQueueManager().interruptSpeech(username, reason);
+  return interruption;
 }
 
 export function beginTTSUserTurn(

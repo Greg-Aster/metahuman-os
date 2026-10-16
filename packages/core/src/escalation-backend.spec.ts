@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mh-escalation-'));
 process.env.METAHUMAN_ROOT = root;
@@ -125,36 +127,44 @@ test('settings round-trip model and reasoning while the on/off switch preserves 
   assert.equal(loadFreshOperatorConfig('fixture').bigBrotherMode?.model, 'sonnet');
 });
 
-test('Big Brother on routes to the selected CLI; off returns to the configured local model', async () => {
+test('selected provider routes to Big Brother or local independently of the retired global switch', async () => {
   const { saveUserConfig } = await import('./config.js');
   const { handleSetBigBrotherConfig } = await import('./api/handlers/big-brother-config.js');
   const { withUserContext } = await import('./context.js');
   const { callProvider } = await import('./providers/bridge.js');
   installFixtureBackends();
+  let localCalls = 0;
+  const server = createServer((request, response) => {
+    const route = request.url;
+    let data;
+    if (route === '/health') data = { status: 'ok' };
+    else if (route === '/v1/models') data = { data: [{ id: 'local-qwen' }] };
+    else {
+      assert.equal(route, '/v1/chat/completions');
+      localCalls++;
+      data = { model: 'local-qwen', choices: [{ message: { content: 'Local reply' } }] };
+    }
+    request.resume();
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify(data));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const endpoint = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
   fs.writeFileSync(path.join(root, 'etc', 'llm-backend.json'), JSON.stringify({
-    activeBackend: 'llama-cpp', llamaCpp: { endpoint: 'http://fixture.test', model: 'local-qwen' },
+    activeBackend: 'llama-cpp', llamaCpp: { endpoint, model: 'local-qwen' },
   }));
   saveUserConfig('operator.json', { bigBrotherMode: {
     enabled: false, provider: 'codex', model: 'gpt-6-luna', reasoningEffort: 'medium', delegateAll: false,
   } }, 'fixture');
-  const originalFetch = globalThis.fetch;
-  let localCalls = 0;
-  globalThis.fetch = async url => {
-    const route = new URL(String(url)).pathname;
-    if (route === '/health') return Response.json({ status: 'ok' });
-    if (route === '/v1/models') return Response.json({ data: [{ id: 'local-qwen' }] });
-    assert.equal(route, '/v1/chat/completions');
-    localCalls++;
-    return Response.json({ model: 'local-qwen', choices: [{ message: { content: 'Local reply' } }] });
-  };
   try {
     await withUserContext({ userId: 'fixture', username: 'fixture', role: 'owner' }, async () => {
       for (const enabled of [true, false, true, false]) {
         await handleSetBigBrotherConfig({ method: 'POST', path: '/api/big-brother-config',
           user: { username: 'fixture', role: 'owner', isAuthenticated: true },
-          body: { enabled, delegateAll: enabled } } as any);
+          body: { enabled: !enabled, delegateAll: !enabled } } as any);
         const schema = { type: 'object', properties: { route: { enum: ['new', 'steer', 'cancel'] } }, required: ['route'] };
-        const result = await callProvider('local', [{ role: 'user', content: 'Hi' }], { jsonSchema: schema });
+        const result = await callProvider(enabled ? 'big-brother' : 'local', [{ role: 'user', content: 'Hi' }], { jsonSchema: schema });
         assert.equal(result.provider, enabled ? 'big-brother' : 'llama-cpp');
         assert.equal(result.model, enabled ? 'gpt-6-luna' : 'local-qwen');
         assert.equal(result.content, enabled ? 'codex' : 'Local reply');
@@ -166,7 +176,10 @@ test('Big Brother on routes to the selected CLI; off returns to the configured l
     });
     assert.equal(localCalls, 2);
     assert.equal(calls.filter(call => call === 'execute:codex').length, 2);
-  } finally { globalThis.fetch = originalFetch; }
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
 
 test('Big Brother preserves JSON-only requests without changing plain-text requests', async () => {
@@ -178,9 +191,99 @@ test('Big Brother preserves JSON-only requests without changing plain-text reque
     enabled: true, provider: 'codex', model: 'gpt-6-luna', reasoningEffort: 'medium', delegateAll: true,
   } }, 'fixture');
   await withUserContext({ userId: 'fixture', username: 'fixture', role: 'owner' }, async () => {
-    await callProvider('local', [{ role: 'user', content: 'Hi' }], { format: 'json' });
+    await callProvider('big-brother', [{ role: 'user', content: 'Hi' }], { format: 'json' });
     assert.match(receivedPrompt, /Return only the final JSON value/);
-    await callProvider('local', [{ role: 'user', content: 'Hi' }], {});
+    await callProvider('big-brother', [{ role: 'user', content: 'Hi' }], {});
     assert.equal(receivedPrompt, '[User]: Hi');
+  });
+});
+
+test('status-widget assignments route Persona to Big Brother and preserve independent specialist adapters', async () => {
+  const { saveUserConfig } = await import('./config.js');
+  const { withUserContext } = await import('./context.js');
+  const { callLLM } = await import('./model-router.js');
+  const { handleAssignModelRole, handleGetModelRegistry } = await import('./api/handlers/model-registry.js');
+  const { handleWarmupModel } = await import('./api/handlers/warmup-model.js');
+  const { resolveModelForCognitiveMode } = await import('./model-resolver.js');
+  installFixtureBackends();
+  const requests: any[] = [];
+  const server = createServer(async (request, response) => {
+    let data: any;
+    if (request.url === '/health') data = { status: 'ok' };
+    else if (request.url === '/v1/models') data = { data: [{ id: 'qwen-fixture' }] };
+    else if (request.url === '/lora-adapters') data = [];
+    else {
+      assert.equal(request.url, '/v1/chat/completions');
+      let body = '';
+      for await (const chunk of request) body += chunk;
+      requests.push(JSON.parse(body));
+      data = { model: 'qwen-fixture', choices: [{ message: { content: 'Local fixture reply' }, finish_reason: 'stop' }] };
+    }
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify(data));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const endpoint = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+  fs.writeFileSync(path.join(root, 'etc', 'llm-backend.json'), JSON.stringify({
+    activeBackend: 'llama-cpp', llamaCpp: { endpoint, model: 'qwen-fixture' },
+  }));
+  const definition = (id: number) => ({ provider: 'llama-cpp', model: 'qwen-fixture', roles: [],
+    description: 'Fixture specialist', adapters: [], options: { endpoint, lora: [{ id, scale: 1 }] } });
+  saveUserConfig('models.json', { version: '1', description: 'Mixed role fixture',
+    defaults: { persona: 'local', orchestrator: 'intent', environmentActionSelector: 'task' },
+    models: { local: definition(0), intent: definition(1), task: definition(2) },
+    cognitiveModeMappings: { environment: { persona: 'local', orchestrator: 'intent', environmentActionSelector: 'task' } },
+  }, 'fixture');
+  saveUserConfig('operator.json', { bigBrotherMode: { enabled: false, delegateAll: false,
+    provider: 'codex', model: 'fixture-sol', reasoningEffort: 'none' } }, 'fixture');
+  const user = { username: 'fixture', userId: 'fixture', role: 'owner', isAuthenticated: true } as const;
+  const assign = (role: string, modelId: string) => handleAssignModelRole({ user, body: { role, modelId, cognitiveMode: 'environment' } } as any);
+  try {
+    await withUserContext({ userId: 'fixture', username: 'fixture', role: 'owner' }, async () => {
+      const inventory = await handleGetModelRegistry({ user, query: { cognitiveMode: 'environment' } } as any);
+      assert.equal(inventory.status, 200);
+      const data = inventory.data as any;
+      assert.equal(data.modelCategories.bigBrother[0].id, 'big-brother.configured');
+      assert.equal(data.roleAssignments.orchestrator, 'intent');
+      assert.equal((await assign('persona', 'big-brother.configured')).status, 200);
+      const selected = resolveModelForCognitiveMode('environment', 'persona', 'fixture');
+      assert.equal(selected.provider, 'big-brother');
+      assert.equal(selected.model, 'fixture-sol');
+      const warm = await handleWarmupModel({ user, body: { role: 'persona', cognitiveMode: 'environment' } } as any);
+      assert.equal(warm.status, 200);
+      assert.equal(calls.length, 0, 'Assignment warmup cannot open a CLI conversation');
+      for (const role of ['orchestrator', 'persona', 'environmentActionSelector'] as const) {
+        const result = await callLLM({ role, cognitiveMode: 'environment', userId: 'fixture', messages: [{ role: 'user', content: 'Fixture request' }] });
+        assert.equal(result.provider, role === 'persona' ? 'big-brother' : 'llama-cpp');
+      }
+      assert.deepEqual(requests.map(request => request.lora), [[{ id: 1, scale: 1 }], [{ id: 2, scale: 1 }]]);
+      assert.equal(calls.filter(call => call === 'execute:codex').length, 1);
+      assert.equal((await assign('persona', 'local')).status, 200);
+      const local = await callLLM({ role: 'persona', cognitiveMode: 'environment', userId: 'fixture', messages: [{ role: 'user', content: 'Local request' }] });
+      assert.equal(local.provider, 'llama-cpp');
+      assert.deepEqual(requests.at(-1).lora, [{ id: 0, scale: 1 }]);
+      assert.equal((await assign('persona', 'big-brother.configured')).status, 200);
+      saveUserConfig('operator.json', { bigBrotherMode: { provider: 'codex', model: 'fixture-updated' } }, 'fixture');
+      assert.equal(resolveModelForCognitiveMode('environment', 'persona', 'fixture').model, 'fixture-updated',
+        'Backend Settings changes are reflected without stale registry copies');
+    });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+test('Big Brother forwards per-call reasoning without changing its configured default', async () => {
+  const { saveUserConfig } = await import('./config.js');
+  const { withUserContext } = await import('./context.js');
+  const { callProvider } = await import('./providers/bridge.js');
+  installFixtureBackends();
+  saveUserConfig('operator.json', { bigBrotherMode: { enabled: true, provider: 'codex', reasoningEffort: 'medium' } }, 'reasoning-fixture');
+  await withUserContext({ userId: 'reasoning-fixture', username: 'reasoning-fixture', role: 'owner' }, async () => {
+    for (const enableThinking of [true, false, undefined]) {
+      await callProvider('big-brother', [{ role: 'user', content: 'Hi' }], { enableThinking });
+      assert.equal(receivedOptions?.enableThinking, enableThinking);
+    }
   });
 });

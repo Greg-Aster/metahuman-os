@@ -394,7 +394,7 @@ function validateRegisteredNodeContracts(graph: any, errors: string[]): void {
     if (!sourceDefinition || !targetDefinition) continue;
 
     if (edge.data?.kind !== 'control') {
-      if (!sourceDefinition.outputs.some(output => output.name === edge.sourceHandle)) {
+      if (!sourceDefinition.outputs.some(output => output.name === edge.sourceHandle?.split('.')[0])) {
         errors.push(`Edge ${edge.id} uses undeclared output ${sourceDefinition.id}.${edge.sourceHandle}`);
       }
       if (!targetDefinition.inputs.some(input => input.name === edge.targetHandle)) {

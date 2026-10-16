@@ -67,6 +67,7 @@ function stageInput(session: SleepSessionRuntime, stageIndex: number): TaskInput
     handler: stage.handler,
     source: 'system',
     username: session.username,
+    originatingCognitiveMode: session.originatingCognitiveMode,
     priority: 'background',
     input: {
       ...(usesAgentProcess && stage.agentId ? { agentId: stage.agentId } : {}),
@@ -129,6 +130,7 @@ export function beginSleepWorkflow(
     parentTaskId: parent.id,
     username: parent.username,
     source: parent.source,
+    originatingCognitiveMode: parent.originatingCognitiveMode,
     reason: parent.source === 'user' || parent.input.force === true ? 'manual' : 'scheduled',
     stages: SLEEP_WORKFLOW_STAGES,
   })

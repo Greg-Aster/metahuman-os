@@ -79,6 +79,7 @@ export interface RobotStatusTaskAction {
 }
 
 export interface RobotStatusTaskFeedback {
+  executionEnded?: boolean
   type: string
   actionId: string
   message: string
@@ -307,6 +308,7 @@ function normalizeTaskFeedback(value: unknown): RobotStatusTaskFeedback | null {
   if (!type) return null
   return {
     type,
+    ...(value.executionEnded === true ? { executionEnded: true } : {}),
     actionId: cleanText(value.actionId, 200),
     message: cleanText(value.message, 500),
     observedAt: cleanText(value.observedAt, 80),

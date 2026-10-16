@@ -1,16 +1,15 @@
 {
   "version": "1.0",
   "format": "svelte-flow",
-  "name": "Robot Autonomy Controller",
-  "description": "One Full-mode autonomy decision. It reads current robot, dialogue, inner-dialogue, Agency, persona, Environment Bridge, and verified action context; one LLM selects the most relevant catalog-backed task or authors one high-level physical intention for Robot Autonomy Executor, dispatches at most one choice through Work Coordinator, and ends.",
+  "name": "Active Operator",
+  "description": "Assess operation activation from context. Semi requests updates at 100; Full requests the highest returned activation. Selected work runs independently through Work Coordinator.",
   "cognitiveMode": "environment",
   "scheduler": {
     "version": 1,
     "activation": "demand",
     "skippedState": "explicit",
     "sideEffectOrder": "serial-topological",
-    "maxLoopIterations": 5,
-    "eventInputNodeId": "input-events"
+    "maxLoopIterations": 0
   },
   "last_modified": "2026-09-04T23:30:00.000Z",
   "nodes": [
@@ -37,24 +36,9 @@
         "y": 80
       },
       "data": {
-        "label": "Full Autonomy Controller Trigger",
+        "label": "Active Operator Assessment Input",
         "nodeType": "robot_operator_input",
         "properties": {}
-      }
-    },
-    {
-      "id": "autonomy-activity",
-      "type": "contextNode",
-      "position": {
-        "x": 40,
-        "y": 260
-      },
-      "data": {
-        "label": "Recent Controller-Selected Task Results",
-        "nodeType": "robot_autonomy_activity_history",
-        "properties": {
-          "limit": 10
-        }
       }
     },
     {
@@ -159,6 +143,7 @@
         "properties": {
           "includeValues": true,
           "includeGoals": true,
+          "goalContext": "standing",
           "includePersonality": true
         }
       }
@@ -191,6 +176,7 @@
         "properties": {
           "taskIds": [
             "robot-autonomy-executor",
+            "robot-status",
             "boredom-observer",
             "boredom-movement",
             "boredom-reflection",
@@ -214,10 +200,10 @@
         "y": 80
       },
       "data": {
-        "label": "Autonomy Controller Task",
+        "label": "Activation Assessment Contract",
         "nodeType": "text_input",
         "properties": {
-          "message": "Choose my next Full-autonomy activity from the supplied context. This is one self-directed decision, so the absence of a new user request does not require me to wait. Consider the checkpointed objective and ordered execution results alongside the Robot Status display, recent Controller-selected task receipts, the most recent user turn and conversation, private reflection, verified robot actions, active desires, Environment Bridge facts, attached verified visual evidence, active persona, and every available task meaning together. Conversation is narrative context; Work Coordinator receipts identify which autonomous activities actually ran or failed, and statements of intention are not proof that an action occurred.\n\nSelect the capability whose described responsibility is useful now, not the first identifier and not a random or rotating choice. Robot Autonomy Executor realizes an already-chosen physical or sensing effect. Observer, reflection, curiosity, daydream, desire, reasoning, and other catalog tasks own the distinct work described for them. An unfinished objective may remain relevant without requiring the same activity again; its result lifecycle is handled after an action completes. Completion frees the next decision to follow other current context, persona, or desires.\n\nFor robot-autonomy-executor, instruction must describe the intended physical or sensing effect with relevant situational detail; do not use an internal label, choose a command, or write a movement plan. For a catalog agent, instruction may provide useful context for that agent's own task. For none, instruction may be empty. response is optional for every choice and may accompany it when speaking is useful. Do not invent physical facts. Return only the requested JSON.\n\nObservation History supplies earlier image interpretations with their source times. Optional visualObservation records an interpretation of attached images independently of speech and goals.",
+          "message": "Evaluate activation levels for the supplied operations using the supplied context. Each operation has an identifier, description, current activation level, activation threshold, and recorded activity. Timestamps identify when records were produced; intentions and requested work are distinct from recorded results. Return updates containing operationId, activation, reason, and instruction. activation is an absolute level from 0 to 100. Each update replaces that operation’s previous level. In Semi Auto, each returned update at 100 requests its operation through the Work Coordinator. In Full Auto, the returned update with the highest activation requests its operation regardless of whether it has reached 100. If updates share the highest activation, their returned order determines which is selected. An omitted operation retains its recorded level and is not newly requested. reason records the basis for the update; instruction supplies context to the selected operation. Updates may raise, lower, or retain levels, and the updates list may be empty.",
           "inputKey": ""
         }
       }
@@ -230,7 +216,7 @@
         "y": 240
       },
       "data": {
-        "label": "Build Autonomy Controller Context",
+        "label": "Build Active Operator Context",
         "nodeType": "robot_autonomy_controller_context",
         "properties": {}
       }
@@ -243,15 +229,15 @@
         "y": 240
       },
       "data": {
-        "label": "Choose Next Contextual Action",
+        "label": "Assess Operation Activation",
         "nodeType": "model_router",
         "properties": {
-          "role": "persona",
-          "maxTokens": 8192,
+          "role": "autonomy",
+          "maxTokens": -1,
           "temperature": 0.7,
           "repeatPenalty": 1.1,
           "format": "json",
-          "enableThinking": true
+          "enableThinking": false
         }
       }
     },
@@ -263,79 +249,9 @@
         "y": 240
       },
       "data": {
-        "label": "Validate Autonomy Decision",
+        "label": "Read Activation Assessment",
         "nodeType": "robot_autonomy_controller_parser",
         "properties": {}
-      }
-    },
-    {
-      "id": "agent-dispatch",
-      "type": "operatorNode",
-      "position": {
-        "x": 1980,
-        "y": 80
-      },
-      "data": {
-        "label": "Start Selected Autonomy Task",
-        "nodeType": "robot_autonomy_task_dispatch",
-        "properties": {}
-      }
-    },
-    {
-      "id": "executor-dispatch",
-      "type": "operatorNode",
-      "position": {
-        "x": 1980,
-        "y": 360
-      },
-      "data": {
-        "label": "Send Intention to Robot Autonomy Executor",
-        "nodeType": "robot_operator_environment_dispatch",
-        "properties": {
-          "graph": "boredom-autonomy"
-        }
-      }
-    },
-    {
-      "id": "conversation",
-      "type": "outputNode",
-      "position": {
-        "x": 1980,
-        "y": 680
-      },
-      "data": {
-        "label": "Save Optional Controller Response",
-        "nodeType": "conversation_buffer",
-        "properties": {}
-      }
-    },
-    {
-      "id": "conversation-memory",
-      "type": "outputNode",
-      "position": {
-        "x": 2360,
-        "y": 680
-      },
-      "data": {
-        "label": "Save Controller Response Memory",
-        "nodeType": "memory_capture",
-        "properties": {}
-      }
-    },
-    {
-      "id": "tts",
-      "type": "outputNode",
-      "position": {
-        "x": 2360,
-        "y": 880
-      },
-      "data": {
-        "label": "Speak Optional Controller Response",
-        "nodeType": "tts",
-        "properties": {
-          "source": "robot-autonomy-controller",
-          "defaultMode": "conversation"
-        }
       }
     },
     {
@@ -348,109 +264,7 @@
       "data": {
         "label": "Current Execution",
         "nodeType": "execution_context",
-        "properties": {
-          "eventLimit": 16
-        }
-      }
-    },
-    {
-      "id": "selected-workflow",
-      "type": "utilityNode",
-      "position": {
-        "x": 2500,
-        "y": 140
-      },
-      "data": {
-        "label": "Run Selected Workflow",
-        "nodeType": "workflow_call",
         "properties": {}
-      }
-    },
-    {
-      "id": "agent-result",
-      "type": "utilityNode",
-      "position": {
-        "x": 2500,
-        "y": 380
-      },
-      "data": {
-        "label": "Wait for Selected Agent",
-        "nodeType": "work_result_wait",
-        "properties": {}
-      }
-    },
-    {
-      "id": "remaining-objective",
-      "type": "default",
-      "position": {
-        "x": 2150,
-        "y": 2390
-      },
-      "data": {
-        "nodeType": "execution_context",
-        "label": "remaining-objective",
-        "properties": {
-          "eventLimit": 16
-        },
-        "activation": {
-          "mode": "always"
-        }
-      }
-    },
-    {
-      "id": "review-remaining-objective",
-      "type": "default",
-      "position": {
-        "x": 2450,
-        "y": 2390
-      },
-      "data": {
-        "nodeType": "workflow_call",
-        "label": "review-remaining-objective",
-        "properties": {
-          "graph": "robot-goal-review"
-        }
-      }
-    },
-    {
-      "id": "input-events",
-      "type": "utilityNode",
-      "position": {
-        "x": 1550,
-        "y": 1850
-      },
-      "data": {
-        "nodeType": "execution_event_wait",
-        "label": "Receive Pending Input",
-        "properties": {
-          "drain": true,
-          "userGraph": "environment",
-          "autonomyGraph": "robot-autonomy-controller"
-        },
-        "activation": {
-          "mode": "always"
-        },
-        "comment": "Receives input admitted while preceding work ran. If later input arrives before this execution finishes, the runtime resumes here, preserving earlier action and review outputs."
-      }
-    },
-    {
-      "id": "continue-user-input",
-      "type": "utilityNode",
-      "position": {
-        "x": 1850,
-        "y": 1850
-      },
-      "data": {
-        "nodeType": "workflow_call",
-        "label": "Handle Received Input",
-        "properties": {},
-        "activation": {
-          "mode": "required-inputs",
-          "requiredInputs": [
-            "invocation"
-          ]
-        },
-        "comment": "Calls the workflow selected by Receive Pending Input in this execution. No input means no child workflow or model call."
       }
     },
     {
@@ -469,70 +283,86 @@
       }
     },
     {
-      "id": "save-observation",
-      "type": "outputNode",
+      "id": "read-camera",
+      "type": "environmentNode",
       "position": {
-        "x": 1820,
-        "y": 810
+        "x": 220,
+        "y": 420
       },
       "data": {
-        "label": "Save Visual Observation",
-        "nodeType": "save_visual_observation",
+        "label": "Read Latest Camera Evidence",
+        "nodeType": "environment_visual_read",
         "properties": {},
         "activation": {
-          "when": [
-            {
-              "nodeId": "parser",
-              "output": "visualObservation",
-              "truthy": true
-            }
-          ]
+          "mode": "always"
         }
       }
     },
     {
-      "id": "observation-status",
-      "type": "outputNode",
+      "id": "autonomy-inner-output",
+      "type": "genericNode",
       "position": {
-        "x": 2240,
-        "y": 810
+        "x": 2200,
+        "y": 580
       },
       "data": {
-        "label": "Update Latest Visual Status",
-        "nodeType": "robot_status_out",
-        "properties": {},
+        "nodeType": "inner_dialogue_buffer",
+        "label": "Inner Dialogue: Autonomy Intention",
+        "properties": {
+          "tags": [
+            "autonomy",
+            "autonomy-intention",
+            "inner"
+          ],
+          "role": "reflection"
+        },
         "activation": {
           "mode": "required-inputs",
           "requiredInputs": [
-            "visualObservation"
+            "entries"
           ]
         }
       }
     },
     {
-      "id": "await-objective-input",
-      "type": "utilityNode",
+      "id": "autonomy-intention-memory",
+      "type": "genericNode",
       "position": {
-        "x": 6800,
-        "y": 550
+        "x": 2420,
+        "y": 580
       },
       "data": {
-        "label": "Await Requested Context",
-        "nodeType": "execution_event_wait",
+        "nodeType": "inner_dialogue_saver",
+        "label": "Memory: Autonomy Intention",
         "properties": {
-          "waitForEvent": true,
-          "userGraph": "environment",
-          "autonomyGraph": "robot-autonomy-controller"
+          "tags": [
+            "autonomy",
+            "autonomy-intention",
+            "inner"
+          ],
+          "roles": [
+            "reflection"
+          ]
         },
         "activation": {
-          "when": [
-            {
-              "nodeId": "remaining-objective",
-              "output": "awaitContext",
-              "truthy": true
-            }
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "entries"
           ]
         }
+      }
+    },
+    {
+      "id": "activation-dispatch",
+      "type": "operatorNode",
+      "position": {
+        "x": 1500,
+        "y": 400
+      },
+      "data": {
+        "nodeType": "active_operator_dispatch",
+        "label": "Request Activated Operations",
+        "properties": {}
       }
     }
   ],
@@ -568,17 +398,6 @@
       "type": "default",
       "data": {
         "type": "object"
-      }
-    },
-    {
-      "id": "e-autonomy-activity-context",
-      "source": "autonomy-activity",
-      "target": "context",
-      "sourceHandle": "history",
-      "targetHandle": "autonomyActivityHistory",
-      "type": "default",
-      "data": {
-        "type": "array"
       }
     },
     {
@@ -824,264 +643,12 @@
       }
     },
     {
-      "id": "e-agent-dispatch",
-      "source": "parser",
-      "target": "agent-dispatch",
-      "sourceHandle": "taskDecision",
-      "targetHandle": "decision",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "e-agent-cycle",
-      "source": "robot-input",
-      "target": "agent-dispatch",
-      "sourceHandle": "robotObserver",
-      "targetHandle": "robotObserver",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "e-agent-session",
-      "source": "observation",
-      "target": "agent-dispatch",
-      "sourceHandle": "sessionId",
-      "targetHandle": "sessionId",
-      "type": "default",
-      "data": {
-        "type": "string"
-      }
-    },
-    {
-      "id": "e-executor-decision",
-      "source": "parser",
-      "target": "executor-dispatch",
-      "sourceHandle": "executorDecision",
-      "targetHandle": "decision",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "e-executor-observation",
-      "source": "observation",
-      "target": "executor-dispatch",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "e-executor-cycle",
-      "source": "robot-input",
-      "target": "executor-dispatch",
-      "sourceHandle": "robotObserver",
-      "targetHandle": "robotObserver",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "e-response-conversation",
-      "source": "parser",
-      "target": "conversation",
-      "sourceHandle": "response",
-      "targetHandle": "response",
-      "type": "default",
-      "data": {
-        "type": "string"
-      }
-    },
-    {
-      "id": "e-response-metadata",
-      "source": "robot-input",
-      "target": "conversation",
-      "sourceHandle": "responseMetadata",
-      "targetHandle": "metadata",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "e-conversation-memory",
-      "source": "conversation",
-      "target": "conversation-memory",
-      "sourceHandle": "entries",
-      "targetHandle": "entries",
-      "type": "default",
-      "data": {
-        "type": "array"
-      }
-    },
-    {
-      "id": "e-conversation-tts",
-      "source": "conversation",
-      "target": "tts",
-      "sourceHandle": "response",
-      "targetHandle": "conversation",
-      "type": "default",
-      "data": {
-        "type": "string"
-      }
-    },
-    {
       "id": "durable-execution-context-context-execution",
       "source": "execution",
       "target": "context",
       "sourceHandle": "context",
       "targetHandle": "execution",
       "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "durable-agent-dispatch-invocation-selected-workflow-invocation",
-      "source": "agent-dispatch",
-      "target": "selected-workflow",
-      "sourceHandle": "invocation",
-      "targetHandle": "invocation",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "durable-executor-dispatch-invocation-selected-workflow-invocation",
-      "source": "executor-dispatch",
-      "target": "selected-workflow",
-      "sourceHandle": "invocation",
-      "targetHandle": "invocation",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "durable-agent-dispatch-work-agent-result-work",
-      "source": "agent-dispatch",
-      "target": "agent-result",
-      "sourceHandle": "work",
-      "targetHandle": "work",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "durable-observation-observation-agent-dispatch-observation",
-      "source": "observation",
-      "target": "agent-dispatch",
-      "sourceHandle": "observation",
-      "targetHandle": "observation",
-      "type": "default",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "contextual-remaining-objective-hasActiveTask-review-remaining-objective-control",
-      "source": "remaining-objective",
-      "sourceHandle": "needsGoalReview",
-      "target": "review-remaining-objective",
-      "targetHandle": "control",
-      "type": "default",
-      "data": {
-        "type": "boolean",
-        "kind": "control",
-        "when": {
-          "output": "needsGoalReview",
-          "truthy": true
-        }
-      }
-    },
-    {
-      "id": "input-events-invocation-continue-user-input-invocation",
-      "source": "input-events",
-      "sourceHandle": "invocation",
-      "target": "continue-user-input",
-      "targetHandle": "invocation",
-      "data": {
-        "type": "object"
-      }
-    },
-    {
-      "id": "continue-user-input-completed-remaining-objective-control",
-      "source": "continue-user-input",
-      "sourceHandle": "completed",
-      "target": "remaining-objective",
-      "targetHandle": "control",
-      "data": {
-        "type": "boolean",
-        "kind": "control",
-        "when": {
-          "truthy": true,
-          "output": "completed"
-        }
-      }
-    },
-    {
-      "id": "input-events-invocation-remaining-objective-control",
-      "source": "input-events",
-      "sourceHandle": "invocation",
-      "target": "remaining-objective",
-      "targetHandle": "control",
-      "data": {
-        "type": "object",
-        "kind": "control",
-        "when": {
-          "truthy": true,
-          "output": "invocation"
-        }
-      }
-    },
-    {
-      "id": "agent-result-result-input-events-control",
-      "source": "agent-result",
-      "sourceHandle": "result",
-      "target": "input-events",
-      "targetHandle": "control",
-      "type": "default",
-      "data": {
-        "type": "object",
-        "kind": "control",
-        "when": {
-          "output": "result",
-          "truthy": true
-        }
-      }
-    },
-    {
-      "id": "selected-workflow-completed-input-events-control",
-      "source": "selected-workflow",
-      "sourceHandle": "completed",
-      "target": "input-events",
-      "targetHandle": "control",
-      "type": "default",
-      "data": {
-        "type": "boolean",
-        "kind": "control",
-        "when": {
-          "output": "completed",
-          "truthy": true
-        }
-      }
-    },
-    {
-      "id": "agent-result-userInput-input-events-receivedInput",
-      "source": "agent-result",
-      "sourceHandle": "userInput",
-      "target": "input-events",
-      "targetHandle": "receivedInput",
       "data": {
         "type": "object"
       }
@@ -1109,54 +676,98 @@
       }
     },
     {
-      "id": "visual-history-context-frames-parser-frames",
-      "source": "context",
-      "sourceHandle": "frames",
+      "id": "observation-sessionId-read-camera-sessionId",
+      "source": "observation",
+      "sourceHandle": "sessionId",
+      "target": "read-camera",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "type": "string"
+      }
+    },
+    {
+      "id": "read-camera-work-image-input-work",
+      "source": "read-camera",
+      "sourceHandle": "work",
+      "target": "image-input",
+      "targetHandle": "work",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "autonomy-inner-output-entries-autonomy-intention-memory-entries",
+      "source": "autonomy-inner-output",
+      "sourceHandle": "entries",
+      "target": "autonomy-intention-memory",
+      "targetHandle": "entries",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "task-catalog-activationState-context-activationState",
+      "source": "task-catalog",
+      "sourceHandle": "activationState",
+      "target": "context",
+      "targetHandle": "activationState",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "task-catalog-activationState-parser-activationState",
+      "source": "task-catalog",
+      "sourceHandle": "activationState",
       "target": "parser",
-      "targetHandle": "frames",
-      "type": "default",
-      "data": {
-        "type": "array"
-      }
-    },
-    {
-      "id": "visual-history-context-frames-save-observation-frames",
-      "source": "context",
-      "sourceHandle": "frames",
-      "target": "save-observation",
-      "targetHandle": "frames",
-      "type": "default",
-      "data": {
-        "type": "array"
-      }
-    },
-    {
-      "id": "visual-history-observation-observation-save-observation-observation",
-      "source": "observation",
-      "sourceHandle": "observation",
-      "target": "save-observation",
-      "targetHandle": "observation",
+      "targetHandle": "activationState",
       "type": "default",
       "data": {
         "type": "object"
       }
     },
     {
-      "id": "visual-history-parser-visualObservation-save-observation-visualObservation",
+      "id": "parser-assessment-activation-dispatch-assessment",
       "source": "parser",
-      "sourceHandle": "visualObservation",
-      "target": "save-observation",
-      "targetHandle": "visualObservation",
+      "sourceHandle": "assessment",
+      "target": "activation-dispatch",
+      "targetHandle": "assessment",
       "type": "default",
       "data": {
         "type": "object"
       }
     },
     {
-      "id": "visual-history-observation-observation-observation-status-observation",
+      "id": "task-catalog-tasks-activation-dispatch-availableTasks",
+      "source": "task-catalog",
+      "sourceHandle": "tasks",
+      "target": "activation-dispatch",
+      "targetHandle": "availableTasks",
+      "type": "default",
+      "data": {
+        "type": "array"
+      }
+    },
+    {
+      "id": "robot-input-robotObserver-activation-dispatch-robotObserver",
+      "source": "robot-input",
+      "sourceHandle": "robotObserver",
+      "target": "activation-dispatch",
+      "targetHandle": "robotObserver",
+      "type": "default",
+      "data": {
+        "type": "object"
+      }
+    },
+    {
+      "id": "observation-observation-activation-dispatch-observation",
       "source": "observation",
       "sourceHandle": "observation",
-      "target": "observation-status",
+      "target": "activation-dispatch",
       "targetHandle": "observation",
       "type": "default",
       "data": {
@@ -1164,69 +775,47 @@
       }
     },
     {
-      "id": "visual-history-save-observation-observation-observation-status-visualObservation",
-      "source": "save-observation",
-      "sourceHandle": "observation",
-      "target": "observation-status",
-      "targetHandle": "visualObservation",
+      "id": "observation-isTriggeringObservation-activation-dispatch-observationCurrent",
+      "source": "observation",
+      "sourceHandle": "isTriggeringObservation",
+      "target": "activation-dispatch",
+      "targetHandle": "observationCurrent",
       "type": "default",
       "data": {
-        "type": "object"
+        "type": "boolean"
       }
     },
     {
-      "id": "visual-history-observation-status-status-agent-dispatch-control",
-      "source": "observation-status",
-      "sourceHandle": "status",
-      "target": "agent-dispatch",
-      "targetHandle": "control",
+      "id": "image-input-frames-activation-dispatch-frames",
+      "source": "image-input",
+      "sourceHandle": "frames",
+      "target": "activation-dispatch",
+      "targetHandle": "frames",
       "type": "default",
       "data": {
-        "type": "object",
-        "kind": "control"
+        "type": "array"
       }
     },
     {
-      "id": "visual-history-observation-status-status-executor-dispatch-control",
-      "source": "observation-status",
-      "sourceHandle": "status",
-      "target": "executor-dispatch",
-      "targetHandle": "control",
+      "id": "image-input-verified-activation-dispatch-currentVisualEvidence",
+      "source": "image-input",
+      "sourceHandle": "verified",
+      "target": "activation-dispatch",
+      "targetHandle": "currentVisualEvidence",
       "type": "default",
       "data": {
-        "type": "object",
-        "kind": "control"
+        "type": "boolean"
       }
     },
     {
-      "id": "remaining-objective-await-input",
-      "source": "remaining-objective",
-      "sourceHandle": "awaitContext",
-      "target": "await-objective-input",
-      "targetHandle": "control",
+      "id": "activation-dispatch-innerEntries-autonomy-inner-output-entries",
+      "source": "activation-dispatch",
+      "sourceHandle": "innerEntries",
+      "target": "autonomy-inner-output",
+      "targetHandle": "entries",
+      "type": "default",
       "data": {
-        "kind": "control",
-        "type": "boolean",
-        "when": {
-          "output": "awaitContext",
-          "truthy": true
-        }
-      }
-    },
-    {
-      "id": "await-objective-input-continue",
-      "source": "await-objective-input",
-      "sourceHandle": "invocation",
-      "target": "continue-user-input",
-      "targetHandle": "invocation",
-      "data": {
-        "kind": "data",
-        "type": "object",
-        "loop": true,
-        "when": {
-          "output": "invocation",
-          "truthy": true
-        }
+        "type": "array"
       }
     }
   ],

@@ -1,15 +1,14 @@
 import { AGENT_CATALOG_DEFINITIONS } from '../../agent-catalog-definitions.js'
 
 export const ROBOT_AUTONOMY_EXECUTOR_TASK_ID = 'robot-autonomy-executor'
-export const ROBOT_AUTONOMY_NO_TASK_ID = 'none'
 export const ROBOT_AUTONOMY_LIFECYCLE_TASK_IDS = new Set([
   'robot-autonomy-controller',
-  'robot-status',
   'robot-goal-review',
 ])
 
 export const DEFAULT_ROBOT_AUTONOMY_TASK_IDS = [
   ROBOT_AUTONOMY_EXECUTOR_TASK_ID,
+  'robot-status',
   'boredom-observer',
   'boredom-movement',
   'boredom-reflection',

@@ -215,7 +215,7 @@ export class AgentCatalogService {
         : serviceRegistered
           ? 'Persistent lifecycle is owned by Agent Monitor and services.json.'
           : robotOperatorOwned
-            ? 'Finite robot-autonomy work is owned by Robot Operator and can be run manually through the Work Coordinator.'
+            ? 'Finite robot-autonomy work is owned by Active Operator and can be run manually through the Work Coordinator.'
             : triggerRegistered
               ? `${trigger?.type === 'manual' ? 'Manual' : 'Scheduled'} finite work is registered with Trigger Manager.`
               : 'Installed finite agent is available for manual runs or Trigger Manager registration.';
@@ -278,7 +278,7 @@ export class AgentCatalogService {
     if (!current) throw new Error(`Unknown installed agent: ${agentId}`);
     if (!current.canRegister) {
       if (current.triggerRegistered) throw new Error(`Agent is already registered: ${agentId}`);
-      if (current.owner === 'robot-operator') throw new Error(`${agentId} is owned by Robot Operator`);
+      if (current.owner === 'robot-operator') throw new Error(`${agentId} is owned by Active Operator`);
       if (current.lifecycle === 'service') throw new Error(`${agentId} is a persistent service managed by Agent Monitor`);
       throw new Error(`Agent cannot be registered because its executable is missing: ${agentId}`);
     }
@@ -321,7 +321,7 @@ export class AgentCatalogService {
   unregister(agentId: string, actor: string): AgentCatalogSnapshot {
     if (!validAgentId(agentId)) throw new Error('Agent id must use lowercase kebab-case');
     const current = this.getAgent(agentId);
-    if (current?.owner === 'robot-operator') throw new Error(`${agentId} is owned by Robot Operator`);
+    if (current?.owner === 'robot-operator') throw new Error(`${agentId} is owned by Active Operator`);
     if (!current?.triggerRegistered) throw new Error(`Agent is not registered with Trigger Manager: ${agentId}`);
     this.triggerConfig.unregisterAgent(agentId, actor);
     return this.getSnapshot();

@@ -57,6 +57,8 @@ def validate_config(cfg):
         ("num_train_epochs", 1, 50), ("per_device_train_batch_size", 1, 128),
         ("gradient_accumulation_steps", 1, 1024), ("max_seq_length", 128, 262144),
     ):
+        if name == "max_seq_length" and cfg.get("require_exact_messages"):
+            continue  # Measured from complete specialist examples before loading weights.
         if type(cfg.get(name)) is not int or not minimum <= cfg[name] <= maximum:
             raise ValueError(f"{name} must be an integer from {minimum} through {maximum}")
     rate = cfg.get("learning_rate")
@@ -165,12 +167,18 @@ def verify_manifest(manifest_path, data_path, eval_path, cfg):
             sources = metadata.get("sourceIds", [])
             if not sources or set(metadata.get("sourceHashes", {})) != set(sources):
                 raise ValueError("Every example requires its exact source identities and hashes")
-            if metadata.get("objective") != manifest.get("settings", {}).get("objective"):
+            settings = manifest.get("settings", {})
+            objective = settings.get("objectivesByMode", {}).get(metadata.get("mode"), settings.get("objective"))
+            if metadata.get("objective") != objective:
                 raise ValueError("Example objective differs from its manifest")
+            if metadata.get("targetAuthor") != ("assistant" if objective == "assistant-continuation" else "human"):
+                raise ValueError("Example target author differs from its objective")
             if any(manifest.get("sourceHashes", {}).get(source) != metadata["sourceHashes"][source] for source in sources):
                 raise ValueError("Example provenance differs from its manifest")
             context = next((message["content"] for message in row["messages"] if message["role"] == "system"), None)
-            if context != manifest.get("systemPrompt"):
+            expected_context = manifest.get("systemPromptsBySample", {}).get(row.get("id"),
+                manifest.get("systemPromptsByObjective", {}).get(objective, manifest.get("systemPrompt")))
+            if context != expected_context:
                 raise ValueError("Example persona context differs from its manifest")
             ids.update(sources)
         if sorted(ids) != section.get("sourceIds"):
@@ -193,7 +201,7 @@ def tokenize_row(tokenizer, row, max_length, exact=False):
     prompt_ids = tokenizer(prefix, add_special_tokens=False)["input_ids"]
     if not full.startswith(prefix) or ids[:len(prompt_ids)] != prompt_ids:
         raise ValueError("The native template has no exact final-response token boundary for this example")
-    if len(ids) > max_length:
+    if max_length is not None and len(ids) > max_length:
         raise ValueError(f"Example has {len(ids)} tokens, exceeding max_seq_length={max_length}; increase the limit or curate a shorter example")
     if len(prompt_ids) >= len(ids):
         raise ValueError("The final response has no supervised tokens")
@@ -215,6 +223,17 @@ def tokenize_rows(tokenizer, rows, cfg):
     return output
 
 
+def prepare_sequences(tokenizer, rows, eval_rows, cfg):
+    """Specialist capacity follows complete native examples, not a preset ceiling."""
+    measured = {**cfg, "max_seq_length": None} if cfg.get("require_exact_messages") else cfg
+    training = tokenize_rows(tokenizer, rows, measured)
+    evaluation = tokenize_rows(tokenizer, eval_rows, measured)
+    effective = {**cfg}
+    if cfg.get("require_exact_messages"):
+        effective["max_seq_length"] = max(len(row["input_ids"]) for row in training + evaluation)
+    return effective, training, evaluation
+
+
 def finite_loss(metrics):
     value = metrics.get("eval_loss")
     if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
@@ -226,7 +245,8 @@ def artifact_files(output):
     output = Path(output)
     names = ["adapter_config.json", "config.json", "tokenizer_config.json", "tokenizer.json",
              "tokenizer.model", "spiece.model", "vocab.json", "vocab.txt", "merges.txt", "added_tokens.json",
-             "special_tokens_map.json", "chat_template.jinja", "generation_config.json"]
+             "special_tokens_map.json", "chat_template.jinja", "generation_config.json",
+             "baseline-generation.json", "candidate-generation.json"]
     files = [output / name for name in names if (output / name).is_file()]
     files += sorted(output.glob("*.safetensors"))
     files += sorted(output.glob("*.safetensors.index.json"))
@@ -256,13 +276,20 @@ def load_runtime(cfg, model_path=None, training=False):
     dtype = getattr(torch, cfg.get("dtype", "bfloat16"))
     if dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
         raise RuntimeError("This GPU does not support the configured bfloat16 training dtype")
+    adapter_path = model_path if model_path and cfg.get("training_mode", "lora") == "lora" else None
     model, tokenizer = FastModel.from_pretrained(
-        model_name=str(model_path or cfg["base_model"]),
+        model_name=str(cfg["base_model"] if adapter_path else model_path or cfg["base_model"]),
+        revision=cfg.get("base_model_revision") if model_path is None or adapter_path else None,
         max_seq_length=cfg["max_seq_length"], dtype=dtype,
         load_in_4bit=cfg["load_in_4bit"], load_in_16bit=cfg["load_in_16bit"],
         full_finetuning=training and cfg.get("training_mode", "lora") != "lora",
         use_gradient_checkpointing="unsloth", text_only=True,
     )
+    if adapter_path:
+        # Unsloth's adapter-path loader drops the base revision. Load the exact
+        # base first, then attach the persisted adapter through PEFT.
+        from peft import PeftModel
+        model = PeftModel.from_pretrained(model, str(adapter_path), is_trainable=False)
     if training and cfg.get("training_mode", "lora") == "lora":
         model = FastModel.get_peft_model(
             model, r=cfg["lora_rank"], lora_alpha=cfg["lora_alpha"],
@@ -271,6 +298,8 @@ def load_runtime(cfg, model_path=None, training=False):
             finetune_attention_modules=True, finetune_mlp_modules=True,
             use_gradient_checkpointing="unsloth", random_state=cfg.get("seed", 42),
         )
+        if cfg.get("base_model_revision"):
+            model.peft_config["default"].revision = cfg["base_model_revision"]
     if tokenizer.pad_token_id is None:
         raise ValueError("The selected tokenizer must declare a padding token")
     tokenizer.padding_side = "right"
@@ -311,12 +340,61 @@ def make_trainer(model, tokenizer, cfg, output, training, evaluation):
     )
 
 
+def generate_evaluation(model, tokenizer, torch, cfg, output, name):
+    evaluation = cfg.get("generationEvaluation")
+    if not evaluation:
+        return
+    from unsloth import FastModel
+    underlying = model.get_base_model() if hasattr(model, "get_base_model") else model
+    model.config.architectures = [type(underlying).__name__]
+    FastModel.for_inference(model)
+    records = []
+    for case in evaluation["cases"]:
+        text = tokenizer.apply_chat_template(case["messages"], tokenize=False,
+            add_generation_prompt=True, enable_thinking=False)
+        encoded = tokenizer(text, add_special_tokens=False, return_tensors="pt")
+        encoded = {key: value.to(model.device) for key, value in encoded.items()}
+        torch.manual_seed(cfg.get("seed", 42))
+        torch.cuda.reset_peak_memory_stats()
+        torch.cuda.synchronize()
+        started = time.perf_counter()
+        with torch.inference_mode():
+            generated = model.generate(**encoded, max_new_tokens=evaluation["maxNewTokens"],
+                do_sample=evaluation["temperature"] > 0, temperature=evaluation["temperature"],
+                top_p=evaluation["topP"], top_k=evaluation["topK"], repetition_penalty=evaluation["repeatPenalty"],
+                eos_token_id=tokenizer.eos_token_id, pad_token_id=tokenizer.pad_token_id)
+        torch.cuda.synchronize()
+        prompt_tokens = encoded["input_ids"].shape[1]
+        continuation = generated[0, prompt_tokens:]
+        records.append({"id": case["id"], "messages": case["messages"],
+            "output": tokenizer.decode(continuation, skip_special_tokens=True),
+            "promptTokens": prompt_tokens, "outputTokens": len(continuation),
+            "latencySeconds": time.perf_counter() - started,
+            "peakAllocatedBytes": torch.cuda.max_memory_allocated(),
+            "endedWithEos": bool(len(continuation) and continuation[-1].item() == tokenizer.eos_token_id)})
+        write_json(Path(output) / name, {"backend": "native-unsloth", "cases": records})
+    FastModel.for_training(model)
+
+
+def pinned_base_artifacts(cfg):
+    from huggingface_hub import try_to_load_from_cache
+    config_file = try_to_load_from_cache(cfg["base_model"], "config.json", revision=cfg["base_model_revision"])
+    snapshot = Path(config_file).parent
+    index = snapshot / "model.safetensors.index.json"
+    weights = set(read_json(index)["weight_map"].values()) if index.is_file() else {"model.safetensors"}
+    files = weights | {"config.json"}
+    files.update(name for name in ("model.safetensors.index.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja")
+        if (snapshot / name).is_file())
+    return {name: digest(snapshot / name) for name in sorted(files)}
+
+
 def evaluate_artifact(args, cfg):
     rows = read_rows(args.eval_data, cfg.get("require_exact_messages", False))
-    model, tokenizer, _ = load_runtime(cfg, args.output)
+    model, tokenizer, torch = load_runtime(cfg, args.output)
     tokens = tokenize_rows(tokenizer, rows, cfg)
     trainer = make_trainer(model, tokenizer, cfg, args.output, [], tokens)
     loss = finite_loss(trainer.evaluate())
+    generate_evaluation(model, tokenizer, torch, cfg, args.output, "candidate-generation.json")
     write_json(Path(args.output) / "artifact-evaluation.json", {
         "version": 1, "loss": loss, "evaluationSha256": digest(args.eval_data),
         "artifacts": artifact_files(args.output), "count": len(rows),
@@ -340,9 +418,22 @@ def run_training(args, cfg, manifest):
     try:
         rows = read_rows(args.data, cfg.get("require_exact_messages", False))
         eval_rows = read_rows(args.eval_data, cfg.get("require_exact_messages", False)) if args.eval_data else []
+        effective_config = Path(args.config).resolve()
+        if cfg.get("require_exact_messages"):
+            # Import Unsloth before Transformers. Tokenization does not allocate model weights.
+            import unsloth
+            from transformers import AutoTokenizer
+            native_tokenizer = AutoTokenizer.from_pretrained(cfg["base_model"])
+            cfg, training, evaluation = prepare_sequences(native_tokenizer, rows, eval_rows, cfg)
+            effective_config = output / "effective-training-config.json"
+            write_json(effective_config, cfg)
+            result["effectiveConfigSha256"] = digest(effective_config)
+            result["maxSequenceTokens"] = cfg["max_seq_length"]
+            log("CAPACITY", f"{cfg['max_seq_length']} tokens; complete native training/validation examples")
         model, tokenizer, torch = load_runtime(cfg, training=True)
-        training = tokenize_rows(tokenizer, rows, cfg)
-        evaluation = tokenize_rows(tokenizer, eval_rows, cfg)
+        if not cfg.get("require_exact_messages"):
+            training = tokenize_rows(tokenizer, rows, cfg)
+            evaluation = tokenize_rows(tokenizer, eval_rows, cfg)
         result.update({
             "trainingSamples": len(training), "evaluationSamples": len(evaluation),
             "supervisedTokens": sum(sum(label != -100 for label in row["labels"]) for row in training),
@@ -351,10 +442,17 @@ def run_training(args, cfg, manifest):
             "baseRevision": getattr(model.config, "_commit_hash", None),
             "packages": {name: importlib.metadata.version(name) for name in ("torch", "unsloth", "transformers", "peft")},
         })
+        if cfg.get("base_model_revision"):
+            result["baseArtifacts"] = pinned_base_artifacts(cfg)
+            result["requestedBaseRevision"] = cfg["base_model_revision"]
         trainer = make_trainer(model, tokenizer, cfg, output, training, evaluation)
         baseline = finite_loss(trainer.evaluate()) if evaluation else None
+        generate_evaluation(model, tokenizer, torch, cfg, output, "baseline-generation.json")
         log("TRAINING", f"{len(training)} examples, {result['supervisedTokens']} supervised tokens")
+        torch.cuda.reset_peak_memory_stats()
         trainer.train()
+        result.update({"trainingPeakAllocatedBytes": torch.cuda.max_memory_allocated(),
+            "trainingPeakReservedBytes": torch.cuda.max_memory_reserved(), "gpu": torch.cuda.get_device_name()})
         trainer.save_model(str(output))
         tokenizer.save_pretrained(output)
         artifacts = artifact_files(output)
@@ -371,6 +469,8 @@ def run_training(args, cfg, manifest):
             # Conversion intermediates are inside this newly created run only.
             shutil.rmtree(conversion_dir)
         result["artifacts"] = artifacts
+        if cfg.get("generationEvaluation"):
+            result["artifacts"]["baseline-generation.json"] = digest(output / "baseline-generation.json")
         # Reload the serialized candidate in a fresh process; in-memory loss is
         # not evidence that the exported weights can actually be loaded.
         del trainer, model, tokenizer
@@ -380,7 +480,7 @@ def run_training(args, cfg, manifest):
         if eval_rows:
             subprocess.run([
                 sys.executable, str(Path(__file__).resolve()),
-                "--config", str(Path(args.config).resolve()), "--output", str(output),
+                "--config", str(effective_config), "--output", str(output),
                 "--eval-data", str(Path(args.eval_data).resolve()), "--evaluate-artifact",
             ], check=True)
             report = read_json(output / "artifact-evaluation.json")
@@ -388,6 +488,8 @@ def run_training(args, cfg, manifest):
                 raise ValueError("Reload evaluation does not describe these exact candidate files")
             candidate = finite_loss({"eval_loss": report["loss"]})
             result["artifacts"]["artifact-evaluation.json"] = digest(output / "artifact-evaluation.json")
+            if cfg.get("generationEvaluation"):
+                result["artifacts"]["candidate-generation.json"] = digest(output / "candidate-generation.json")
         result.update({
             "status": "candidate", "baselineLoss": baseline, "candidateLoss": candidate,
             "qualityGate": "passed" if candidate is not None and baseline is not None and candidate <= baseline else
@@ -454,9 +556,11 @@ def main():
     if args.validate_only:
         from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(cfg["base_model"])
-        rows = tokenize_rows(tokenizer, read_rows(args.data, cfg.get("require_exact_messages", False)), cfg)
-        evaluation = tokenize_rows(tokenizer, read_rows(args.eval_data, cfg.get("require_exact_messages", False)), cfg) if args.eval_data else []
-        log("VALIDATED", f"{len(rows)} training and {len(evaluation)} evaluation examples; final response labels only")
+        cfg, rows, evaluation = prepare_sequences(tokenizer,
+            read_rows(args.data, cfg.get("require_exact_messages", False)),
+            read_rows(args.eval_data, cfg.get("require_exact_messages", False)) if args.eval_data else [], cfg)
+        log("VALIDATED", f"{len(rows)} training and {len(evaluation)} evaluation examples; "
+            f"{cfg['max_seq_length']} tokens; final response labels only")
         return
     check_environment()
     run_training(args, cfg, manifest)

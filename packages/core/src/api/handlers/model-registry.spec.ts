@@ -243,17 +243,42 @@ test('registry migration replaces the known text-only selector with the vision-c
   assert.equal(migration.registry.models['default.orchestrator']?.capabilities?.includes('image'), true)
 })
 
-test('adding an Environment intent role preserves general orchestration and explicit assignments', () => {
-  const source = { version: '1.0.0', description: 'Role split', defaults: { orchestrator: 'general' },
+test('Intent consolidation preserves explicit choices, default inheritance, disabled roles and installed artifacts', () => {
+  const source = { version: '1.0.0', description: 'Role consolidation',
+    defaults: { orchestrator: 'general', environmentIntent: 'specialist', persona: 'general' },
     models: { general: model('general', 'llama-cpp', 'general-9b', ['orchestrator']),
       specialist: model('specialist', 'llama-cpp', 'intent-small', ['environmentIntent']) },
-    cognitiveModeMappings: { environment: { orchestrator: 'general' } } } as unknown as ModelRegistry
-  const first = migrateModelRegistry(source).registry
-  assert.equal(first.defaults.environmentIntent, 'general')
-  assert.equal(first.cognitiveModeMappings?.environment?.environmentIntent, 'general')
-  first.cognitiveModeMappings!.environment!.environmentIntent = 'specialist'
-  const next = migrateModelRegistry(first).registry
-  assert.equal(next.cognitiveModeMappings?.environment?.environmentIntent, 'specialist')
-  assert.equal(next.cognitiveModeMappings?.environment?.orchestrator, 'general')
-  assert.equal(next.defaults.orchestrator, 'general')
+    roleHierarchy: { environmentIntent: ['specialist'], orchestrator: ['general'] },
+    cognitiveModeMappings: {
+      environment: { orchestrator: 'general', environmentIntent: 'specialist' },
+      dual: { orchestrator: 'general' },
+      agent: { orchestrator: 'general', environmentIntent: null },
+      emulation: { environmentIntent: 'general' },
+    } } as unknown as ModelRegistry
+  const { registry: result } = migrateModelRegistry(source)
+  assert.equal(result.defaults.orchestrator, 'specialist')
+  assert.equal(result.defaults.persona, 'general')
+  assert.deepEqual(result.cognitiveModeMappings?.environment?.orchestrator, 'specialist')
+  assert.deepEqual(result.cognitiveModeMappings?.dual, {})
+  assert.equal(result.cognitiveModeMappings?.agent?.orchestrator, null)
+  assert.equal(result.cognitiveModeMappings?.emulation?.orchestrator, 'general')
+  assert.deepEqual(result.roleHierarchy?.orchestrator, ['specialist'])
+  assert.deepEqual(result.models.specialist, { ...source.models.specialist, roles: ['orchestrator'] })
+  assert.deepEqual(result.models.general, source.models.general)
+  assert.equal(JSON.stringify(result).includes('environmentIntent'), false)
+  assert.equal(migrateModelRegistry(result).changed, false)
+  assert.deepEqual(migrateModelRegistry(result).registry, result)
+  assert.equal((source.defaults as Record<string, string>).environmentIntent, 'specialist', 'input remains unchanged')
+})
+
+test('registries without the retired Intent assignment retain their existing orchestrator choices', () => {
+  const source = { version: '1', description: '', defaults: { orchestrator: 'general' },
+    models: { general: model('general', 'llama-cpp', 'general', ['orchestrator']) },
+    cognitiveModeMappings: { dual: { orchestrator: null }, environment: { orchestrator: 'general' } },
+  } as ModelRegistry
+  const result = migrateModelRegistry(source).registry
+  assert.equal(result.defaults.orchestrator, 'general')
+  assert.equal(result.cognitiveModeMappings?.dual?.orchestrator, null)
+  assert.equal(result.cognitiveModeMappings?.environment?.orchestrator, 'general')
+  assert.equal(migrateModelRegistry(result).changed, false)
 })

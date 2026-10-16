@@ -4,9 +4,10 @@ import type { QueuedTask } from '../../queue/types.js'
 import { openExecutionStore } from '../../durable-execution/storage.js'
 import type { ExecutionStore } from '../../durable-execution/store.js'
 import { executionEventContext } from '../utility/execution-context.node.js'
+import { ExecutionCheckpointer } from '../../durable-execution/checkpointer.js'
 
 export interface RobotAutonomyActivityRecord {
-  taskId: string
+  taskId?: string
   capabilityId: string
   handler: string
   state: QueuedTask['state']
@@ -204,7 +205,8 @@ export function summarizeRobotAutonomyActivity(
 
 /** Current execution facts replace the initial admission snapshot, not its LLM decision. */
 export function projectAutonomyActivityOutcomes(history: RobotAutonomyActivityRecord[], store: ExecutionStore) {
-  const records = new Map(store.list().map(record => [record.executionId, record]))
+  const records = new Map([...new Set(history.flatMap(activity => activity.executionIds ?? []))]
+    .map(executionId => [executionId, store.find(executionId)] as const))
   return history.map(activity => {
     const executions = (activity.executionIds ?? []).flatMap(executionId => {
       const record = records.get(executionId)
@@ -249,16 +251,79 @@ export const robotAutonomyActivityHistoryNode = defineNode({
       step: 1,
     },
   },
-  description: 'Reads bounded terminal receipts directly from canonical Work Coordinator history for tasks previously selected by Full autonomy. It does not read conversation, choose a task, or schedule work.',
+  description: 'Reads recorded Full-autonomy decisions and selected-task outcomes from canonical execution and Work Coordinator history. It does not choose a task or schedule work.',
   async execute(_inputs, context, properties) {
     const username = cleanText(context.username, 160)
     const supplied = username
       ? summarizeRobotAutonomyActivity(getQueueManager().getHistory(), username)
       : []
-    const selected = supplied.slice(-boundedLimit(properties?.limit))
-    if (!selected.length) return { history: [], count: 0 }
+    if (!username) return { history: [], count: 0 }
     const store = openExecutionStore(username)
     try {
+      // Work receipts have a global display window. Controller decisions retain
+      // their own durable execution identity after unrelated work fills it.
+      const records = store.list(username)
+      const decisions = new Map<string, Record<string, unknown> | null>()
+      const readDecision = async (executionId: string) => {
+        if (!decisions.has(executionId)) {
+          const reader = new ExecutionCheckpointer(store, { executionId, generation: 0, owner: 'read-only' })
+          const saved = await reader.getTuple({ configurable: { thread_id: executionId } })
+          const nodes = (saved?.checkpoint.channel_values.nodeEntries ?? []) as Array<[string, import('../../graph-executor.js').NodeExecutionState]>
+          const parser = nodes.find(([, node]) => node.definition?.type === 'robot_autonomy_controller_parser'
+            && node.status === 'completed')?.[1]
+          const decision = parser?.outputs?.decisionReceipt
+          decisions.set(executionId, isRecord(decision) ? decision : null)
+        }
+        return decisions.get(executionId)
+      }
+      const recordIds = new Set(records.map(record => record.executionId))
+      const represented = new Set(supplied
+        .filter(activity => activity.handler === 'workflow.robot-autonomy-controller')
+        .flatMap(activity => activity.executionIds ?? []))
+      const candidates = [
+        ...supplied.map(activity => ({ at: activity.completedAt ?? activity.createdAt, activity, record: undefined })),
+        ...records.filter(record => !represented.has(record.executionId)
+          && ['completed', 'failed', 'cancelled'].includes(record.status))
+          .map(record => ({ at: new Date(record.updatedAt).toISOString(), activity: undefined, record })),
+      ].sort((left, right) => left.at.localeCompare(right.at))
+      const selected: RobotAutonomyActivityRecord[] = []
+      // Select in the same stable order before expanding nonselected evidence.
+      // Only an eligible activity consumes the graph's existing history limit.
+      for (const candidate of candidates.reverse()) {
+        const { record } = candidate
+        let activity = candidate.activity
+        if (record) {
+          const entry = store.entry(record.executionId)
+          const observer = entry.context?.robotOperatorContext?.robotObserver
+          if (observer?.triggerSource !== 'autonomy'
+            || observer.requestedBy !== 'robot-autonomy-controller'
+            || observer.graph !== 'robot-autonomy-controller') continue
+          const decision = await readDecision(record.executionId)
+          if (!decision) continue
+          activity = {
+            executionIds: [record.executionId],
+            capabilityId: typeof decision.taskId === 'string' ? decision.taskId : 'workflow.robot-autonomy-controller',
+            handler: 'workflow.robot-autonomy-controller',
+            state: record.status as 'completed' | 'failed' | 'cancelled',
+            createdAt: new Date(record.createdAt).toISOString(),
+            completedAt: new Date(record.updatedAt).toISOString(),
+            result: { decision },
+          }
+        } else if (activity?.handler === 'workflow.robot-autonomy-controller') {
+          for (const executionId of activity.executionIds ?? []) {
+            if (!recordIds.has(executionId)) continue
+            const decision = await readDecision(executionId)
+            if (decision) {
+              activity.capabilityId = typeof decision.taskId === 'string' ? decision.taskId : activity.capabilityId
+              activity.result = { ...activity.result, decision }
+            }
+          }
+        }
+        if (!activity) continue
+        selected.push(activity)
+        if (selected.length === boundedLimit(properties?.limit)) break
+      }
+      selected.reverse()
       const history = projectAutonomyActivityOutcomes(selected, store)
       return { history, count: history.length }
     } finally { store.close() }

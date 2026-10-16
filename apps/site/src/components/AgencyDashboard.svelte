@@ -244,7 +244,17 @@
 
   let loading = true;
   let error = '';
-  let statusFilter: string = 'active';  // Default to showing active/in-progress work
+  let statusFilter: string = 'open';
+  const statusFilters = [
+    { value: 'active', label: 'Active (Operational)', icon: '🔄' },
+    { value: 'waiting', label: 'Waiting', icon: '⏳' },
+    { value: 'open', label: 'All Open', icon: '📂' },
+    { value: 'needs_action', label: 'Needs Your Action', icon: '⚠️' },
+    { value: 'completed', label: 'Completed', icon: '✅' },
+    { value: 'archived', label: 'Archived', icon: '📦' },
+    { value: 'all', label: 'All', icon: '' },
+  ];
+  $: statusFilterLabel = statusFilters.find(filter => filter.value === statusFilter)?.label;
   let processingId: string | null = null;
 
   // New desire form
@@ -1683,13 +1693,9 @@
     <div class="flex justify-between items-center flex-wrap gap-2 mt-4">
       <div class="flex items-center gap-2">
         <select bind:value={statusFilter} on:change={loadDesires} class="select-field">
-          <option value="active">🔄 Active (Operational)</option>
-          <option value="waiting">⏳ Waiting</option>
-          <option value="open">📂 All Open</option>
-          <option value="needs_action">⚠️ Needs Your Action</option>
-          <option value="completed">✅ Completed</option>
-          <option value="archived">📦 Archived</option>
-          <option value="all">All</option>
+          {#each statusFilters as filter}
+            <option value={filter.value}>{filter.icon}{filter.icon ? ' ' : ''}{filter.label}</option>
+          {/each}
         </select>
         <button class="btn-secondary btn-sm" on:click={() => loadAll(true, true)}>Refresh</button>
       </div>
@@ -1812,8 +1818,10 @@
     <div class="flex flex-col gap-3 mt-4">
       {#if desires.length === 0}
         <div class="text-center py-8">
-          <p class="muted">No desires found</p>
-          <p class="text-sm muted mt-1">Desires will be generated automatically by the agency system</p>
+          <p class="muted">No desires match the “{statusFilterLabel}” filter.</p>
+          {#if statusFilter !== 'all'}
+            <p class="text-sm muted mt-1">Select All to view desires across every lifecycle stage.</p>
+          {/if}
         </div>
       {:else}
         {#each desires.sort((a, b) => (b.strength || 0) - (a.strength || 0)) as desire}

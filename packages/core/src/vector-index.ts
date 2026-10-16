@@ -66,6 +66,9 @@ export interface VectorIndexItem {
   path: string
   type: 'episodic' | 'task' | 'function'
   memoryType?: string
+  role?: string
+  source?: string
+  sleepSessionId?: string
   timestamp?: string
   text: string
   vector: number[]
@@ -111,11 +114,15 @@ export type MemoryIndexStatus =
     }
 
 export interface MemoryIndexQueryOptions {
+  currentMemoryId?: string
   model?: string
   topK?: number
   username?: string
   hybridWeight?: number
   memoryTypes?: string[]
+  memoryOrder?: 'relevance' | 'newest'
+  memoryTimeRange?: { from?: string; before?: string }
+  sleepSessionId?: string
 }
 
 export class MemoryIndexUnavailableError extends Error {
@@ -367,6 +374,9 @@ async function buildMemoryIndex(options: {
           path: recordPath,
           type: 'episodic',
           memoryType: memType || 'observation',
+          ...(typeof obj.metadata?.role === 'string' ? { role: obj.metadata.role } : {}),
+          ...(typeof obj.metadata?.source === 'string' ? { source: obj.metadata.source } : {}),
+          ...(typeof obj.metadata?.sleepSessionId === 'string' ? { sleepSessionId: obj.metadata.sleepSessionId } : {}),
           timestamp: obj.timestamp,
           text,
           vector,
@@ -599,6 +609,27 @@ export async function queryIndex(
   }
   if (idx.data.length === 0) return []
 
+  const requestedMemoryTypes = new Set(
+    (options.memoryTypes || []).map(type => type.trim().toLowerCase()).filter(Boolean)
+  )
+  const from = options.memoryTimeRange?.from === undefined ? undefined : Date.parse(options.memoryTimeRange.from)
+  const before = options.memoryTimeRange?.before === undefined ? undefined : Date.parse(options.memoryTimeRange.before)
+  const candidates = idx.data.filter(item => {
+    if (options.currentMemoryId !== undefined && item.id === options.currentMemoryId) return false
+    if (requestedMemoryTypes.size && (!item.memoryType || !requestedMemoryTypes.has(item.memoryType.toLowerCase()))) return false
+    if (options.sleepSessionId !== undefined && item.sleepSessionId !== options.sleepSessionId) return false
+    const time = Date.parse(item.timestamp ?? '')
+    if (from !== undefined && !(time >= from)) return false
+    if (before !== undefined && !(time < before)) return false
+    return true
+  })
+  if (options.memoryOrder === 'newest') {
+    return candidates.filter(item => Number.isFinite(Date.parse(item.timestamp ?? '')))
+      .sort((a, b) => Date.parse(b.timestamp!) - Date.parse(a.timestamp!))
+      .slice(0, topK).map(item => ({ item, score: 0 }))
+  }
+  if (candidates.length === 0) return []
+
   // Step 2: Generate embedding for query using model router
   const embedStart = Date.now()
   const queryEmbedding = await callEmbeddings({ text: prepareEmbeddingText(query), userId: options.username })
@@ -614,12 +645,6 @@ export async function queryIndex(
 
   // Step 3: Compute HYBRID scores (vector + keyword)
   const scoreStart = Date.now()
-  const requestedMemoryTypes = new Set(
-    (options.memoryTypes || []).map(type => type.trim().toLowerCase()).filter(Boolean)
-  )
-  const candidates = requestedMemoryTypes.size > 0
-    ? idx.data.filter(item => item.memoryType && requestedMemoryTypes.has(item.memoryType.toLowerCase()))
-    : idx.data
   const scored = candidates.map(item => {
     const vectorSim = cosineSimilarity(qvec, item.vector)
     const kwScore = keywordScore(query, item.text)
@@ -837,6 +862,7 @@ export async function appendEventToIndex(event: {
   type?: string
   tags?: string[]
   entities?: string[]
+  metadata?: Record<string, any>
   path?: string
 }, options: { model?: string; username?: string } = {}): Promise<boolean> {
   const idx = loadIndex(options.model, options.username)
@@ -892,6 +918,9 @@ export async function appendEventToIndex(event: {
     path: event.path || '',
     type: 'episodic',
     memoryType: event.type || 'observation',
+    ...(typeof event.metadata?.role === 'string' ? { role: event.metadata.role } : {}),
+    ...(typeof event.metadata?.source === 'string' ? { source: event.metadata.source } : {}),
+    ...(typeof event.metadata?.sleepSessionId === 'string' ? { sleepSessionId: event.metadata.sleepSessionId } : {}),
     timestamp: event.timestamp,
     text,
     vector,

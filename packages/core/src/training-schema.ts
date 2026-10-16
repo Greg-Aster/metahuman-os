@@ -72,6 +72,7 @@ export const TRAINING_MEMORY_TYPES = [
 
 export interface TrainingDataSettings {
   objective: TrainingObjective
+  objectivesByMode: { dual: TrainingObjective; environment: TrainingObjective }
   includePersona: boolean
   memoryTypes: { percentages: Record<string, number> }
   maxSyntheticPercent: number
@@ -81,6 +82,7 @@ export interface TrainingDataSettings {
 
 export const DEFAULT_TRAINING_DATA: TrainingDataSettings = {
   objective: 'human-continuation',
+  objectivesByMode: { dual: 'human-continuation', environment: 'assistant-continuation' },
   includePersona: true,
   memoryTypes: { percentages: {
     conversation: 100, observation: 0, therapy_session: 0, journal: 0,
@@ -102,6 +104,13 @@ export function parseTrainingDataSettings(value: unknown = {}): TrainingDataSett
   const data = object(value, 'Training data settings')
   const objective = data.objective ?? DEFAULT_TRAINING_DATA.objective
   if (objective !== 'human-continuation' && objective !== 'assistant-continuation') throw new Error('Invalid training objective')
+  const objectivesByMode = { ...DEFAULT_TRAINING_DATA.objectivesByMode }
+  const modeObjectives = data.objectivesByMode === undefined ? {} : object(data.objectivesByMode, 'Mode training objectives')
+  for (const [mode, target] of Object.entries(modeObjectives)) {
+    if (mode !== 'dual' && mode !== 'environment') throw new Error('Mode training objectives support dual and environment')
+    if (target !== 'human-continuation' && target !== 'assistant-continuation') throw new Error('Invalid mode training objective')
+    objectivesByMode[mode] = target
+  }
   const includePersona = data.includePersona ?? DEFAULT_TRAINING_DATA.includePersona
   if (typeof includePersona !== 'boolean') throw new Error('includePersona must be a boolean')
   const types = data.memoryTypes === undefined ? {} : object(data.memoryTypes, 'Memory types')
@@ -126,7 +135,7 @@ export function parseTrainingDataSettings(value: unknown = {}): TrainingDataSett
   }
   const seed = data.seed ?? DEFAULT_TRAINING_DATA.seed
   if (typeof seed !== 'string' || !/^[A-Za-z0-9._-]{1,80}$/.test(seed)) throw new Error('Training seed must contain 1 to 80 letters, numbers, dots, dashes or underscores')
-  return { objective, includePersona, memoryTypes: { percentages }, maxSyntheticPercent, evaluationPercent, seed }
+  return { objective, objectivesByMode, includePersona, memoryTypes: { percentages }, maxSyntheticPercent, evaluationPercent, seed }
 }
 
 export interface TrainingMessage { role: 'system' | 'user' | 'assistant'; content: string }

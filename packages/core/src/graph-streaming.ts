@@ -123,7 +123,7 @@ export async function loadGraphForMode(graphKey: string, _username?: string): Pr
 
   const normalizedKey = graphKey.toLowerCase();
 
-  // NOTE: Big Brother routing is now handled at the LLM call level (via useBigBrother option in response-synthesizer)
+  // Big Brother follows model-role assignments through the shared provider bridge.
   // Separate -bigbrother graph variants are no longer used. All modes use the standard graph.
   const baseName = `${normalizedKey}-mode`;
   const pathsToCheck = [

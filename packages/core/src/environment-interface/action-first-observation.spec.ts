@@ -232,7 +232,7 @@ test('a failed Boredom Movement stimulus capture returns to its autonomy graph f
           step: 1,
           triggerSource: 'autonomy',
           requestedBy: 'boredom-movement',
-          graph: 'boredom-autonomy',
+          graph: 'environment',
           instruction: 'Choose a contextually relevant boredom response.',
         },
       },

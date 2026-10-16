@@ -19,6 +19,26 @@ background services, and runs the prebuilt web server in the foreground. It
 never installs packages or builds source. Press Ctrl+C to stop what it started,
 or use `./stop.sh` for a full repository-scoped shutdown.
 
+After building an update, replace only the running web application with:
+
+```bash
+./start.sh --restart-app
+```
+
+The existing launcher verifies the build and replaces its web child. Background
+services, including model training and inference services, remain unchanged.
+This requires a launcher started with the current script. It reports the restart
+request; the launcher log records verification and the new server startup.
+
+To start just the application while another lifecycle owns the services:
+
+```bash
+./start.sh --app-only
+```
+
+This mode neither starts background services nor stops them when it exits.
+Normal `./start.sh` and full `./stop.sh` retain their service lifecycle behavior.
+
 ## Development
 
 ```bash

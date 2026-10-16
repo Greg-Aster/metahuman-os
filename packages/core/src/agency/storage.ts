@@ -1305,6 +1305,80 @@ export async function findSimilarDesires(
   return candidates.slice(0, limit);
 }
 
+/** Apply a model-selected absolute strength once for its attributed evidence. */
+export async function applyDesireRelevance(
+  desireId: string,
+  assessment: { targetStrength: number; reason: string; evidence: DesireEvidence },
+  username?: string,
+): Promise<Desire | null> {
+  if (!Number.isFinite(assessment.targetStrength) || assessment.targetStrength < 0 || assessment.targetStrength > 1) {
+    throw new Error('Desire target strength must be between zero and one');
+  }
+  const desire = await loadDesire(desireId, username);
+  if (!desire || !OPEN_DESIRE_STATUSES.includes(desire.status)
+    || desire.evidence?.some(item => item.id === assessment.evidence.id)) return desire;
+  const now = new Date().toISOString();
+  const previousStrength = desire.strength;
+  const increased = assessment.targetStrength > previousStrength;
+  const decreased = assessment.targetStrength < previousStrength;
+  const metrics = desire.metrics || initializeDesireMetrics();
+  desire.strength = assessment.targetStrength;
+  desire.evidence = [...(desire.evidence || []), assessment.evidence];
+  desire.lastReviewedAt = now;
+  desire.lastDecayAt = now;
+  desire.updatedAt = now;
+  desire.runCount = (desire.runCount || 0) + 1;
+  desire.reinforcements = (desire.reinforcements || 0) + Number(increased);
+  desire.metrics = { ...metrics,
+    reinforcementCount: metrics.reinforcementCount + Number(increased),
+    decayCount: metrics.decayCount + Number(decreased),
+    netReinforcement: metrics.netReinforcement + Number(increased) - Number(decreased),
+    peakStrength: Math.max(metrics.peakStrength, desire.strength),
+    troughStrength: Math.min(metrics.troughStrength, desire.strength),
+    lastActivityAt: now,
+  };
+  if (desire.strength === 0) {
+    desire.status = 'archived';
+    desire.currentStage = 'archived';
+    desire.dispositionReason = assessment.reason;
+    desire.completedAt = now;
+  }
+  await saveDesireManifest(desire, username);
+  await addScratchpadEntryToFolder(desireId, {
+    timestamp: now, type: 'strength_adjusted', actor: 'system',
+    description: assessment.reason,
+    data: { previousStrength, targetStrength: desire.strength, evidenceId: assessment.evidence.id, kind: 'relevance' },
+  }, username);
+  return await loadDesire(desireId, username);
+}
+
+/** Persist a worker result without overwriting newer nurturing or archival. */
+export async function saveDesireProgress(desire: Desire, username?: string, writesExecution = false): Promise<void> {
+  const current = await loadDesire(desire.id, username);
+  if (current) {
+    Object.assign(desire, {
+      strength: current.strength, evidence: current.evidence,
+      lastReviewedAt: current.lastReviewedAt, lastDecayAt: current.lastDecayAt,
+      reinforcements: current.reinforcements, runCount: current.runCount,
+      scratchpad: current.scratchpad,
+      ...(current.status === 'archived' && !writesExecution
+        ? { execution: current.execution, executionHistory: current.executionHistory } : {}),
+      metrics: { ...desire.metrics,
+        reinforcementCount: current.metrics.reinforcementCount,
+        decayCount: current.metrics.decayCount,
+        netReinforcement: current.metrics.netReinforcement,
+        peakStrength: current.metrics.peakStrength,
+        troughStrength: current.metrics.troughStrength,
+      },
+      ...(current.status === 'archived' ? {
+        status: current.status, currentStage: current.currentStage,
+        dispositionReason: current.dispositionReason, completedAt: current.completedAt,
+      } : {}),
+    });
+  }
+  await saveDesireManifest(desire, username);
+}
+
 /**
  * Reinforce an existing desire's strength.
  * Called when similar content is detected that supports an existing desire.

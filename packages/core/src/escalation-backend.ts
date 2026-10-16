@@ -25,6 +25,8 @@ import { loadToolExecutorConfig } from './tool-executor-config.js';
  * Options for executing an escalation request
  */
 export interface EscalationOptions {
+  /** Request high reasoning for this invocation; false or absent retains configured effort. */
+  enableThinking?: boolean;
   /** Timeout in milliseconds */
   timeout?: number;
   /** Session ID for correlating audit events */

@@ -23,7 +23,7 @@
     "summarizer": "default.summarizer",
     "psychotherapist": "default.psychotherapist",
     "embedder": "default.embedder",
-    "environmentIntent": "default.orchestrator"
+    "environmentVision": "default.orchestrator"
   },
   "models": {
     "default.orchestrator": {
@@ -39,7 +39,7 @@
         "psychotherapist",
         "summarizer",
         "environmentActionSelector",
-        "environmentIntent"
+        "environmentVision"
       ],
       "capabilities": [
         "text",
@@ -395,13 +395,12 @@
     "embedder": [
       "default.embedder"
     ],
-    "environmentIntent": [
+    "environmentVision": [
       "default.orchestrator"
     ]
   },
   "cognitiveModeMappings": {
     "dual": {
-      "orchestrator": "default.orchestrator",
       "persona": "default.orchestrator",
       "planner": "default.orchestrator",
       "coder": "default.coder",
@@ -410,7 +409,6 @@
       "psychotherapist": "default.coder"
     },
     "agent": {
-      "orchestrator": "default.orchestrator",
       "persona": "default.persona",
       "coder": "default.coder",
       "planner": "default.planner",
@@ -419,12 +417,12 @@
       "psychotherapist": "default.psychotherapist"
     },
     "emulation": {
-      "orchestrator": "default.orchestrator",
       "persona": "default.orchestrator"
     },
     "environment": {
       "persona": "default.persona",
-      "environmentActionSelector": "default.orchestrator"
+      "environmentActionSelector": "default.orchestrator",
+      "environmentVision": "default.orchestrator"
     }
   },
   "providers": {

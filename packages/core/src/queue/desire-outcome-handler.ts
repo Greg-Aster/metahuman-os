@@ -1,5 +1,7 @@
 import {
   reviewPendingDesireOutcomes,
+  archiveDesireWork,
+  type DesireArchiveResult,
   type DesireOutcomeReviewResult,
 } from '../agency/desire-outcome-service.js'
 import { withUserContext } from '../context.js'
@@ -11,12 +13,23 @@ import { buildDesireAgentTaskInput } from './work-submission.js'
 export async function executeDesireOutcomeReviewWork(
   task: QueuedTask,
   context: WorkHandlerContext,
-): Promise<DesireOutcomeReviewResult> {
+): Promise<DesireOutcomeReviewResult | DesireArchiveResult> {
   const user = getUserByUsername(task.username)
   if (!user) throw new Error(`Desire outcome review user not found: ${task.username}`)
   const desireId = typeof task.input.desireId === 'string' && task.input.desireId.trim()
     ? task.input.desireId.trim()
     : undefined
+
+  if (task.input.operation === 'archive') {
+    if (!desireId) throw new Error('Desire archival requires a desire ID')
+    const { getQueueSystem } = await import('./queue-system.js')
+    return withUserContext(
+      { userId: user.id, username: user.username, role: user.role },
+      () => archiveDesireWork(user.username, desireId,
+        typeof task.input.reason === 'string' ? task.input.reason : 'Desire strength reached zero',
+        task.id, getQueueSystem()),
+    )
+  }
 
   const result = await withUserContext(
     { userId: user.id, username: user.username, role: user.role },

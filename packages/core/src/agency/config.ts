@@ -75,7 +75,7 @@ export const DEFAULT_AGENCY_CONFIG: AgencyConfig = {
     decay: {
       enabled: true,
       ratePerDay: 0.03,        // Strength lost per elapsed day without reinforcement
-      minStrength: 0.05,       // Minimum before automatic archival
+      minStrength: 0,       // Minimum before automatic archival
       reinforcementBoost: 0.08, // Boost when related inputs found
       initialStrength: 0.15,   // New desires start small and grow
     },

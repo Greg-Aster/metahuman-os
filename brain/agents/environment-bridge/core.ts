@@ -38,7 +38,6 @@ const PROTOCOL_VERSION = 1;
 const RECONNECT_DELAY_MS = 2_000;
 const MAX_MESSAGE_BYTES = audioTransportLimits.maxMessageBytes;
 const MAX_PENDING_AUDIO_UTTERANCES = 2;
-const MAX_PENDING_ADAPTER_MESSAGES = 128;
 const DIAGNOSTIC_TELEMETRY_INTERVAL_MS = 1_000;
 const MAX_DIAGNOSTIC_EVENTS_PER_WINDOW = 20;
 const MAX_ACTION_TIMINGS = 256;
@@ -240,6 +239,7 @@ export async function consumeActionStream(
   sendAction: (action: Record<string, unknown>) => Promise<void>,
   signal: AbortSignal,
   cancelAction?: (cancellation: Record<string, unknown>) => void,
+  readVisual?: (request: Record<string, unknown>) => void,
 ): Promise<void> {
   const url = new URL('/api/environment-bridge/stream', config.coreUrl);
   url.searchParams.set('sessionId', sessionId);
@@ -277,6 +277,12 @@ export async function consumeActionStream(
         const data = JSON.parse(rawData) as { cancellations: Record<string, unknown>[] };
         if (!cancelAction) throw new Error('Action stream requires its cancellation transport');
         for (const cancellation of data.cancellations) cancelAction(cancellation);
+        continue;
+      }
+      if (event === 'visual-reads') {
+        if (!readVisual) throw new Error('Bridge stream requires its camera read transport');
+        const data = JSON.parse(rawData) as { reads: Record<string, unknown>[] };
+        for (const request of data.reads) readVisual(request);
         continue;
       }
       if (event !== 'actions') continue;
@@ -329,11 +335,11 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       }
     };
     const mediaUploads = new Set<Promise<void>>();
-    let pendingPerception: Record<string, unknown> | undefined;
-    let observedPerceptionFlush: Promise<void> | undefined;
-    const flushPerception = createCoalescedTaskRunner(async () => {
-      const current = pendingPerception;
-      pendingPerception = undefined;
+    let pendingSensorState: Record<string, unknown> | undefined;
+    let observedSensorFlush: Promise<void> | undefined;
+    const flushSensorState = createCoalescedTaskRunner(async () => {
+      const current = pendingSensorState;
+      pendingSensorState = undefined;
       if (current && !localAbort.signal.aborted) {
         await postJson(config, '/api/environment-bridge/telemetry', current, localAbort.signal);
       }
@@ -744,7 +750,7 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
     let inboundMessages: SerialTaskQueue | undefined;
     let connectionReady: Promise<void> | undefined;
     await new Promise<void>((resolve, reject) => {
-      inboundMessages = createSerialTaskQueue(reject, MAX_PENDING_ADAPTER_MESSAGES);
+      inboundMessages = createSerialTaskQueue(reject);
       websocket.on('message', (raw: RawData | string, isBinary?: boolean) => {
         const incoming = rawDataBuffer(raw);
         diagnostics.inboundBytes += incoming.length;
@@ -762,21 +768,26 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           message = JSON.parse(incoming.toString()) as Record<string, unknown>;
           if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('Invalid adapter message');
           const telemetry = message.telemetry as Record<string, unknown> | undefined;
-          if (message.type === 'environment.telemetry' && telemetry?.kind === 'vision.recognition') {
+          const recognition = telemetry?.kind === 'vision.recognition';
+          const locomotion = telemetry?.kind === 'robot.status' && telemetry.locomotionMeasurement !== undefined;
+          if (message.type === 'environment.telemetry' && (recognition || locomotion)) {
             if (message.sessionId !== latestObservation?.sessionId || localAbort.signal.aborted) return;
-            const perception = normalizeEnvironmentPerception(telemetry.perception);
-            pendingPerception = { sessionId: message.sessionId, perception, recognitionProcessing: telemetry.processing, recognitionReportedAt: telemetry.timestamp };
-            const operation = flushPerception();
-            if (operation !== observedPerceptionFlush) {
-              observedPerceptionFlush = operation;
+            pendingSensorState = { ...pendingSensorState, sessionId: message.sessionId,
+              ...(recognition ? { perception: normalizeEnvironmentPerception(telemetry!.perception),
+                recognitionProcessing: telemetry!.processing, recognitionReportedAt: telemetry!.timestamp }
+                : { locomotionMeasurement: telemetry!.locomotionMeasurement }) };
+            const operation = flushSensorState();
+            if (operation !== observedSensorFlush) {
+              observedSensorFlush = operation;
               void operation.catch(error => {
                 if (!localAbort.signal.aborted) {
-                  console.error(`${LOG_PREFIX} perception delivery failed: ${(error as Error).message}`);
-                  websocket.close(1011, 'perception delivery failed');
+                  console.error(`${LOG_PREFIX} sensor delivery failed: ${(error as Error).message}`);
+                  websocket.close(1011, 'sensor delivery failed');
                 }
               });
             }
-            return;
+            if (recognition) return;
+            // Ordinary status attribution still follows the existing diagnostics path.
           }
           const feedback = message.type === 'environment.feedback'
             && message.feedback && typeof message.feedback === 'object'
@@ -803,14 +814,12 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
           return;
         }
         const queued = inboundMessages?.enqueue(async () => {
-          if (message.type === 'speech.settings' || message.type === 'behavior.settings') {
+          if (message.type === 'behavior.settings') {
             const requestId = message.requestId;
-            const behavior = message.type === 'behavior.settings';
             const resultType = `${message.type}.result`;
             try {
-              const settings = await postJson(config, behavior ? '/api/environment-bridge/behavior-settings' : '/api/environment-bridge/speech-settings',
-                behavior ? (message.enabled === undefined ? {} : { enabled: message.enabled })
-                  : message.outputTarget === undefined ? {} : { outputTarget: message.outputTarget },
+              const settings = await postJson(config, '/api/environment-bridge/behavior-settings',
+                message.enabled === undefined ? {} : { enabled: message.enabled },
                 AbortSignal.any([localAbort.signal, AbortSignal.timeout(4000)]));
               sendMessage({ ...settings, type: resultType, version: PROTOCOL_VERSION, requestId });
             } catch (error) {
@@ -837,12 +846,17 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
             }
             if (!actionStream) {
               actionStream = consumeActionStream(config, sessionId, sendAction, localAbort.signal,
-                cancellation => sendMessage({ type: 'environment.cancel', version: PROTOCOL_VERSION, ...cancellation }))
+                cancellation => sendMessage({ type: 'environment.cancel', version: PROTOCOL_VERSION, ...cancellation }),
+                request => sendMessage(request))
                 .catch((error) => {
                   if (!localAbort.signal.aborted) reject(error);
                 });
             }
             console.log(`${LOG_PREFIX} ready session=${sessionId} adapter=${config.adapterUrl}`);
+            return;
+          }
+          if (message.type === 'environment.visual.result') {
+            await postJson(config, '/api/environment-bridge/visual-result', message, localAbort.signal);
             return;
           }
           if (message.type === 'environment.observation') {
@@ -910,7 +924,9 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
               if (value.kind === 'audio.level' && typeof value.level === 'number') {
                 diagnostics.microphoneLevel = Math.max(0, Math.min(1, value.level));
               } else if (value.kind === 'robot.status') {
-                diagnostics.robotStatus = { ...value };
+                diagnostics.robotStatus = diagnostics.robotStatus?.robot_id === value.robot_id
+                  && diagnostics.robotStatus?.epoch === value.epoch
+                  ? { ...diagnostics.robotStatus, ...value } : { ...value };
                 if (latestObservation) {
                   latestObservation = applyRobotStatusToEnvironmentObservation(
                     latestObservation,
@@ -1016,8 +1032,8 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
       connectionFailure = error;
     });
     localAbort.abort();
-    pendingPerception = undefined;
-    await observedPerceptionFlush?.catch(() => undefined); // Aborted delivery is drained before reconnecting.
+    pendingSensorState = undefined;
+    await observedSensorFlush?.catch(() => undefined); // Aborted delivery is drained before reconnecting.
     if (!signal.aborted) await inboundMessages?.drain();
     await Promise.allSettled([...awaitingAdapterAcceptance].map(actionId => (
       reportActionDelivery(actionId, 'environment adapter disconnected before acceptance was confirmed', 'acceptance')

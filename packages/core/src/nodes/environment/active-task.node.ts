@@ -1,9 +1,11 @@
+import { recognitionImageAssociation } from '../../environment-interface/perception.js'
 import { randomUUID } from 'node:crypto'
 import { defineNode, type NodeExecutionContext } from '../types.js'
 import { getLatestEnvironmentObservation, getEnvironmentPerception, prepareEnvironmentCommand } from '../../environment-interface/store.js'
-import type { EnvironmentTaskProgram, ActiveTaskState, ActiveTaskContinuation } from '../../environment-interface/active-task.js'
-import { observeSinglePerson, personFrameKey } from '../../environment-interface/active-task.js'
-import type { EnvironmentAction, EnvironmentObservation, EnvironmentVisualFrame } from '../../environment-interface/types.js'
+import type { EnvironmentTaskProgram, ActiveTaskState, ActiveTaskContinuation, EnvironmentTaskSteering } from '../../environment-interface/active-task.js'
+import { observeSinglePerson, personFrameKey, evaluateLocomotionGoal } from '../../environment-interface/active-task.js'
+import { environmentActionHasEnded } from '../../environment-interface/types.js'
+import type { EnvironmentAction, EnvironmentObservation, EnvironmentVisualFrame, EnvironmentLocomotionMeasurement } from '../../environment-interface/types.js'
 import type { EnvironmentTaskDecision } from './helpers.js'
 import { loadGraphForMode } from '../../graph-streaming.js'
 import { requireGraphNodeOutput } from '../../graph-runtime.js'
@@ -14,10 +16,8 @@ import { graphContextSnapshot } from '../../durable-execution/graph-contract.js'
 import { projectRobotStatus } from '../robot-status/out.node.js'
 
 const INTERPRETATION_OWNER_CHANGED = 'Body ownership or session changed while interpreting; pending instructions were not applied'
-const FEEDBACK_START_GRACE_MS = 2_000
 const FINISH_TIMEOUT_MS = 5_000
 const CANCELLATION_CONFIRMATION_MS = 2_000
-const terminalTypes = ['completed', 'failed', 'rejected', 'expired', 'cancelled']
 
 // The graph records cancellation intent; only the existing Coordinator mutates
 // work ownership. This also works when a graph runs outside that owner process.
@@ -38,7 +38,7 @@ function clearDeadline(state: ActiveTaskState, context: NodeExecutionContext) {
 function settleAction(state: ActiveTaskState, context: NodeExecutionContext) {
   clearDeadline(state, context)
   if (state.motionId) state.completedActionId = state.motionId
-  for (const field of ['motionId', 'action', 'accepted', 'snapshotId', 'identificationEffectId', 'identificationRequest', 'generationEffectId', 'image', 'identification', 'lastIdentifiedFrame', 'finishRequestedAt', 'cancellationRequestedAt', 'feedbackRequiredSince', 'pendingControls', 'desiredControls', 'acknowledgedControls', 'retrySteering', 'captureRequestedAt', 'captureCompleted'] as const) delete state[field]
+  for (const field of ['motionId', 'action', 'accepted', 'snapshotId', 'identificationEffectId', 'identificationRequest', 'generationEffectId', 'image', 'identification', 'lastIdentifiedFrame', 'finishRequestedAt', 'cancellationRequestedAt', 'pendingControls', 'desiredControls', 'acknowledgedControls', 'retrySteering', 'steeringOffset', 'captureRequestedAt', 'captureCompleted', 'visionEffectId', 'locomotion', 'locomotionTargetAcquired'] as const) delete state[field]
   state.updateRevision = 0
 }
 
@@ -60,8 +60,7 @@ function observationReference(observation: EnvironmentObservation): EnvironmentO
 }
 
 export const environmentActiveTaskNode = defineNode({
-  id: 'environment_active_task', name: 'Execute Robot Task', category: 'environment', version: '2.1.0',
-  execution: { timeoutOwner: 'children' },
+  id: 'environment_active_task', name: 'Execute Robot Task', category: 'environment', version: '2.2.0',
   description: 'Owns the complete task program within the existing durable execution.',
   inputs: [{ name: 'program', type: 'object', description: 'MetaHuman-selected ordered actions and ongoing behaviors' },
     { name: 'taskDecision', type: 'object', description: 'Whole objective and completion criteria' },
@@ -71,6 +70,7 @@ export const environmentActiveTaskNode = defineNode({
     { name: 'completed', type: 'boolean', description: 'All task phases completed' },
     { name: 'result', type: 'object', description: 'Execution progress and phase evidence' },
     { name: 'userInput', type: 'object', description: 'New instruction returned to existing intent routing' },
+    { name: 'planningResult', type: 'object', description: 'Acquisition evidence returned to the existing task workflow' },
     { name: 'taskDecision', type: 'object', description: 'Decision from this execution' },
     { name: 'observation', type: 'object', description: 'Latest observation references' },
     { name: 'resultObservation', type: 'object', description: 'Returned observation with captured frames resolved from this execution' },
@@ -88,13 +88,14 @@ export const environmentActiveTaskNode = defineNode({
     } else if (continuation) {
       const first = selected.steps[0]
       const nextMotion = first?.kind === 'behavior' ? first.motion
-        : first?.kind === 'action' && first.action.continuous ? first.action : null
+        : first?.kind === 'action' && (first.action.continuous || first.action.locomotionGoal) ? first.action : null
       const currentMotion = continuation.state.action
       if (nextMotion && currentMotion?.continuous && nextMotion.type === currentMotion.type
         && nextMotion.command === currentMotion.command && nextMotion.gait === currentMotion.gait) {
         const current = continuation.program.steps[continuation.state.stepIndex]
         const sameBehavior = first.kind === 'behavior' && current?.kind === 'behavior'
           && first.target === current.target && first.completionCriteria === current.completionCriteria
+          && JSON.stringify(first.motion?.locomotionGoal) === JSON.stringify(current.motion?.locomotionGoal)
         initial = { ...(sameBehavior ? continuation.state : {}), stepIndex: 0, evidence: [], motionId: continuation.state.motionId,
           accepted: continuation.state.accepted, action: nextMotion,
           updateRevision: continuation.state.updateRevision, desiredControls: continuation.state.desiredControls,
@@ -138,13 +139,23 @@ export const environmentActiveTaskNode = defineNode({
     const resultObservation = result.observation && { ...result.observation,
       ...(frames.length ? { visual: frames.at(-1), visuals: frames } : {}) };
     return { finished: result.done === true, completed: result.objectiveComplete === true, result, userInput: result.userInput,
+      planningResult: result.planningRequired && !result.userInput ? {
+        environmentTaskEvidence: result.acquisition
+          ? { kind: 'vision_acquisition', acquisition: result.acquisition }
+          : { kind: 'vision_result', visionResult: result.visionResult,
+            queryId: result.queryId, perception: result.perception, trackingFeedback: result.trackingFeedback,
+            motionId: result.motionId, evidence: result.evidence },
+        activeTaskContinuation: { program: selected, decision: context.graphExecution!.task()?.decision,
+          state: { ...result, planningRequired: undefined } },
+        environmentObservation: resultObservation, environmentObservationCurrent: false,
+      } : null,
       taskDecision: context.graphExecution!.task()?.decision, observation: result.observation, resultObservation,
       resultContext: resultObservation ? { environmentObservation: resultObservation, environmentObservationCurrent: false } : {} }
   },
 })
 
 export const environmentActiveTaskStepNode = defineNode({
-  id: 'environment_active_task_step', name: 'Advance Active Task', category: 'environment', version: '2.1.0',
+  id: 'environment_active_task_step', name: 'Advance Active Task', category: 'environment', version: '2.2.0',
   execution: { activation: 'always' },
   description: 'Advances task phases and updates the admitted gait without waiting for remote inference.',
   inputs: [{ name: 'state', type: 'object', optional: true, description: 'Saved active task state' }],
@@ -186,12 +197,13 @@ export const environmentActiveTaskStepNode = defineNode({
         observedAt: state.perception?.observedAt, frameExpiresAt: state.perception?.expiresAt,
         windowExpiresAt: new Date(loss.expiresAt).toISOString(),
         terminationConfirmed: !state.motionId && (!state.completedActionId || state.feedback?.actionId === state.completedActionId
-          && terminalTypes.includes(state.feedback.type)),
+          && environmentActionHasEnded(state.feedback)),
         rejection: loss.resumeRejection,
       } : undefined,
       selectedAction: state.action ? { type: state.action.type!, command: state.action.command, direction: state.action.direction, target: state.action.target } : null,
-      actionId: state.motionId ?? state.completedActionId ?? '', actionStatus: state.feedback?.type === 'outcome_unknown' ? 'outcome_unknown' : state.failure?.type ?? (complete ? 'completed' : 'active'),
-      feedback: feedback ? { type: feedback.type, actionId: feedback.actionId ?? '', message: feedback.message, observedAt: feedback.timestamp } : null,
+      actionId: state.motionId ?? state.completedActionId ?? '', actionStatus: state.feedback?.type === 'outcome_unknown' ? 'outcome_unknown' : state.failure?.type
+        ?? (state.completedActionId && state.feedback?.actionId === state.completedActionId ? state.feedback.type : 'active'),
+      feedback: feedback ? { ...(feedback.data?.executionEnded === true ? { executionEnded: true } : {}), type: feedback.type, actionId: feedback.actionId ?? '', message: feedback.message, observedAt: feedback.timestamp } : null,
       baselineFrame: previous?.baselineFrame ?? null, updatedAt: new Date().toISOString() }
       execution.recordTask(task)
       // Project changes to the existing action record, including receipts that
@@ -260,26 +272,33 @@ export const environmentActiveTaskStepNode = defineNode({
         input: { sessionId, actionId: state.motionId },
       } }).effectId
     }
-    let feedbackExpires: number | undefined
+    let trackingGapChanged = false
     const phase = program.steps[state.stepIndex]
     // The model already selects the steering target. Person steering uses the
     // approved single-candidate policy through this same execution owner.
-    const personSteering = phase?.kind === 'behavior' && phase.steering?.label.toLowerCase() === 'person'
+    const personSteering = phase?.kind === 'behavior' && phase.motion !== null && phase.steering?.label.toLowerCase() === 'person'
     if (personSteering) {
       state.interpretationFence ??= interpretationBody(observation ?? undefined)
       observeSinglePerson(state, Date.now())
     }
-    if (phase?.kind === 'behavior' && !state.finishRequestedAt && !state.failure && !state.identificationError) {
-      state.feedbackRequiredSince ??= Date.now()
-      const expires = state.perception ? Date.parse(state.perception.expiresAt) : state.feedbackRequiredSince + FEEDBACK_START_GRACE_MS
-      if (expires <= Date.now()) state.identificationError = 'Required live feedback expired or is unavailable'
-      else feedbackExpires = expires
+    if (phase?.kind === 'behavior' && phase.motion !== null
+      && (phase.motion.locomotionGoal?.kind !== 'visual' || personSteering)
+      && !state.finishRequestedAt && !state.failure && !state.identificationError) {
+      const status = state.perception ? 'current' : 'unavailable'
+      trackingGapChanged = status === 'unavailable' && (state.trackingFeedback?.status !== status
+        || state.trackingFeedback?.queryId !== state.queryId)
+      state.trackingFeedback = { status, queryId: state.queryId,
+        observedAt: state.perception?.observedAt ?? state.trackingFeedback?.observedAt,
+        expiresAt: state.perception?.expiresAt ?? state.trackingFeedback?.expiresAt }
+      // Expiry wakes the owner to report a changed observation, not to cancel
+      // the model's movement. An absent first frame has no arbitrary deadline.
+      if (state.perception) scheduleDeadline(Date.parse(state.perception.expiresAt))
     }
     if (state.finishRequestedAt && Date.now() >= state.finishRequestedAt + FINISH_TIMEOUT_MS)
       state.identificationError ??= 'Finish did not receive the original motion terminal receipt within 5 seconds'
     if (state.failure || state.identificationError) {
       state.objectiveComplete = false
-      const confirmed = state.feedback && state.feedback.actionId === state.motionId && terminalTypes.includes(state.feedback.type)
+      const confirmed = state.feedback && state.feedback.actionId === state.motionId && environmentActionHasEnded(state.feedback)
       if (!state.motionId || !state.action?.continuous || confirmed) {
         if (confirmed) settleAction(state, context)
         else if (!state.personLoss || state.personLoss.windowExpired) clearDeadline(state, context)
@@ -303,40 +322,48 @@ export const environmentActiveTaskStepNode = defineNode({
       if (state.personLoss && !state.personLoss.windowExpired) scheduleDeadline(state.personLoss.expiresAt)
       record(); return { state }
     }
+    if (state.planningRequired && !state.userInput) { record(); return { state } }
     if (state.userInput && !state.motionId) { record(); return { state } }
     if (state.awaitingReplacement) {
       if (state.pendingControls) { record(); return { state } }
       delete state.awaitingReplacement; delete state.motionId; delete state.accepted
     }
-    const identify = (target: string, completionCriteria: string) => {
+    const identify = (target: string, completionCriteria: string, purpose: 'evaluate' | 'locate' = 'evaluate', referenceImage?: EnvironmentVisualFrame) => {
       if (!state.image || state.identificationEffectId) return
       execution.recordFrames([state.image])
+      state.capturedFrameIds = [...new Set([...(state.capturedFrameIds ?? []), state.image.id])]
       const effect = execution.dispatch({ kind: 'coordinator_work', payload: {
         type: 'generic', handler: 'environment.identify', resource: 'remote-llm', source: 'environment',
         username: context.username, maxAttempts: 1,
-        input: { target, objective: decision.objective, completionCriteria, image: state.image, perception: state.perception },
+        input: { target, objective: decision.objective, completionCriteria, purpose, referenceImage, image: state.image, perception: state.perception },
         metadata: { producer: 'environment-active-task', sessionId },
       } })
       const owner = observation?.state?.activeMovementUpdates as Record<string, unknown> | undefined
       state.identificationEffectId = effect.effectId
       state.identificationRequest = { effectId: effect.effectId, frameId: state.image.id, stepIndex: state.stepIndex,
-        gatewayInstance: owner?.gatewayInstance, epoch: owner?.epoch, expiresAt: state.perception?.expiresAt }
+        gatewayInstance: owner?.gatewayInstance, epoch: owner?.epoch, expiresAt: phase?.kind === 'behavior' && (phase.motion === null || phase.motion.locomotionGoal?.kind === 'visual') ? undefined : state.perception?.expiresAt }
       delete state.image
     }
-    const updateMovement = (motion: Partial<EnvironmentAction>, steering: { label: string; gain: number } | null = null) => {
+    const updateMovement = (motion: Partial<EnvironmentAction>, steering: EnvironmentTaskSteering | null = null) => {
       const controls: Record<string, number> = motion.stride !== undefined && motion.rate !== undefined
         ? { stride: motion.stride, rate: motion.rate }
         : motion.type === 'move' || motion.speed !== undefined ? { speed: motion.speed ?? 100 } : {}
-      if (motion.type === 'move') {
+      const lateralAvailable = observation?.capabilities.locomotion?.lateral === true
+      if (motion.type === 'move' && (motion.gait !== 'crab' || lateralAvailable)) {
         controls.forward = motion.forward ?? (motion.direction === 'back' ? -100 : motion.direction === 'forward' ? 100 : 0)
         controls.turn = motion.turn ?? (motion.direction === 'left' ? 100 : motion.direction === 'right' ? -100 : 0)
-      } else if (motion.forward !== undefined && motion.turn !== undefined) {
+      } else if (motion.gait !== 'crab' && motion.forward !== undefined && motion.turn !== undefined) {
         controls.forward = motion.forward; controls.turn = motion.turn
       }
+      if (lateralAvailable && motion.lateral !== undefined) controls.lateral = motion.lateral
       if (!Object.keys(controls).length) return
-      const object = steering && state.perception?.objects.find(object => object.label.toLowerCase() === steering!.label.toLowerCase() && object.box)
-      if (object?.box && steering) controls.turn = Math.max(-100, Math.min(100,
-        controls.turn + (0.5 - object.box.x - object.box.width / 2) * steering.gain))
+      const object = steering && state.perception?.objects.find(object => object.box && (steering.trackId
+        ? object.trackId === steering.trackId : object.label.toLowerCase() === steering.label.toLowerCase()))
+      if (object?.box && steering) state.steeringOffset = (0.5 - object.box.x - object.box.width / 2) * steering.gain
+      // Only fresh evidence changes the steering offset. A gap retains the
+      // last commanded turn, while explicit model changes to speed/direction
+      // still apply through the same movement owner.
+      if (steering) controls.turn = Math.max(-100, Math.min(100, controls.turn + (state.steeringOffset ?? 0)))
       const encoded = JSON.stringify(controls)
       const changed = state.desiredControls !== encoded
       state.desiredControls = encoded
@@ -361,10 +388,141 @@ export const environmentActiveTaskStepNode = defineNode({
     const step = program.steps[state.stepIndex]
     if (!step) {
       state.done = true
-      // Program receipts describe executed steps. The existing objective review
-      // evaluates whether those results fulfil the person's overall request.
-      state.objectiveComplete = false
+      // The wait owner advances each phase only from its matching result. A
+      // finite objective whose selected completion basis is those receipts ends
+      // here; visual/state interpretation remains with objective confirmation.
+      state.objectiveComplete = decision.requiredCompletionBasis === 'action_result'
+        && decision.continuationPolicy === 'none' && program.steps.length > 0 && program.steps.every(step => step.kind !== 'vision')
       record(state.objectiveComplete); return { state }
+    }
+    if (step.kind === 'vision') {
+      if (step.operation === 'acquire' && state.image) {
+        const reference = step.referenceFrameId ? execution.frame(step.referenceFrameId) : undefined
+        if (step.referenceFrameId && !reference?.dataUrl) {
+          state.identificationError = 'Requested reference frame is not retained by this execution'
+          state.done = true
+          state.objectiveComplete = false
+          record(); return { state }
+        }
+        identify(step.target, decision.completionCriteria ?? '', 'locate', reference)
+      } else if (!state.visionEffectId && !state.identificationEffectId) {
+        const { kind: _kind, ...operation } = step
+        let vision: Record<string, unknown> | undefined
+        if (step.operation !== 'acquire') {
+          vision = { ...operation }
+          if (step.operation === 'select') {
+            const frame = execution.frame(step.frameId)
+            if (!frame?.dataUrl) {
+              state.identificationError = 'Selected source frame is not retained by this execution'
+              state.done = true
+              state.objectiveComplete = false
+              record(); return { state }
+            }
+            vision.frame = frame
+            delete vision.frameId
+          }
+        }
+        state.visionEffectId = execution.dispatch({ kind: 'coordinator_work', payload: {
+          type: 'generic', handler: 'environment.visual-read', resource: `environment-visual-read:${sessionId}`,
+          source: 'environment', username: context.username, maxAttempts: 1, input: { sessionId, ...(vision ? { vision } : {}) },
+        } }).effectId
+      }
+      record(); return { state }
+    }
+    const requestedMotion = step.kind === 'action' ? step.action : step.kind === 'behavior' ? step.motion : null
+    const goal = requestedMotion?.locomotionGoal
+    let locomotionControls: { forward?: number; turn?: number; lateral?: number } | undefined
+    if (goal?.kind === 'distance' && requestedMotion?.gait === 'crab'
+      && observation?.capabilities.locomotion?.lateral !== true && !state.motionId) {
+      state.identificationError = 'Measured Crab movement requires negotiated lateral control'
+      state.done = true; state.objectiveComplete = false; record(); return { state }
+    }
+    if (goal?.kind === 'visual') {
+      const measurement = observation?.state?.locomotionMeasurement as EnvironmentLocomotionMeasurement | undefined
+      const camera = measurement?.camera
+      const available = camera?.available === true && Number.isFinite(Date.parse(camera.observedAt))
+        && Date.parse(camera.observedAt) <= Date.now() && (!camera.expiresAt || Date.now() < Date.parse(camera.expiresAt))
+      if (!available || state.locomotion?.incomplete) {
+        state.locomotion = { initial: state.locomotion?.initial ?? {}, latest: measurement ?? {}, reached: false,
+          incomplete: state.locomotion?.incomplete ?? camera?.reason ?? 'Visual goal evidence is unavailable' }
+        if (!state.motionId) { state.identificationError = state.locomotion.incomplete; state.done = true; state.objectiveComplete = false; record(); return { state } }
+        state.finishRequestedAt ??= Date.now()
+        updateMovement({ ...requestedMotion!, stride: undefined, rate: undefined, speed: 0,
+          ...(observation?.capabilities.locomotion?.lateral === true ? { lateral: 0 } : {}) }, null)
+        record(); return { state }
+      }
+      state.locomotion = { initial: state.locomotion?.initial ?? measurement!, latest: measurement!, reached: false }
+      if (!state.finishRequestedAt && camera.expiresAt) scheduleDeadline(Date.parse(camera.expiresAt))
+    }
+    if (goal && goal.kind !== 'visual') {
+      if ((goal.kind === 'approach' || goal.kind === 'follow') && !state.motionId && !execution.frame(goal.target.frameId)?.dataUrl) {
+        state.identificationError = 'Selected locomotion target frame is not retained'; state.done = true; state.objectiveComplete = false; record(); return { state }
+      }
+      if ((goal.kind === 'approach' || goal.kind === 'follow') && goal.proximity.kind === 'imageRelative'
+        && !goal.target.trackId && !state.motionId) {
+        if (!state.visionEffectId) {
+          state.visionEffectId = execution.dispatch({ kind: 'coordinator_work', payload: {
+            type: 'generic', handler: 'environment.visual-read', resource: `environment-visual-read:${sessionId}`,
+            source: 'environment', username: context.username, maxAttempts: 1,
+            input: { sessionId, vision: { operation: 'select', frame: execution.frame(goal.target.frameId),
+              box: goal.target.box, description: decision.objective } },
+          } }).effectId
+        }
+        record(); return { state }
+      }
+      if ((goal.kind === 'approach' || goal.kind === 'follow') && goal.proximity.kind === 'metric'
+        && !state.locomotionTargetAcquired && !state.motionId) {
+        if (!state.visionEffectId) {
+          const frame = execution.frame(goal.target.frameId)
+          if (!frame?.dataUrl) { state.identificationError = 'Selected ground-contact frame is not retained'; state.done = true; record(); return { state } }
+          state.visionEffectId = execution.dispatch({ kind: 'coordinator_work', payload: {
+            type: 'generic', handler: 'environment.visual-read', resource: `environment-visual-read:${sessionId}`,
+            source: 'environment', username: context.username, maxAttempts: 1,
+            input: { sessionId, vision: { operation: 'groundRange', frameId: goal.target.frameId,
+              sourceFrame: { frameId: frame.id, robotId: frame.metadata?.robotId, epoch: frame.metadata?.epoch,
+                gatewayInstance: frame.metadata?.gatewayInstance, frameCounter: frame.metadata?.counter,
+                jpeg: frame.dataUrl.slice(frame.dataUrl.indexOf(',') + 1), frameTimestamp: frame.timestamp },
+              groundContact: goal.target.groundContact, trackId: goal.target.trackId, queryId: goal.target.queryId } },
+          } }).effectId
+        }
+        record(); return { state }
+      }
+      const measurement: EnvironmentLocomotionMeasurement = { ...state.locomotion?.latest, ...(observation?.state?.locomotionMeasurement as EnvironmentLocomotionMeasurement | undefined) }
+      if ((goal.kind === 'approach' || goal.kind === 'follow') && goal.proximity.kind === 'imageRelative') {
+        const perception = state.perception
+        const object = goal.target.trackId ? perception?.objects.find(object => object.trackId === goal.target.trackId) : undefined
+        const matches = perception && recognitionImageAssociation({ robotId: perception.robotId, gatewayInstance: perception.gatewayInstance,
+          epoch: perception.epoch, counter: perception.frameCounter }, [observation?.visual, ...(observation?.visuals ?? [])].filter((v): v is EnvironmentVisualFrame => Boolean(v)))
+        if (perception && object?.box && (!goal.target.queryId || perception.queryId === goal.target.queryId)) {
+          measurement.target = { available: true, source: 'visual-tracking', robotId: perception.robotId,
+            referenceId: personFrameKey(perception), observedAt: perception.observedAt, expiresAt: perception.expiresAt,
+            frameId: matches?.matchingVisualFrameIds[0] ?? personFrameKey(perception), trackId: object.trackId,
+            queryId: perception.queryId, boxHeight: object.box.height, horizontalOffset: 0.5 - object.box.x - object.box.width / 2,
+            uncertaintyMetres: null }
+        } else {
+          measurement.target = { available: false, reason: 'Selected target is absent from current perception', source: 'visual-tracking',
+            robotId: perception?.robotId ?? '', referenceId: perception ? personFrameKey(perception) : '',
+            observedAt: perception?.observedAt ?? observation?.timestamp ?? '', expiresAt: perception?.expiresAt,
+            frameId: goal.target.frameId, trackId: goal.target.trackId, queryId: perception?.queryId, uncertaintyMetres: null }
+        }
+      }
+      const initial = state.locomotion?.initial ?? measurement
+      const result = evaluateLocomotionGoal(goal, measurement, initial, Date.now(), requestedMotion?.gait)
+      const measuredSource = goal.kind === 'distance' ? measurement.position : goal.kind === 'relativeTurn' ? measurement.yaw : measurement.target
+      if (!result.reason && !state.finishRequestedAt && measuredSource?.expiresAt) scheduleDeadline(Date.parse(measuredSource.expiresAt))
+      state.locomotion = { initial, latest: measurement, reached: state.locomotion?.reached || result.reached,
+        incomplete: state.locomotion?.incomplete ?? result.reason, progress: result.progress }
+      locomotionControls = { forward: result.forward, turn: result.turn, lateral: result.lateral }
+      if (state.locomotion.incomplete && !state.motionId) {
+        state.identificationError = state.locomotion.incomplete; state.done = true; state.objectiveComplete = false; record(); return { state }
+      }
+      if (state.locomotion.reached || state.locomotion.incomplete) {
+        if (!state.motionId) { state.evidence.push(JSON.stringify({ locomotionGoal: goal, ...state.locomotion })); settleAction(state, context); state.stepIndex += 1; record(); return { state } }
+        state.finishRequestedAt ??= Date.now()
+        updateMovement({ ...requestedMotion!, stride: undefined, rate: undefined, speed: 0,
+          ...(observation?.capabilities.locomotion?.lateral === true ? { lateral: 0 } : {}) }, null)
+        record(); return { state }
+      }
     }
     if (step.kind !== 'behavior') {
       if (!state.motionId) {
@@ -379,28 +537,34 @@ export const environmentActiveTaskStepNode = defineNode({
           record(); return { state }
         }
         delete state.feedback
-        if (step.kind === 'action') state.action = step.action
+        if (step.kind === 'action') state.action = goal ? { ...step.action, continuous: true, durationMs: 0, ...locomotionControls } : step.action
         state.motionId = await send(state.action!)
         if (state.action?.type === 'captureImage') {
           state.snapshotId = state.motionId; state.captureRequestedAt = new Date().toISOString()
         }
       }
-      if (step.kind === 'action' && step.action.continuous) updateMovement(step.action)
+      if (step.kind === 'action' && (step.action.continuous || goal)) updateMovement({ ...step.action, ...locomotionControls })
       record(); return { state }
     }
     if (state.identification?.matchesTarget && state.identification.completionSatisfied) {
+      if (step.motion === null) { record(); return { state } }
       state.finishRequestedAt ??= Date.now()
       scheduleDeadline(state.finishRequestedAt + FINISH_TIMEOUT_MS)
       // Finish is a speed-zero update of the original gait. Its ACK is not
       // completion; the wait node requires that gait's own terminal receipt.
-      updateMovement({ ...step.motion, stride: undefined, rate: undefined, speed: 0 }, null)
+      updateMovement({ ...step.motion, stride: undefined, rate: undefined, speed: 0,
+          ...(observation?.capabilities.locomotion?.lateral === true ? { lateral: 0 } : {}) }, null)
       record(); return { state }
     }
-    if (feedbackExpires !== undefined) scheduleDeadline(feedbackExpires)
-    if (personSteering && !state.perception) { record(); return { state } }
-    identify(step.target, step.completionCriteria)
-    if (!state.motionId) { delete state.feedback; state.action = step.motion; state.motionId = await send(step.motion); state.accepted = false }
-    updateMovement(step.motion, step.steering)
+    if (personSteering && !state.perception) {
+      if (trackingGapChanged) state.planningRequired = true
+      record(); return { state }
+    }
+    identify(goal?.kind === 'visual' ? goal.target : step.target, goal?.kind === 'visual' ? goal.completionCriteria : goal?.kind === 'follow' ? goal.endingCondition : step.completionCriteria)
+    if (step.motion !== null) {
+      if (!state.motionId) { delete state.feedback; state.action = { ...step.motion, ...locomotionControls }; state.motionId = await send(state.action); state.accepted = false }
+      updateMovement({ ...step.motion, ...locomotionControls }, step.steering)
+    }
     const frame = state.perception?.frameCounter
     const periodic = state.lastIdentifiedFrame === undefined || (frame !== undefined && ((frame - state.lastIdentifiedFrame) >>> 0) >= step.identifyEveryFrames)
     const candidate = state.perception?.objects.some(object => step.candidateLabels.some(label => label.toLowerCase() === object.label.toLowerCase()))
@@ -410,12 +574,13 @@ export const environmentActiveTaskStepNode = defineNode({
       state.snapshotId = capture.input.id as string; state.lastIdentifiedFrame = frame
       state.captureRequestedAt = new Date().toISOString()
     }
+    if (trackingGapChanged) state.planningRequired = true
     record(); return { state }
   },
 })
 
 export const environmentActiveTaskWaitNode = defineNode({
-  id: 'environment_active_task_wait', name: 'Receive Active Task Event', category: 'environment', version: '2.1.0',
+  id: 'environment_active_task_wait', name: 'Receive Active Task Event', category: 'environment', version: '2.2.0',
   description: 'Consumes observations and physical results within the current task phase.',
   inputs: [{ name: 'state', type: 'object', description: 'Current task phase and requests' }],
   outputs: [{ name: 'state', type: 'object', description: 'Updated task progress' },
@@ -470,11 +635,19 @@ export const environmentActiveTaskWaitNode = defineNode({
     if (state.instructionRevision !== enteringRevision) return { state, continue: true }
     if (state.userInput && state.interpretation && (state.interpretation.motionId !== state.motionId
       || state.interpretation.stepIndex !== state.stepIndex)) return { state, continue: true }
-    if (state.done && !state.userInput) return { state, continue: false }
+    if ((state.done || state.planningRequired) && !state.userInput) return { state, continue: false }
     const advance = (evidence: string) => {
       settleAction(state, context)
       state.evidence = [...state.evidence, evidence]; state.stepIndex += 1
       return { state, continue: !routeInput() }
+    }
+    const phase = program.steps[state.stepIndex]
+    if (phase?.kind === 'behavior' && phase.motion === null
+      && state.identification?.matchesTarget && state.identification.completionSatisfied) {
+      state.visualCompletionSatisfied = true
+      if (state.stepIndex + 1 === program.steps.length) state.planningRequired = true
+      return advance(JSON.stringify({ type: 'visual_observation', result: state.identification,
+        frameIds: state.capturedFrameIds }))
     }
     const captureResult = () => {
       if (!state.captureCompleted || !state.image) return { state, continue: true }
@@ -488,9 +661,10 @@ export const environmentActiveTaskWaitNode = defineNode({
       if (routeInput()) return { state, continue: false }
       if (state.instructionRevision !== revision) return { state, continue: true }
       const step = program.steps[state.stepIndex]
-      const usesPerception = step?.kind === 'behavior' || step?.kind === 'action' && step.action.continuous
+      const usesPerception = step?.kind === 'behavior' || step?.kind === 'action' && (step.action.continuous || Boolean(step.action.locomotionGoal))
+      const locomotionGoal = step?.kind === 'action' ? step.action.locomotionGoal : step?.kind === 'behavior' ? step.motion?.locomotionGoal : undefined
       const event = state.pendingEvents?.shift() ?? execution.waitForEvent(
-        `active_task:${context.activeTaskSessionId}${usesPerception ? ':perception' : ''}`)
+        `active_task:${context.activeTaskSessionId}${locomotionGoal ? ':perception:locomotion' : usesPerception ? ':perception' : ''}`)
       const payload = event.payload as Record<string, any>
       if (event.kind === 'single_person_resume' && state.personLoss) {
         // This is an explicit operator event, not model text or a selector
@@ -500,7 +674,7 @@ export const environmentActiveTaskWaitNode = defineNode({
         const loss = state.personLoss
         const body = interpretationBody(getLatestEnvironmentObservation(context.activeTaskSessionId as string) ?? undefined)
         const terminal = !state.motionId && (!state.completedActionId || state.feedback?.actionId === state.completedActionId
-          && terminalTypes.includes(state.feedback.type))
+          && environmentActionHasEnded(state.feedback))
         if (payload.executionId !== execution.executionId || payload.sessionId !== context.activeTaskSessionId
           || payload.confirmCandidate !== true || payload.resume !== true || !loss.candidateFrame
           || payload.candidateFrame !== loss.candidateFrame || !state.perception
@@ -537,25 +711,71 @@ export const environmentActiveTaskWaitNode = defineNode({
         } else state.interpretationError = result.error?.message ?? 'Instruction interpretation failed; pending instructions were not applied'
         return { state, continue: !routeInput() }
       }
+      if (event.kind === 'observation_received' && state.action?.locomotionGoal && payload.environmentObservation?.state?.locomotionMeasurement) {
+        state.observation = observationReference(payload.environmentObservation); return { state, continue: true }
+      }
       if (event.kind === 'perception_received') { state.retrySteering = true; return { state, continue: true } }
       if (event.kind === 'action_accepted' && event.actionId === state.motionId) {
         state.accepted = true; return { state, continue: true }
+      }
+      if (event.kind === 'work_result' && payload.effectId === state.visionEffectId) {
+        delete state.visionEffectId
+        if (payload.result.state !== 'completed') {
+          state.identificationError = payload.result.error?.message ?? 'Vision operation failed'
+          return { state, continue: true }
+        }
+        if (step.kind === 'vision' && step.operation === 'acquire') {
+          const image = payload.result.result.visual as EnvironmentVisualFrame | null
+          if (image?.dataUrl) state.image = image
+          else state.identificationError = 'No current camera image is available for acquisition'
+          return { state, continue: true }
+        }
+        if (step.kind !== 'vision') {
+          const goal = (step.kind === 'action' ? step.action : step.kind === 'behavior' ? step.motion : null)?.locomotionGoal
+          if ((goal?.kind === 'approach' || goal?.kind === 'follow') && goal.proximity.kind === 'imageRelative') {
+            state.visionResult = payload.result.result.vision
+            state.queryId = typeof state.visionResult?.queryId === 'string' ? state.visionResult.queryId : undefined
+            state.evidence.push(JSON.stringify({ type: 'vision', result: state.visionResult, locomotionGoal: goal, motionStarted: false }))
+            state.planningRequired = true
+            return { state, continue: true }
+          }
+          state.locomotionTargetAcquired = true
+          const measured = payload.result.result.vision?.locomotionMeasurement as EnvironmentLocomotionMeasurement | undefined
+          if (measured) state.locomotion = { initial: measured, latest: measured, reached: false }
+          else state.identificationError = 'Selected ground-contact measurement was not returned'
+          return { state, continue: true }
+        }
+        state.visionResult = payload.result.result.vision
+        state.queryId = typeof state.visionResult?.queryId === 'string' ? state.visionResult.queryId : undefined
+        // Return the finished sensing program's result to its planner, as acquisition does.
+        // A configuration receipt is not a decision that the whole objective is complete.
+        if (state.stepIndex + 1 === program.steps.length) state.planningRequired = true
+        return advance(JSON.stringify({ type: 'vision', result: state.visionResult }))
       }
       if (event.kind === 'work_result' && payload.effectId === state.identificationEffectId) {
         delete state.identificationEffectId
         const request = state.identificationRequest
         const current = getLatestEnvironmentObservation(context.activeTaskSessionId as string)?.state?.activeMovementUpdates as Record<string, unknown> | undefined
         delete state.identificationRequest
+        if (step.kind === 'vision' && step.operation === 'acquire') {
+          if (payload.result.state === 'completed') {
+            state.acquisition = payload.result.result
+            state.planningRequired = true
+            return advance(JSON.stringify({ type: 'acquisition', result: state.acquisition }))
+          }
+          state.identificationError = payload.result.error?.message ?? 'Target acquisition failed'
+          return { state, continue: true }
+        }
         if (!request || request.stepIndex !== state.stepIndex || request.gatewayInstance !== current?.gatewayInstance
-          || request.epoch !== current?.epoch || request.expiresAt && Date.parse(request.expiresAt) <= Date.now()) {
+          || request.epoch !== current?.epoch) {
           state.perceptionOutcome = 'stale'
-          const live = getEnvironmentPerception(context.activeTaskSessionId as string)
-          // Slow inference is not feedback loss. Discard expired image evidence
-          // and recapture while current local feedback remains usable.
-          if (program.steps[state.stepIndex].kind !== 'behavior' || !live
-            || request?.gatewayInstance !== current?.gatewayInstance || request?.epoch !== current?.epoch)
-            state.identificationError = 'Image evidence belongs to an expired frame or ended body session'
-          else delete state.lastIdentifiedFrame
+          state.identificationError = 'Image evidence belongs to a different task phase or ended body session'
+          delete state.identification
+        } else if (request.expiresAt && Date.parse(request.expiresAt) <= Date.now()) {
+          // Late image interpretation cannot establish current completion.
+          // Camera freshness does not grant authority to cancel movement.
+          state.perceptionOutcome = 'stale'
+          delete state.lastIdentifiedFrame
           delete state.identification
         } else if (payload.result.state === 'completed') {
           state.identification = payload.result.result; state.perceptionOutcome = state.identification?.outcome
@@ -592,7 +812,7 @@ export const environmentActiveTaskWaitNode = defineNode({
           : state.action
         if (action) projectRobotStatus({ observation: state.observation,
           bridgeRecord: { requestedActions: [action], commands: [{ id: event.actionId }], status: feedback.type },
-          ...(['completed', 'failed', 'rejected', 'expired', 'cancelled'].includes(feedback.type) ? { terminalFeedback: feedback } : {}),
+          ...(environmentActionHasEnded(feedback) ? { terminalFeedback: feedback } : {}),
         }, context)
       }
       if (state.pendingControls && event.actionId === state.pendingControls.commandId) {
@@ -605,13 +825,22 @@ export const environmentActiveTaskWaitNode = defineNode({
         state.steeringResult = feedback
         state.retrySteering = false
         if (feedback.type === 'completed') state.acknowledgedControls = pending.controls
-        if (feedback.type !== 'outcome_unknown') delete state.pendingControls
+        if (environmentActionHasEnded(feedback)) delete state.pendingControls
         return { state, continue: true }
       }
       if (event.actionId === state.motionId) {
         advanceInterpretationFence(state, feedback)
         state.feedback = feedback
         if (feedback.type === 'accepted' || feedback.type === 'status') { state.accepted = true; return { state, continue: true } }
+        if (state.action?.locomotionGoal && environmentActionHasEnded(feedback)) {
+          state.evidence.push(JSON.stringify({ locomotionGoal: state.action.locomotionGoal, ...state.locomotion, termination: feedback }))
+          if (feedback.type === 'completed' && state.finishRequestedAt && state.locomotion?.reached && !state.locomotion.incomplete)
+            return advance(feedback.message || 'Locomotion endpoint and gait termination recorded')
+          if (state.locomotion?.incomplete || state.action.locomotionGoal.kind !== 'visual' && state.action.locomotionGoal.kind !== 'follow') {
+            state.identificationError = state.locomotion?.incomplete ?? 'Gait ended without locomotion endpoint evidence'
+            state.done = true; state.objectiveComplete = false; return { state, continue: true }
+          }
+        }
         if (program.steps[state.stepIndex].kind === 'behavior' && state.finishRequestedAt
           && !state.identificationError && !state.failure && feedback.type === 'completed') {
           state.visualCompletionSatisfied = state.identification?.completionSatisfied === true

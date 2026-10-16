@@ -164,4 +164,15 @@ test('Dreamer carries the Work Coordinator retry identity into graph persistence
   assert.equal(context.idempotencyKey, 'dreamer:test-profile:dream-task-stable')
   assert.equal(context.memoryTimestamp, executionTimestamp)
   assert.equal(context.maxDreams, 3)
+  assert.equal(context.sleepSessionId, undefined)
+})
+
+test('Dreamer preserves the admitted Sleep session without consulting a later current session', () => {
+  const args = parseDreamerArgs([], {
+    MH_TASK_ID: 'sleep-dream-task', MH_TASK_CREATED_AT: '2026-10-14T01:00:00.000Z',
+    MH_TASK_PAYLOAD: JSON.stringify({ triggeredBy: 'sleep-workflow', sleepWorkflow: { sessionId: 'admitted-sleep-session' } }),
+  })
+  const context = buildDreamerGraphContext('test-profile', 3, args)
+  assert.equal(context.sleepSessionId, 'admitted-sleep-session')
+  assert.equal(context.memoryTimestamp, '2026-10-14T01:00:00.000Z')
 })

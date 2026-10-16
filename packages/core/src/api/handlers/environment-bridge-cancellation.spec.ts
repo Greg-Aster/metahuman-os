@@ -52,8 +52,9 @@ test('queue Cancel and Cancel pending cancel the saved workflow, not only its wa
         { eventId: 'late', kind: 'autonomy_trigger', payload: {} }), /finished before input admission/);
       assert.equal(store.findEvent(record.executionId, 'late'), null, 'Cancelled executions cannot acknowledge new input');
       assert.equal(store.pendingDispatches().length, 0);
-      assert.ok(response.data.snapshot.executions.some((entry: any) => entry.executionId === record.executionId
-        && entry.status === 'cancelled'));
+      assert.ok(!response.data.snapshot.executions.some((entry: any) => entry.executionId === record.executionId),
+        'Cancelled workflows leave the Queue view while their durable record remains');
+      assert.equal('history' in response.data.snapshot, false);
     } finally { store.close(); }
   }
   await system.dispose();
@@ -108,9 +109,9 @@ test('saved-only cancellation wakes the activity observer and updates viewers wi
       stream = response.stream![Symbol.asyncIterator]();
       await stream.next();
       const update = stream.next();
-      const mock = t.mock.method(system, 'getExecutions', (profile: string) => {
+      const mock = t.mock.method(system, 'getExecutions', (profile: string, terminalHistoryCount?: number) => {
         if (profile === 'unreadable-viewer') throw new Error('Viewer storage unavailable');
-        return readExecutions(profile);
+        return readExecutions(profile, terminalHistoryCount);
       });
       fs.mkdirSync(path.dirname(ACTIVITY_STATE_FILE), { recursive: true });
       const changed = new Promise<void>((resolve, reject) => {
@@ -124,7 +125,14 @@ test('saved-only cancellation wakes the activity observer and updates viewers wi
       const packet = JSON.parse((await update).value!.match(/^data: (.+)$/m)![1]);
       assert.equal(packet.type, brokenViewer ? 'error' : 'execution_cancelled');
       if (brokenViewer) assert.equal(packet.error, 'Viewer storage unavailable');
-      else assert.ok(packet.snapshot.executions.some((entry: any) => entry.executionId === execution.executionId && entry.status === 'cancelled'));
+      else {
+        // Cancellation and the Trigger Manager's activity update share one
+        // delivered batch; its last event carries the current projection.
+        const projection = packet.snapshot ? packet : JSON.parse((await stream.next()).value!.match(/^data: (.+)$/m)![1]);
+        if (projection !== packet) assert.equal(projection.type, 'trigger-state');
+        assert.ok(!projection.snapshot.executions.some((entry: any) => entry.executionId === execution.executionId),
+          'The cancellation update removes finished work from the Queue view');
+      }
       assert.equal(JSON.parse(fs.readFileSync(ACTIVITY_STATE_FILE, 'utf8')).username, username);
       assert.equal(store.get(execution.executionId).status, 'cancelled');
       assert.ok(!manager.getAllTasks().some(task => task.graphExecutions?.includes(execution.executionId)), 'No synthetic work item is required to wake Full Auto');
@@ -241,6 +249,70 @@ function decode(chunk: string) {
   return { event, data };
 }
 
+test('user input interrupts robot rendering and playback through the shared speech owner', async () => {
+  const { beginTTSUserTurn, getTTSQueueState } = await import('../../tts/delivery-queue.js');
+  const username = 'speech-turn-owner', sessionId = randomUUID();
+  const generation = getTTSQueueState(username).generation;
+  const render = (requestId: string, value = generation) => manager.enqueue({ type: 'generic', handler: 'tts.robot-speech',
+    username, input: { requestId, sessionId, generation: value } });
+  const rendering = render('old'); manager.claim(rendering.id);
+  const playing = manager.enqueue({ type: 'environment_command', username, resource: `environment-speech:${sessionId}`,
+    input: { type: 'speak', sessionId, id: randomUUID(), metadata: { speechRequestId: 'old' } } });
+  manager.claim(playing.id);
+  const turn = beginTTSUserTurn(username)!;
+  assert.ok(rendering.cancellationRequestedAt);
+  assert.ok(playing.cancellationRequestedAt);
+  assert.equal(bridge.pendingEnvironmentCancellations(sessionId).length, 1);
+  const current = render('current', turn.generation);
+  assert.equal(render('late-old-response').state, 'cancelled');
+  assert.equal(current.state, 'queued', 'A late old response cannot interrupt the new turn');
+  manager.acknowledgeCancellation(rendering.id); manager.acknowledgeCancellation(playing.id); manager.cancel(current.id);
+});
+
+test('closing a speech delivery stream reconciles its own claim and cannot interrupt a replacement connection', () => {
+  const sessionId = randomUUID(), username = 'stream-owner';
+  const speech = () => manager.enqueue({ type: 'environment_command', username, resource: `environment-speech:${sessionId}`,
+    input: { type: 'speak', sessionId, id: randomUUID() } });
+  const old = speech(); manager.claim(old.id, 'old-stream');
+  bridge.releaseEnvironmentStreamWork(sessionId, 'old-stream');
+  assert.ok(old.cancellationRequestedAt);
+  const next = speech(); assert.ok(manager.claim(next.id, 'new-stream'));
+  bridge.releaseEnvironmentStreamWork(sessionId, 'old-stream');
+  assert.equal(next.state, 'leased'); assert.equal(next.cancellationRequestedAt, undefined);
+  manager.acknowledgeCancellation(old.id); manager.complete(next.id, true);
+});
+
+test('cancelled unsent speech settles its durable delivery without an adapter receipt or cancelling its parent', async () => {
+  const { ExecutionCheckpointer } = await import('../../durable-execution/checkpointer.js');
+  const { executionWorkInput } = await import('../../durable-execution/coordinator-outbox.js');
+  const { deliverDurableWorkReceipt } = await import('../../durable-execution/work-results.js');
+  const username = 'unsent-speech-owner', store = openExecutionStore(username);
+  try {
+    const definition = { graphId: 'speech', graphHash: 'current', runtimeVersion: 'current', checkpointSchemaVersion: 1, nodeVersions: {} };
+    const execution = store.create(username, definition), lease = store.claim(execution.executionId, definition);
+    const effectId = randomUUID(), input = { id: randomUUID(), sessionId: randomUUID(), type: 'speak' };
+    await new ExecutionCheckpointer(store, lease).put({ configurable: { thread_id: execution.executionId } }, {
+      v: 4, id: randomUUID(), ts: new Date().toISOString(), channel_versions: {}, versions_seen: {},
+      channel_values: { executionTransition: { transitionId: randomUUID(), dispatches: [{ effectId, actionId: input.id,
+        kind: 'coordinator_work', payload: { type: 'environment_command', handler: 'environment.command', username, input } }] } },
+    }, { source: 'loop', step: 0, parents: {} });
+    store.settle(lease, 'waiting', 'robot_result'); store.release(lease);
+    const task = manager.enqueue(executionWorkInput(store, store.dispatch(effectId)));
+    store.acknowledgeAdmission(effectId, task.id); manager.interruptSpeech(username, 'new input');
+    const enqueue = async (work: any) => manager.enqueue(work);
+    await deliverDurableWorkReceipt(task, enqueue, store);
+    await deliverDurableWorkReceipt(task, enqueue, store);
+    store.confirmUndispatched(effectId, task);
+    assert.equal(store.dispatch(effectId).status, 'completed');
+    assert.equal(store.get(execution.executionId).cancelledAt, null);
+    const events = store.events(execution.executionId).filter(event => event.actionId === input.id);
+    assert.equal(events.length, 1);
+    assert.equal((events[0].payload as any).feedback.type, 'cancelled');
+    assert.equal((events[0].payload as any).feedback.data.delivery.outcome, 'not_sent');
+    assert.equal(task.startedAt, undefined);
+  } finally { store.close(); }
+});
+
 async function openStream(sessionId: string) {
   const controller = new AbortController();
   const request: UnifiedRequest = {
@@ -345,7 +417,7 @@ test('persisted physical cancellation reaches the Bridge stream and replays unti
 });
 
 
-test('interrupted speech cancels through the adapter before releasing ownership and survives recovery', async () => {
+test('interrupted speech reconciles through the adapter without blocking newer speech across recovery', async () => {
   const { ExecutionCheckpointer } = await import('../../durable-execution/checkpointer.js');
   const { executionWorkInput } = await import('../../durable-execution/coordinator-outbox.js');
   for (const kind of ['speak', 'robotCommand']) {
@@ -378,8 +450,8 @@ test('interrupted speech cancels through the adapter before releasing ownership 
       bridge.recordEnvironmentActionResult(feedback);
       assert.equal(manager.getTask(task.id)?.state, 'waiting');
       assert.equal(Boolean(manager.getTask(task.id)?.cancellationRequestedAt), kind === 'speak');
-      assert.equal(manager.getNextExecutable(candidate => candidate.id === next.id), null,
-        'An uncertain delivery is not permission to release ownership of the same physical channel');
+      assert.equal(manager.getNextExecutable(candidate => candidate.id === next.id)?.id, kind === 'speak' ? next.id : undefined,
+        'Speech replacement does not wait for the old receipt; motion ownership is unchanged');
       assert.equal(store.dispatch(effectId).status, 'outcome_unknown');
       manager.importState(loadQueueState()!);
       assert.equal(bridge.pendingEnvironmentCancellations(sessionId).length, kind === 'speak' ? 1 : 0);

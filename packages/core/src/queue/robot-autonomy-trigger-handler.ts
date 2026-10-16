@@ -9,7 +9,6 @@ import {
 } from '../environment-interface/index.js'
 import {
   isRobotOperatorChildEnabled,
-  hasActiveRobotAutonomyCycle,
   loadRobotOperatorConfig,
   robotAutonomyControllerContext,
   robotObserverSourceAllowed,
@@ -17,14 +16,9 @@ import {
   type RobotObserverCycleMetadata,
   type RobotOperatorStimulusAgent,
 } from '../robot-operator.js'
-import { getQueueManager } from './unified-queue-manager.js'
 import type { QueuedTask } from './types.js'
 import type { WorkHandlerContext } from './execution-engine.js'
 import { getUserByUsername } from '../users.js'
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-}
 
 function requestedSessionId(task: QueuedTask, configuredSessionId?: string): string | undefined {
   if (typeof task.input.sessionId === 'string' && task.input.sessionId.trim()) return task.input.sessionId.trim()
@@ -96,7 +90,7 @@ async function executeRobotStatusGraph(
 async function executeRobotAutonomyControllerGraph(
   task: QueuedTask,
   graphName: string,
-  autonomyGraph: string,
+  environmentGraph: string,
   sessionId: string | undefined,
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
@@ -128,7 +122,7 @@ async function executeRobotAutonomyControllerGraph(
         allowMemoryWrites: canWriteMemory('environment'),
         environment: 'server',
         robotOperatorContext: operatorContext,
-        robotOperatorEnvironmentGraph: autonomyGraph,
+        robotOperatorEnvironmentGraph: environmentGraph,
         abortSignal: signal,
       },
     }),
@@ -137,43 +131,23 @@ async function executeRobotAutonomyControllerGraph(
   if (graphState.status === 'failed' || graphState.error || failures.length > 0) {
     throw new Error(`Robot Autonomy Controller graph failed: ${graphState.error?.message || failures[0]?.error || graphState.status}`, { cause: graphState.error })
   }
-  const parsed = requireGraphNodeOutput(graphState, 'robot_autonomy_controller_parser')
-  const decision = isRecord(parsed.decisionReceipt) ? parsed.decisionReceipt : null
-  if (!decision) throw new Error('Robot Autonomy Controller completed without a validated decision receipt')
-  const selectedTaskId = typeof decision.taskId === 'string' ? decision.taskId : ''
-  const dispatchType = selectedTaskId === 'robot-autonomy-executor'
-    ? 'robot_operator_environment_dispatch' : 'robot_autonomy_task_dispatch'
-  const dispatchNodes = [...graphState.nodes.values()]
-    .filter(node => node.definition?.type === dispatchType)
-  // Selected branches can still be inactive when a required input is absent.
-  // Report that execution outcome without selecting a different task.
-  const dispatch = selectedTaskId === 'none'
-    ? { queued: false, taskId: '', status: 'none_selected' }
-    : dispatchNodes.length === 1 && dispatchNodes[0].status === 'skipped'
-      ? { queued: false, taskId: '', status: 'skipped', reason: dispatchNodes[0].skipReason }
-      : requireGraphNodeOutput(graphState, dispatchType)
-  return {
-    graphExecuted: true,
-    executionId: graphState.executionId,
-    executionStatus: graphState.status,
-    graph: graphName,
-    agentId: 'robot-autonomy-controller',
-    cycle: robotObserver,
-    decision,
-    dispatch: {
-      queued: dispatch.queued === true,
-      taskId: typeof dispatch.taskId === 'string' ? dispatch.taskId : '',
-      status: typeof dispatch.status === 'string' ? dispatch.status : 'unknown',
-      ...(typeof dispatch.reason === 'string' ? { reason: dispatch.reason } : {}),
-    },
+  // A durable graph can yield before the controller has made a decision.
+  // Its existing execution owns continuation after the requested work returns.
+  if (graphState.status === 'waiting') {
+    return {
+      graphExecuted: true,
+      executionId: graphState.executionId,
+      executionStatus: graphState.status,
+      graph: graphName,
+      agentId: 'robot-autonomy-controller',
+      cycle: robotObserver,
+    }
   }
-}
-
-function anotherRobotAutonomyCycleIsActive(task: QueuedTask): boolean {
-  const cycleId = typeof task.input.cycleId === 'string' && task.input.cycleId.trim()
-    ? task.input.cycleId.trim()
-    : task.correlationId?.trim() ?? ''
-  return hasActiveRobotAutonomyCycle(getQueueManager().getAllTasks(), task.id, cycleId)
+  const parsed = requireGraphNodeOutput(graphState, 'robot_autonomy_controller_parser')
+  const dispatch = requireGraphNodeOutput(graphState, 'active_operator_dispatch')
+  return { graphExecuted: true, executionId: graphState.executionId, executionStatus: graphState.status,
+    graph: graphName, agentId: 'robot-autonomy-controller', cycle: robotObserver,
+    assessment: parsed.assessment, requests: dispatch.requests }
 }
 
 export async function executeRobotAutonomyTriggerWork(
@@ -189,16 +163,13 @@ export async function executeRobotAutonomyTriggerWork(
   if (!isRobotOperatorChildEnabled(agentId)) {
     return { skipped: true, reason: `${agentId.replace(/-/g, '_')}_disabled`, agentId }
   }
-  if (anotherRobotAutonomyCycleIsActive(task)) {
-    return { skipped: true, reason: 'robot_autonomy_cycle_active', agentId }
-  }
 
   const config = loadRobotOperatorConfig()
   if (agentId === 'robot-autonomy-controller') {
     const result = await executeRobotAutonomyControllerGraph(
       task,
       robotOperatorChildGraph(config, agentId),
-      config.autonomyGraph,
+      config.environmentGraph,
       requestedSessionId(task, config.sessionId),
       context.signal,
     )
@@ -281,8 +252,9 @@ export async function executeRobotAutonomyTriggerWork(
       mode: 'system', dialogueType: 'system', environment: 'server',
       allowMemoryWrites: canWriteMemory('environment'),
       environmentObservation: observation, environmentObservationCurrent: false,
-      robotOperatorEnvironmentGraph: config.autonomyGraph,
+      robotOperatorEnvironmentGraph: config.environmentGraph,
       robotOperatorContext: { robotObserver: cycle, stimulusAgent: agentId,
+        ...(task.input.plannerDecision ? { plannerDecision: task.input.plannerDecision } : {}),
         sourceObservationAt: observation.timestamp, currentVisualEvidence: false },
     },
   }))

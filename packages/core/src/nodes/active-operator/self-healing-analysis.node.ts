@@ -1,4 +1,5 @@
-import { reasoningProperty } from '../llm/model-router.schema.js';
+import type { ModelRole } from '../../model-roles.js';
+import { reasoningProperty, modelRouterDefinition } from '../llm/model-router.schema.js';
 import { callLLM } from '../../model-router.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext, type NodeExecutor } from '../types.js'
 
@@ -72,7 +73,7 @@ export async function executeSelfHealingAnalysis(
     throw new Error('Self-healing Analysis requires graph-supplied error context')
   }
   const response = await dependencies.callModel({
-    role: 'orchestrator',
+    role: (properties?.role ?? 'coder') as ModelRole,
     userId: typeof context.userId === 'string' ? context.userId : context.username,
     cognitiveMode: typeof context.cognitiveMode === 'string' ? context.cognitiveMode : undefined,
     messages: [
@@ -107,7 +108,8 @@ export const SelfHealingInputNode: NodeDefinition = defineNode({
 })
 
 export const SelfHealingAnalysisNode: NodeDefinition = defineNode({
-  propertySchemas: { enableThinking: reasoningProperty },
+  propertySchemas: {
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'coder' }, enableThinking: reasoningProperty },
   id: 'self_healing_analysis',
   name: 'Analyze TypeScript Error',
   category: 'active-operator',
@@ -122,7 +124,7 @@ export const SelfHealingAnalysisNode: NodeDefinition = defineNode({
     { name: 'diff', type: 'string', optional: true },
     { name: 'confidence', type: 'string' },
   ],
-  properties: { enableThinking: false },
+  properties: { role: 'coder', enableThinking: false },
   description: 'Produces a typed, review-only TypeScript repair proposal',
   execute: executeSelfHealingAnalysis,
 })

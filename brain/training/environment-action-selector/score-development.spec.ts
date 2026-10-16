@@ -6,10 +6,66 @@ import { action, noTask, routes, task } from './development-cases.js'
 import { main, score, validatePredictionCoverage } from './score-development.js'
 import { REPOSITORY_ROOT, sha256 } from './corpus.js'
 import type { ActionSelectorTrainingRecord } from './generate-training-data.js'
+import { DEVELOPMENT_CASES, REGRESSION_CASES } from './generate-training-data.js'
+import { migrateLocomotionReference } from './locomotion-contract.js'
 const prediction = (expected: Record<string, any>, actual: unknown, specialist: 'intent' | 'task' = 'task') => ({
   fold: 0, recordId: 'test-record', sourceCaseId: 'test-case', suite: 'scoring', risk: 'high', specialist,
   sourceSplit: 'development', user: '{}', expected, rawResponse: typeof actual === 'string' ? actual : JSON.stringify(actual),
   meanBatchLatencyMs: 100, promptTokens: 10, completionTokens: 5, systemOwned: true,
+})
+test('qualification failure shapes cannot pass the paired task references', () => {
+  const language = DEVELOPMENT_CASES.find(source => source.suite === 'contrast-language-conversation')!
+  const inventedMovement = score([prediction(language.targets![0]!, task('Discuss an idea.', [action('wave')]))])
+  assert.equal(inventedMovement.coreValid.count, 1)
+  assert.equal(inventedMovement.unsafeActionAuthorityErrors, 1)
+  assert.equal(inventedMovement.typedDecisionMatch.count, 0)
+
+  const sequence = DEVELOPMENT_CASES.find(source => source.suite === 'contrast-sequence-latch')!.targets![2]!
+  const turnOnly = structuredClone(sequence)
+  turnOnly.program.steps.pop()
+  const missingCapture = score([prediction(sequence, turnOnly)])
+  assert.equal(missingCapture.coreValid.count, 1)
+  assert.equal(missingCapture.wrongPhysicalActions, 1)
+  assert.equal(missingCapture.typedDecisionMatch.count, 0)
+  assert.equal(missingCapture.semanticReview.confirmedCorrect, 0)
+
+  const condition = DEVELOPMENT_CASES.find(source => source.suite === 'contrast-condition-wave-sit')!
+  const both = structuredClone(condition.targets![0]!)
+  both.program.steps = condition.targets![3]!.program.steps
+  const bothBranches = score([prediction(condition.targets![0]!, both)])
+  assert.equal(bothBranches.coreValid.count, 1)
+  assert.equal(bothBranches.wrongPhysicalActions, 1)
+  assert.equal(bothBranches.typedDecisionMatch.count, 0)
+})
+test('photo-only output cannot pass a compound visual-goal regression', () => {
+  const expected = migrateLocomotionReference(structuredClone(REGRESSION_CASES.find(source => source.suite === 'goal-live-regression')!.expected)).output
+  const observed = task('Use the selected interface to see one fresh capture.',
+    [{ kind: 'action', action: { type: 'captureImage' } }])
+  const result = score([prediction(expected, observed)])
+  assert.equal(result.coreValid.count, 1, 'The recorded defect is semantic, not malformed JSON')
+  assert.equal(result.missedPhysicalActions, 1)
+  assert.equal(result.typedDecisionMatch.count, 0)
+  assert.equal(result.acceptableRouting.count, 0)
+  assert.equal(result.semanticReview.confirmedCorrect, 0)
+  assert.equal(result.semanticReview.pending.length, 1)
+
+  const premature = { ...expected, taskDecision: { ...expected.taskDecision,
+    continuationPolicy: 'none', requiredCompletionBasis: 'action_result' } }
+  const wrongEvidence = score([prediction(expected, premature)])
+  assert.equal(wrongEvidence.exactRouting.count, 1, 'Same actions do not establish visual goal success')
+  assert.equal(wrongEvidence.typedDecisionMatch.count, 0)
+  assert.equal(wrongEvidence.semanticReview.confirmedCorrect, 0)
+})
+
+test('a reviewed alternative viewpoint does not have to copy the reference direction', () => {
+  const expected = migrateLocomotionReference(structuredClone(REGRESSION_CASES.find(source => source.suite === 'goal-live-regression')!.expected)).output
+  const alternative = structuredClone(expected)
+  alternative.program.steps[0].motion.turn = -25
+  const sample = prediction(expected, alternative)
+  const result = score([sample], [{ recordId: sample.recordId, predictionDigest: sha256(sample),
+    semantic: 'pass', grounding: 'pass', reason: 'Both directions are candidate viewpoints, not claims that glare has already improved. The whole objective and visual completion criterion remain intact.' }])
+  assert.equal(result.exactRouting.count, 0)
+  assert.equal(result.semanticReview.confirmedCorrect, 1)
 })
 test('scoring catches a wrong later program step and false completion without a receipt', () => {
   const expected = task('Wave and bow.', [action('wave'), action('bow')])
@@ -205,4 +261,28 @@ test('a reviewed equivalent generated motion can pass semantics without an exact
   assert.equal(result.exactRouting.count, 0)
   assert.equal(result.semanticReview.confirmedCorrect, 1)
   assert.equal(score([sample]).semanticReview.confirmedCorrect, 0)
+})
+
+
+test('tool over-delegation, missed delegation, and a missing current route cannot pass routing evaluation', () => {
+  for (const needsToolUse of [false, true]) {
+    const expected = { needsResponse: true, needsAction: false, needsToolUse, taskContext: [], conversationContext: [] }
+    const actual = { ...expected, needsToolUse: !needsToolUse }
+    const result = score([prediction(expected, actual, 'intent')])
+    assert.equal(result.acceptableRouting.count, 0)
+    assert.equal(result.routeErrors.needsToolUse![needsToolUse ? 'missed' : 'extra'], 1)
+    const { needsToolUse: _tool, ...legacy } = expected
+    assert.equal(score([prediction(expected, legacy, 'intent')]).acceptableRouting.count, 0)
+    assert.equal(score([prediction(expected, expected, 'intent')]).acceptableRouting.count, 1)
+  }
+})
+
+test('planner selection is scored separately from context and action routes', () => {
+  const expected = { needsResponse: false, needsAction: true, needsToolUse: false, taskPlanner: 'vision', taskContext: ['vision'], conversationContext: [] }
+  const actual = { ...expected, taskPlanner: 'specialist' }
+  const result = score([prediction(expected, actual, 'intent')])
+  assert.equal(result.acceptableRouting.count, 0)
+  assert.equal(result.routeErrors['taskPlanner.vision']!.missed, 1)
+  assert.equal(result.routeErrors['taskPlanner.specialist']!.extra, 1)
+  assert.equal(score([prediction(expected, expected, 'intent')]).acceptableRouting.count, 1)
 })

@@ -9,7 +9,8 @@ import { systemPaths } from './paths.js'
 import { safeWriteJSON } from './safe-file.js'
 import { acquireLock, assertProfileMemoryAvailable } from './locks.js'
 import { DEFAULT_TRAINING_MODEL, DEFAULT_VLLM_TRAINING_MODEL } from './model-defaults.js'
-import { parseTrainingDataSettings, type CognitiveMode } from './training-schema.js'
+import { parseTrainingDataSettings, type CognitiveMode, type TrainingMessage } from './training-schema.js'
+import { selectReviewedPersonalizationDataset, type ReviewedPersonalizationDataset } from './training-dataset.js'
 import {
   readProfileTrainingConfig,
   updateProfileTrainingConfig,
@@ -66,6 +67,7 @@ export interface TrainingRunpodConfig {
 
 export interface TrainingLaunchConfig {
   base_model: string
+  base_model_revision?: string
   num_train_epochs: number
   max_samples: number | null
   monthly_training?: boolean
@@ -88,6 +90,15 @@ export interface TrainingLaunchRequest {
   trainingTarget?: TrainingTarget
   runpodConfig?: TrainingRunpodConfig
   trainingConfig: TrainingLaunchConfig
+  reviewedDataset?: ReviewedPersonalizationDataset
+  generationEvaluation?: {
+    cases: Array<{ id: string; messages: TrainingMessage[] }>
+    maxNewTokens: number
+    temperature: number
+    topP: number
+    topK: number
+    repeatPenalty: number
+  }
   advancedSettings?: {
     enableS3Upload: boolean
     enablePreprocessing: boolean
@@ -266,11 +277,15 @@ export function buildTrainingEngineConfig(request: TrainingLaunchRequest, profil
   if (!['adamw_torch', 'adamw_8bit'].includes(String(profile.optimizer ?? 'adamw_torch'))) throw new Error('Training optimizer must be adamw_torch or adamw_8bit')
   const dropout = profile.lora_dropout ?? 0
   if (typeof dropout !== 'number' || !Number.isFinite(dropout) || dropout < 0 || dropout >= 1) throw new Error('LoRA dropout must be from 0 to less than 1')
+  const data = parseTrainingDataSettings(profile.data ?? {})
+  if (request.reviewedDataset) selectReviewedPersonalizationDataset(request.reviewedDataset, data, new Date().toISOString())
   return {
     ...config,
     training_mode: request.method === 'fine-tune' ? 'full_finetune' : 'lora',
     trainingTarget: request.trainingTarget ?? 'ollama',
-    data: parseTrainingDataSettings(profile.data ?? {}),
+    data,
+    ...(request.reviewedDataset ? { reviewedDataset: structuredClone(request.reviewedDataset) } : {}),
+    ...(request.generationEvaluation ? { generationEvaluation: structuredClone(request.generationEvaluation) } : {}),
     dtype: profile.dtype ?? 'bfloat16',
     optimizer: profile.optimizer ?? 'adamw_torch',
     lora_dropout: profile.lora_dropout ?? 0,

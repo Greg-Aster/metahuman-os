@@ -31,6 +31,26 @@ test('current manual launch configuration passes the canonical validator', () =>
   }), null)
 })
 
+test('admission freezes reviewed context and generation cases with the native base revision', () => {
+  const row = (id: string) => ({ id, messages: [
+    { role: 'user' as const, content: 'Attributed fixture ' + id },
+    { role: 'assistant' as const, content: 'Reviewed continuation ' + id },
+  ], metadata: { sourceIds: [id], sourceHashes: { [id]: 'a'.repeat(64) }, curatedRecordIds: [id],
+    group: id, timestamp: '2026-10-15T00:00:00Z', sourceType: 'conversation', mode: 'environment' as const,
+    objective: 'assistant-continuation' as const, targetAuthor: 'assistant' as const, synthetic: true } })
+  const reviewedDataset = { review: { reviewer: 'Owner', reviewedAt: '2026-10-15T00:00:00Z', purpose: 'Fixture' },
+    train: [row('train')], evaluation: [row('evaluation')] }
+  const generationEvaluation = { cases: [{ id: 'case', messages: [{ role: 'user' as const, content: 'Original question' }] }],
+    maxNewTokens: 2048, temperature: 0.7, topP: 0.9, topK: 40, repeatPenalty: 1.1 }
+  const frozen = buildTrainingEngineConfig({ method: 'local-lora', trainingTarget: 'vllm',
+    trainingConfig: { ...config, base_model_revision: 'a'.repeat(40) }, reviewedDataset, generationEvaluation }, {})
+  reviewedDataset.train[0]!.messages[0]!.content = 'Changed after admission'
+  generationEvaluation.cases[0]!.messages[0]!.content = 'Changed after admission'
+  assert.equal(frozen.base_model_revision, 'a'.repeat(40))
+  assert.equal((frozen.reviewedDataset as typeof reviewedDataset).train[0]!.messages[0]!.content, 'Attributed fixture train')
+  assert.equal((frozen.generationEvaluation as typeof generationEvaluation).cases[0]!.messages[0]!.content, 'Original question')
+})
+
 test('remote training requires credentials; local safetensors uses the shared trainer', () => {
   assert.match(validateTrainingLaunchRequest({
     method: 'remote-lora',

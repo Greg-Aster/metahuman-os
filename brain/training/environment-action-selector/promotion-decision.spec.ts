@@ -46,8 +46,11 @@ test('manual GPU training restores the prior service activity after a failed fit
   const log = path.join(directory, 'systemctl.log')
   fs.writeFileSync(path.join(directory, 'systemctl'), [
     '#!/bin/sh',
-    'if [ "$2" = "is-active" ]; then echo active; exit 0; fi',
-    'echo "$2 $3 $4" >> "$TRAINING_TEST_LOG"',
+    'if [ "$2" = "is-active" ]; then',
+    '  if [ "$3" = "llama-cpp-environment-2b.service" ] && [ -f "$TRAINING_TEST_LOG.inactive" ]; then echo inactive; exit 3; fi',
+    '  echo active; exit 0;',
+    'fi',
+    'shift; echo "$*" >> "$TRAINING_TEST_LOG"',
   ].join('\n'), { mode: 0o755 })
   process.env.PATH = `${directory}:${oldPath}`
   process.env.TRAINING_TEST_LOG = log
@@ -57,14 +60,53 @@ test('manual GPU training restores the prior service activity after a failed fit
       throw new Error('fit failed')
     }), /fit failed/)
     assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n'), [
-      'stop llama-cpp.service llama-cpp-environment-intent.service',
+      'stop llama-cpp.service llama-cpp-environment-intent.service llama-cpp-environment-2b.service',
       'fit attempted',
-      'start llama-cpp.service llama-cpp-environment-intent.service',
+      'start llama-cpp.service llama-cpp-environment-intent.service llama-cpp-environment-2b.service',
     ])
+    fs.writeFileSync(`${log}.inactive`, '')
+    fs.writeFileSync(log, '')
+    await withTrainingGpuCapacity(async () => { fs.appendFileSync(log, 'fit completed\n') })
+    assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n'), [
+      'stop llama-cpp.service llama-cpp-environment-intent.service',
+      'fit completed',
+      'start llama-cpp.service llama-cpp-environment-intent.service',
+    ], 'an inactive optional 2B service must not be started after training')
   } finally {
     process.env.PATH = oldPath
     if (oldLog === undefined) delete process.env.TRAINING_TEST_LOG
     else process.env.TRAINING_TEST_LOG = oldLog
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('2B activation and rollback touch only its existing service and preserve the paired adapter', async () => {
+  const { activateReviewedLora } = await import('./serve-promotion.js')
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'specialist-promotion-'))
+  const originalPath = process.env.PATH
+  const originalConfig = process.env.XDG_CONFIG_HOME
+  const originalFetch = globalThis.fetch
+  const log = path.join(directory, 'calls')
+  const unitPath = path.join(directory, 'systemd/user/llama-cpp-environment-2b.service')
+  const unit = '[Service]\nExecStart=server --lora-scaled /old.gguf:0,/paired.gguf:0 --port 8086\n'
+  fs.mkdirSync(path.dirname(unitPath), { recursive: true })
+  fs.writeFileSync(unitPath, unit)
+  fs.writeFileSync(path.join(directory, 'systemctl'), `#!/bin/sh\necho "$*" >> '${log}'\n`, { mode: 0o755 })
+  process.env.PATH = `${directory}:${originalPath}`
+  process.env.XDG_CONFIG_HOME = directory
+  globalThis.fetch = async () => new Response(JSON.stringify([{ path: fs.readFileSync(unitPath, 'utf8').includes('/new.gguf') ? '/new.gguf' : '/old.gguf' }]))
+  try {
+    const input = { baseModel: 'unsloth/Qwen3.5-2B', previousPath: '/old.gguf', nextPath: '/new.gguf', endpoint: 'http://fixture:8086' }
+    await assert.rejects(activateReviewedLora({ ...input, commit: async () => { throw new Error('commit failed') } }), /commit failed/)
+    assert.equal(fs.readFileSync(unitPath, 'utf8'), unit)
+    assert.equal(await activateReviewedLora({ ...input, commit: async () => 'committed' }), 'committed')
+    assert.equal(fs.readFileSync(unitPath, 'utf8'), unit.replace('/old.gguf', '/new.gguf'))
+    assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n'), Array.from({ length: 3 }, () => ['--user daemon-reload', '--user restart llama-cpp-environment-2b.service']).flat())
+  } finally {
+    globalThis.fetch = originalFetch
+    process.env.PATH = originalPath
+    if (originalConfig === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = originalConfig
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })

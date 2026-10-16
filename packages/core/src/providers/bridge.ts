@@ -155,21 +155,7 @@ export async function callProvider(
   // NO FALLBACKS - if the configured backend isn't working, STOP and notify user
   // =========================================================================
   const operatorConfig = username ? loadFreshOperatorConfig(username) : null;
-  const bigBrotherEnabled = operatorConfig?.bigBrotherMode?.enabled ?? false;
-  const bigBrotherDelegateAll = operatorConfig?.bigBrotherMode?.delegateAll ?? false;
-
-  // Big Brother routing logic:
-  // - delegateAll: ALL LLM calls go to Big Brother
-  // - enabled but not delegateAll (hybrid mode): only calls with useBigBrother option go to Big Brother
-  // - disabled: all local
-  const shouldUseBigBrother =
-    (!options.explicitModel && bigBrotherEnabled && bigBrotherDelegateAll) || // Role-based delegate-all mode
-    (options?.useBigBrother === true); // Explicit request from node (even if config cache misses)
-
-  if (options?.useBigBrother === true && !bigBrotherEnabled) {
-    const reason = operatorConfig ? 'disabled in operator config' : 'operator config unavailable';
-    throw new Error(`Big Brother requested but ${reason}`);
-  }
+  const shouldUseBigBrother = providerName === 'big-brother' || options.useBigBrother === true;
 
   if (shouldUseBigBrother) {
     // Use the provider-agnostic escalation system
@@ -222,6 +208,7 @@ export async function callProvider(
     // Execute through the configured backend (provider-agnostic)
     const result = await escalate(prompt, {
       signal: options.signal,
+      enableThinking: options.enableThinking,
       username,
       preferredBackend,
       timeout: 300000,
@@ -245,7 +232,7 @@ export async function callProvider(
   }
 
   // A registered llama.cpp role retains its serving endpoint and request adapters.
-  // Big Brother routing above remains authoritative when enabled.
+  // Role assignment retains its selected provider.
   if (providerName === 'llama-cpp') {
     const backend = loadBackendConfig();
     return callLlamaCpp({ ...backend.llamaCpp,
@@ -267,7 +254,7 @@ export async function callProvider(
 
   const backendStatus = await getBackendStatus();
 
-  // Big Brother not enabled - check local backend availability
+  // Local provider selected: check its backend availability
   if (!backendStatus.running || backendStatus.health === 'offline') {
     const errorMsg = `No LLM backend available. ${backendStatus.reason || `${backendStatus.backend} is ${backendStatus.health}`}. Check the configured service in System settings.`;
     console.error(`[provider-bridge] ${errorMsg}`);
@@ -877,6 +864,13 @@ async function callMockProvider(
  */
 export async function isProviderAvailable(providerName: ProviderType): Promise<boolean> {
   switch (providerName) {
+    case 'big-brother': {
+      const { ensureBackendsInitialized, getBackend } = await import('../escalation-backend.js');
+      await ensureBackendsInitialized();
+      const username = getUserContext()?.username;
+      const provider = (username ? loadFreshOperatorConfig(username).bigBrotherMode?.provider : undefined) || 'claude-code';
+      return await getBackend(provider)?.isAvailable() ?? false;
+    }
     case 'llama-cpp':
       return (await getLlamaCppStatus(loadBackendConfig().llamaCpp)).running;
     case 'ollama':

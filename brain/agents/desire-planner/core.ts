@@ -15,6 +15,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime';
 import {
@@ -906,7 +907,7 @@ export async function runCycle(options: DesirePlannerOptions = {}): Promise<Desi
 
     console.log(`${LOG_PREFIX} Processing user: ${user.username}`);
 
-    const lock = acquireLock(`${LOCK_NAME}:${user.username}`, { exitOnSignal: false });
+    const lock = acquireLock(`${LOCK_NAME}-${createHash('sha256').update(user.username).digest('hex')}`, { exitOnSignal: false });
     try {
       console.log(`${LOG_PREFIX} --- Processing user: ${user.username} ---`);
       await withUserContext(user, async () => {

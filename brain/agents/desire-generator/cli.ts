@@ -22,7 +22,7 @@ async function main() {
     const result = await runCycle(parseDesireGeneratorArgs(process.argv.slice(2)));
 
     if (result.success) {
-      console.log(`[desire-agent] Completed: ${result.totalGenerated} desire changes for ${result.usersProcessed} users`);
+      console.log(`[desire-agent] Completed review for ${result.usersProcessed} users; ${result.totalGenerated} creations, increases, or activations. Decreases and archival are recorded in the review report.`);
     } else {
       console.error(`[desire-agent] Failed: ${result.errors.at(-1) || 'Unknown failure'}`);
     }

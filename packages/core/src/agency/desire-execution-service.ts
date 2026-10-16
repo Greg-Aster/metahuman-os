@@ -3,7 +3,7 @@ import {
   listAllDesires,
   listDesiresByStatus,
   loadDesire,
-  saveDesireManifest,
+  saveDesireProgress,
 } from './storage.js'
 import {
   executeDesireViaGraph,
@@ -35,7 +35,7 @@ export interface ApprovedDesireExecutionResult {
 export interface DesireExecutionDependencies {
   loadDesire: typeof loadDesire
   listApproved: (username: string) => Promise<Desire[]>
-  saveManifest: typeof saveDesireManifest
+  saveManifest: typeof saveDesireProgress
   addScratchpadEntry: typeof addScratchpadEntryToFolder
   executeGraph: typeof executeDesireViaGraph
   allowAutoApprovedManualSteps: (username: string) => Promise<boolean>
@@ -243,7 +243,7 @@ export function createApprovedDesireExecutor(dependencies: Partial<DesireExecuti
   const deps: DesireExecutionDependencies = {
     loadDesire,
     listApproved: username => listDesiresByStatus('approved', username),
-    saveManifest: saveDesireManifest,
+    saveManifest: (desire, username) => saveDesireProgress(desire, username, true),
     addScratchpadEntry: addScratchpadEntryToFolder,
     executeGraph: executeDesireViaGraph,
     allowAutoApprovedManualSteps: async username => (await loadConfig(username)).mode === 'yolo',

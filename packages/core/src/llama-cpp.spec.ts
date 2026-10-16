@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { after, afterEach, test } from 'node:test'
+import { after, afterEach, mock, test } from 'node:test'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { once } from 'node:events'
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-llama-cpp-'))
 process.env.METAHUMAN_ROOT = root
@@ -19,10 +21,38 @@ const { handleGetModelRegistry, handleAssignModelRole } = await import('./api/ha
 const { handleSetLlmBackendConfig } = await import('./api/handlers/llm-backend-config.js')
 eventBus.disconnect()
 const fetchOriginal = globalThis.fetch
-afterEach(() => { globalThis.fetch = fetchOriginal })
-after(() => { eventBus.disconnect(); fs.rmSync(root, { recursive: true, force: true }) })
+let respond: typeof fetch
+let rawHandler: ((request: IncomingMessage, response: ServerResponse) => void) | undefined
+const endpoints: string[] = []
+const servers: ReturnType<typeof createServer>[] = []
+for (let index = 0; index < 4; index++) {
+  const server = createServer((request, response) => {
+    if (rawHandler) { rawHandler(request, response); return }
+    void (async () => {
+      let body = ''
+      for await (const chunk of request) body += chunk
+      const result = await respond(`${endpoints[index]}${request.url}`, {
+        method: request.method, ...(body ? { body } : {}),
+      })
+      response.writeHead(result.status, Object.fromEntries(result.headers))
+      response.end(Buffer.from(await result.arrayBuffer()))
+    })().catch(error => { response.writeHead(503); response.end(error.message) })
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  endpoints.push(`http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`)
+  servers.push(server)
+}
+afterEach(() => { globalThis.fetch = fetchOriginal; rawHandler = undefined; mock.restoreAll() })
+after(async () => {
+  eventBus.disconnect()
+  await Promise.all(servers.map(server => new Promise<void>(resolve => {
+    server.closeAllConnections(); server.close(() => resolve())
+  })))
+  fs.rmSync(root, { recursive: true, force: true })
+})
 
-const config = { ...DEFAULT_LLAMA_CPP_CONFIG, model: 'fixture-model', capabilities: ['text', 'image'] as Array<'text' | 'image'> }
+const config = { ...DEFAULT_LLAMA_CPP_CONFIG, endpoint: endpoints[0], model: 'fixture-model', capabilities: ['text', 'image'] as Array<'text' | 'image'> }
 const messages = [{ role: 'user' as const, content: 'Synthetic greeting' }]
 const imageMessages = [{ role: 'user' as const, content: [
   { type: 'text' as const, text: 'Describe this synthetic image' },
@@ -32,7 +62,7 @@ const success = { model: config.model, choices: [{ message: { content: 'OK', rea
 const requests: { url: string; body?: any }[] = []
 function healthyFetch() {
   requests.length = 0
-  globalThis.fetch = async (url, init) => {
+  respond = async (url, init) => {
     requests.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined })
     if (String(url).endsWith('/lora-adapters')) return Response.json([])
     if (String(url).endsWith('/health')) return Response.json({ status: 'ok' })
@@ -56,14 +86,27 @@ test('preserves text/image messages, structured output, options and token usage'
   assert.equal(requests[0].body.max_tokens, 32)
   assert.equal(requests[0].body.chat_template_kwargs.enable_thinking, false)
   await callLlamaCpp(config, messages, { format: 'json' })
-  assert.deepEqual(requests[1].body.response_format, { type: 'json_object' })
+  assert.deepEqual(requests[1].body.response_format, { type: 'json_object', schema: { type: 'object' } })
+})
+
+test('unlimited generation survives defaults, explicit options and saved backend config', async () => {
+  healthyFetch()
+  await callLlamaCpp(config, messages)
+  assert.equal(requests[0].body.max_tokens, -1)
+  await callLlamaCpp({ ...config, maxTokens: 32 }, messages, { maxTokens: -1 })
+  assert.equal(requests[1].body.max_tokens, -1)
+  assert.deepEqual(requests[1].body.messages, messages)
+  saveBackendConfig({ llamaCpp: { ...config, maxTokens: -1 } })
+  assert.equal(loadBackendConfig(true).llamaCpp.maxTokens, -1)
+  await assert.rejects(callLlamaCpp(config, messages, { maxTokens: -2 }), /output tokens/)
+  assert.equal(requests.length, 2)
 })
 
 test('per-model JSON-object mode overrides native schema constraint without changing other models', async () => {
   healthyFetch()
   const schema = { type: 'object', properties: { needsAction: { type: 'boolean' } } }
   await callLlamaCpp(config, messages, { jsonSchema: schema, jsonSchemaMode: 'json-object' })
-  assert.deepEqual(requests[0].body.response_format, { type: 'json_object' })
+  assert.deepEqual(requests[0].body.response_format, { type: 'json_object', schema: { type: 'object' } })
   await callLlamaCpp(config, messages, { jsonSchema: schema })
   assert.deepEqual(requests[1].body.response_format, {
     type: 'json_schema', json_schema: { name: 'response', schema },
@@ -81,13 +124,13 @@ test('rejects unsupported images, invalid endpoints and invalid budgets before t
 })
 
 test('HTTP errors, malformed responses and absent model are reported without fallback', async () => {
-  globalThis.fetch = async () => new Response('model unavailable', { status: 503 })
+  respond = async () => new Response('model unavailable', { status: 503 })
   await assert.rejects(callLlamaCpp(config, messages), /HTTP 503/)
-  globalThis.fetch = async () => new Response('not JSON')
+  respond = async () => new Response('not JSON')
   await assert.rejects(callLlamaCpp(config, messages), /invalid JSON/)
-  globalThis.fetch = async () => Response.json({ choices: [{ message: { content: '' } }] })
+  respond = async () => Response.json({ choices: [{ message: { content: '' } }] })
   await assert.rejects(callLlamaCpp(config, messages), /no assistant text/)
-  globalThis.fetch = async url => Response.json(String(url).endsWith('/health') ? { status: 'ok' } : { data: [{ id: 'different-model' }] })
+  respond = async url => Response.json(String(url).endsWith('/health') ? { status: 'ok' } : { data: [{ id: 'different-model' }] })
   assert.match((await getLlamaCppStatus(config)).error!, /not serving/)
 })
 
@@ -97,24 +140,40 @@ test('cancellation is honored before transport and while consuming the body', as
   before.abort(new Error('cancelled before request'))
   await assert.rejects(callLlamaCpp(config, messages, { signal: before.signal }), /cancelled before/)
   assert.equal(requests.length, 0)
-  const during = new AbortController()
-  globalThis.fetch = async (_url, init) => ({ ok: true, text: () => new Promise((_resolve, reject) => {
-    init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
-    during.abort(new Error('cancelled during body'))
-  }) }) as Response
-  await assert.rejects(callLlamaCpp(config, messages, { signal: during.signal }), /cancelled during body/)
+  for (const writeBody of [false, true]) {
+    const during = new AbortController()
+    rawHandler = (_request, response) => {
+      if (writeBody) { response.writeHead(200); response.write('{') }
+      setImmediate(() => during.abort(new Error('cancelled during request')))
+    }
+    await assert.rejects(callLlamaCpp(config, messages, { signal: during.signal }), /cancelled during request/)
+  }
+})
+
+test('inference has no provider deadline and retains caller cancellation', async () => {
+  healthyFetch()
+  const deadlines: number[] = []
+  const timeout = AbortSignal.timeout
+  mock.method(AbortSignal, 'timeout', (ms: number) => { deadlines.push(ms); return timeout(ms) })
+  const caller = new AbortController()
+  assert.equal((await callLlamaCpp(config, messages, { signal: caller.signal })).content, 'OK')
+  assert.equal((await callLlamaCpp(config, messages)).content, 'OK')
+  assert.deepEqual(deadlines, [], 'Inference must not manufacture a wall-clock deadline')
 })
 
 test('health timeout covers a stalled body and reports offline', async () => {
-  globalThis.fetch = async (_url, init) => ({ ok: true, text: () => new Promise((_resolve, reject) => {
-    init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
-  }) }) as Response
-  const keepAlive = setTimeout(() => {}, 3000)
-  try {
-    const result = await getLlamaCppStatus(config)
-    assert.equal(result.running, false)
-    assert.match(result.error!, /timed out/)
-  } finally { clearTimeout(keepAlive) }
+  rawHandler = (_request, response) => { response.writeHead(200); response.write('{') }
+  const result = await getLlamaCppStatus(config)
+  assert.equal(result.running, false)
+  assert.match(result.error!, /timed out/)
+})
+
+test('a broken response body reports failure rather than partial success', async () => {
+  rawHandler = (_request, response) => {
+    response.writeHead(200, { 'Content-Length': '1000' }); response.write('{')
+    setImmediate(() => response.destroy())
+  }
+  await assert.rejects(callLlamaCpp(config, messages), /failed/)
 })
 
 test('backend config validates at its owner, disables other startup flags, and resolves live status', async () => {
@@ -122,7 +181,7 @@ test('backend config validates at its owner, disables other startup flags, and r
   saveBackendConfig({ activeBackend: 'llama-cpp', preferredLocalBackend: 'llama-cpp', llamaCpp: config })
   assert.equal(loadBackendConfig(true).ollama.autoStart, false)
   assert.equal(loadBackendConfig().vllm.autoStart, false)
-  assert.throws(() => saveBackendConfig({ llamaCpp: { ...config, maxTokens: -1 } }), /maxTokens/)
+  assert.throws(() => saveBackendConfig({ llamaCpp: { ...config, maxTokens: -2 } }), /maxTokens/)
   assert.equal(loadBackendConfig(true).llamaCpp.maxTokens, config.maxTokens)
   assert.equal((await getBackendStatus()).resolvedBackend, 'llama-cpp')
   assert.equal((await ensureBackendRunning()).running, true)
@@ -172,21 +231,21 @@ test('device routing overrides synced local chat/action roles without changing p
   assert.equal(data.localModel.provider, 'llama-cpp')
   assert.equal(data.modelCategories.local[0].model, config.model)
   assert(data.modelCategories.local[0].aliases.includes('old'))
-  globalThis.fetch = async () => { throw new Error('server disconnected') }
+  respond = async () => { throw new Error('server disconnected') }
   await assert.rejects(callProvider('llama-cpp', messages, {}), /[Nn]o.*backend|offline|not.*running|unavailable|disconnected/)
 })
 
 test('role-selected llama.cpp deployment preserves model, endpoint and request adapters', async () => {
   const selected = 'specialist'
-  globalThis.fetch = async (url, init) => {
-    assert.equal(String(url), 'http://127.0.0.1:8081/v1/chat/completions')
+  respond = async (url, init) => {
+    assert.equal(String(url), `${endpoints[1]}/v1/chat/completions`)
     const body = JSON.parse(String(init?.body))
     assert.equal(body.model, selected)
     assert.deepEqual(body.lora, [{ id: 1, scale: 0.8 }])
     return Response.json({ ...success, model: selected })
   }
   const result = await callProvider('llama-cpp', messages, {
-    model: selected, endpoint: 'http://127.0.0.1:8081',
+    model: selected, endpoint: endpoints[1],
     modelCapabilities: ['text'], lora: [{ id: 1, scale: 0.8 }],
   })
   assert.equal(result.model, selected)
@@ -200,15 +259,15 @@ test('explicit registry selection carries its JSON-object mode through the model
   registry.models[id] = {
     provider: 'llama-cpp', model: 'speck-intent', adapters: [], roles: [], capabilities: ['text'],
     description: 'Synthetic intent model',
-    options: { endpoint: 'http://127.0.0.1:8083', contextWindow: 4096, jsonSchemaMode: 'json-object' },
+    options: { endpoint: endpoints[3], contextWindow: 4096, jsonSchemaMode: 'json-object' },
   }
   fs.writeFileSync(file, JSON.stringify(registry))
   const schema = { type: 'object', properties: { needsAction: { type: 'boolean' } } }
-  globalThis.fetch = async (url, init) => {
-    assert.equal(String(url), 'http://127.0.0.1:8083/v1/chat/completions')
+  respond = async (url, init) => {
+    assert.equal(String(url), `${endpoints[3]}/v1/chat/completions`)
     const body = JSON.parse(String(init?.body))
     assert.equal(body.model, 'speck-intent')
-    assert.deepEqual(body.response_format, { type: 'json_object' })
+    assert.deepEqual(body.response_format, { type: 'json_object', schema: { type: 'object' } })
     return Response.json({ ...success, model: 'speck-intent' })
   }
   const result = await callLLM({ role: 'orchestrator', modelId: id, userId: 'fixture',
@@ -235,12 +294,12 @@ test('saved specialist role changes reach the newly assigned endpoint and adapte
   const file = path.join(getProfilePaths('fixture').etc, 'models.json')
   const registry = JSON.parse(fs.readFileSync(file, 'utf8'))
   for (const [index, name] of ['intent-v1', 'intent-v2'].entries()) {
-    registry.models[name] = { provider: 'llama-cpp', model: name, roles: ['environmentIntent'], capabilities: ['text'],
-      options: { endpoint: `http://127.0.0.1:${8081 + index}`, lora: [{ id: index, scale: 0.8 }] } }
+    registry.models[name] = { provider: 'llama-cpp', model: name, roles: ['orchestrator'], capabilities: ['text'],
+      options: { endpoint: endpoints[index + 1], lora: [{ id: index, scale: 0.8 }] } }
   }
   fs.writeFileSync(file, JSON.stringify(registry))
   const dispatched: any[] = []
-  globalThis.fetch = async (url, init) => {
+  respond = async (url, init) => {
     assert(String(url).endsWith('/v1/chat/completions'))
     const body = JSON.parse(String(init?.body))
     dispatched.push({ url: String(url), model: body.model, lora: body.lora })
@@ -248,30 +307,31 @@ test('saved specialist role changes reach the newly assigned endpoint and adapte
   }
   for (const name of ['intent-v1', 'intent-v2']) {
     const result = await handleAssignModelRole({ user: { username: 'fixture', isAuthenticated: true },
-      body: { role: 'environmentIntent', modelId: name, cognitiveMode: 'environment' } } as any)
+      body: { role: 'orchestrator', modelId: name, cognitiveMode: 'environment' } } as any)
     assert.equal(result.status, 200)
-    const resolved = resolveModelForCognitiveMode('environment', 'environmentIntent', 'fixture')
+    const resolved = resolveModelForCognitiveMode('environment', 'orchestrator', 'fixture')
     assert.equal(resolved.model, name)
-    const response = await callLLM({ userId: 'fixture', role: 'environmentIntent', cognitiveMode: 'environment', messages })
+    const response = await callLLM({ userId: 'fixture', role: 'orchestrator', cognitiveMode: 'environment', messages })
     assert.equal(response.model, name)
   }
   assert.deepEqual(dispatched, [
-    { url: 'http://127.0.0.1:8081/v1/chat/completions', model: 'intent-v1', lora: [{ id: 0, scale: 0.8 }] },
-    { url: 'http://127.0.0.1:8082/v1/chat/completions', model: 'intent-v2', lora: [{ id: 1, scale: 0.8 }] },
+    { url: `${endpoints[1]}/v1/chat/completions`, model: 'intent-v1', lora: [{ id: 0, scale: 0.8 }] },
+    { url: `${endpoints[2]}/v1/chat/completions`, model: 'intent-v2', lora: [{ id: 1, scale: 0.8 }] },
   ])
   // A separate server process cannot call this process's invalidation function.
   const externalUpdate = JSON.parse(fs.readFileSync(file, 'utf8'))
-  externalUpdate.cognitiveModeMappings.environment.environmentIntent = 'intent-v1'
+  externalUpdate.cognitiveModeMappings.environment.orchestrator = 'intent-v1'
   fs.writeFileSync(`${file}.updated`, JSON.stringify(externalUpdate))
   fs.renameSync(`${file}.updated`, file)
-  assert.equal(resolveModelForCognitiveMode('environment', 'environmentIntent', 'fixture').model, 'intent-v1')
-  assert.equal(resolveModelForCognitiveMode('environment', 'orchestrator', 'fixture').model, config.model);
+  assert.equal(resolveModelForCognitiveMode('environment', 'orchestrator', 'fixture').model, 'intent-v1')
+  assert.equal(resolveModelForCognitiveMode('environment', 'persona', 'fixture').model, config.model);
+  fs.writeFileSync(file, JSON.stringify(registry))
 })
 
 test('router sends an explicit small model to Ollama while inherited calls use llama.cpp', async () => {
   const { callLLM } = await import('./model-router.js')
   const dispatched: string[] = []
-  globalThis.fetch = async (url, init) => {
+  respond = async (url, init) => {
     const route = String(url)
     if (route.endsWith('/api/version')) return Response.json({ version: 'fixture' })
     if (route.endsWith('/api/ps')) return Response.json({ models: [{ name: 'desktop-model' }] })
@@ -288,6 +348,7 @@ test('router sends an explicit small model to Ollama while inherited calls use l
     }
     throw new Error(`Unexpected route: ${route}`)
   }
+  globalThis.fetch = (url, init) => respond(url, init)
   const small = await callLLM({ modelId: 'old', userId: 'fixture', role: 'orchestrator', cognitiveMode: 'environment', messages })
   const inherited = await callLLM({ userId: 'fixture', role: 'orchestrator', cognitiveMode: 'environment', messages })
   assert.equal(small.provider, 'ollama')
@@ -299,7 +360,7 @@ test('router sends an explicit small model to Ollama while inherited calls use l
 })
 
 test('named llama.cpp adapter selection resolves the current server ID after reload', async () => {
-  globalThis.fetch = async (url, init) => {
+  respond = async (url, init) => {
     if (String(url).endsWith('/lora-adapters')) return Response.json([{ id: 7, path: '/models/specialist.gguf', scale: 0 }])
     assert.deepEqual(JSON.parse(String(init?.body)).lora, [{ id: 7, scale: 1 }])
     return Response.json(success)
@@ -337,4 +398,74 @@ test('graph Reasoning overrides model defaults per call and preserves prompts an
     assert.equal(result.response, 'OK', 'Reasoning stays separate from the final answer')
     assert.equal(JSON.stringify(result).includes('Reason'), false)
   }
+})
+
+test('image input never substitutes another category and Vision retains its endpoint and adapter', async () => {
+  const { callLLM } = await import('./model-router.js')
+  const file = path.join(getProfilePaths('fixture').etc, 'models.json')
+  const original = fs.readFileSync(file, 'utf8')
+  const registry = JSON.parse(original)
+  registry.models['text-task'] = { provider: 'llama-cpp', model: 'text-task', adapters: [],
+    roles: ['environmentActionSelector'], capabilities: ['text'], options: { endpoint: endpoints[1] } }
+  registry.models['selected-vision'] = { provider: 'llama-cpp', model: 'selected-vision', adapters: ['/vision.gguf'],
+    roles: ['environmentVision'], capabilities: ['text', 'image'],
+    options: { endpoint: endpoints[2], lora: [{ path: '/vision.gguf', scale: 0.7 }] } }
+  registry.cognitiveModeMappings.environment.environmentActionSelector = 'text-task'
+  registry.cognitiveModeMappings.environment.environmentVision = 'selected-vision'
+  registry.cognitiveModeMappings.environment.orchestrator = `llama-cpp.${config.model}`
+  fs.writeFileSync(file, JSON.stringify(registry))
+  const calls: Array<{ url: string; body: any }> = []
+  respond = async (url, init) => {
+    const request = { url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined }
+    calls.push(request)
+    if (request.url.endsWith('/lora-adapters')) return Response.json([{ id: 9, path: '/vision.gguf', scale: 0 }])
+    return Response.json({ ...success, model: request.body.model })
+  }
+  try {
+    await assert.rejects(callLLM({ userId: 'fixture', cognitiveMode: 'environment',
+      role: 'environmentActionSelector', messages: imageMessages }), /not configured for image/)
+    assert.deepEqual(calls, [], 'unsupported selected Task does not dispatch to the image-capable Orchestrator')
+    const response = await callLLM({ userId: 'fixture', cognitiveMode: 'environment',
+      role: 'environmentVision', messages: imageMessages })
+    assert.equal(response.modelId, 'selected-vision')
+    assert.equal(response.model, 'selected-vision')
+    assert.deepEqual(calls.map(call => call.url), [`${endpoints[2]}/lora-adapters`, `${endpoints[2]}/v1/chat/completions`])
+    assert.deepEqual(calls[1].body.messages, imageMessages)
+    assert.deepEqual(calls[1].body.lora, [{ id: 9, scale: 0.7 }])
+  } finally { fs.writeFileSync(file, original) }
+})
+
+
+test('Autonomy adapter assignment is isolated from Persona on the same llama.cpp service', async () => {
+  healthyFetch()
+  saveBackendConfig({ activeBackend: 'llama-cpp', llamaCpp: config })
+  const profile = getProfilePaths('autonomy-fixture')
+  fs.mkdirSync(profile.etc, { recursive: true })
+  fs.writeFileSync(path.join(profile.etc, 'models.json'), JSON.stringify({
+    version: '1.0.0', description: 'Autonomy isolation fixture', defaults: { persona: 'base' },
+    models: {
+      base: { provider: 'llama-cpp', model: config.model, roles: ['persona'], adapters: [],
+        capabilities: ['text'], options: { endpoint: config.endpoint, lora: [] } },
+      trained: { provider: 'llama-cpp', model: config.model, roles: ['autonomy'], adapters: ['/autonomy.gguf'],
+        capabilities: ['text'], options: { endpoint: config.endpoint, lora: [{ path: '/autonomy.gguf', scale: 1 }] } },
+    }, cognitiveModeMappings: { environment: { persona: 'base' } },
+  }))
+  const assigned = await handleAssignModelRole({ method: 'POST',
+    user: { isAuthenticated: true, username: 'autonomy-fixture', role: 'owner' },
+    body: { cognitiveMode: 'environment', role: 'autonomy', modelId: 'trained' } } as any)
+  assert.equal(assigned.status, 200)
+  const originalRespond = respond
+  respond = async (url, init) => String(url).endsWith('/lora-adapters')
+    ? Response.json([{ id: 4, path: '/autonomy.gguf', scale: 0 }]) : originalRespond(url, init)
+  const { ModelRouterNode } = await import('./nodes/llm/model-router.node.js')
+  for (const role of ['autonomy', 'persona', 'autonomy', 'persona']) {
+    const result = await ModelRouterNode.execute!({ messages },
+      { username: 'autonomy-fixture', cognitiveMode: 'environment' }, { role, maxTokens: -1 })
+    assert.equal(result.response, 'OK')
+    const body = requests.filter(request => request.url.endsWith('/v1/chat/completions')).at(-1)!.body
+    assert.deepEqual(body.lora, role === 'autonomy' ? [{ id: 4, scale: 1 }] : [])
+    assert.equal(body.max_tokens, -1)
+  }
+  assert.equal(resolveModelForCognitiveMode('environment', 'persona', 'autonomy-fixture').id, 'base')
+  assert.equal(resolveModelForCognitiveMode('environment', 'autonomy', 'autonomy-fixture').id, 'trained')
 })

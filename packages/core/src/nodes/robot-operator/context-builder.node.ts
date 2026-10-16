@@ -1,6 +1,7 @@
 import { serializeContext } from '../../context-serialization.js';
 import { projectDesireAwareness } from '../../agency/lifecycle-policy.js'
 import { withVisualObservationSchema } from '../../visual-observation.js';
+import { recognitionImageAssociation } from '../../environment-interface/perception.js';
 import type {
   EnvironmentObservation,
   EnvironmentVisualFrame,
@@ -23,9 +24,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function cleanText(value: unknown, maxLength: number): string {
+function cleanText(value: unknown): string {
   return typeof value === 'string'
-    ? value.replace(/\s+/g, ' ').trim().slice(0, maxLength)
+    ? value.trim()
     : '';
 }
 
@@ -33,8 +34,8 @@ function correlationId(
   observation: EnvironmentObservation | null,
   robotObserver: RobotObserverCycleMetadata | null,
 ): string {
-  return cleanText(robotObserver?.cycleId, 200)
-    || cleanText(observation?.metadata?.correlationId, 200);
+  return cleanText(robotObserver?.cycleId)
+    || cleanText(observation?.metadata?.correlationId);
 }
 
 function frameSummary(frame: EnvironmentVisualFrame): Record<string, unknown> {
@@ -44,8 +45,14 @@ function frameSummary(frame: EnvironmentVisualFrame): Record<string, unknown> {
     mimeType: frame.mimeType,
     width: frame.width,
     height: frame.height,
-    actionId: cleanText(frame.metadata?.actionId, 200) || undefined,
-    correlationId: cleanText(frame.metadata?.correlationId, 200) || undefined,
+    cameraFrame: frame.metadata ? {
+      robotId: frame.metadata.robotId,
+      gatewayInstance: frame.metadata.gatewayInstance,
+      epoch: frame.metadata.epoch,
+      counter: frame.metadata.counter,
+    } : undefined,
+    actionId: cleanText(frame.metadata?.actionId) || undefined,
+    correlationId: cleanText(frame.metadata?.correlationId) || undefined,
   };
 }
 
@@ -66,15 +73,15 @@ function consolidatedHistory(value: unknown): Array<Record<string, unknown>> {
   const history: Array<Record<string, unknown>> = [];
   for (const message of messages.filter(isRecord)) {
     const meta = isRecord(message.meta) ? message.meta : null;
-    const sourceRole = cleanText(message.role, 40).toLowerCase();
-    const originalRole = cleanText(meta?.originalRole, 40).toLowerCase();
+    const sourceRole = cleanText(message.role).toLowerCase();
+    const originalRole = cleanText(meta?.originalRole).toLowerCase();
     const isInnerDialogue = meta?.isInnerDialogue === true;
     const role = isInnerDialogue
       ? 'assistant'
       : sourceRole === 'system' || sourceRole === 'user' || sourceRole === 'assistant'
         ? sourceRole
         : '';
-    const content = cleanText(message.content, 4_000);
+    const content = cleanText(message.content);
     if (!role || !content) continue;
     history.push({
       role,
@@ -87,8 +94,9 @@ function consolidatedHistory(value: unknown): Array<Record<string, unknown>> {
             context: {
               isInnerDialogue,
               originalRole: originalRole || null,
-              dialogueSource: cleanText(meta.dialogueSource, 100) || null,
-              correlationId: cleanText(meta.correlationId, 200) || null,
+              dialogueSource: cleanText(meta.dialogueSource) || null,
+              correlationId: cleanText(meta.correlationId) || null,
+              executionId: cleanText(meta.executionId) || null,
               tags: normalizedTags(meta.tags),
               taskLifecycle: meta.taskLifecycle ?? null,
             },
@@ -106,7 +114,7 @@ function consolidatedInnerHistory(value: unknown): Array<Record<string, unknown>
       ? value.messages
       : [];
   return messages.filter(isRecord).flatMap(message => {
-    const content = cleanText(message.content, 2_000);
+    const content = cleanText(message.content);
     if (!content) return [];
     const meta = isRecord(message.meta) ? message.meta : {};
     return [{
@@ -117,9 +125,9 @@ function consolidatedInnerHistory(value: unknown): Array<Record<string, unknown>
         : {}),
       context: {
         isInnerDialogue: true,
-        originalRole: cleanText(message.role, 40).toLowerCase() || 'reflection',
-        dialogueSource: cleanText(meta.dialogueSource, 100) || null,
-        correlationId: cleanText(meta.correlationId, 200) || null,
+        originalRole: cleanText(message.role).toLowerCase() || 'reflection',
+        dialogueSource: cleanText(meta.dialogueSource) || null,
+        correlationId: cleanText(meta.correlationId) || null,
         tags: normalizedTags(meta.tags),
       },
     }];
@@ -146,15 +154,15 @@ function robotTrigger(
   robotObserver: RobotObserverCycleMetadata | null,
 ): Record<string, unknown> {
   const metadata = isRecord(observation?.metadata) ? observation.metadata : null;
-  const perceptionEvent = cleanText(metadata?.perceptionEvent, 100);
-  const triggerSource = cleanText(robotObserver?.triggerSource, 40);
-  const requestedBy = cleanText(robotObserver?.requestedBy, 100);
+  const perceptionEvent = cleanText(metadata?.perceptionEvent);
+  const triggerSource = cleanText(robotObserver?.triggerSource);
+  const requestedBy = cleanText(robotObserver?.requestedBy);
   return {
     type: perceptionEvent || (robotObserver ? 'robot_observer' : 'environment_observation'),
     source: triggerSource || null,
     requestedBy: requestedBy || null,
     correlationId: correlationId(observation, robotObserver) || null,
-    cycleId: cleanText(robotObserver?.cycleId, 200) || null,
+    cycleId: cleanText(robotObserver?.cycleId) || null,
     step: typeof robotObserver?.step === 'number' ? robotObserver.step : null,
   };
 }
@@ -164,16 +172,16 @@ function delegatedPlannerDecision(
 ): Record<string, unknown> | null {
   const value = isRecord(input) ? input : null;
   if (!value) return null;
-  const observed = cleanText(value.observed, 500);
-  const instruction = cleanText(value.instruction, 1_000);
-  const reason = cleanText(value.reason, 500);
+  const observed = cleanText(value.observed);
+  const instruction = cleanText(value.instruction);
+  const reason = cleanText(value.reason);
   if (!observed || !instruction || !reason) return null;
   return {
     provenance: 'boredom_planner_decision',
     observed,
     instruction,
     reason,
-    ...(cleanText(value.decidedAt, 100) ? { decidedAt: cleanText(value.decidedAt, 100) } : {}),
+    ...(cleanText(value.decidedAt) ? { decidedAt: cleanText(value.decidedAt) } : {}),
   };
 }
 
@@ -182,7 +190,7 @@ function compactFeedback(observation: EnvironmentObservation): Array<Record<stri
     id: feedback.id,
     timestamp: feedback.timestamp,
     type: feedback.type,
-    message: cleanText(feedback.message, 1_000),
+    message: cleanText(feedback.message),
     actionId: feedback.actionId ?? null,
     data: feedback.data ?? null,
   }));
@@ -190,36 +198,36 @@ function compactFeedback(observation: EnvironmentObservation): Array<Record<stri
 
 function compactAction(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value)) return null;
-  const type = cleanText(value.type, 60);
+  const type = cleanText(value.type);
   if (!type) return null;
   return {
     type,
-    ...(cleanText(value.command, 120) ? { command: cleanText(value.command, 120) } : {}),
-    ...(cleanText(value.direction, 60) ? { direction: cleanText(value.direction, 60) } : {}),
+    ...(cleanText(value.command) ? { command: cleanText(value.command) } : {}),
+    ...(cleanText(value.direction) ? { direction: cleanText(value.direction) } : {}),
     ...(typeof value.units === 'number' ? { units: value.units } : {}),
-    ...(cleanText(value.target, 160) ? { target: cleanText(value.target, 160) } : {}),
+    ...(cleanText(value.target) ? { target: cleanText(value.target) } : {}),
   };
 }
 
 function compactBridgeSummary(value: unknown, sessionId: string): Record<string, unknown> | null {
   if (!isRecord(value)) return null;
   const sessions = Array.isArray(value.sessions) ? value.sessions.filter(isRecord) : [];
-  const selected = sessions.find(session => cleanText(session.sessionId, 200) === sessionId)
-    ?? sessions.find(session => cleanText(session.status, 40) === 'connected')
+  const selected = sessions.find(session => cleanText(session.sessionId) === sessionId)
+    ?? sessions.find(session => cleanText(session.status) === 'connected')
     ?? null;
   return {
     enabled: value.enabled === true,
-    updatedAt: cleanText(value.updatedAt, 100) || null,
+    updatedAt: cleanText(value.updatedAt) || null,
     sessionCount: typeof value.sessionCount === 'number' ? value.sessionCount : sessions.length,
-    pendingCommandCount: typeof value.pendingCommandCount === 'number' ? value.pendingCommandCount : 0,
+    pendingCommandCount: typeof selected?.pendingCommandCount === 'number' ? selected.pendingCommandCount : 0,
     selectedSession: selected
       ? {
-          sessionId: cleanText(selected.sessionId, 200) || null,
-          environmentId: cleanText(selected.environmentId, 160) || null,
-          adapter: cleanText(selected.adapter, 160) || null,
-          status: cleanText(selected.status, 40) || null,
-          firstSeenAt: cleanText(selected.firstSeenAt, 100) || null,
-          lastSeenAt: cleanText(selected.lastSeenAt, 100) || null,
+          sessionId: cleanText(selected.sessionId) || null,
+          environmentId: cleanText(selected.environmentId) || null,
+          adapter: cleanText(selected.adapter) || null,
+          status: cleanText(selected.status) || null,
+          firstSeenAt: cleanText(selected.firstSeenAt) || null,
+          lastSeenAt: cleanText(selected.lastSeenAt) || null,
         }
       : null,
   };
@@ -248,14 +256,14 @@ function verifiedActionHistory(value: unknown): Array<Record<string, unknown>> {
 
     if (record.direction === 'inbound') {
       const action = isRecord(record.action) ? record.action : null;
-      const actionId = cleanText(record.actionId, 200) || cleanText(action?.id, 200);
+      const actionId = cleanText(record.actionId) || cleanText(action?.id);
       if (!actionId) continue;
       const prior = actions.get(actionId) ?? { actionId };
       actions.set(actionId, {
         ...prior,
         requested: compactAction(action) ?? prior.requested,
-        status: cleanText(record.status, 60) || 'reported',
-        result: cleanText(record.message, 500) || undefined,
+        status: cleanText(record.status) || 'reported',
+        result: cleanText(record.message) || undefined,
         completedAt: timestamp,
         verified: true,
       });
@@ -264,13 +272,13 @@ function verifiedActionHistory(value: unknown): Array<Record<string, unknown>> {
 
     const commands = Array.isArray(record.commands) ? record.commands.filter(isRecord) : [];
     for (const command of commands) {
-      const actionId = cleanText(command.id, 200) || `outbound-${anonymousIndex++}`;
+      const actionId = cleanText(command.id) || `outbound-${anonymousIndex++}`;
       actions.set(actionId, {
         actionId,
         requested: compactAction(command),
-        status: cleanText(command.status, 60) || cleanText(record.status, 60) || 'queued',
-        correlationId: cleanText(command.correlationId, 200)
-          || cleanText(record.correlationId, 200)
+        status: cleanText(command.status) || cleanText(record.status) || 'queued',
+        correlationId: cleanText(command.correlationId)
+          || cleanText(record.correlationId)
           || undefined,
         requestedAt: timestamp,
         verified: false,
@@ -308,7 +316,8 @@ const COMMON_CONTEXT_INPUTS: Record<string, NodeSlot> = {
   memoryContext: { name: 'memoryContext', type: 'array', optional: true, description: 'Historical memories supplied as inspiration, never current-world evidence' },
   robotStatus: { name: 'robotStatus', type: 'object', optional: true, description: 'Canonical Robot Status snapshot' },
   activeDesires: { name: 'activeDesires', type: 'array', optional: true, description: 'Active Agency Desire summaries selected by the connected node' },
-  availableTasks: { name: 'availableTasks', type: 'array', optional: true, description: 'Catalog-backed finite tasks available to the Full-mode controller' },
+  activationState: { name: 'activationState', type: 'object', optional: true },
+  availableTasks: { name: 'availableTasks', type: 'array', optional: true, description: 'Catalog-backed operations available to Active Operator' },
   autonomyActivityHistory: { name: 'autonomyActivityHistory', type: 'array', optional: true, description: 'Terminal receipts selected by Recent Autonomy Activity' },
   robotObserver: { name: 'robotObserver', type: 'object', optional: true, description: 'Current Robot Operator cycle' },
   plannerDecision: { name: 'plannerDecision', type: 'object', optional: true, description: 'Planner-authored intention delegated to Robot Autonomy Executor' },
@@ -329,7 +338,7 @@ async function buildRobotOperatorContext(
     const suppliedObservation = isRecord(inputs.observation)
       ? inputs.observation as unknown as EnvironmentObservation
       : null;
-    const instruction = cleanText(inputs.instruction, 8_000);
+    const instruction = cleanText(inputs.instruction);
     const robotObserver = parseRobotObserverCycle(inputs.robotObserver);
     const invalid = (error: string) => ({
       messages: [],
@@ -357,7 +366,7 @@ async function buildRobotOperatorContext(
       isRecord(entry.context) && entry.context.isInnerDialogue === true
     )).length;
     const personaText = typeof inputs.personaText === 'string'
-      ? inputs.personaText.trim().slice(0, 12_000)
+      ? inputs.personaText.trim()
       : '';
     const suppliedMemories = Array.isArray(inputs.memoryContext)
       ? inputs.memoryContext
@@ -368,9 +377,9 @@ async function buildRobotOperatorContext(
     const seenMemories = new Set<string>();
     const memoryContext = [...suppliedMemories, ...delegatedMemories].flatMap(memory => {
       const key = typeof memory === 'string'
-        ? cleanText(memory, 4_000)
+        ? cleanText(memory)
         : isRecord(memory)
-          ? cleanText(memory.content, 4_000)
+          ? cleanText(memory.content)
           : '';
       if (!key || seenMemories.has(key)) return [];
       seenMemories.add(key);
@@ -384,23 +393,23 @@ async function buildRobotOperatorContext(
     const frames = selectedFrames.map(frameSummary);
     const trigger = robotTrigger(observation, robotObserver);
     const plannerDecision = delegatedPlannerDecision(inputs.plannerDecision);
-    const cycleId = cleanText(trigger.cycleId, 200);
+    const cycleId = cleanText(trigger.cycleId);
     const latestActionContext = isRecord(inputs.actionContext)
       ? inputs.actionContext
       : null;
-    const reportedActionId = cleanText(observation?.metadata?.actionId, 200);
+    const reportedActionId = cleanText(observation?.metadata?.actionId);
     const currentActionContext = latestActionContext
       && reportedActionId
-      && cleanText(latestActionContext.actionId, 200) === reportedActionId
+      && cleanText(latestActionContext.actionId) === reportedActionId
       ? latestActionContext
       : null;
-    const currentActionId = cleanText(currentActionContext?.actionId, 200);
+    const currentActionId = cleanText(currentActionContext?.actionId);
     const actionHistory = currentActionId
-      ? allActionHistory.filter(entry => cleanText(entry.actionId, 200) !== currentActionId)
+      ? allActionHistory.filter(entry => cleanText(entry.actionId) !== currentActionId)
       : allActionHistory;
     const latestActionAlreadyInHistory = latestActionContext
       ? allActionHistory.some(entry => (
-          cleanText(entry.actionId, 200) === cleanText(latestActionContext.actionId, 200)
+          cleanText(entry.actionId) === cleanText(latestActionContext.actionId)
         ))
       : false;
     const historicalLatestAction = latestActionContext
@@ -411,18 +420,32 @@ async function buildRobotOperatorContext(
     const projectedRobotStatus = isRecord(inputs.robotStatus)
       ? projectRobotStatusContext(inputs.robotStatus)
       : null;
+    if (isRecord(projectedRobotStatus) && isRecord(projectedRobotStatus.live)
+      && isRecord(projectedRobotStatus.live.recognition)) {
+      const recognition = projectedRobotStatus.live.recognition;
+      projectedRobotStatus.live = {
+        ...projectedRobotStatus.live,
+        recognition: {
+          ...recognition,
+          ...recognitionImageAssociation(
+            isRecord(recognition.sourceFrame) ? recognition.sourceFrame : null,
+            selectedFrames,
+          ),
+        },
+      };
+    }
     const robotStatus = projectedRobotStatus
       && (outputContract === 'autonomy_controller' || outputContract === 'goal_review')
       ? Object.fromEntries(Object.entries(projectedRobotStatus).filter(([key]) => key !== 'agency'))
       : projectedRobotStatus;
     const bridgeSummary = outputContract === 'autonomy_controller'
-      ? compactBridgeSummary(inputs.bridgeSummary, cleanText(observation?.sessionId, 200))
+      ? compactBridgeSummary(inputs.bridgeSummary, cleanText(observation?.sessionId))
       : null;
     const activeDesires = (outputContract === 'autonomy_controller' || outputContract === 'goal_review')
       && Array.isArray(inputs.activeDesires)
       ? projectDesireAwareness(inputs.activeDesires)
       : [];
-    const availableTasks = (outputContract === 'autonomy_controller' || outputContract === 'goal_review') && Array.isArray(inputs.availableTasks)
+    const availableTasks = outputContract === 'autonomy_controller' && Array.isArray(inputs.availableTasks)
       ? inputs.availableTasks.filter(isRecord).map(({ id, name, description, kind }) => ({ id, name, description, kind }))
       : [];
     const autonomyActivityHistory = (outputContract === 'autonomy_controller' || outputContract === 'goal_review')
@@ -442,8 +465,12 @@ async function buildRobotOperatorContext(
       });
       return { ...activity, result: { ...result, executionIds } };
     });
+    const executionId = cleanText(inputs.execution?.executionId);
     const taskNarrative = recentContext.filter(entry => (
-      isRecord(entry.context) && cleanText(entry.context.correlationId, 200) === cycleId
+      isRecord(entry.context) && (
+        Boolean(cycleId) && cleanText(entry.context.correlationId) === cycleId
+        || Boolean(executionId) && cleanText(entry.context.executionId) === executionId
+      )
     ));
     const backgroundNarrative = recentContext.filter(entry => !taskNarrative.includes(entry));
     const reflectionTrigger = trigger.requestedBy === 'boredom-reflection';
@@ -452,23 +479,21 @@ async function buildRobotOperatorContext(
       : [];
     const visualEvidenceVerified = images.length > 0 && inputs.currentVisualEvidence === true;
     const stimulusReady = visualEvidenceVerified || feedback.length > 0;
-    const baseCapabilities = observation
-      ? Object.fromEntries(Object.entries(observation.capabilities).filter(([key]) => key !== 'robotCommandDescriptions'))
-      : null;
+    const baseCapabilities = observation?.capabilities ?? null;
     const stimulus = {
       trigger,
       ...(observation
         ? {
             observedAt: observation.timestamp,
-            stateObservedAt: cleanText(inputs.sourceObservationAt, 100) || observation.timestamp,
-            state: outputContract === 'goal_review' ? projectSelectorState(observation.state) : observation.state ?? null,
+            stateObservedAt: cleanText(inputs.sourceObservationAt) || observation.timestamp,
+            state: projectSelectorState(observation.state) ?? null,
             location: observation.location ?? null,
             map: observation.map ?? null,
             capabilities: { ...baseCapabilities },
             text: (observation.text ?? []).slice(-8).map(event => ({
               source: event.source,
               sender: event.senderName ?? event.senderId ?? null,
-              text: cleanText(event.text, 2_000),
+              text: cleanText(event.text),
               timestamp: event.timestamp,
             })),
           }
@@ -483,10 +508,17 @@ async function buildRobotOperatorContext(
     };
     const supportingMemoryContext = reflectionTrigger ? [] : memoryContext;
     const contextEnvelope = {
+      ...(inputs.activationState ? { activeOperator: { mode: inputs.activationState.mode, assessedAt: inputs.activationState.assessedAt, localTime: inputs.activationState.localTime, timeZone: inputs.activationState.timeZone, operations: inputs.activationState.operations } } : {}),
+      ...(outputContract === 'goal_review' ? {
+        originatingInstruction: {
+          content: inputs.execution?.task?.instruction ?? null,
+          source: inputs.execution?.task?.source ?? null,
+        },
+      } : {}),
       execution: inputs.execution ?? null,
       ...(Array.isArray(inputs.observationHistory) && inputs.observationHistory.length
         ? { observationHistory: inputs.observationHistory } : {}),
-      ...(availableTasks.length ? { availableTasks } : {}),
+      ...(availableTasks.length && !inputs.activationState ? { availableTasks } : {}),
       robotOperatorContext: {
         activePersona: personaText || null,
         ...(robotStatus
@@ -580,11 +612,10 @@ async function buildRobotOperatorContext(
         { role: 'user', content: userContent },
       ],
       frames: selectedFrames,
-      jsonSchema: withVisualObservationSchema(outputContract === 'delegation'
-        ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA
-          : outputContract === 'goal_review'
-            ? buildRobotGoalReviewJsonSchema(inputs.availableTasks)
-            : buildRobotAutonomyControllerJsonSchema(inputs.availableTasks), selectedFrames),
+      jsonSchema: outputContract === 'autonomy_controller'
+        ? buildRobotAutonomyControllerJsonSchema(inputs.availableTasks ?? [])
+        : withVisualObservationSchema(outputContract === 'delegation'
+          ? ROBOT_OPERATOR_DECISION_JSON_SCHEMA : buildRobotGoalReviewJsonSchema(), selectedFrames),
       context: {
         instruction,
         stimulus,
@@ -663,11 +694,11 @@ export const robotGoalReviewContextNode = fixedContextNode(
 export const robotAutonomyControllerContextNode = fixedContextNode(
   'robot_autonomy_controller_context',
   'Robot Autonomy Controller Context',
-  'Builds one Full-mode decision package from current status, bridge facts, selected histories, persona, desires, task meanings, and prior task receipts.',
+  'Builds one activation assessment package from current status, bridge facts, selected histories, persona, desires, task meanings, and prior task receipts.',
   contextInputs(
     'instruction', 'observation', 'bridgeSummary', 'images', 'frames', 'conversationHistory',
     'innerHistory', 'actionHistory', 'personaText', 'robotStatus', 'activeDesires',
-    'availableTasks', 'autonomyActivityHistory', 'robotObserver', 'sourceObservationAt',
+    'availableTasks', 'activationState', 'autonomyActivityHistory', 'robotObserver', 'sourceObservationAt',
     'currentVisualEvidence',
   ),
   'autonomy_controller',

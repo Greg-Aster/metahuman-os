@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { activeView, dashboardSection, systemSection } from '../stores/navigation';
+  import { activeView, dashboardSection, systemSection, agencySection } from '../stores/navigation';
   import { onDestroy, onMount } from 'svelte';
   import type { SvelteComponent } from 'svelte';
   import { apiFetch, isMobileApp } from '../lib/client/api-config';
@@ -632,7 +632,6 @@ async function loadMemoryContent(relPath: string) {
           <button class="tab-button {$dashboardSection === 'overview' ? 'active' : ''}" on:click={() => dashboardSection.set('overview')}>Overview</button>
           <button class="tab-button {$dashboardSection === 'tasks' ? 'active' : ''}" on:click={() => dashboardSection.set('tasks')}>Tasks</button>
           <button class="tab-button {$dashboardSection === 'approvals' ? 'active' : ''}" on:click={() => dashboardSection.set('approvals')}>Approvals</button>
-          <button class="tab-button {$dashboardSection === 'operator' ? 'active' : ''}" on:click={() => dashboardSection.set('operator')}>Active Operator</button>
           <button class="tab-button {$dashboardSection === 'sleep' ? 'active' : ''}" on:click={() => dashboardSection.set('sleep')}>Sleep</button>
           <button class="tab-button {$dashboardSection === 'agent-catalog' ? 'active' : ''}" on:click={() => dashboardSection.set('agent-catalog')}>Agent Catalog</button>
           <button class="tab-button {$dashboardSection === 'trigger-manager' ? 'active' : ''}" on:click={() => dashboardSection.set('trigger-manager')}>Trigger Manager</button>
@@ -655,12 +654,6 @@ async function loadMemoryContent(relPath: string) {
           {:then Component}
             <svelte:component this={Component} />
           {/await}
-        {:else if $dashboardSection === 'operator'}
-          {#await loadComponent('ActiveOperatorDashboard')}
-            <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading active operator...</div>
-          {:then Component}
-              <svelte:component this={Component} />
-            {/await}
         {:else if $dashboardSection === 'sleep'}
           {#await loadComponent('SleepDashboard')}
             <div class="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500 text-sm animate-pulse">Loading Sleep…</div>
@@ -1512,14 +1505,26 @@ async function loadMemoryContent(relPath: string) {
     <div class="view-container">
       <div class="view-header">
         <h2 class="view-title">🎯 Agency</h2>
-        <p class="view-subtitle">Autonomous desires and intentions</p>
+        <p class="view-subtitle">Desires and self-directed activity</p>
       </div>
       <div class="view-content">
-        {#await loadComponent('AgencyDashboard')}
-          <div class="loading-placeholder">Loading agency dashboard...</div>
-        {:then Component}
-          <svelte:component this={Component} />
-        {/await}
+        <div class="flex gap-2 border-b border-gray-200 px-4 dark:border-gray-800">
+          <button class="tab-button {$agencySection === 'desires' ? 'active' : ''}" on:click={() => agencySection.set('desires')}>Desires</button>
+          <button class="tab-button {$agencySection === 'operator' ? 'active' : ''}" on:click={() => agencySection.set('operator')}>Active Operator</button>
+        </div>
+        {#if $agencySection === 'operator'}
+          {#await loadComponent('ActiveOperatorDashboard')}
+            <div class="loading-placeholder">Loading Active Operator...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
+        {:else}
+          {#await loadComponent('AgencyDashboard')}
+            <div class="loading-placeholder">Loading desires...</div>
+          {:then Component}
+            <svelte:component this={Component} />
+          {/await}
+        {/if}
       </div>
     </div>
   {/if}

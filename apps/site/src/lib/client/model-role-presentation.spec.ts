@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { MODEL_ROLES } from '@metahuman/core/model-roles';
+import { MODEL_ROLES, MODEL_ROLE_OPTIONS } from '@metahuman/core/model-roles';
 import { buildModelRoleSections, type WorkflowModelSummary } from './model-role-presentation.js';
 
 const workflows: WorkflowModelSummary[] = [
   { key: 'environment', name: 'Environment Mode', models: [
-    { nodeId: 'intent', label: 'Intent Orchestrator', role: 'environmentIntent', selection: 'role' },
+    { nodeId: 'intent', label: 'Intent Orchestrator', role: 'orchestrator', selection: 'role' },
     { nodeId: 'task', label: 'Task Decision', role: 'environmentActionSelector', selection: 'role' },
     { nodeId: 'plan', label: 'Delegated planning', role: 'persona', selection: 'role' },
     { nodeId: 'conversation', label: 'Conversation', role: 'persona', selection: 'role' },
@@ -16,13 +16,13 @@ const workflows: WorkflowModelSummary[] = [
   ] },
 ];
 
-test('Environment shows its intent specialist first without substituting the general orchestrator', () => {
+test('Environment uses the single canonical Orchestrator category', () => {
   const sections = buildModelRoleSections(workflows, 'environment');
   assert.deepEqual(sections[0].roles.map(item => item.role), [
-    'environmentIntent', 'environmentActionSelector', 'persona',
+    'orchestrator', 'environmentActionSelector', 'persona',
   ]);
-  assert.equal(sections[0].roles[0].label, 'Intent orchestrator');
-  assert.equal(sections[1].roles.find(item => item.role === 'orchestrator')?.label, 'General orchestrator');
+  assert.equal(sections[0].roles[0].label, 'Orchestrator');
+  assert.equal(sections[1].roles.some(item => item.role === 'orchestrator'), false);
 });
 
 test('repeated workflow consumers share one selector while all saved roles remain available', () => {
@@ -41,7 +41,7 @@ test('presentation follows changed graph roles and does not assume an Environmen
   changed[0].models[0].role = 'planner';
   const sections = buildModelRoleSections(changed, 'environment');
   assert.equal(sections[0].roles[0].role, 'planner');
-  assert.equal(sections[0].roles.some(item => item.role === 'environmentIntent'), false);
+  assert.equal(sections[0].roles.some(item => item.role === 'orchestrator'), false);
   assert.equal(buildModelRoleSections(workflows, 'review')[0].roles[0].role, 'orchestrator');
 });
 
@@ -49,5 +49,15 @@ test('missing graphs and runtime-selected roles do not fabricate fixed workflow 
   assert.equal(buildModelRoleSections([], 'environment')[0].label, 'Other saved roles');
   const runtime = structuredClone(workflows);
   runtime[0].models[0].selection = 'runtime-role';
-  assert.equal(buildModelRoleSections(runtime, 'environment')[0].roles.some(item => item.role === 'environmentIntent'), false);
+  assert.equal(buildModelRoleSections(runtime, 'environment')[0].roles.some(item => item.role === 'orchestrator'), false);
+});
+
+test('every category presents its exact shared definition and label', () => {
+  const roles = buildModelRoleSections(workflows, 'environment').flatMap(section => section.roles);
+  for (const definition of MODEL_ROLE_OPTIONS) {
+    const presentation = roles.find(item => item.role === definition.value)!;
+    assert.equal(presentation.label, definition.label);
+    assert.equal(presentation.description.split('\n')[0], definition.description);
+  }
+  assert.equal(roles.some(item => String(item.role) === 'environmentIntent'), false);
 });

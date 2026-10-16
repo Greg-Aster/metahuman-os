@@ -51,6 +51,22 @@ const definition: ExecutionDefinition = {
   nodeVersions: { fixture: 'v1' },
 }
 
+test('all feedback wakeups use the same execution resource regardless of the prior wait reason', () => {
+  const store = openExecutionStore('resume-resource-fixture')
+  try {
+    const record = store.create('resume-resource-fixture', definition)
+    const lease = store.claim(record.executionId, definition)
+    for (const reason of ['active_task:motion', 'agent_result', 'observation']) {
+      store.settle(lease, 'waiting', reason)
+      store.deliverEvent(record.executionId, { eventId: reason, kind: 'physical_result', payload: {} })
+    }
+    const resources = store.pendingDispatches().map(effect => executionWorkInput(store, effect).resource)
+    assert.deepEqual(resources, [`execution:${record.executionId}`])
+    assert.equal(store.events(record.executionId).length, 3, 'coalescing work keeps all feedback')
+    store.release(lease)
+  } finally { store.close() }
+})
+
 async function fixture(username: string, handler?: string, physical = false) {
   const store = openExecutionStore(username)
   assert.ok(String(store.db.name).startsWith(root + path.sep))
@@ -120,24 +136,35 @@ test('recovery retires satisfied queued resumes without claiming model capacity 
       store.acknowledgeAdmission(effect.effectId, task.id)
       return task
     })
-    await new ExecutionCheckpointer(store, lease).put({ configurable: { thread_id: record.executionId } }, {
+    const saver = new ExecutionCheckpointer(store, lease)
+    const config = await saver.put({ configurable: { thread_id: record.executionId } }, {
       v: 4, id: randomUUID(), ts: new Date().toISOString(), channel_versions: {}, versions_seen: {},
       channel_values: { executionTransition: { transitionId: 'first-consumed', processedEventIds: [first.eventId] } },
     }, { source: 'loop', step: 0, parents: {} })
     store.settle(lease, 'waiting', 'observation')
     store.release(lease)
     await recoverDurableExecutions(manager, 30)
+    assert.equal(wakes.length, 1)
+    assert.equal(manager.getTask(wakes[0].id)?.state, 'queued', 'Unconsumed evidence retains the shared continuation')
+    assert.equal(manager.getNextExecutable()?.id, wakes[0].id)
+    assert.equal(store.get(record.executionId).lastProcessedSequence, first.sequence)
+    assert.equal(store.event(record.executionId, second.eventId).sequence, second.sequence)
+    await recoverDurableExecutions(manager, 30)
+    assert.equal(manager.getTask(wakes[0].id)?.state, 'queued', 'Duplicate recovery preserves the outstanding wake')
+    assert.equal(store.get(record.executionId).status, 'waiting')
+    const nextLease = store.claim(record.executionId, definition)
+    await new ExecutionCheckpointer(store, nextLease).put(config, {
+      v: 4, id: randomUUID(), ts: new Date().toISOString(), channel_versions: {}, versions_seen: {},
+      channel_values: { executionTransition: { transitionId: 'second-consumed', processedEventIds: [second.eventId] } },
+    }, { source: 'loop', step: 1, parents: {} })
+    store.release(nextLease)
+    await recoverDurableExecutions(manager, 30)
     const satisfied = manager.getTask(wakes[0].id)!
     assert.equal(satisfied.state, 'cancelled')
     assert.match(satisfied.cancellationReason ?? '', /already.*processed/i)
     assert.equal(satisfied.startedAt, undefined, 'A satisfied wake never acquired the model lane')
-    assert.equal(manager.getTask(wakes[1].id)?.state, 'queued', 'Unconsumed evidence retains its continuation')
-    assert.equal(manager.getNextExecutable()?.id, wakes[1].id, 'Retirement must not charge a model cooldown')
-    assert.equal(store.get(record.executionId).lastProcessedSequence, first.sequence)
-    assert.equal(store.event(record.executionId, second.eventId).sequence, second.sequence)
-    await recoverDurableExecutions(manager, 30)
-    assert.equal(manager.getTask(wakes[1].id)?.state, 'queued', 'Duplicate recovery preserves the outstanding wake')
-    assert.equal(store.get(record.executionId).status, 'waiting')
+    const probe = manager.enqueue({ type: 'generic', handler: 'fixture.probe', resource: 'local-llm', username, input: {} })
+    assert.equal(manager.getNextExecutable()?.id, probe.id, 'Retirement must not charge a model cooldown')
   } finally { store.close() }
 })
 
@@ -602,4 +629,75 @@ test('instruction interpretation recovery reuses its finite work identity and pu
     assert.equal((receipts[0].payload as any).effectId, parent.effectId)
     assert.equal((receipts[0].payload as any).result.result.revision, 3)
   } finally { store.close() }
+})
+
+test('terminal display recovery settles finished old graphs without rerunning them or claiming physical success', async () => {
+  const username = 'display-delivery-recovery'
+  authenticate(username)
+  for (const phase of ['unknown', 'interrupted', 'cancelled', 'parent-cancelled'] as const) {
+    const store = openExecutionStore(username)
+    const manager = new UnifiedQueueManager()
+    const record = store.create(username, definition)
+    const lease = store.claim(record.executionId, definition)
+    const effectId = randomUUID()
+    const actionId = randomUUID()
+    try {
+      const saver = new ExecutionCheckpointer(store, lease)
+      await saver.put({ configurable: { thread_id: record.executionId } }, {
+        v: 4, id: randomUUID(), ts: new Date().toISOString(),
+        channel_values: { queue: [], nodeEntries: [['face', { status: 'completed', outputs: { success: true } }]],
+          executionTransition: { transitionId: randomUUID(), dispatches: [{ effectId, actionId, kind: 'coordinator_work',
+            payload: { type: 'environment_command', handler: 'environment.command', resource: 'environment-display:body',
+              source: 'environment', username, input: { id: actionId, type: 'faceExpression', sessionId: 'body', expression: 'thinking' } } }] } },
+        channel_versions: {}, versions_seen: {},
+      }, { source: 'loop', step: 0, parents: {} })
+      const task = manager.enqueue(executionWorkInput(store, store.dispatch(effectId)))
+      store.acknowledgeAdmission(effectId, task.id)
+      if (phase === 'cancelled' || phase === 'parent-cancelled') manager.cancel(task.id, 'Superseded before dispatch')
+      else {
+        assert.ok(manager.claim(task.id))
+        store.recordActionAcceptance(effectId, manager.getTask(task.id)!)
+        if (phase === 'unknown') {
+          store.appendEvent(record.executionId, { eventId: 'old-unknown', kind: 'physical_result', actionId, workItemId: task.id,
+            payload: { feedback: { type: 'outcome_unknown', message: 'No acknowledgement' } } })
+          store.db.prepare("UPDATE execution_outbox SET status='outcome_unknown' WHERE effect_id=?").run(effectId)
+          // Persist the pre-repair wait as a real restart fixture.
+          manager.wait(task.id, 'outcome_unknown: No acknowledgement')
+        }
+      }
+      store.settle(lease, 'completed')
+      store.release(lease)
+      assert.equal(store.get(record.executionId).waitingReason, 'effect_delivery')
+      if (phase === 'parent-cancelled') {
+        store.cancel(record.executionId, { eventId: 'user-cancel', kind: 'user_cancelled', payload: {} })
+        store.appendEvent(record.executionId, { eventId: `work:${task.id}:undispatched`, kind: 'dispatch_cancelled', workItemId: task.id,
+          payload: { effectId, reason: 'Execution ended before work started' } })
+      }
+      const checkpointVersion = store.get(record.executionId).checkpointVersion
+      const restarted = new UnifiedQueueManager()
+      restarted.importState(JSON.parse(JSON.stringify(manager.exportState())))
+      // Notice delivery has its own tests; this fixture has no System Buffer graph.
+      restarted.acknowledgeFailureNotice(task.id)
+      await recoverDurableExecutions(restarted, 30)
+      await recoverDurableExecutions(restarted, 30)
+      const final = store.get(record.executionId)
+      assert.equal(final.status, phase === 'parent-cancelled' ? 'cancelled' : 'completed', phase)
+      assert.equal(final.checkpointVersion, checkpointVersion, 'delivery must not execute graph/model nodes')
+      assert.equal(final.ownerGeneration, lease.generation)
+      assert.equal(store.pendingDispatches().filter(effect => effect.executionId === record.executionId).length, 0)
+      assert.equal(store.events(record.executionId).filter(event => event.kind === 'work_result').length, 1)
+      assert.equal(store.events(record.executionId).filter(event => event.kind === 'physical_result').length, phase === 'unknown' ? 1 : 0)
+      if (phase === 'unknown') assert.equal((store.event(record.executionId, 'old-unknown').payload as any).feedback.type, 'outcome_unknown')
+      if (phase === 'parent-cancelled') assert.equal((store.event(record.executionId, `work:${task.id}:undispatched`).payload as any).reason, 'Execution ended before work started')
+      if (phase === 'cancelled') assert.ok(store.events(record.executionId).some(event => event.kind === 'dispatch_cancelled'))
+      assert.ok(restarted.getAllTasks().every(task => task.handler !== 'graph.resume'))
+      // The first actual adapter receipt can arrive after interrupted display delivery settled.
+      if (phase === 'interrupted') {
+        const receipt = restarted.getTask(task.id)!
+        store.deliverActionResult(record.executionId, actionId, { eventId: 'late-applied', kind: 'physical_result', actionId,
+          workItemId: task.id, payload: { feedback: { type: 'completed' } } }, false, false, receipt)
+        assert.equal(store.get(record.executionId).status, 'completed')
+      }
+    } finally { store.close() }
+  }
 })

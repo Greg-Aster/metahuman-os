@@ -53,7 +53,7 @@ test('one saver and one buffer owner persist an ordered dream sequence idempoten
           index: 1,
         }],
         sourceIds: ['source-memory-1', 'source-memory-1'],
-      }, { userId: username, username }, { type: 'dream' })
+      }, { userId: username, username, originatingCognitiveMode: 'environment', cognitiveMode: 'agent', sleepSessionId: 'recorded-sleep-session' }, { type: 'dream' })
 
       assert.equal(saver.saved, true)
       assert.equal(saver.savedCount, 2)
@@ -78,7 +78,7 @@ test('one saver and one buffer owner persist an ordered dream sequence idempoten
       assert.equal(firstAdmission.passthrough, saver.dream)
       const firstReasoningSave = await InnerDialogueSaverNode.execute!(
         { entries: firstAdmission.entries },
-        { userId: username, username, recordPersonaMemory: true },
+        { userId: username, username, originatingCognitiveMode: 'environment', cognitiveMode: 'agent', recordPersonaMemory: true },
         { roles: ['reasoning'] },
       )
       assert.equal(firstReasoningSave.saved, true)
@@ -88,7 +88,7 @@ test('one saver and one buffer owner persist an ordered dream sequence idempoten
       assert.equal(replayAdmission.saved, true)
       const replayReasoningSave = await InnerDialogueSaverNode.execute!(
         { entries: replayAdmission.entries },
-        { userId: username, username, recordPersonaMemory: true },
+        { userId: username, username, originatingCognitiveMode: 'environment', cognitiveMode: 'agent', recordPersonaMemory: true },
         { roles: ['reasoning'] },
       )
       assert.equal(replayReasoningSave.saved, true)
@@ -105,7 +105,10 @@ test('one saver and one buffer owner persist an ordered dream sequence idempoten
       assert.equal(dreams.length, 2)
       assert.equal(reasoning.length, 2)
       assert.equal(reasoning.every(event => event.metadata?.role === 'reasoning'), true)
+      assert.equal([...dreams, ...reasoning].every(event => event.metadata?.cognitiveMode === 'environment'), true)
       assert.deepEqual(dreams[0].metadata.sources, ['source-memory-1'])
+      assert.equal(dreams[0].metadata.sleepSessionId, 'recorded-sleep-session')
+      assert.equal(dreams[1].metadata.sleepSessionId, 'recorded-sleep-session')
       assert.equal(dreams[1].metadata.continuation, true)
       assert.equal(dreams[1].metadata.continuationIndex, 1)
       assert.deepEqual(dreams[1].metadata.sources, ['source-memory-1'])
@@ -153,9 +156,13 @@ test('coordinator retry identity replays the first durable daydream exactly', as
         sourceIds: ['source-first'],
       }, context, { type: 'daydream' })
       const retry = await DreamerDreamSaverNode.execute!({
-        dreamData: 'A regenerated retry produced different words that must not replace the first result.',
-        sourceIds: ['source-retry'],
+        dreamData: 'The first durable daydream watches clouds gather into a quiet library.',
+        sourceIds: ['source-first'],
       }, context, { type: 'daydream' })
+      await assert.rejects(() => DreamerDreamSaverNode.execute!({
+        dreamData: 'Different regenerated words must not reuse the persisted identity.',
+        sourceIds: ['source-first'],
+      }, context, { type: 'daydream' }), /idempotency key conflicts/)
 
       assert.equal(first.saved, true)
       assert.equal(retry.saved, true)
@@ -185,6 +192,8 @@ test('coordinator retry identity replays the first durable daydream exactly', as
       assert.equal(events.length, 1)
       assert.equal(events[0].content, first.dream)
       assert.deepEqual(events[0].metadata.sources, ['source-first'])
+      assert.equal(events[0].metadata.sleepSessionId, undefined)
+      assert.equal(events[0].metadata.cognitiveMode, undefined)
     })
   } finally {
     globalThis.fetch = originalFetch
@@ -234,14 +243,19 @@ test('coordinator retry identity replays the complete durable dream sequence exa
         sourceIds: ['source-first'],
       }, context, { type: 'dream' })
       const retry = await DreamerDreamSaverNode.execute!({
-        dreamData: 'Regenerated initial text must not replace the first dream.',
-        thinkingData: 'Regenerated reasoning must not replace admitted reasoning.',
+        dreamData: 'The first durable dream crosses a silver bridge.',
+        thinkingData: 'The bridge suggests transition.',
         continuationsData: [
-          { dream: 'Regenerated continuation one.', thinking: 'Regenerated continuation reasoning.', index: 1 },
-          { dream: 'Regenerated continuation two.', index: 2 },
+          { dream: 'The bridge becomes a paper bird.', thinking: 'The image becomes lighter.', index: 1 },
+          { dream: 'The bird folds the moon into its wings.', index: 2 },
         ],
-        sourceIds: ['source-retry'],
+        sourceIds: ['source-first'],
       }, context, { type: 'dream' })
+      await assert.rejects(() => DreamerDreamSaverNode.execute!({
+        dreamData: 'The first durable dream crosses a silver bridge.',
+        continuationsData: [{ dream: 'Regenerated continuation must not replace the stored dream.', index: 1 }],
+        sourceIds: ['source-first'],
+      }, context, { type: 'dream' }), /idempotency key conflicts/)
 
       assert.equal(first.savedCount, 3)
       assert.equal(retry.savedCount, 3)

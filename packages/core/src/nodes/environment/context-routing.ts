@@ -9,10 +9,14 @@ export interface EnvironmentRequestRouting {
   needsResponse: boolean;
   needsAction: boolean;
   needsToolUse?: boolean;
+  taskPlanner?: 'specialist' | 'vision';
   taskContext: EnvironmentContextEntry[];
   conversationContext: EnvironmentContextEntry[];
   memoryQuery?: string;
   memoryTypes?: string[];
+  memoryOrder?: 'relevance' | 'newest';
+  memoryTimeRange?: { from?: string; before?: string };
+  memorySleepCycle?: 'latest';
 }
 
 export function selectedEnvironmentRoutes(

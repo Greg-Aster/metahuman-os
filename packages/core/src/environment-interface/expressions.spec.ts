@@ -18,6 +18,7 @@ mock.module(new URL('../queue/work-submission.js', import.meta.url).href, { name
 const { runDurableGraph, withGraphWork } = await import('../durable-execution/runtime.js')
 const { getQueueManager } = await import('../queue/unified-queue-manager.js')
 const { openExecutionStore } = await import('../durable-execution/storage.js')
+const { deliverDurableWorkReceipt } = await import('../durable-execution/work-results.js')
 const { writeEnvironmentBridgeState, subscribeEnvironmentActions, recordEnvironmentActionResult,
   readEnvironmentBridgeState } = await import('./store.js')
 const { handleEnvironmentBridgeStatus } = await import('../api/handlers/environment-bridge.js')
@@ -61,12 +62,26 @@ test('Face Expression node delivers one display command and preserves recorded p
     assert.equal(action.input.command, undefined)
     assert.equal(action.resource, 'environment-display:body')
     assert.ok(manager.claim(action.id))
+    recordEnvironmentActionResult({ id: 'face-unknown', actionId: String(action.input.id), timestamp,
+      type: 'outcome_unknown', message: 'Simulated display connection interrupted',
+      data: { producer: 'environment-bridge', delivery: { outcome: 'unknown' } } })
+    assert.equal(manager.getTask(action.id)?.state, 'failed')
+    const next = manager.enqueue({ type: 'environment_command', handler: 'environment.command', username: 'fixture', source: 'environment',
+      resource: 'environment-display:body', input: { id: 'newer-display', type: 'faceExpression', sessionId: 'body', expression: 'thinking' } })
+    assert.ok(manager.claim(next.id), 'an unknown display delivery does not own the display lane')
     recordEnvironmentActionResult({ id: 'face-completed', actionId: String(action.input.id), timestamp,
       type: 'completed', message: 'Simulated face applied' })
     assert.deepEqual(readEnvironmentBridgeState().sessions.body.latestObservation?.state?.commandedPose, pose)
     const store = openExecutionStore('fixture')
     try {
       assert.equal(store.dispatches(result.executionId!).filter(effect => effect.actionId).length, 1)
+      assert.equal(store.get(result.executionId!).status, 'completed')
+      assert.equal((store.event(result.executionId!, 'face-unknown').payload as any).feedback.type, 'outcome_unknown')
+      assert.equal(store.event(result.executionId!, 'face-completed').parentEventId, 'face-unknown')
+      assert.equal(manager.getTask(action.id)?.state, 'failed', 'later evidence does not rewrite historical Coordinator failure')
+      assert.equal(manager.getTask(next.id)?.state, 'leased', 'late old receipt does not complete the new display')
+      manager.complete(next.id, true)
+
     } finally { store.close() }
     const response = await handleEnvironmentBridgeStatus({ query: { view: 'expression-options' } } as any)
     assert.deepEqual((response.data as any).expressionLibrary, library)
@@ -107,7 +122,9 @@ test('Pass-through thinking, conditional release and replay preserve input and d
     const result = await runFixture(graph)
     assert.notEqual(result.status, 'failed', result.error?.stack)
     assert.equal(result.nodes.get('on')!.outputs!.control, 'Tell me what you see, then bow.')
-    const commands = manager.getAllTasks().filter(task => task.type === 'environment_command' && task.durable?.executionId === result.executionId)
+    const ledger = manager.exportState()
+    const commands = [...new Map([...(ledger.items ?? []), ...(ledger.history ?? []), ...(ledger.durableReceipts ?? [])].map(task => [task.id, task])).values()]
+      .filter(task => task.type === 'environment_command' && task.durable?.executionId === result.executionId)
     assert.equal(commands.length, 2)
     const on = commands.find(task => task.input.displayRelease === false)!
     const off = commands.find(task => task.input.displayRelease === true)!
@@ -116,9 +133,22 @@ test('Pass-through thinking, conditional release and replay preserve input and d
     assert.equal(on.input.displayBackground, true)
     assert.equal(off.input.displayToken, on.input.displayToken)
     assert.equal(off.input.expression, undefined)
+    assert.equal(on.state, 'cancelled', 'the unsent thinking SET is superseded by its matching release')
+    assert.equal(on.startedAt, undefined)
+    assert.equal(off.state, 'queued', 'the release remains deliverable')
+    await deliverDurableWorkReceipt(on, async input => manager.enqueue(input))
+    assert.ok(manager.claim(off.id))
+    recordEnvironmentActionResult({ id: 'face-release-completed', actionId: String(off.input.id), timestamp: new Date().toISOString(),
+      type: 'completed', message: 'Simulated release' })
+    const store = openExecutionStore('fixture')
+    try {
+      assert.equal(store.get(result.executionId!).status, 'completed')
+      assert.ok(store.dispatches(result.executionId!).filter(effect => effect.actionId).every(effect => ['completed', 'cancelled'].includes(effect.status)))
+      assert.ok(store.events(result.executionId!).some(event => event.kind === 'dispatch_cancelled'))
+    } finally { store.close() }
     const replay = await runDurableGraph({ graph, executionId: result.executionId, context: { username: 'fixture' } })
     assert.notEqual(replay.status, 'failed', replay.error?.stack)
-    assert.equal(manager.getAllTasks().filter(task => task.type === 'environment_command' && task.durable?.executionId === result.executionId).length, 2)
+    assert.equal(manager.getAllTasks().filter(task => task.type === 'environment_command' && task.durable?.executionId === result.executionId).length, 0)
   } finally { unsubscribe() }
 })
 

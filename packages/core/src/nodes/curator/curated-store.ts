@@ -69,13 +69,38 @@ export function* scanCuratedMemories(username: string): Generator<CuratedMemoryS
 }
 
 /** Missing, old or changed decisions are eligible for review again, never for silent reuse. */
-export function sourceCurationStatus(username: string, memory: EpisodicMemory): { current: boolean; reason?: string } {
+export function sourceCurationStatus(
+  username: string,
+  memory: EpisodicMemory,
+  exact?: { recordId: string; recordFile: string },
+): { current: boolean; reason?: string } {
   const metadata = memory.metadata
   if (!metadata?.curated) return { current: false, reason: 'unreviewed' }
-  if (metadata.curatorPolicyVersion !== CURATOR_POLICY_VERSION) return { current: false, reason: 'obsolete-policy' }
+  const reviews = metadata.curatorReviews && typeof metadata.curatorReviews === 'object'
+    ? metadata.curatorReviews as Record<string, Record<string, unknown>> : {}
+  const entries = Object.entries(reviews)
+  if (typeof metadata.curatorRecordId === 'string' && !reviews[metadata.curatorRecordId]) {
+    entries.push([metadata.curatorRecordId, {
+      recordFile: metadata.curatorRecordFile, sourceHash: metadata.curatorSourceHash,
+      policyVersion: metadata.curatorPolicyVersion, status: metadata.curationStatus,
+    }])
+  }
+  const selected = exact ? entries.filter(([id, review]) => id === exact.recordId && review?.recordFile === exact.recordFile) : entries
+  let result: { current: boolean; reason?: string } = { current: false, reason: 'missing-record-reference' }
+  for (const [id, review] of selected) {
+    result = review && typeof review === 'object'
+      ? reviewCurationStatus(username, memory, id, review)
+      : { current: false, reason: 'invalid-record-reference' }
+    if (result.current) return result
+  }
+  return result
+}
+
+function reviewCurationStatus(username: string, memory: EpisodicMemory, recordId: string, review: Record<string, unknown>): { current: boolean; reason?: string } {
+  if (review.policyVersion !== CURATOR_POLICY_VERSION) return { current: false, reason: 'obsolete-policy' }
   const hash = episodicSourceHash(memory)
-  if (metadata.curatorSourceHash !== hash) return { current: false, reason: 'source-changed' }
-  const filename = metadata.curatorRecordFile
+  if (review.sourceHash !== hash) return { current: false, reason: 'source-changed' }
+  const filename = review.recordFile
   if (typeof filename !== 'string') return { current: false, reason: 'missing-record-reference' }
   try { checkFilename(filename) } catch { return { current: false, reason: 'invalid-record-reference' } }
   const directory = curatedMemoryDirectory(username)
@@ -89,9 +114,9 @@ export function sourceCurationStatus(username: string, memory: EpisodicMemory): 
     if (error instanceof InvalidCuratedRecordError) return { current: false, reason: 'invalid-record' }
     throw error
   }
-  if (record.id !== metadata.curatorRecordId || record.provenance?.policyVersion !== CURATOR_POLICY_VERSION
+  if (record.id !== recordId || record.provenance?.policyVersion !== CURATOR_POLICY_VERSION
       || record.provenance.sourceHashes[memory.id] !== hash
-      || metadata.curationStatus !== (record.suitableForTraining ? 'accepted' : 'rejected')) {
+      || review.status !== (record.suitableForTraining ? 'accepted' : 'rejected')) {
     return { current: false, reason: 'decision-mismatch' }
   }
   return { current: true }

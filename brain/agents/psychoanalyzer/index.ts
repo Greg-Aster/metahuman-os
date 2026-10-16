@@ -13,8 +13,8 @@ import { run } from './core.js';
  */
 export const meta: AgentMeta = {
   id: 'psychoanalyzer',
-  name: 'Psychoanalyzer',
-  description: 'Reviews memories to extract personality insights and update persona',
+  name: 'Psychotherapist',
+  description: 'Reviews saved conversations and other recent memories, then proposes and applies validated persona updates during Sleep or manual review.',
   usesLLM: true,
   priority: 'low',
   tags: ['psychoanalyzer', 'llm', 'persona', 'analysis'],

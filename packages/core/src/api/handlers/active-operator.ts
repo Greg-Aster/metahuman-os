@@ -40,7 +40,7 @@ function authRequired(): UnifiedResponse {
 /**
  * GET /api/active-operator/status
  */
-export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> {
+export async function handleGetActiveOperatorStatus(req?: UnifiedRequest): Promise<UnifiedResponse> {
   try {
     const controller = getModeController();
     const modeStatus = controller.getStatus();
@@ -89,9 +89,23 @@ export async function handleGetActiveOperatorStatus(): Promise<UnifiedResponse> 
         };
       });
 
+    let operations: unknown[] = []
+    let assessments: unknown[] = []
+    if (req?.user.username) {
+      const [{ robotAutonomyTaskCatalogNode }, { readActivationAssessments }, { loadGraphForMode }, { loadRobotOperatorConfig }] = await Promise.all([
+        import('../../nodes/robot-operator/task-catalog.node.js'), import('../../active-operator/activation-history.js'),
+        import('../../graph-streaming.js'), import('../../robot-operator.js'),
+      ])
+      const loaded = await loadGraphForMode(loadRobotOperatorConfig().robotAutonomyControllerGraph, req.user.username)
+      const catalogNode = loaded.graph.nodes.find(node => node.data.nodeType === 'robot_autonomy_task_catalog')
+      const catalog = await robotAutonomyTaskCatalogNode.execute({}, { username: req.user.username }, catalogNode?.data.properties)
+      operations = catalog.activationState.operations
+      assessments = await readActivationAssessments(req.user.username, 12)
+    }
     return {
       status: 200,
       data: {
+        operations, assessments,
         mode: modeStatus.mode,
         isExecuting: modeStatus.isExecuting,
         currentTask: modeStatus.currentTask || null,

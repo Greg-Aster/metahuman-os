@@ -15,10 +15,8 @@ user authority, body safety, and evidence-based completion explicit.
 
 - **Reactive**: respond to user and environment events; do not admit timed or
   inactivity-based autonomy.
-- **Semi-autonomous**: admit configured scheduled and idle work through the
-  existing coordinator.
-- **Fully autonomous**: let Robot Operator admit one bounded robot workflow chain
-  at a time, with later work beginning only after completion and cooldown.
+- **Semi-autonomous**: request model updates at 100% activation through the existing coordinator.
+- **Fully autonomous**: request the highest returned activation, even below 100%; selected work runs independently of subsequent assessments.
 - **Embodied execution**: express high-level semantic intentions. The Ainekio
   body runtime remains responsible for actuator timing, balance, collision
   avoidance, emergency stop, and other fast safety control.
@@ -32,9 +30,9 @@ observation, and physical result.
 
 ```text
 Active Operator mode
-  -> Robot Operator service timing and admission
-  -> one contextual Robot Autonomy Controller, or an existing execution's saved wait
-  -> one catalog-backed finite agent or Robot Autonomy Executor
+  -> Active Operator agent assessment admission
+  -> one shared activation assessment for Semi and Full
+  -> selected operations through independent Coordinator admissions
   -> Environment intent routing, selector and specialized evidence inputs
   -> environment_active_task in the same durable execution
   -> asynchronous remote perception/motion-generation through the same Work Coordinator
@@ -51,9 +49,9 @@ The maintained owners are:
 | Responsibility | Canonical owner |
 | --- | --- |
 | Reactive, Semi, and Full mode transitions | `packages/core/src/active-operator/mode-controller.ts` |
-| Full-mode completion-driven admission | `brain/services/robot-operator.ts` |
+| Semi/Full activation-assessment admission | `brain/agents/active-operator/index.ts` |
 | Finite-work ordering and execution admission | `packages/core/src/queue/queue-system.ts` |
-| Semi workflow timing and Full saved-wait/controller admission | `brain/services/robot-operator.ts` |
+| Mode-specific selection from model activation updates | `brain/agents/active-operator/index.ts` |
 | Full contextual task selection | `etc/cognitive-graphs/robot-autonomy-controller-mode.json` |
 | Reusable profile-resolved situational snapshot | `packages/core/src/robot-status.ts` and `etc/cognitive-graphs/robot-status-mode.json` |
 | Contextual autonomous intentions | `boredom-observer-mode.json`, `boredom-movement-mode.json`, and `boredom-reflection-mode.json` |
@@ -76,7 +74,7 @@ bridge, or retry loop around these owners.
 | Area | Current source state | Evidence still required |
 | --- | --- | --- |
 | Active Operator modes | Implemented in the mode controller and coordinator contracts | Current-build runtime transition and suppression evidence |
-| Robot Operator admission | Registered as a persistent service; Semi owns configured workflow timers; Full signals saved waits and otherwise admits the finite autonomy controller | Current-build Agent Monitor and queue admission evidence |
+| Robot Operator admission | Persistent agent; Semi requests updates at 100%, Full requests the highest returned activation | Current-build Agent Monitor and queue admission evidence |
 | Robot Status | Implemented as one bounded graph and profile-resolved snapshot owner | Current profile read/write and downstream-consumption evidence |
 | Boredom planning | Existing contextual planner graphs feed the shared program executor | Repeated runtime cycles proving no competing execution path |
 | Environment execution | Environment Mode and Robot Autonomy Executor select one complete ordered program; active-task nodes consume correlated physical and remote perception results | Simulated success, failure, cancellation, reordered replies and dispatch regressions; installed runtime and physical evidence remain separate |

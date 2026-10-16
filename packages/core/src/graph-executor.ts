@@ -13,7 +13,6 @@ import {
   type SvelteFlowEdge,
 } from './cognitive-graph-schema.js';
 import { createLogger } from './logger.js';
-import { loadOperatorConfig } from './config.js';
 import { eventBus, EventTypes, generateRequestId } from './infrastructure/event-bus/index.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,19 +26,6 @@ import { executionAbortError, executionDefinition, graphContextSnapshot, resolve
 import type { CheckpointTransition, DispatchIntent } from './durable-execution/types.js';
 
 const log = createLogger('graph-pipeline');
-
-// Default timeouts (in ms)
-const DEFAULT_NODE_TIMEOUT = 600000;  // 10 minutes
-const DEFAULT_LLM_TIMEOUT = 900000;   // 15 minutes
-
-// Node types that are considered LLM nodes (need longer timeouts)
-const LLM_NODE_TYPES = new Set([
-  'curator_llm', 'response_llm', 'planner_llm', 'decision_llm',
-  'unified_decision_llm', 'big_brother_reviewer', 'big_brother_decision', 'llm',
-  'claude_full_task', 'orchestrator_llm', 'persona_llm', 'response_synthesizer',
-  'movement_generator', 'llm_enricher',
-  'inner_curiosity_question_generator', 'inner_curiosity_answer_generator',
-]);
 
 /**
  * Write a graph execution trace to the NDJSON trace file.
@@ -485,49 +471,11 @@ export async function executeNodeByType(
     : (node.data.properties || {});
 
   if (executor) {
-    // Determine timeout based on node type and config
-    // Priority: node property > operator config > defaults
-    let timeoutMs = effectiveProperties?.timeout;
-
-    if (!timeoutMs) {
-      // Try to load operator config for custom timeouts
-      const username = context.userId || context.username;
-      let graphConfig: { defaultNodeTimeout?: number; llmNodeTimeout?: number } | undefined;
-
-      if (username && username !== 'anonymous') {
-        try {
-          const opConfig = loadOperatorConfig(username);
-          graphConfig = (opConfig as any).graphExecutor;
-        } catch {
-          // Config not available, use defaults
-        }
-      }
-
-      // Use LLM timeout for LLM nodes, otherwise default timeout
-      if (LLM_NODE_TYPES.has(nodeType)) {
-        timeoutMs = graphConfig?.llmNodeTimeout || DEFAULT_LLM_TIMEOUT;
-      } else {
-        timeoutMs = graphConfig?.defaultNodeTimeout || DEFAULT_NODE_TIMEOUT;
-      }
-    }
-
     const startTime = Date.now();
+    if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting`);
 
-    // Big Brother nodes and desire executor have no timeout - cloud LLM/research takes as long as needed
-    const neverTimeout = nodeType === 'claude_full_task' || nodeType === 'big_brother_executor' || nodeType === 'desire_executor';
-
-    if (process.env.DEBUG_GRAPH) console.log(`[EXEC_START] Node ${node.id} (${nodeType}) starting, timeout: ${timeoutMs}ms`);
-
-    const controller = new AbortController();
-    const signal = context.abortSignal
-      ? AbortSignal.any([context.abortSignal, controller.signal])
-      : controller.signal;
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    if (!neverTimeout && nodeDefinition?.execution.timeoutOwner !== 'children') {
-      timeoutHandle = setTimeout(() => {
-        controller.abort(new Error(`TIMEOUT: Node ${node.id} (${nodeType}) exceeded ${timeoutMs / 1000} second execution limit`));
-      }, timeoutMs);
-    }
+    // The execution owner controls cancellation; elapsed time does not cancel valid work.
+    const signal = context.abortSignal ?? new AbortController().signal;
     const execution = context.graphExecution as GraphNodeExecution | undefined;
     const scopedContext = {
       ...context, abortSignal: signal,
@@ -557,7 +505,6 @@ export async function executeNodeByType(
       signal.throwIfAborted();
     } finally {
       signal.removeEventListener('abort', onAbort);
-      if (timeoutHandle) clearTimeout(timeoutHandle);
     }
 
     const duration = Date.now() - startTime;
@@ -696,9 +643,12 @@ export async function executeGraph(
   durable?: DurableGraphOptions,
   readExecution?: GraphNodeExecution,
 ): Promise<GraphExecutionState> {
+  if (durable?.invocationId) {
+    graph = durable.store.graphSnapshot(durable.lease.executionId, durable.invocationId) ?? graph;
+  }
   validateSvelteFlowGraph(graph);
   if (durable) {
-    if (durable.invocationId) durable.store.pinGraph(durable.lease, durable.invocationId, executionDefinition(graph));
+    if (durable.invocationId) durable.store.pinGraph(durable.lease, durable.invocationId, executionDefinition(graph), graph);
     else durable.store.assertDefinition(durable.lease.executionId, executionDefinition(graph));
     durable.store.assertLease(durable.lease);
   }
@@ -839,6 +789,12 @@ export async function executeGraph(
             catch (error) { resumeError = error instanceof Error ? error.message : String(error); }
             return { executionId: record.executionId, status: record.status, graphId: record.definition.graphId,
               waitingReason: record.waitingReason, task: durable.store.task(record.executionId),
+              ...(entry.environmentObservation ? { sourceObservation: {
+                id: entry.environmentObservation.id,
+                sessionId: entry.environmentObservation.sessionId,
+                timestamp: entry.environmentObservation.timestamp,
+                bodyEvent: entry.environmentObservation.state?.bodyEvent,
+              } } : {}),
               canSteer: !resumeError && Boolean(saved.graph.scheduler.eventInputNodeId),
               ...(resumeError ? { resumeError } : {}),
               instruction: entry.userMessage || entry.robotOperatorContext?.plannerDecision?.instruction || '' };

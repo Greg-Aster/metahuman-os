@@ -265,7 +265,7 @@ export interface ProviderConfig {
  * Local providers: ollama, vllm, mock, local-models (handled by core bridge)
  * Cloud providers: runpod_serverless, huggingface
  */
-export type ProviderType = 'llama-cpp' | 'ollama' | 'vllm' | 'mock' | 'runpod_serverless' | 'huggingface' | 'openai' | 'local' | 'remote-server' | 'local-models';
+export type ProviderType = 'big-brother' | 'llama-cpp' | 'ollama' | 'vllm' | 'mock' | 'runpod_serverless' | 'huggingface' | 'openai' | 'local' | 'remote-server' | 'local-models';
 
 /**
  * Check if a provider is a cloud provider.

@@ -311,7 +311,7 @@ export function buildBigBrotherCLIInvocation(
   if (options.diagnostic?.threadId) args.push('resume', options.diagnostic.threadId, '-')
   ensureArg(args, '--json')
   if (model) setModelArg(args, model)
-  const reasoning = options.diagnostic?.reasoning ? 'high'
+  const reasoning = options.enableThinking === true || options.diagnostic?.reasoning ? 'high'
     : (bigBrother?.provider === provider ? bigBrother.reasoningEffort : undefined) || backend.reasoningEffort
   if (reasoning || !options.diagnostic) ensureConfigOverride(args, 'model_reasoning_effort', reasoning || 'low')
   const colorIndex = args.indexOf('--color')

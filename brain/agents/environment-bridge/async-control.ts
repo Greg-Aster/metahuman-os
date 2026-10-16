@@ -6,34 +6,18 @@ export interface SerialTaskQueue {
 
 export function createSerialTaskQueue(
   onError: (error: unknown) => void,
-  maximumPendingTasks: number,
 ): SerialTaskQueue {
-  if (!Number.isInteger(maximumPendingTasks) || maximumPendingTasks < 1) {
-    throw new Error('Serial task queue capacity must be a positive integer');
-  }
-
   let failed = false;
-  let pendingTasks = 0;
   const tails = new Map<string, Promise<void>>();
   const pending = (key = 'adapter') => tails.get(key) ?? Promise.resolve();
 
   return {
     enqueue(task, orderingKey = 'adapter', dependency) {
       if (failed) return Promise.resolve();
-      if (pendingTasks >= maximumPendingTasks) {
-        failed = true;
-        onError(new Error(`Serial task queue exceeded ${maximumPendingTasks} pending tasks`));
-        return Promise.resolve();
-      }
-      pendingTasks += 1;
       const tail = pending(orderingKey)
         .then(async () => {
-          try {
-            if (dependency) await dependency;
-            if (!failed) await task();
-          } finally {
-            pendingTasks -= 1;
-          }
+          if (dependency) await dependency;
+          if (!failed) await task();
         })
         .catch(error => {
           if (failed) return;

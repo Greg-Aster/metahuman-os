@@ -25,10 +25,6 @@
     "catalogTTL": 60000,
     "parallelSkillExecution": false
   },
-  "graphExecutor": {
-    "defaultNodeTimeout": 600000,
-    "llmNodeTimeout": 900000
-  },
   "bigBrotherMode": {
     "enabled": true,
     "provider": "codex",

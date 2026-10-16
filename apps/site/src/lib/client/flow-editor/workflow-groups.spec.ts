@@ -4,7 +4,7 @@ import { groupWorkflows, workflowGroupId } from './workflow-groups'
 
 test('groups desire and robot autonomy workflow families by stable filenames', () => {
   assert.equal(workflowGroupId('desire-planner'), 'desires-agency')
-  assert.equal(workflowGroupId('boredom-autonomy-mode'), 'robot-autonomy')
+  assert.equal(workflowGroupId('robot-autonomy-controller-mode'), 'robot-autonomy')
   assert.equal(workflowGroupId('robot-status-mode'), 'robot-autonomy')
 })
 

@@ -7,13 +7,12 @@ import { isPlanningDelegation } from './planning-contract.js'
 /** Delegation is selected by the model; all programs use the existing parser. */
 export const environmentTaskPlannerNode = defineNode({
   id: 'environment_task_planner', name: 'Resolve Task Plan', category: 'environment',
-  execution: { timeoutOwner: 'children' },
   inputs: [...environmentActionParserNode.inputs,
     { name: 'planningMessages', type: 'array', description: 'The same selected context with the original task contract' },
     { name: 'planningSchema', type: 'object', description: 'Existing task schema without recursive delegation' }],
   outputs: [...environmentActionParserNode.outputs, { name: 'rawResponse', type: 'string', description: 'Exact final task output for continuation reuse, separate from conversational response' }],
-  properties: { ...modelRouterDefinition.properties, role: 'persona', format: 'json', temperature: 0.1 },
-  propertySchemas: modelRouterDefinition.propertySchemas,
+  properties: { ...modelRouterDefinition.properties, role: 'planner', format: 'json', temperature: 0.1 },
+  propertySchemas: { ...modelRouterDefinition.propertySchemas, role: { ...modelRouterDefinition.propertySchemas.role, default: 'planner' } },
   description: 'Resolves optional planning through Model Router, then returns the existing task parser output.',
   async execute(inputs, context, properties) {
     let selected: any

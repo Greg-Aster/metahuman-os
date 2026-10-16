@@ -1,4 +1,5 @@
-import { reasoningProperty } from '../llm/model-router.schema.js';
+import type { ModelRole } from '../../model-roles.js';
+import { reasoningProperty, modelRouterDefinition } from '../llm/model-router.schema.js';
 import { callLLM } from '../../model-router.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext, type NodeExecutor } from '../types.js'
 
@@ -81,7 +82,7 @@ export async function executeGoalReviewInsights(
   }
   if (projects.length > 100) throw new Error('Goal Review Insights accepts at most 100 projects')
   const response = await dependencies.callModel({
-    role: 'curator',
+    role: (properties?.role ?? 'psychotherapist') as ModelRole,
     userId: typeof context.userId === 'string' ? context.userId : context.username,
     cognitiveMode: typeof context.cognitiveMode === 'string' ? context.cognitiveMode : undefined,
     messages: [{
@@ -110,7 +111,8 @@ export const GoalReviewInputNode: NodeDefinition = defineNode({
 })
 
 export const GoalReviewInsightsNode: NodeDefinition = defineNode({
-  propertySchemas: { enableThinking: reasoningProperty },
+  propertySchemas: {
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'psychotherapist' }, enableThinking: reasoningProperty },
   id: 'goal_review_insights',
   name: 'Generate Goal Review Insights',
   category: 'agent',
@@ -126,7 +128,7 @@ export const GoalReviewInsightsNode: NodeDefinition = defineNode({
     { name: 'celebrateWins', type: 'array' },
     { name: 'concernAreas', type: 'array' },
   ],
-  properties: { enableThinking: false },
+  properties: { role: 'psychotherapist', enableThinking: false },
   description: 'Generates typed weekly goal insights from graph-supplied progress evidence',
   execute: executeGoalReviewInsights,
 })

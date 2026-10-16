@@ -594,11 +594,11 @@
     <div class="mb-6">
       <label for="speech-output-target" class="block font-medium text-gray-700 dark:text-gray-300 mb-2 text-sm">Speech output</label>
       <select id="speech-output-target" bind:value={config.outputTarget} disabled={saving} class="select-field">
-        <option value="local">This computer</option>
-        <option value="robot">Robot speaker (Environment Mode)</option>
+        <option value="local">Browser</option>
+        <option value="robot">Body Control</option>
       </select>
       <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-        The chat header speaker button still enables or disables speech.
+        The chat header cycles between Off, Browser, and Body Control. Body Control selects its robot or computer speaker in its Audio settings.
       </p>
     </div>
 

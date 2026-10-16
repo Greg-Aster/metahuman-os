@@ -47,7 +47,7 @@ export interface MemoryIndexRefreshSubmission {
   metadata?: Record<string, any>;
 }
 
-export type DesireAgentOperation = 'plan' | 'execute' | 'review' | 'checkin';
+export type DesireAgentOperation = 'plan' | 'execute' | 'review' | 'checkin' | 'archive';
 
 /**
  * The only public admission contract for Desire work after generation.
@@ -56,6 +56,7 @@ export type DesireAgentOperation = 'plan' | 'execute' | 'review' | 'checkin';
  */
 export interface DesireAgentSubmission {
   operation: DesireAgentOperation;
+  reason?: string;
   username: string;
   source: WorkSource;
   desireId?: string;
@@ -164,8 +165,8 @@ function validateDesireAgentIdentity(input: DesireAgentSubmission): {
   if (desireId && !/^desire-[a-zA-Z0-9_-]+$/.test(desireId)) {
     throw new Error('Desire Agent requires a valid desire ID');
   }
-  if (input.operation === 'checkin' && !desireId) {
-    throw new Error('Desire Agent check-in requires a desire ID');
+  if ((input.operation === 'checkin' || input.operation === 'archive') && !desireId) {
+    throw new Error(`Desire Agent ${input.operation === 'checkin' ? 'check-in' : input.operation} requires a desire ID`);
   }
   return { username, desireId };
 }
@@ -174,6 +175,17 @@ function validateDesireAgentIdentity(input: DesireAgentSubmission): {
 export function buildDesireAgentTaskInput(input: DesireAgentSubmission): TaskInput {
   const { username, desireId } = validateDesireAgentIdentity(input);
   const metadata = desireAgentMetadata(input);
+
+  if (input.operation === 'archive') {
+    return {
+      type: 'desire_review', handler: 'agency.desire-outcome-review', resource: 'system',
+      source: input.source, username, priority: input.priority ?? 'normal',
+      input: { operation: 'archive', desireId, reason: input.reason, triggeredBy: 'desire-agent' },
+      parentTaskId: input.parentTaskId, correlationId: input.correlationId,
+      idempotencyKey: input.idempotencyKey || `desire-agent:archive:${desireId}`,
+      maxAttempts: 2, metadata,
+    };
+  }
 
   if (input.operation === 'plan') {
     const args = desireId ? ['--desire-id', desireId] : [];

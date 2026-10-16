@@ -28,7 +28,7 @@ import type {
 } from '../../agency/types.js';
 import { initializeDesireMetrics, statusToStage } from '../../agency/types.js';
 import {
-  saveDesireManifest,
+  saveDesireProgress,
   loadDesireFromFolder,
   savePlanToFolder,
   saveDesireReviewToFolder,
@@ -252,7 +252,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
     if (currentManifest?.scratchpad) updatedDesire.scratchpad = currentManifest.scratchpad;
 
     // Save desire manifest to folder
-    await saveDesireManifest(updatedDesire, username);
+    await saveDesireProgress(updatedDesire, username);
 
     // Audit the update
     audit({

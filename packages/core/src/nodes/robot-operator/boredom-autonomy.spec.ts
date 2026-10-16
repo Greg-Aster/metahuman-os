@@ -36,7 +36,6 @@ const {
 } = await import('./context-builder.node.js');
 const { robotOperatorDecisionParserNode } = await import('./decision-parser.node.js');
 const { robotOperatorEnvironmentDispatchNode } = await import('./environment-dispatch.node.js');
-const { robotAutonomyTaskDispatchNode } = await import('./task-dispatch.node.js');
 const { robotAutonomyControllerParserNode } = await import('./autonomy-controller-parser.node.js');
 const { robotAutonomyTaskCatalogNode } = await import('./task-catalog.node.js');
 const { robotOperatorInputNode } = await import('./input.node.js');
@@ -51,24 +50,23 @@ const ALL_AUTONOMY_ROUTES = {
   needsAction: true,
 };
 
-test('continuation authorization preserves specialist choices and operating-mode semantics', async () => {
+test('an input wait handles real user and autonomy events without an authorization state', async () => {
   const { executionEventWaitNode } = await import('../utility/execution-event-wait.node.js');
-  const choice = { task: { id: 'reflector' }, instruction: 'Consider the current observation.' };
   const config = path.join(testRoot, 'etc', 'active-operator.json');
   for (const mode of ['full', 'semi', 'reactive']) {
     fs.writeFileSync(config, JSON.stringify({ autonomyMode: mode }));
-    const events = [{ kind: 'autonomy_trigger', payload: {} }, { kind: 'user_steering', payload: { userMessage: 'Updated intention' } }];
-    let waits = 0;
-    const result = await executionEventWaitNode.execute({ selection: choice }, {
-      graphExecution: { waitForEvent: () => events[waits++] },
-    }, { waitForEvent: false, userGraph: 'environment', autonomyGraph: 'robot-autonomy-controller' });
-    assert.equal(waits, mode === 'full' ? 0 : mode === 'semi' ? 1 : 2);
-    if (mode !== 'reactive') assert.deepEqual(result.selection, choice);
-    else {
-      assert.equal(result.selection, null);
-      assert.equal(result.invocation.graph, 'environment');
+    const events = [{ kind: 'autonomy_trigger', payload: { triggerId: 'fixture' } },
+      { kind: 'user_steering', payload: { userMessage: 'Updated intention', ttsGeneration: 7 } }];
+    const reasons: string[] = [];
+    const result = await executionEventWaitNode.execute({}, {
+      graphExecution: { waitForEvent: (reason: string) => { reasons.push(reason); return events.shift(); } },
+    }, { userGraph: 'environment', autonomyGraph: 'robot-autonomy-controller' });
+    assert.deepEqual(reasons, Array(mode === 'reactive' ? 2 : 1).fill('user_or_autonomy'));
+    assert.equal(result.invocation.graph, mode === 'reactive' ? 'environment' : 'robot-autonomy-controller');
+    if (mode === 'reactive') {
       assert.equal(result.invocation.context.userMessage, 'Updated intention');
-    }
+      assert.equal(result.invocation.context.ttsGeneration, 7);
+    } else assert.equal(result.invocation.context.triggerId, 'fixture');
   }
 });
 
@@ -104,6 +102,49 @@ test('execution context represents repeated observations losslessly without copy
   assert.deepEqual(events, original, 'The durable event history is not changed');
   assert.ok(JSON.stringify(projected).length < JSON.stringify(events).length / 2);
   assert.ok(!JSON.stringify(projected).includes('raw-image-data'));
+});
+
+
+test('execution observations use selected-body evidence without leaking transport diagnostics', async () => {
+  const { executionEventContext } = await import('../utility/execution-context.node.js');
+  const { projectSelectorState } = await import('../environment/helpers.js');
+  const details = Array.from({ length: 30 }, (_, index) => ({ index, text: 'Evidence retained. '.repeat(40) }));
+  const state = { body: { robotId: 'selected', authenticated: true }, scene: { details }, gateway: {
+    joint_contract: { joints: ['transport-only'] },
+    robots: {
+      selected: { model: 'v2-12servo', profile: 'home', connection_state: 'online',
+        heartbeat: { counter: 100 }, body_clock: { clock_samples: 100 },
+        last_terminal: { status: 'outcome_unknown', actionId: 'action-1', timestamp: 'original-time' } },
+      other: { model: 'v1-8servo', posture: 'standing' },
+    },
+  } };
+  const observation = { id: 'observation-1', timestamp: 'first-time', state };
+  const later = structuredClone(observation);
+  later.id = 'observation-2'; later.timestamp = 'second-time';
+  later.state.gateway.robots.selected.heartbeat.counter++;
+  later.state.gateway.robots.selected.body_clock.clock_samples++;
+  const receipt = { eventId: 'receipt', executionId: 'execution', sequence: 3, createdAt: 3,
+    kind: 'physical_result', actionId: 'action-1', payload: { feedback: {
+      type: 'outcome_unknown', actionId: 'action-1', timestamp: 'original-time', message: 'Receipt missing' } } };
+  const events = [observation, later].map((environmentObservation, index) => ({
+    eventId: `observation-${index}`, executionId: 'execution', sequence: index + 1, createdAt: index,
+    kind: 'observation_received', payload: { environmentObservation },
+  }));
+  const original = structuredClone(events);
+  const projected = executionEventContext([...events, receipt]);
+  const first = (projected[0].payload as any).environmentObservation;
+  assert.deepEqual(first.state, projectSelectorState(state));
+  assert.deepEqual(first.state.scene.details, details, 'No implicit length, depth or field budget');
+  assert.equal(first.state.gateway.selectedRobot.posture, null, 'Another body cannot establish posture');
+  assert.equal(first.state.gateway.selectedRobot.lastTerminal.status, 'outcome_unknown');
+  assert.equal(first.timestamp, 'first-time');
+  assert.deepEqual((projected[1].payload as any).observationChanges, [
+    { path: ['id'], value: 'observation-2' }, { path: ['timestamp'], value: 'second-time' },
+  ]);
+  assert.deepEqual(projected[2], receipt, 'Action receipt identity, uncertainty and time remain intact');
+  assert.deepEqual(events, original, 'Raw transport evidence remains in the durable store');
+  assert.equal(JSON.stringify(projected).includes('clock_samples'), false);
+  assert.equal(JSON.stringify(projected).includes('transport-only'), false);
 });
 
 function robotObservation() {
@@ -179,6 +220,35 @@ test('autonomy decision inputs preserve available sight, capability meanings and
   const input = await robotOperatorInputNode.execute({}, { robotOperatorContext: { plannerDecision: brief } });
   assert.deepEqual(input.plannerDecision, brief);
 })
+
+test('autonomy tracking evidence retains camera identity without stale raw detections or misattributed boxes', async () => {
+  const sourceFrame = { robotId: 'p4', gatewayInstance: 'gateway', epoch: 3, counter: 12 };
+  const frame = { ...robotObservation().visual, metadata: sourceFrame };
+  const recognition = { status: 'fresh', sourceFrame, queryId: 'selected-object',
+    objects: [{ label: 'ball', trackId: 'track-7', box: { x: 0.2, y: 0.3, width: 0.2, height: 0.2 } }] };
+  const status = { live: { recognition } };
+  const observation = { ...robotObservation(), state: { perception: { summary: 'Obsolete raw detection' },
+    recognition: { visionOperations: ['search', 'select', 'release'] } } };
+  for (const build of [robotAutonomyControllerContextNode, robotAutonomyPlannerContextNode, robotGoalReviewContextNode]) {
+    for (const counter of [12, 13]) {
+      const selected = { ...frame, metadata: { ...sourceFrame, counter } };
+      const result = await build.execute({ instruction: 'Fixture instructions.', observation,
+        robotStatus: status, currentVisualEvidence: true, frames: [selected],
+        images: [{ type: 'image_url', image_url: { url: selected.dataUrl } }] }, {});
+      const envelope = modelInputEnvelope(result);
+      const supplied = envelope.robotOperatorContext.robotStatus.state.live.recognition;
+      assert.equal(supplied.imageAssociation, counter === 12 ? 'exact_frame' : 'different_frame');
+      assert.deepEqual(supplied.matchingVisualFrameIds, counter === 12 ? [frame.id] : []);
+      assert.equal(supplied.queryId, 'selected-object');
+      assert.equal(supplied.objects[0].trackId, 'track-7');
+      assert.deepEqual(envelope.robotStimulus.visualEvidence.frames[0].cameraFrame, selected.metadata);
+      assert.equal(envelope.robotStimulus.state.perception, undefined);
+      assert.deepEqual(envelope.robotStimulus.state.recognition.visionOperations, ['search', 'select', 'release']);
+    }
+  }
+  assert.equal('imageAssociation' in recognition, false, 'Projection must not mutate upstream status');
+  assert.equal(observation.state.perception.summary, 'Obsolete raw detection');
+});
 
 test('configured Conversation Buffer history reads the canonical conversation context', async () => {
   const conversationHistory = [
@@ -752,19 +822,19 @@ test('Robot Operator prepares only a planner-selected child invocation and prese
   }, {
     username: 'owner',
     operatorMode: 'semi',
-    robotOperatorEnvironmentGraph: 'boredom-autonomy',
-  }, { graph: 'boredom-autonomy' });
+    robotOperatorEnvironmentGraph: 'environment',
+  }, { graph: 'environment' });
 
   assert.equal(result.queued, false);
   assert.equal(result.status, 'prepared');
   assert.equal(result.taskId, '');
-  assert.equal(result.invocation.graph, 'boredom-autonomy');
+  assert.equal(result.invocation.graph, 'environment');
   const delegated = result.invocation.context;
   assert.equal(delegated.environmentObservationCurrent, false);
   assert.equal(delegated.environmentObservation.visual.id, observation.visual.id);
   assert.equal(delegated.environmentObservation.timestamp, observation.timestamp);
   assert.equal(delegated.environmentObservation.metadata.robotObserver, undefined);
-  assert.equal(delegated.robotOperatorContext.robotObserver.graph, 'boredom-autonomy');
+  assert.equal(delegated.robotOperatorContext.robotObserver.graph, 'environment');
   assert.equal(delegated.robotOperatorContext.robotObserver.requestedBy, 'boredom-observer');
   assert.equal(delegated.robotOperatorContext.sourceObservationAt, observation.timestamp);
   assert.equal(delegated.robotOperatorContext.currentVisualEvidence, false);
@@ -779,7 +849,7 @@ test('Robot Operator prepares only a planner-selected child invocation and prese
     observation,
   }, {
     username: 'owner',
-  }, { graph: 'boredom-autonomy' });
+  }, { graph: 'environment' });
   assert.equal(directInstruction.queued, false);
   assert.equal(directInstruction.status, 'no_decision');
   assert.equal(directInstruction.invocation, null);
@@ -794,67 +864,12 @@ test('Robot Operator prepares only a planner-selected child invocation and prese
   }, {
     username: 'owner',
     operatorMode: 'semi',
-  }, { graph: 'boredom-autonomy' });
+  }, { graph: 'environment' });
   assert.equal(malformed.queued, false);
   assert.equal(malformed.status, 'invalid_decision');
   assert.equal(malformed.invocation, null);
 });
 
-test('Robot Autonomy Controller prepares the selected catalog-backed robot child without a separate job', async () => {
-  const availableTasks = [{
-    id: 'boredom-observer',
-    name: 'Boredom Observer',
-    description: 'Acquires and considers current visual evidence.',
-    kind: 'agent',
-    handler: 'workflow.boredom-observer',
-    taskType: 'generic',
-    priority: 'low',
-    tags: ['robot', 'vision'],
-  }];
-  const parsed = await robotAutonomyControllerParserNode.execute({
-    response: JSON.stringify({
-      response: '',
-      taskId: 'boredom-observer',
-      reason: 'The current objective needs new visual evidence.',
-      observationSummary: 'Robot Status records an unresolved visual objective.',
-      instruction: 'Capture and consider a current view for the unresolved objective.',
-    }),
-    availableTasks,
-  }, {}, {});
-  assert.deepEqual(parsed.taskDecision, {
-    task: availableTasks[0],
-    reason: 'The current objective needs new visual evidence.',
-    observationSummary: 'Robot Status records an unresolved visual objective.',
-    instruction: 'Capture and consider a current view for the unresolved objective.',
-  });
-  assert.equal(parsed.executorDecision, null);
-
-  const dispatched = await robotAutonomyTaskDispatchNode.execute({
-    decision: parsed.taskDecision,
-    robotObserver: {
-      cycleId: 'controller-cycle',
-      step: 1,
-      triggerSource: 'autonomy',
-      graph: 'robot-autonomy-controller',
-      requestedBy: 'robot-autonomy-controller',
-    },
-    sessionId: 'robot-1',
-  }, {
-    username: 'owner',
-  }, {});
-  assert.equal(dispatched.queued, false);
-  assert.equal(dispatched.status, 'prepared');
-  assert.equal(dispatched.work, null);
-  assert.equal(dispatched.selectedTaskId, 'boredom-observer');
-  assert.equal(dispatched.invocation.graph, 'boredom-observer');
-  assert.equal(dispatched.invocation.context.robotOperatorContext.robotObserver.cycleId, 'controller-cycle');
-  assert.equal(
-    dispatched.invocation.context.robotOperatorContext.plannerDecision.instruction,
-    'Capture and consider a current view for the unresolved objective.',
-  );
-  const received = await robotOperatorInputNode.execute({}, dispatched.invocation.context, {});
-  assert.equal(received.plannerInstruction, parsed.taskDecision.instruction);
-});
 
 test('Robot Autonomy Controller receives contextual daytime tasks from the canonical Agent Catalog', async () => {
   const catalog = await robotAutonomyTaskCatalogNode.execute({}, {}, {
@@ -950,7 +965,7 @@ test('Robot Autonomy Controller context combines unfinished work, buffers, bridg
   assert.equal(result.context.activeDesireCount, 1);
   assert.equal(result.context.bridgeSummaryIncluded, true);
   assert.equal(result.context.autonomyActivityCount, 1);
-  assert.deepEqual(result.jsonSchema.anyOf.flatMap((branch: any) => branch.properties.taskId.enum), ['boredom-observer', 'none']);
+  assert.deepEqual(result.jsonSchema.properties.updates.items.properties.operationId.enum, ['boredom-observer']);
   const envelope = JSON.parse(result.messages[1].content);
   const entries = envelope.robotOperatorContext.recentNarrativeContext.entries;
   const userTurn = entries.find((entry: any) => entry.content === 'Please keep looking for my keys.');
@@ -969,10 +984,7 @@ test('Robot Autonomy Controller context combines unfinished work, buffers, bridg
   assert.match(encoded, /Explore carefully/);
   assert.match(encoded, /prior-observer/);
   assert.doesNotMatch(encoded, /UNRELATED_DUPLICATE_GATEWAY_STATE/);
-  assert.match(
-    result.jsonSchema.anyOf[0].properties.taskId.description,
-    /boredom-observer: Acquires and evaluates one current robot-camera observation/i,
-  );
+
 });
 
 test('Robot Goal Review context includes current active desires with its other decision inputs', async () => {
@@ -1021,11 +1033,10 @@ test('Full autonomy graph visibly loads the decision context and routes one cata
     'conversation_history',
     'persona_loader',
     'active_desires',
-    'robot_autonomy_activity_history',
-    'robot_autonomy_task_catalog',
+        'robot_autonomy_task_catalog',
     'robot_autonomy_controller_context',
     'robot_autonomy_controller_parser',
-    'robot_autonomy_task_dispatch',
+    'active_operator_dispatch',
   ]) {
     assert.equal(nodeTypes.includes(required), true, `${required} must be visible in the controller graph`);
   }
@@ -1036,11 +1047,11 @@ test('Full autonomy graph visibly loads the decision context and routes one cata
   );
   assert.match(
     graph.nodes.find((node: any) => node.id === 'policy')?.data?.properties?.message ?? '',
-    /not the first identifier and not a random or rotating choice/,
+    /In Semi Auto, each returned update at 100/,
   );
   const configuredTasks = graph.nodes.find((node: any) => node.id === 'task-catalog')
     ?.data?.properties?.taskIds ?? [];
-  assert.equal(configuredTasks.includes('robot-status'), false);
+  assert.equal(configuredTasks.includes('robot-status'), true);
   assert.equal(configuredTasks.includes('robot-goal-review'), false);
   assert.ok(configuredTasks.includes('boredom-observer'));
   assert.ok(graph.edges.some((edge: any) => (
@@ -1050,10 +1061,10 @@ test('Full autonomy graph visibly loads the decision context and routes one cata
     && edge.targetHandle === 'availableTasks'
   )));
   assert.ok(graph.edges.some((edge: any) => (
-    edge.source === 'autonomy-activity'
-    && edge.sourceHandle === 'history'
+    edge.source === 'task-catalog'
+    && edge.sourceHandle === 'activationState'
     && edge.target === 'context'
-    && edge.targetHandle === 'autonomyActivityHistory'
+    && edge.targetHandle === 'activationState'
   )));
 });
 
@@ -1076,7 +1087,7 @@ test('Boredom Reflection delegates sampled memory once through the same planner 
     robotObserver: observation.metadata.robotObserver,
   }, {
     username: 'owner',
-  }, { graph: 'boredom-autonomy' });
+  }, { graph: 'environment' });
 
   assert.equal(result.status, 'prepared');
   assert.equal(result.queued, false);
@@ -1097,11 +1108,11 @@ test('Robot Operator dispatch does not reapply trigger mode after the graph deci
   }, {
     username: 'owner',
     operatorMode: 'reactive',
-  }, { graph: 'boredom-autonomy' });
+  }, { graph: 'environment' });
   assert.equal(result.queued, false);
   assert.equal(result.status, 'prepared');
   assert.equal(result.taskId, '');
-  assert.equal(result.invocation.graph, 'boredom-autonomy');
+  assert.equal(result.invocation.graph, 'environment');
 });
 
 test('three boredom planners feed one editable one-pass executor with reusable Robot Status', () => {
@@ -1138,7 +1149,7 @@ test('three boredom planners feed one editable one-pass executor with reusable R
     assert.equal(planner?.data?.properties?.format, 'json');
     assert.equal(planner?.data?.properties?.maxTokens, 384);
     const dispatch = graph.nodes.find((node: any) => node.data?.nodeType === 'robot_operator_environment_dispatch');
-    assert.deepEqual(dispatch?.data?.properties, { graph: 'boredom-autonomy' });
+    assert.deepEqual(dispatch?.data?.properties, { graph: 'environment' });
     assert.ok(graph.edges.some((edge: any) => (
       edge.source === 'planner-context'
       && edge.sourceHandle === 'jsonSchema'
@@ -1239,8 +1250,31 @@ test('three boredom planners feed one editable one-pass executor with reusable R
   assert.equal(service.boredomObserverGraph, 'boredom-observer');
   assert.equal(service.boredomMovementGraph, 'boredom-movement');
   assert.equal(service.boredomReflectionGraph, 'boredom-reflection');
-  assert.equal(service.autonomyGraph, 'boredom-autonomy');
+  assert.equal(Object.hasOwn(service, 'autonomyGraph'), false);
+  assert.equal(service.environmentGraph, 'environment');
   assert.equal(fs.existsSync(path.join(ROOT, 'etc/cognitive-graphs/robot-operator-mode.json')), false);
 
 
+});
+
+test('Goal Review correlates narrative by real identity and preserves unrelated speakers and dates', async () => {
+  const messages = [
+    { role: 'user', content: 'Please bow.', timestamp: 1000, meta: { executionId: 'current' } },
+    { role: 'assistant', content: 'I am holding a bow.', timestamp: 2000, meta: { executionId: 'current' } },
+    { role: 'user', content: 'Yesterday was cloudy.', timestamp: 500, meta: { correlationId: null } },
+    { role: 'assistant', content: 'An unrelated recollection.', timestamp: 600, meta: { executionId: 'other' } },
+  ];
+  for (const executionId of ['', 'current']) {
+    const result = await robotGoalReviewContextNode.execute({
+      instruction: 'Review the current objective from supplied context.',
+      observation: robotObservation(), conversationHistory: messages,
+      execution: { executionId, task: { objective: 'Please bow.' } },
+    }, {}, {});
+    const envelope = JSON.parse(result.messages[1].content);
+    const narrative = envelope.robotOperatorContext;
+    assert.deepEqual(narrative.correlatedTaskNarrative.map((entry: any) => entry.content),
+      executionId ? messages.slice(0, 2).map(entry => entry.content) : []);
+    assert.deepEqual(narrative.recentNarrativeContext.entries.map((entry: any) => [entry.role, entry.timestamp]),
+      messages.slice(executionId ? 2 : 0).map(entry => [entry.role, entry.timestamp]));
+  }
 });

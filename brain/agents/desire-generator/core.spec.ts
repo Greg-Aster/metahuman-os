@@ -34,11 +34,11 @@ test('generator model contracts fail closed while accepting an intentional empty
 test('reinforcement decisions must use exact desire and evidence identifiers', () => {
   assert.deepEqual(
     parseReinforcementResponse(
-      '{"desire-1":{"reason":"Recent work supports it","evidenceIds":["task:task-1"]}}',
+      '{"desire-1":{"targetStrength":0.8,"reason":"Recent work supports it","evidenceIds":["task:task-1"]}}',
       new Set(['desire-1']),
       new Set(['task:task-1']),
     ),
-    [{ id: 'desire-1', reason: 'Recent work supports it', evidenceIds: ['task:task-1'] }],
+    [{ id: 'desire-1', targetStrength: 0.8, reason: 'Recent work supports it', evidenceIds: ['task:task-1'] }],
   )
   assert.throws(
     () => parseReinforcementResponse(
@@ -50,11 +50,11 @@ test('reinforcement decisions must use exact desire and evidence identifiers', (
   )
   assert.deepEqual(
     parseReinforcementResponse(
-      '{"desire-1":{"reason":"A","evidenceIds":["task:task-1","task:task-1"]}}',
+      '{"desire-1":{"targetStrength":0.8,"reason":"A","evidenceIds":["task:task-1","task:task-1"]}}',
       new Set(['desire-1']),
       new Set(['task:task-1']),
     ),
-    [{ id: 'desire-1', reason: 'A', evidenceIds: ['task:task-1'] }],
+    [{ id: 'desire-1', targetStrength: 0.8, reason: 'A', evidenceIds: ['task:task-1'] }],
   )
 })
 
@@ -110,7 +110,7 @@ test('Desire Agent validates the complete model decision before committing stora
   const start = source.indexOf('export async function generateDesiresForUser')
   const end = source.indexOf('// CLI Entry Point', start)
   const cycle = source.slice(start, end)
-  const generationDecision = cycle.indexOf('await identifyDesires(inputs, signal)')
+  const generationDecision = cycle.indexOf('await identifyDesires({ ...inputs,')
   const commit = cycle.indexOf('await applyNurtureDecisions(')
   assert.ok(generationDecision >= 0)
   assert.ok(commit > generationDecision)
@@ -128,7 +128,7 @@ test('Desire Agent reads bounded stable user-request evidence only when it runs'
   const selected = selectRecentUserRequests(messages, 5)
   assert.equal(selected.length, 5)
   assert.equal(selected.at(-1)?.id, 'conversation-request-24')
-  assert.equal(selected.every(request => request.content.length <= 1_000), true)
+  assert.deepEqual(selected.map(request => request.content), messages.filter(message => message.role === 'user').slice(-5).map(message => message.content))
   assert.deepEqual(selectRecentUserRequests(messages, 5), selected)
 })
 
@@ -167,7 +167,6 @@ test('Agency Review narrative stays compact while operational detail remains in 
     archived: [],
     activated: [],
     created: [],
-    goalsProposed: [],
     candidatesRejectedAsDuplicates: 0,
     candidatesBlockedByCapacity: 0,
     generationSkippedReason: null,

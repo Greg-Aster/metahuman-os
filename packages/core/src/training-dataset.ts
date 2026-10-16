@@ -8,7 +8,7 @@ import { buildPersonaSummary } from './persona-summary.js'
 import { episodicSourceHash, scanEpisodicMemoryRecords, type EpisodicEvent } from './memory.js'
 import { CURATOR_POLICY_VERSION, isTrainingCuratedMemory, type CuratedMemory } from './nodes/curator/contracts.js'
 import { scanCuratedMemories, sourceCurationStatus } from './nodes/curator/curated-store.js'
-import { parseTrainingDataSettings, validatePersonalizationSample, type PersonalizationSample, type TrainingDataSettings, type CognitiveMode } from './training-schema.js'
+import { parseTrainingDataSettings, validatePersonalizationSample, type PersonalizationSample, type TrainingDataSettings, type CognitiveMode, type TrainingObjective } from './training-schema.js'
 
 export interface TrainingDatasetStats {
   totalMemories: number
@@ -60,7 +60,7 @@ export function inspectTrainingDataset(username: string, now = Date.now()): Trai
   }
   const errors: string[] = []
   const sources: EpisodicEvent[] = []
-  const currentSources = new Map<string, { recordId: string; filename: string }>()
+  const currentSources = new Map<string, EpisodicEvent>()
   for (const outcome of scanEpisodicMemoryRecords(username)) {
     if (outcome.status === 'failed') {
       stats.invalidSourceRecords++
@@ -77,7 +77,7 @@ export function inspectTrainingDataset(username: string, now = Date.now()): Trai
     if (source.metadata?.processed === true) stats.organizedMemories++
     if (sourceCurationStatus(username, source).current) {
       stats.curatedMemories++
-      currentSources.set(source.id, { recordId: source.metadata!.curatorRecordId as string, filename: source.metadata!.curatorRecordFile as string })
+      currentSources.set(source.id, source)
     }
     const mode = source.metadata?.cognitiveMode
     if (mode === 'dual' || mode === 'agent' || mode === 'emulation' || mode === 'environment') stats.cognitiveModeCounts[mode]++
@@ -103,7 +103,7 @@ export function inspectTrainingDataset(username: string, now = Date.now()): Trai
     const record = outcome.memory
     if (!stats.latestCuratedAt || Date.parse(record.curatedAt) > Date.parse(stats.latestCuratedAt)) stats.latestCuratedAt = record.curatedAt
     if (record.provenance?.policyVersion !== CURATOR_POLICY_VERSION
-        || record.sourceMemoryIds.some(id => currentSources.get(id)?.recordId !== record.id || currentSources.get(id)?.filename !== outcome.filename || sourceHashes.get(id) !== record.provenance!.sourceHashes[id])) {
+        || record.sourceMemoryIds.some(id => !currentSources.has(id) || !sourceCurationStatus(username, currentSources.get(id)!, { recordId: record.id, recordFile: outcome.filename }).current || sourceHashes.get(id) !== record.provenance!.sourceHashes[id])) {
       stats.obsoleteCuratedRecords++
       continue
     }
@@ -124,12 +124,13 @@ export interface PersonalizationDatasetOptions {
   recentDays?: number
   olderSamples?: number
   personaContext?: string
+  personaContexts?: Partial<Record<TrainingObjective, string>>
 }
 
-export function trainingPersonaContext(username: string, settings: TrainingDataSettings): string | undefined {
+export function trainingPersonaContext(username: string, settings: TrainingDataSettings, objective = settings.objective): string | undefined {
   if (!settings.includePersona) return undefined
   const summary = buildPersonaSummary(loadPersonaCore(username))
-  return (settings.objective === 'human-continuation'
+  return (objective === 'human-continuation'
     ? 'Write the next reply in the first-person voice of this persona.\n\n'
     : 'Respond in the configured persona, preserving its role and identity.\n\n') + summary
 }
@@ -140,6 +141,47 @@ export interface SelectedPersonalizationDataset {
   cutoff: string
   settings: TrainingDataSettings
   sourceIds: string[]
+}
+
+/** Reviewed, attributed messages for experiments that must retain their runtime context. */
+export interface ReviewedPersonalizationDataset {
+  review: { reviewedAt: string; reviewer: string; purpose: string }
+  train: PersonalizationSample[]
+  evaluation: PersonalizationSample[]
+}
+
+export function selectReviewedPersonalizationDataset(
+  reviewed: ReviewedPersonalizationDataset, settings: TrainingDataSettings, cutoff: string, history?: TrainingDatasetHistory,
+): SelectedPersonalizationDataset {
+  if (!reviewed?.review?.reviewer?.trim() || !reviewed.review.purpose?.trim()
+      || !Number.isFinite(Date.parse(reviewed.review.reviewedAt))) throw new Error('Reviewed examples require their review attribution')
+  const groups = new Map<string, string>()
+  const sources = new Map<string, string>()
+  const contents = new Map<string, string>()
+  for (const split of ['train', 'evaluation'] as const) {
+    if (!Array.isArray(reviewed[split]) || !reviewed[split].length) throw new Error('Reviewed examples require separate training and evaluation groups')
+    for (const row of reviewed[split]) {
+      validatePersonalizationSample(row)
+      const objective = objectiveForMode(settings, row.metadata.mode)
+      if (row.metadata.objective !== objective || row.metadata.targetAuthor !== (objective === 'assistant-continuation' ? 'assistant' : 'human')) {
+        throw new Error('Reviewed example objective or target author differs from the configured mode')
+      }
+      const historicalKeys = ['group:' + row.metadata.group, 'content:' + trainingSampleContentHash(row),
+        ...row.metadata.sourceIds.map(id => 'source:' + id)]
+      if (historicalKeys.some(key => history?.assignments[key] && history.assignments[key] !== split)) {
+        throw new Error('Reviewed split conflicts with previously frozen dataset history')
+      }
+      for (const [map, identities] of [[groups, [row.metadata.group]], [sources, row.metadata.sourceIds],
+        [contents, [trainingSampleContentHash(row)]]] as const) {
+        for (const identity of identities) {
+          if (map.has(identity) && map.get(identity) !== split) throw new Error('Reviewed training and evaluation share a family, source or example')
+          map.set(identity, split)
+        }
+      }
+    }
+  }
+  return { train: structuredClone(reviewed.train), evaluation: structuredClone(reviewed.evaluation),
+    settings, cutoff, excluded: {}, sourceIds: [...sources.keys()].sort() }
 }
 
 function digest(value: string): string { return createHash('sha256').update(value).digest('hex') }
@@ -192,18 +234,22 @@ export function readTrainingDatasetHistory(username: string): TrainingDatasetHis
 function orderRows(rows: PersonalizationSample[], seed: string): PersonalizationSample[] {
   return [...rows].sort((a, b) => digest(seed + a.id).localeCompare(digest(seed + b.id)) || a.id.localeCompare(b.id))
 }
+function objectiveForMode(settings: TrainingDataSettings, mode: CognitiveMode): TrainingObjective {
+  return mode === 'dual' || mode === 'environment' ? settings.objectivesByMode[mode] : settings.objective
+}
 function sample(
   record: CuratedMemory, sourceIds: string[], hashes: Record<string, string>,
   prompt: string, response: string, group: string, settings: TrainingDataSettings,
   curatedRecordIds = [record.id],
 ): PersonalizationSample {
+  const objective = objectiveForMode(settings, record.cognitiveMode)
   return {
-    id: digest(JSON.stringify([settings.objective, sourceIds, hashes])).slice(0, 32),
+    id: digest(JSON.stringify([objective, sourceIds, hashes])).slice(0, 32),
     messages: [{ role: 'user', content: prompt }, { role: 'assistant', content: response }],
     metadata: {
       sourceIds, sourceHashes: hashes, curatedRecordIds, group, timestamp: record.originalTimestamp,
-      sourceType: record.memoryType, mode: record.cognitiveMode, objective: settings.objective,
-      targetAuthor: settings.objective === 'human-continuation' ? 'human' : 'assistant',
+      sourceType: record.memoryType, mode: record.cognitiveMode, objective,
+      targetAuthor: objective === 'human-continuation' ? 'human' : 'assistant',
       synthetic: record.provenance!.kind === 'synthetic-exchange',
     },
   }
@@ -263,7 +309,7 @@ export function selectPersonalizationDataset(
   if (options.maxSamples !== null && (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 1_000_000)) throw new Error('maxSamples must be null or an integer from 1 to 1000000')
   if (!Number.isSafeInteger(days) || days < 1 || days > 36500) throw new Error('recentDays must be an integer from 1 to 36500')
   if (!Number.isSafeInteger(older) || older < 0 || older > 1_000_000) throw new Error('olderSamples must be an integer from 0 to 1000000')
-  if (settings.includePersona && !options.personaContext?.trim()) throw new Error('Persona context is enabled but unavailable')
+  if (settings.includePersona && !options.personaContext?.trim() && !Object.values(options.personaContexts ?? {}).some(value => value?.trim())) throw new Error('Persona context is enabled but unavailable')
   const excluded: Record<string, number> = {}
   const exclude = (reason: string, count = 1) => { excluded[reason] = (excluded[reason] ?? 0) + count }
   const eligible = inspection.records.filter(record => {
@@ -274,15 +320,17 @@ export function selectPersonalizationDataset(
     return true
   }).filter(isTrainingCuratedMemory)
   const candidates: PersonalizationSample[] = []
-  if (settings.objective === 'assistant-continuation') {
-    for (const record of eligible) candidates.push(sample(
-      record, record.sourceMemoryIds, record.provenance!.sourceHashes,
-      record.userMessage, record.assistantResponse,
-      record.provenance!.sessionId ? 'session:' + record.provenance!.sessionId : 'source:' + record.sourceMemoryIds[0],
-      settings,
-    ))
-  } else {
-    const bySource = new Map(eligible.flatMap(record => record.sourceMemoryIds.map(id => [id, record] as const)))
+  const objectiveFor = (record: CuratedMemory) => objectiveForMode(settings, record.cognitiveMode)
+  const assistantRecords = eligible.filter(record => objectiveFor(record) === 'assistant-continuation')
+  const humanRecords = eligible.filter(record => objectiveFor(record) === 'human-continuation')
+  for (const record of assistantRecords) candidates.push(sample(
+    record, record.sourceMemoryIds, record.provenance!.sourceHashes,
+    record.userMessage, record.assistantResponse,
+    record.provenance!.sessionId ? 'session:' + record.provenance!.sessionId : 'source:' + record.sourceMemoryIds[0],
+    settings,
+  ))
+  {
+    const bySource = new Map(humanRecords.flatMap(record => record.sourceMemoryIds.map(id => [id, record] as const)))
     const sessions = new Map<string, EpisodicEvent[]>()
     for (const source of inspection.sources) {
       const sessionId = source.metadata?.sessionId
@@ -311,7 +359,7 @@ export function selectPersonalizationDataset(
         usedRecords.add(record.id)
       }
     }
-    exclude('no-verified-human-continuation', eligible.length - usedRecords.size)
+    exclude('no-verified-human-continuation', humanRecords.length - usedRecords.size)
   }
   const cutoff = Date.parse(inspection.cutoff)
   const recentCutoff = cutoff - days * 86400000
@@ -355,7 +403,11 @@ export function selectPersonalizationDataset(
     partitions[split] = weightedSelection([...recorded, ...synthetic.slice(0, syntheticLimit)], settings, budget)
     exclude('sample-budget', recorded.length + Math.min(synthetic.length, syntheticLimit) - partitions[split].length)
     for (const row of partitions[split]) {
-      if (settings.includePersona) row.messages.unshift({ role: 'system', content: options.personaContext! })
+      if (settings.includePersona) {
+        const persona = options.personaContexts?.[row.metadata.objective] ?? options.personaContext
+        if (!persona?.trim()) throw new Error('Persona context is enabled but unavailable for ' + row.metadata.objective)
+        row.messages.unshift({ role: 'system', content: persona })
+      }
       validatePersonalizationSample(row)
     }
   }

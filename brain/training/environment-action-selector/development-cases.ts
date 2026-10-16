@@ -22,10 +22,13 @@ export interface SpecialistCase {
   targets?: Record<number, Record<string, any>>
   contextRequirements?: IntentRequirements
   responseOptional?: true
+  inputSource?: 'user' | 'autonomy'
+  visualTask?: true
+  taskEvidence?: Record<string, unknown>
 }
-export const ROUTE_FIELDS = ['needsResponse', 'needsAction', 'taskContext', 'conversationContext'] as const
+export const ROUTE_FIELDS = ['needsResponse', 'needsAction', 'needsToolUse', 'taskPlanner', 'taskContext', 'conversationContext'] as const
 export const intentOutput = (task: string[], conversation: string[], response = true, action = false) => ({
-  needsResponse: response, needsAction: action, taskContext: task, conversationContext: conversation,
+  needsResponse: response, needsAction: action, needsToolUse: false, taskContext: task, conversationContext: conversation,
 })
 // Synthetic corpus annotations only; runtime route decisions belong to the model.
 export function routes(selected: string[], memoryQuery?: string, personaSections = ['personality']): SpecialistCase['routes'] {
@@ -50,6 +53,7 @@ export function addCase(specialist: Specialist, suite: string, instructions: str
   expected: Record<string, any> | null, inputs: Record<string, unknown> = {}, split: CaseSplit = 'development', memoryQuery?: string, personaSections?: string[]) {
   const familyIndex = cases.filter(item => item.specialist === specialist && item.split === split).length
   const routing = specialist === 'intent' && expected ? expected : routes(selected, memoryQuery, personaSections)
+  if (specialist === 'intent') routing.needsToolUse ??= false
   cases.push({ id: `${specialist}-${split}-${String(familyIndex + 1).padStart(3, '0')}`, specialist, suite,
     risk: routing.needsAction === true || (Array.isArray(routing.taskContext) && routing.taskContext.includes('executionContext')) ? 'high' : 'low',
     fold: familyIndex % 4, split, instructions, routes: routing, inputs, expected: expected ?? routing })

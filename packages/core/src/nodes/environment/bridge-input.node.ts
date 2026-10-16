@@ -1,5 +1,6 @@
 import { defineNode } from '../types.js';
 import {
+  applyRobotStatusToEnvironmentObservation,
   getEnvironmentBridgeDiagnosticsSnapshot,
   getLatestEnvironmentObservation,
   getEnvironmentPerception,
@@ -209,21 +210,27 @@ export const environmentBridgeInputNode = defineNode({
     const sourceObservation: EnvironmentObservation | null = suppliedForSession
       ?? getLatestEnvironmentObservation(requestedSessionId)
       ?? null;
-    const observation = sourceObservation
-      ? projectAinekioBridgeObservation(projectCurrentEnvironmentPerception(
-        sanitizeEnvironmentBridgeObservation(sourceObservation),
-        getEnvironmentPerception(sourceObservation.sessionId),
-      ))
-      : null;
     const bridgeSummary = summarizeEnvironmentBridgeState();
     const diagnosticsSnapshot = getEnvironmentBridgeDiagnosticsSnapshot();
-    const effectiveSessionId = observation?.sessionId
+    const effectiveSessionId = sourceObservation?.sessionId
       ?? requestedSessionId
       ?? diagnosticsSnapshot.sessions[0]?.sessionId
       ?? [...bridgeSummary.sessions]
         .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))[0]?.sessionId
       ?? '';
     const diagnostics = selectedDiagnostics(diagnosticsSnapshot.sessions, effectiveSessionId);
+    // The event and any returned frame remain the original evidence. Its action
+    // interface also needs the status received since that event (notably boot).
+    // The store projection already matches robot and connection epoch.
+    const currentObservation = sourceObservation && diagnostics?.robotStatus
+      ? applyRobotStatusToEnvironmentObservation(sourceObservation, diagnostics.robotStatus)
+      : sourceObservation;
+    const observation = currentObservation
+      ? projectAinekioBridgeObservation(projectCurrentEnvironmentPerception(
+        sanitizeEnvironmentBridgeObservation(currentObservation),
+        getEnvironmentPerception(currentObservation.sessionId),
+      ))
+      : null;
     const state = optionalRecord(observation?.state);
     const body = optionalRecord(state?.body);
     const gateway = optionalRecord(state?.gateway);

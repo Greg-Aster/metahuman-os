@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { registerProfileStorageConfigGetter } from '../path-builder.js';
 import { setAuditEnabled } from '../audit.js';
 import { TriggerManager } from './trigger-manager.js';
 import { TriggerConfigService, type TriggerManagerConfig } from './trigger-config-service.js';
@@ -9,6 +10,11 @@ import { UnifiedQueueManager } from './unified-queue-manager.js';
 
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-trigger-manager-'));
 const configPath = path.join(tempRoot, 'agents.json');
+registerProfileStorageConfigGetter(username => {
+  const profilePath = path.join(tempRoot, 'profiles', username);
+  fs.mkdirSync(profilePath, { recursive: true });
+  return { path: profilePath, type: 'internal' };
+});
 
 const config: TriggerManagerConfig = {
   version: '1.0.0',
@@ -284,6 +290,22 @@ try {
   const manualTaskId = manager.triggerManual('organizer', 'owner', ['--dry-run']);
   assert.ok(manualTaskId);
   assert.deepEqual(queue.getTask(manualTaskId!)?.input.args, ['--dry-run']);
+  const modeFile = path.join(tempRoot, 'profiles', 'owner', 'persona', 'cognitive-mode.json');
+  fs.mkdirSync(path.dirname(modeFile), { recursive: true });
+  fs.writeFileSync(modeFile, '{invalid-json');
+  const errorsBefore = manager.getSnapshot().triggers.find(trigger => trigger.id === 'organizer')!.errorCount;
+  assert.equal(manager.triggerManual('organizer', 'owner'), null,
+    'mode-read errors use the existing admission failure path instead of escaping the trigger callback');
+  const failedAdmission = manager.getSnapshot().triggers.find(trigger => trigger.id === 'organizer')!;
+  assert.equal(failedAdmission.errorCount, errorsBefore + 1);
+  assert.equal(failedAdmission.lastOutcome, 'failed');
+  assert.equal(failedAdmission.lastSuppressionReason, 'queue-unavailable');
+  fs.writeFileSync(modeFile, JSON.stringify({ currentMode: 'environment' }));
+  const recoveredAdmission = manager.triggerManual('organizer', 'owner');
+  assert.ok(recoveredAdmission);
+  assert.equal(queue.getTask(recoveredAdmission!)?.originatingCognitiveMode, 'environment');
+  assert.equal(manager.getSnapshot().triggers.find(trigger => trigger.id === 'organizer')?.lastOutcome, 'admitted');
+
   queue.pause();
   const queuedWhilePaused = manager.triggerManual('organizer', 'owner');
   assert.equal(queue.isPaused(), true);

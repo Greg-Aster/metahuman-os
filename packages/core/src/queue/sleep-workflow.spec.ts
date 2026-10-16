@@ -19,6 +19,7 @@ test('sleep workflow admits exactly one ordered stage at a time', async () => {
     const manager = new UnifiedQueueManager()
     const result = beginSleepWorkflow({
       id: 'sleep-parent-test',
+      originatingCognitiveMode: 'environment',
       username: 'test-owner',
       source: 'user',
       input: { force: true },
@@ -30,6 +31,7 @@ test('sleep workflow admits exactly one ordered stage at a time', async () => {
       assert.equal(active.length, 1)
       assert.equal(active[0].handler, stage.handler)
       assert.equal(active[0].username, 'test-owner')
+      assert.equal(active[0].originatingCognitiveMode, 'environment')
       assert.equal(active[0].input.args?.includes('--username') ?? false, false)
       if (stage.handler === 'vector.index-build') assert.equal(active[0].input.agentId, undefined)
       const task = manager.claim(active[0].id)

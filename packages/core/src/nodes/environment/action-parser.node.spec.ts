@@ -25,6 +25,10 @@ test('one model-owned outcome defines completion independently of conversational
   assert.equal(validateEnvironmentSelectorOutput(JSON.stringify({ ...choice,
     taskDecision: { ...choice.taskDecision, objectiveComplete: false } })).valid, false)
   assert.equal(JSON.stringify(buildEnvironmentSelectorJsonSchema()).includes('objectiveComplete'), false)
+  const responseGoal = validateEnvironmentSelectorOutput(JSON.stringify({ ...choice,
+    taskDecision: { ...choice.taskDecision, requiredCompletionBasis: 'response' } }))
+  assert.equal(responseGoal.valid, false)
+  assert.match(responseGoal.errors.join('; '), /requiredCompletionBasis is not supported/)
 })
 
 test('ordered advertised actions preserve commands and require a whole-task decision', async () => {
@@ -36,6 +40,15 @@ test('ordered advertised actions preserve commands and require a whole-task deci
   await assert.rejects(parse({ response: '', program: { steps: [action('stand')] }, taskDecision: null }), /requires its objective decision/)
   await assert.rejects(parse({ response: '', program: { steps: [action('stand')] },
     taskDecision: { ...taskDecision, outcome: 'complete' } }), /before its results/)
+})
+
+test('Task rejects the retired speech step before any program is admitted', async () => {
+  const speech = { kind: 'speech', text: "You know, that look on your face is giving off serious 'I'm one bug away from enlightenment' vibes." }
+  for (const steps of [[speech], [speech, action('stand')]]) {
+    await assert.rejects(parse({ response: '', program: { steps }, taskDecision }), /program step/)
+  }
+  const schema = JSON.stringify(buildEnvironmentSelectorJsonSchema({ actions: ['robotCommand'], robotCommands: ['stand'] }))
+  assert.equal(schema.includes('"kind":{"const":"speech"}'), false)
 })
 
 test('conversation has no physical program; obsolete and empty outputs are rejected', async () => {
@@ -81,7 +94,7 @@ test('capture preserves evidence semantics and rejects malformed action fields',
 
 test('generic ongoing behavior keeps phase criteria separate from the entire objective', async () => {
   const behavior = { kind: 'behavior', target: 'the object described by the owner', completionCriteria: 'Identify that object.',
-    motion: { type: 'move', direction: 'forward', continuous: true, durationMs: 0, speed: 60, forward: 75, turn: 25 },
+    motion: { type: 'move', direction: 'forward', continuous: true, durationMs: 0, speed: 60, forward: 75, turn: 25, locomotionGoal: { kind: 'visual', target: 'the object described by the owner', completionCriteria: 'Identify that object.' } },
     candidateLabels: [], identifyEveryFrames: 10, steering: null }
   const result = await parse({ response: '', program: { steps: [behavior, action('wave')] },
     taskDecision: { ...taskDecision, objective: 'Find the described object and wave to it.' } })
@@ -93,18 +106,13 @@ test('generic ongoing behavior keeps phase criteria separate from the entire obj
     taskDecision: { ...taskDecision, escalation: { target: 'general' } } }), /escalation/)
 })
 
-test('V2 named gait composition survives the provider schema and parser', async () => {
-  const schema = buildEnvironmentSelectorJsonSchema({ actions: ['robotCommand'], robotCommands: ['crawl', 'crab_right', 'run'] })
-  const encoded = JSON.stringify(schema)
-  assert.ok(encoded.includes('"forward":{"type":"number","minimum":-100,"maximum":100}'))
-  assert.ok(encoded.includes('"turn":{"type":"number","minimum":-100,"maximum":100}'))
-  for (const fields of [{ speed: 150, forward: 80, turn: -25 }, { stride: 85, rate: 1.5 }, { speed: 0 }]) {
-    const gait = { type: 'robotCommand', command: 'run', continuous: true, ...fields }
-    const result = await parse({ response: '', program: { steps: [{ kind: 'action', action: gait }] }, taskDecision },
-      { ...observation, capabilities: { actions: ['robotCommand'], robotCommands: ['run'] } })
-    assert.equal(result.valid, true)
-    for (const [key, value] of Object.entries(gait)) assert.equal(result.program.steps[0].action[key], value)
-  }
+test('V2 bare named gait aliases are removed from schema and rejected by capability admission', async () => {
+  const capabilities = { actions: ['move', 'robotCommand'] as any, robotCommands: ['run', 'wave'],
+    locomotion: { commands: ['run'], goalKinds: ['distance'] as any } }
+  const result = await parse({ response: '', program: { steps: [action('run')] }, taskDecision }, { ...observation, capabilities })
+  assert.equal(result.valid, false)
+  assert.equal(result.actionAdmission.reason, 'robot_command_unavailable')
+  assert.equal(JSON.stringify(buildEnvironmentSelectorJsonSchema(capabilities)).includes('"command":{"type":"string","enum":["wave"]}'), true)
 })
 
 test('move generation requires the same direction or vector as the existing action parser', async () => {
@@ -119,7 +127,7 @@ test('move generation requires the same direction or vector as the existing acti
     assert.ok(moves.every((choice: any) => choice.required.includes('direction') || choice.required.includes('vector')),
       'The observed {type:move, forward:100} response must not satisfy a generation branch')
     for (const fields of [{ direction: 'forward', forward: 100 }, { vector: { x: 1, y: 0 } },
-      { direction: 'forward', vector: { x: 1, y: 0 }, forward: 100 }]) {
+      { direction: 'forward', vector: { x: 1, y: 0 }, forward: 100 }].map(fields => ({ ...fields, locomotionGoal: { kind: 'distance', direction: 'forward', metres: 1, tolerance: .05 } }))) {
       assert.ok(moves.some((choice: any) => choice.required.every((key: string) => key === 'type' || key in fields)))
       const result = await parse({ response: '', taskDecision,
         program: { steps: [{ kind: 'action', action: { type: 'move', ...fields } }] } })
@@ -189,4 +197,47 @@ test('selector handoff preserves target validation and never restores a local co
   const separate = await environmentActionParserNode.execute({ response: JSON.stringify({ ...response, response: 'Hello', executionDisposition: 'new', targetExecutionId: '' }), activeExecutions }, {}, {})
   assert.equal(separate.executionSelection, undefined)
   assert.equal(separate.continueHere, true)
+})
+
+
+test('vision and stationary observation preserve the selected task without admitting a body command', async () => {
+  const steps = [
+    { kind: 'vision', operation: 'acquire', target: 'my keys' },
+    { kind: 'vision', operation: 'search', labels: ['keys', 'cup'] },
+    { kind: 'vision', operation: 'select', frameId: 'retained-image', description: 'my keys',
+      box: { x: .1, y: .2, width: .03, height: .04 } },
+    { kind: 'vision', operation: 'release' },
+    { kind: 'behavior', target: 'my keys', completionCriteria: 'The requested keys are visible.',
+      motion: null, candidateLabels: ['keys'], identifyEveryFrames: 10,
+      steering: { label: 'keys', gain: 1, trackId: 'selected-track' } },
+  ]
+  const result = await parse({ response: '', program: { steps }, taskDecision: {
+    ...taskDecision, objective: 'Find my keys.', requiredCompletionBasis: 'visual_observation',
+  } }, { ...observation, capabilities: { actions: ['captureImage'], visual: true, movement: false } })
+  assert.equal(result.valid, true)
+  assert.deepEqual(result.program.steps, steps)
+  assert.equal(result.actionAdmission, null)
+  const schema = JSON.stringify(buildEnvironmentSelectorJsonSchema({ actions: ['captureImage'],
+    visionOperations: ['search', 'select', 'release'] }))
+  for (const operation of ['acquire', 'search', 'select', 'release']) assert.ok(schema.includes(`"const":"${operation}"`))
+  assert.ok(schema.includes('Observe without issuing a movement command.'))
+  const unconfigured = JSON.stringify(buildEnvironmentSelectorJsonSchema({ actions: ['captureImage'] }))
+  assert.ok(unconfigured.includes('"const":"acquire"'))
+  assert.equal(unconfigured.includes('"const":"search"'), false)
+  assert.equal(unconfigured.includes('"const":"select"'), false)
+})
+
+test('visual and follow goals use existing behavior execution with their selected ending condition', async () => {
+  const frameTimestamp = new Date().toISOString()
+  const follow = { kind: 'follow', target: { frameId: 'frame', frameTimestamp, box: { x: .2, y: .2, width: .3, height: .4 }, trackId: 'track' },
+    proximity: { kind: 'imageRelative', boxHeight: .4, tolerance: .05 }, endingCondition: 'The selected target reaches the doorway' }
+  const visual = { kind: 'visual', target: 'the selected object', completionCriteria: 'The requested view is visible' }
+  for (const locomotionGoal of [follow, visual]) {
+    const motion = { type: 'move', direction: 'forward', continuous: true, speed: 40, locomotionGoal }
+    const behavior = { kind: 'behavior', target: 'the selected target', completionCriteria: 'Original phase description',
+      motion, candidateLabels: [], identifyEveryFrames: 10, steering: null }
+    const result = await parse({ response: '', taskDecision, program: { steps: [behavior] } })
+    assert.deepEqual(result.program.steps[0].motion.locomotionGoal, locomotionGoal)
+    await assert.rejects(parse({ response: '', taskDecision, program: { steps: [{ kind: 'action', action: motion }] } }), /behavior step/)
+  }
 })

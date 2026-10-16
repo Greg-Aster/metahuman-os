@@ -66,3 +66,23 @@ test('Persona Loader browser schema matches the executable handle contract', () 
   assert.deepEqual(schema?.outputs.map(output => output.name), PersonaLoaderNode.outputs.map(output => output.name));
   assert.equal(schema?.category, PersonaLoaderNode.category);
 });
+
+test('standing goal context retains complete recorded identity, horizon and status without changing default conversation context', async () => {
+  const persona = getDefaultPersonaCore();
+  persona.goals = {
+    shortTerm: Array.from({ length: 13 }, (_, index) => ({ id: `proposed-${index}`, status: 'proposed', goal: `Recorded proposal ${index} suffix` })),
+    midTerm: [{ id: 'planning', status: 'planning', goal: 'Recorded plan' }],
+    longTerm: [{ id: 'aspiration', status: 'aspirational', goal: 'Recorded aspiration' }, { id: 'finished', status: 'completed', goal: 'Finished goal' }],
+  };
+  const standing = await PersonaFormatterNode.execute({ persona, sections: ['goals'] }, {}, { goalContext: 'standing' });
+  assert.match(standing.formatted, /## Standing Persona Goals/);
+  assert.match(standing.formatted, /Their presence does not establish an active task, new evidence, or reinforcement\./);
+  for (const goal of persona.goals.shortTerm) assert.ok(standing.formatted.includes(`id=${goal.id} | tier=shortTerm | status=proposed | ${goal.goal}`));
+  assert.match(standing.formatted, /id=planning \| tier=midTerm \| status=planning/);
+  assert.match(standing.formatted, /id=aspiration \| tier=longTerm \| status=aspirational/);
+  assert.doesNotMatch(standing.formatted, /Finished goal/);
+  assert.equal((await PersonaFormatterNode.execute({ persona, sections: ['goals'] }, {}, {})).formatted, '');
+  assert.equal((await PersonaFormatterNode.execute({ persona, sections: [] }, {}, { goalContext: 'standing' })).formatted, '');
+  assert.equal(getNodeSchema('persona_formatter')?.properties?.goalContext, 'active');
+  assert.deepEqual(getNodeSchema('persona_formatter')?.propertySchemas?.goalContext, PersonaFormatterNode.propertySchemas?.goalContext);
+});

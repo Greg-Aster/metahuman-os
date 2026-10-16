@@ -1,4 +1,5 @@
-import { reasoningProperty } from '../llm/model-router.schema.js';
+import type { ModelRole } from '../../model-roles.js';
+import { reasoningProperty, modelRouterDefinition } from '../llm/model-router.schema.js';
 import { callLLMText } from '../../model-router.js'
 import type { Desire } from '../../agency/types.js'
 import { defineNode, type NodeDefinition, type NodeExecutionContext } from '../types.js'
@@ -95,7 +96,7 @@ export async function executeDesireCheckinEvaluator(
   }
   const currentMilestoneIndex = desire.goalProgress?.currentMilestone || 0
   const response = await dependencies.callModel({
-    role: 'orchestrator',
+    role: (properties?.role ?? 'psychotherapist') as ModelRole,
     userId: typeof context.userId === 'string' ? context.userId : context.username,
     cognitiveMode: typeof context.cognitiveMode === 'string' ? context.cognitiveMode : undefined,
     messages: [
@@ -130,7 +131,8 @@ Use only the supplied goal state and memory references. Do not claim work was co
 }
 
 export const DesireCheckinEvaluatorNode: NodeDefinition = defineNode({
-  propertySchemas: { enableThinking: reasoningProperty },
+  propertySchemas: {
+    role: { ...modelRouterDefinition.propertySchemas.role, default: 'psychotherapist' }, enableThinking: reasoningProperty },
   id: 'desire_checkin_evaluator',
   name: 'Evaluate Desire Check-in',
   category: 'agency',
@@ -147,7 +149,7 @@ export const DesireCheckinEvaluatorNode: NodeDefinition = defineNode({
     { name: 'recommendation', type: 'string' },
     { name: 'recommendationReason', type: 'string', optional: true },
   ],
-  properties: { enableThinking: false },
+  properties: { role: 'psychotherapist', enableThinking: false },
   description: 'Evaluates progress for one long-running desire using graph-supplied memory evidence',
   execute: executeDesireCheckinEvaluator,
 })

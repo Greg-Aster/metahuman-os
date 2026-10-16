@@ -16,6 +16,7 @@ setAuditEnabled(false)
 await import('../index.js')
 const { recordEnvironmentObservation } = await import('./store.js')
 const { environmentActiveTaskStepNode: step, environmentActiveTaskWaitNode: wait } = await import('../nodes/environment/active-task.node.js')
+const { executionContextNode } = await import('../nodes/utility/execution-context.node.js')
 after(() => fs.rmSync(root, { recursive: true, force: true }))
 
 const decision = { outcome: 'act', objective: 'Find the red cup', completionCriteria: 'Identify the red cup in a fresh image',
@@ -134,21 +135,114 @@ test('capture receipt alone never satisfies a visual objective', async () => {
   assert.equal(captured.captureCompleted, true)
 })
 
-for (const basis of ['action_result', 'visual_observation']) {
-  test(`a finished program preserves the objective for review (${basis})`, async () => {
+for (const basis of ['action_result', 'visual_observation', 'environment_state', 'response']) {
+  test(`a finished finite program settles only its selected receipt completion basis (${basis})`, async () => {
     const f = fixture()
-    Object.assign(f.context, { activeTaskDecision: { ...decision, requiredCompletionBasis: basis } })
-    const feedback = { id: 'receipt', actionId: 'walk', type: 'completed', message: 'done', timestamp: new Date().toISOString() }
-    const state = await f.advance({ stepIndex: 1, updateRevision: 0, evidence: ['walk: done'],
-      visualCompletionSatisfied: true, completedActionId: 'walk', feedback } as ActiveTaskState)
+    Object.assign(f.context, { activeTaskDecision: { ...decision, requiredCompletionBasis: basis, continuationPolicy: 'none' } })
+    const received = await f.receive(f.state, 'motion', 'completed')
+    const state = await f.advance(received)
+    const complete = basis === 'action_result'
     assert.equal(state.done, true)
-    assert.equal(state.objectiveComplete, false)
+    assert.equal(state.objectiveComplete, complete)
     assert.equal(f.task().decision.objective, decision.objective)
-    assert.equal(f.task().decision.outcome, 'continue')
-    assert.deepEqual(f.task().feedback, { actionId: 'walk', type: 'completed', message: 'done', observedAt: feedback.timestamp })
+    assert.equal(f.task().decision.outcome, complete ? 'complete' : 'continue')
+    assert.equal(f.task().actionStatus, 'completed', 'Physical result is independent of remaining objective interpretation')
+    assert.deepEqual(f.task().feedback, { actionId: 'motion', type: 'completed', message: 'Explicit completed', observedAt: received.feedback!.timestamp })
+    assert.equal(f.dispatches.length, 0)
+    assert.deepEqual(await f.advance(state), state, 'Re-entry preserves the settled result without dispatch')
+  })
+}
+
+test('multi-step receipt completion waits for every selected action and ignores unrelated receipts', async () => {
+  const f = fixture({ steps: [
+    { kind: 'action', action: { type: 'robotCommand', command: 'bow' } },
+    { kind: 'action', action: { type: 'robotCommand', command: 'wave' } },
+  ] })
+  Object.assign(f.context, { activeTaskDecision: { ...decision, requiredCompletionBasis: 'action_result', continuationPolicy: 'none' } })
+  await assert.rejects(() => f.receive(f.state, 'unrelated', 'completed'), /WAIT/)
+  const first = await f.receive(f.state, 'motion', 'completed')
+  assert.equal(first.stepIndex, 1)
+  assert.notEqual(first.objectiveComplete, true)
+  const second = await f.receive({ ...first, motionId: 'second', action: { type: 'robotCommand', command: 'wave' } }, 'second', 'completed')
+  const final = await f.advance(second)
+  assert.equal(final.objectiveComplete, true)
+  assert.equal(final.evidence.length, 2)
+  assert.equal(f.task().feedback.actionId, 'second')
+})
+
+for (const type of ['failed', 'rejected', 'expired', 'cancelled', 'outcome_unknown'] as const) {
+  test(`finite receipt objective does not complete on ${type}`, async () => {
+    const f = fixture({ steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'bow' } }] })
+    Object.assign(f.context, { activeTaskDecision: { ...decision, requiredCompletionBasis: 'action_result', continuationPolicy: 'none' } })
+    const result = await f.receive({ ...f.state, action: { type: 'robotCommand', command: 'bow' } }, 'motion', type)
+    const final = await f.advance(result)
+    assert.equal(final.objectiveComplete, false)
+    assert.equal(f.task().actionStatus, type)
+    assert.equal(f.task().feedback.type, type)
     assert.equal(f.dispatches.length, 0)
   })
 }
+
+test('bounded objectives remain open after one program returns', async () => {
+  const f = fixture()
+  Object.assign(f.context, { activeTaskDecision: { ...decision, requiredCompletionBasis: 'action_result', continuationPolicy: 'bounded' } })
+  const result = await f.advance(await f.receive(f.state, 'motion', 'completed'))
+  assert.equal(result.done, true)
+  assert.equal(result.objectiveComplete, false)
+})
+
+test('Goal Review confirms returned actions and does not generate tasks from text-only or unfinished work', async () => {
+  const f = fixture()
+  const graphExecution = (f.context as any).graphExecution
+  Object.assign(graphExecution, { events: () => [], activeExecutions: () => [] })
+  const read = () => executionContextNode.execute({}, f.context, {})
+  const base = { actionId: 'motion', decision: { ...decision, outcome: 'continue' },
+    feedback: { actionId: 'motion', type: 'completed', message: 'done' } }
+  for (const basis of ['visual_observation', 'environment_state', 'action_result']) {
+    for (const type of ['completed', 'failed', 'rejected', 'expired', 'cancelled']) {
+      graphExecution.recordTask({ ...base, decision: { ...base.decision, requiredCompletionBasis: basis }, feedback: { ...base.feedback, type } })
+      assert.equal((await read()).needsGoalReview, true, `${basis}: ${type}`)
+    }
+  }
+  for (const task of [
+    { ...base, feedback: null },
+    { ...base, actionId: '' },
+    { ...base, feedback: { ...base.feedback, actionId: 'other' } },
+    { ...base, feedback: { ...base.feedback, type: 'outcome_unknown' } },
+    { ...base, feedback: { ...base.feedback, type: 'accepted' } },
+    { ...base, decision: { ...base.decision, requiredCompletionBasis: 'response' } },
+    { ...base, decision: { ...base.decision, requiredCompletionBasis: 'user_input', outcome: 'request_user' } },
+    { ...base, decision: { ...base.decision, objectiveComplete: true, outcome: 'complete' } },
+    { ...base, desireId: 'agency-owned' },
+  ]) {
+    graphExecution.recordTask(task)
+    assert.equal((await read()).needsGoalReview, false, JSON.stringify(task))
+  }
+})
+
+test('unfinished goals retain continuation independently of action or review eligibility', async () => {
+  const f = fixture()
+  const execution = (f.context as any).graphExecution
+  Object.assign(execution, { events: () => [], activeExecutions: () => [] })
+  for (const basis of ['visual_observation', 'environment_state', 'action_result', 'user_input', 'response']) {
+    execution.recordTask({ objective: 'Find the target', decision: { ...decision,
+      outcome: 'continue', requiredCompletionBasis: basis, continuationPolicy: 'none' },
+      actionId: '', feedback: null })
+    const result = await executionContextNode.execute({}, f.context, {})
+    assert.equal(result.hasActiveTask, true)
+    assert.equal(result.needsGoalReview, false, 'No returned action requires review')
+    assert.equal(result.awaitContext, true, `${basis}: unfinished goal must survive`)
+  }
+  for (const task of [null,
+    ...['complete', 'cancel', 'abandon', 'failed'].map(outcome => ({ decision: { ...decision, outcome } })),
+    { desireId: 'agency-owned', decision: { ...decision, outcome: 'continue' } },
+  ]) {
+    execution.recordTask(task)
+    const result = await executionContextNode.execute({}, f.context, {})
+    assert.equal(result.awaitContext, false, 'Do not continue terminal, absent, or Agency-owned goals')
+    assert.equal(result.needsGoalReview, false)
+  }
+})
 
 test('cancelled task state cannot consume late results or dispatch more work', async () => {
   const f = fixture()
@@ -287,12 +381,11 @@ test('Finish waits for the original gait terminal receipt, not its control ACK',
   assert.equal(complete.visualCompletionSatisfied, true)
 })
 
-for (const reason of ['failed', 'stale', 'finish-timeout'] as const) {
+for (const reason of ['failed', 'finish-timeout'] as const) {
   test(`${reason} requires bounded cancellation confirmation and retains unknown until a late terminal receipt`, async () => {
     const f = fixture(search)
     const state = { ...f.state, ...(reason === 'failed' ? { identificationError: 'Required remote inference failed' }
-      : reason === 'stale' ? { feedbackRequiredSince: Date.now() - 3000 }
-        : { finishRequestedAt: Date.now() - 6000, identification: identified }) }
+      : { finishRequestedAt: Date.now() - 6000, identification: identified }) }
     const cancelling = await f.advance(state)
     assert.ok(cancelling.cancellationRequestedAt)
     assert.equal(cancelling.done, undefined)
@@ -308,6 +401,100 @@ for (const reason of ['failed', 'stale', 'finish-timeout'] as const) {
     assert.equal(failed.objectiveComplete, false)
   })
 }
+
+test('missing tracking feedback returns evidence to planning without cancelling commanded movement', async () => {
+  const f = fixture(search)
+  const first = await f.advance({ ...f.state, snapshotId: 'pending-capture' })
+  assert.equal(first.identificationError, undefined)
+  assert.equal(first.cancellationRequestedAt, undefined)
+  assert.equal(first.motionId, 'motion')
+  assert.equal(first.planningRequired, true)
+  assert.equal(first.trackingFeedback?.status, 'unavailable')
+  assert.equal(f.dispatches.some(item => item.payload.handler === 'environment.active-task-deadline'), false)
+  assert.equal(f.dispatches.some(item => item.payload.handler === 'environment.cancel-owned-work'), false)
+  const continued = await f.advance({ ...first, planningRequired: undefined })
+  assert.equal(continued.planningRequired, undefined, 'An unchanged gap does not repeatedly invoke the planner')
+  assert.equal(continued.motionId, 'motion')
+})
+
+test('a slow camera gap keeps the last turn, reports the gap once and steers again on fresh evidence', async () => {
+  const realNow = Date.now
+  let now = realNow()
+  Date.now = () => now
+  const f = fixture({ steps: [{ ...search.steps[0], steering: { label: 'cup', gain: 100 } } as any] })
+  const frame = (counter: number, x: number) => recordEnvironmentObservation({ ...observation,
+    timestamp: new Date(now).toISOString(), state: { ...observation.state,
+      body: { authenticated: true, cameraReady: true, robotId: 'p4' },
+      gateway: { robots: { p4: { epoch: 1, connection_state: 'online' } } },
+      perception: { version: 1, timeBasis: 'gateway_receipt', robotId: 'p4', epoch: 1, gatewayInstance: 'gateway',
+        frameCounter: counter, observedAt: new Date(now).toISOString(), expiresAt: new Date(now + 1000).toISOString(),
+        backend: 'fixture', model: 'fixture', summary: 'Cup',
+        objects: [{ label: 'cup', box: { x, y: .2, width: .2, height: .4 } }], uncertainties: [] },
+    } })
+  try {
+    frame(1, .1)
+    let state = await f.advance({ ...f.state, snapshotId: 'pending-capture' })
+    assert.equal(JSON.parse(state.pendingControls!.controls).turn, 50)
+    state = await f.receive(state, state.pendingControls!.commandId, 'completed')
+    const updates = () => f.dispatches.filter(item => item.payload.input.movementUpdate)
+    now += 1600 // The next frame arrives later than the previous frame's validity.
+    state = await f.advance(state)
+    assert.equal(state.identificationError, undefined)
+    assert.equal(state.cancellationRequestedAt, undefined)
+    assert.equal(state.planningRequired, true)
+    assert.equal(state.trackingFeedback?.status, 'unavailable')
+    assert.equal(updates().length, 1, 'Expiry does not reset the turn to the unsteered base motion')
+    now += 20000
+    state = await f.advance({ ...state, planningRequired: undefined })
+    assert.equal(state.planningRequired, undefined)
+    assert.equal(state.motionId, 'motion')
+    assert.equal(f.dispatches.some(item => item.payload.handler === 'environment.cancel-owned-work'
+      && item.payload.input.actionId === 'motion'), false)
+    frame(2, .7)
+    state = await f.advance(state)
+    assert.equal(state.trackingFeedback?.status, 'current')
+    assert.ok(Math.abs(JSON.parse(state.pendingControls!.controls).turn + 10) < 1e-8)
+    assert.equal(state.motionId, 'motion', 'Recovery updates the original movement, without restart')
+  } finally { Date.now = realNow; recordEnvironmentObservation(observation) }
+})
+
+test('expired image interpretation with a detector gap cannot cancel the active movement', async () => {
+  const f = fixture(search)
+  const state = { ...f.state, snapshotId: 'pending-capture', identificationEffectId: 'slow-image', lastIdentifiedFrame: 1,
+    identificationRequest: { effectId: 'slow-image', frameId: 'old-image', stepIndex: 0,
+      gatewayInstance: 'gateway', epoch: 1, expiresAt: new Date(Date.now() - 1).toISOString() },
+    pendingEvents: [{ kind: 'work_result', payload: { effectId: 'slow-image', result: { state: 'completed', result: identified } } }] }
+  const received = (await wait.execute({ state }, f.context, {})).state as ActiveTaskState
+  assert.equal(received.perceptionOutcome, 'stale')
+  assert.equal(received.identification, undefined, 'Old image evidence cannot establish current completion')
+  assert.equal(received.identificationError, undefined)
+  const continued = await f.advance(received)
+  assert.equal(continued.motionId, 'motion')
+  assert.equal(continued.cancellationRequestedAt, undefined)
+  assert.equal(continued.planningRequired, true)
+})
+
+test('the existing task planning handoff carries missing feedback and the original motion identity', async () => {
+  const { environmentActiveTaskNode } = await import('../nodes/environment/active-task.node.js')
+  const graphDir = path.join(root, 'etc', 'cognitive-graphs')
+  fs.mkdirSync(graphDir, { recursive: true })
+  fs.copyFileSync(new URL('../../../../etc/cognitive-graphs/robot-active-task-mode.json', import.meta.url),
+    path.join(graphDir, 'robot-active-task-mode.json'))
+  const state: ActiveTaskState = { stepIndex: 0, evidence: [], updateRevision: 3,
+    motionId: 'original-motion', action: motion, accepted: true, planningRequired: true,
+    trackingFeedback: { status: 'unavailable', queryId: 'selected-target' } }
+  const output = await environmentActiveTaskNode.execute({ program: search, taskDecision: decision,
+    sessionId: observation.sessionId }, { username: 'fixture', graphExecution: {
+      callGraph: async () => ({ nodes: new Map([['wait', { definition: { type: 'environment_active_task_wait' },
+        status: 'completed', outputs: { state } }]]) }), frame: () => undefined, task: () => ({ decision }),
+    } } as any, {})
+  assert.equal(output.finished, false)
+  assert.equal(output.completed, false)
+  assert.deepEqual(output.planningResult.environmentTaskEvidence.trackingFeedback, state.trackingFeedback)
+  assert.equal(output.planningResult.environmentTaskEvidence.motionId, 'original-motion')
+  assert.equal(output.planningResult.activeTaskContinuation.state.motionId, 'original-motion')
+  assert.equal(output.planningResult.activeTaskContinuation.state.planningRequired, undefined)
+})
 
 test('deadline events and late original results cannot change a replacement action', async () => {
   const f = fixture()
@@ -555,7 +742,7 @@ test('routing combined input to another execution preserves every turn and the e
   assert.equal(f.state.motionId, 'motion')
 })
 
-for (const nextAction of [{ type: 'stop' as const }, { type: 'move' as const, direction: 'forward' as const, durationMs: 1000 }]) {
+for (const nextAction of [{ type: 'stop' as const }, { type: 'move' as const, direction: 'forward' as const, continuous: true, durationMs: 0, locomotionGoal: { kind: 'relativeTurn' as const, degrees: 90, tolerance: 2 } }]) {
   test(`interpreted wave retains correlated ownership for later ${nextAction.type} across checkpoint and manual takeover`, async () => {
     const bridge = await import('./store.js')
     bridge.setEnvironmentBridgeEnabled(true)
@@ -565,7 +752,8 @@ for (const nextAction of [{ type: 'stop' as const }, { type: 'move' as const, di
     const live = (sequence: number) => ({ ...observation, capabilities: { ...observation.capabilities,
       actions: [...observation.capabilities.actions, 'robotCommand' as const], robotCommands: ['wave'] },
       state: { ...observation.state, body: { authenticated: true, robotId: 'p4' },
-        gateway: { robots: { p4: { epoch: 1, body_command_sequence: sequence } } } } })
+        gateway: { robots: { p4: { epoch: 1, body_command_sequence: sequence } } },
+        locomotionMeasurement: { yaw: { available: true, source: 'imu', robotId: 'p4', referenceId: 'boot', observedAt: new Date().toISOString(), degrees: 0, uncertaintyDegrees: null } } } })
     recordEnvironmentObservation(live(10))
     try {
       const f = fixture({ steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'wave' } },
@@ -615,6 +803,7 @@ async function singlePersonFixture(run: (f: any) => Promise<void>) {
   const { interpretationBody } = await import('./interpretation.js')
   const { personFrameKey } = await import('./active-task.js')
   const f = fixture({ steps: [{ ...search.steps[0], target: 'candidate person',
+    motion: { ...motion, locomotionGoal: { kind: 'visual', target: 'candidate person', completionCriteria: 'Observe the selected person' } },
     candidateLabels: ['person'], steering: { label: 'person', gain: 100 } } as any] })
   const { setEnvironmentBridgeEnabled, subscribeEnvironmentActions } = await import('./store.js')
   setEnvironmentBridgeEnabled(true)
@@ -824,17 +1013,17 @@ test('restricted loss cannot advance to a later phase or apply an interpreted re
 })
 
 
-test('person steering waits for initial feedback on the existing perception subscription', async () => {
+test('person steering reports missing initial feedback and retains the existing perception subscription', async () => {
   const f = fixture({ steps: [{ ...search.steps[0], steering: { label: 'person', gain: 100 } } as any] })
   const initial: ActiveTaskState = { stepIndex: 0, evidence: [], updateRevision: 0 }
   const state = await f.advance(initial)
   assert.equal(state.motionId, undefined, 'No movement is admitted before a fresh candidate')
-  const deadline = f.dispatches.find(effect => effect.payload.handler === 'environment.active-task-deadline')
-  assert.equal(deadline.payload.input.sessionId, observation.sessionId,
-    'The existing perception owner can discover this execution before its first body command')
+  assert.equal(state.planningRequired, true)
+  assert.equal(state.trackingFeedback?.status, 'unavailable')
+  assert.equal(f.dispatches.some(effect => effect.payload.handler === 'environment.active-task-deadline'), false)
   let reason: string | undefined
   ;(f.context as any).graphExecution.waitForEvent = (value: string) => { reason = value; throw new Error('WAIT') }
-  await assert.rejects(wait.execute({ state }, f.context, {}), /WAIT/)
+  await assert.rejects(wait.execute({ state: { ...state, planningRequired: undefined } }, f.context, {}), /WAIT/)
   assert.equal(reason, `active_task:${observation.sessionId}:perception`)
   assert.equal(f.dispatches.some(effect => effect.payload.type === 'environment_command'), false)
 })
@@ -925,3 +1114,489 @@ for (const outcome of ['resume', 'unknown', 'manual', 'reconnect', 'expired', 's
     await system.dispose()
   })
 }
+
+
+const visionFrame = { id: 'retained-source-frame', timestamp: new Date().toISOString(),
+  dataUrl: 'data:image/jpeg;base64,/9j/2Q==', metadata: { robotId: 'p4', gatewayInstance: 'gateway', epoch: 1, counter: 12 } }
+const emptyVisionState = (): ActiveTaskState => ({ stepIndex: 0, updateRevision: 0, evidence: [] })
+async function visionWorkResult(f: ReturnType<typeof fixture>, state: ActiveTaskState, effectId: string, result: unknown) {
+  return (await wait.execute({ state: { ...state, pendingEvents: [{ kind: 'work_result', payload: {
+    effectId, result: { state: 'completed', result },
+  } }] } }, f.context, {})).state as ActiveTaskState
+}
+
+test('finite acquisition reads then reasons under the same task without movement or completion authority', async () => {
+  const f = fixture({ steps: [{ kind: 'vision', operation: 'acquire', target: 'my keys' }] })
+  const reading = await f.advance(emptyVisionState())
+  assert.equal(f.dispatches[0].payload.handler, 'environment.visual-read')
+  const read = await visionWorkResult(f, reading, reading.visionEffectId!, { visual: visionFrame })
+  const identifying = await f.advance(read)
+  assert.equal(f.dispatches[1].payload.handler, 'environment.identify')
+  assert.equal(f.dispatches[1].payload.input.purpose, 'locate')
+  assert.deepEqual(f.dispatches[1].payload.input.image, visionFrame)
+  const acquisition = { purpose: 'locate', outcome: 'found', frame: { id: visionFrame.id, timestamp: visionFrame.timestamp, metadata: visionFrame.metadata },
+    candidates: [{ box: { x: .1, y: .2, width: .3, height: .4 }, description: 'keys', evidence: 'Visible keyring' }] }
+  const received = await visionWorkResult(f, identifying, identifying.identificationEffectId!, acquisition)
+  assert.equal(received.stepIndex, 1)
+  assert.deepEqual(received.acquisition, acquisition)
+  assert.deepEqual(received.capturedFrameIds, [visionFrame.id])
+  const planning = await f.advance(received)
+  assert.equal(planning.planningRequired, true)
+  assert.notEqual(planning.done, true)
+  const handoff = await wait.execute({ state: planning }, f.context, {})
+  assert.equal(handoff.continue, false)
+  assert.notEqual(planning.objectiveComplete, true)
+  assert.ok(f.dispatches.every(work => work.payload.type === 'generic'))
+})
+
+test('visual selection sends retained source bytes and joins the existing bridge result', async () => {
+  const f = fixture({ steps: [{ kind: 'vision', operation: 'select', frameId: visionFrame.id,
+    description: 'keys', box: { x: .1, y: .2, width: .3, height: .4 } }] })
+  ;(f.context as any).graphExecution.frame = (id: string) => id === visionFrame.id ? visionFrame : undefined
+  const sent = await f.advance(emptyVisionState())
+  assert.equal(f.dispatches[0].payload.handler, 'environment.visual-read')
+  assert.deepEqual(f.dispatches[0].payload.input.vision.frame, visionFrame)
+  assert.equal(f.dispatches[0].payload.input.vision.frameId, undefined)
+  const result = { operation: 'select', queryId: 'selected-keys', referenceFrameId: visionFrame.id }
+  const received = await visionWorkResult(f, sent, sent.visionEffectId!, { vision: result })
+  assert.equal(received.stepIndex, 1)
+  assert.equal(received.queryId, 'selected-keys')
+  assert.deepEqual(received.visionResult, result)
+  assert.ok(f.dispatches.every(work => work.payload.type === 'generic'))
+})
+
+test('finished vision configuration returns evidence for planning without interrupting remaining program steps', async () => {
+  for (const trailing of [false, true]) {
+    const search = { kind: 'vision', operation: 'search', labels: ['chair'] } as const
+    const f = fixture({ steps: [{ ...search, labels: [...search.labels] },
+      ...(trailing ? [{ kind: 'vision' as const, operation: 'release' as const }] : [])] })
+    const sent = await f.advance(emptyVisionState())
+    const result = { operation: 'search', queryId: 'chair-search', classes: ['chair'], tracking: true }
+    const received = await visionWorkResult(f, sent, sent.visionEffectId!, { vision: result })
+    assert.deepEqual(received.visionResult, result)
+    assert.equal(received.planningRequired === true, !trailing)
+    assert.notEqual(received.objectiveComplete, true)
+    const next = await f.advance(received)
+    if (trailing) {
+      assert.equal(f.dispatches[1].payload.input.vision.operation, 'release')
+    } else {
+      assert.equal((await wait.execute({ state: next }, f.context, {})).continue, false)
+      assert.notEqual(next.done, true)
+      assert.equal(f.dispatches.length, 1)
+    }
+  }
+})
+
+test('stationary visual behavior evaluates its image without a movement or finish command', async () => {
+  const f = fixture({ steps: [{ kind: 'behavior', target: 'keys', completionCriteria: 'Keys are visible',
+    motion: null, candidateLabels: ['keys'], identifyEveryFrames: 1, steering: null }] })
+  const sent = await f.advance({ ...emptyVisionState(), image: visionFrame })
+  assert.equal(sent.identificationError, undefined)
+  assert.equal(sent.motionId, undefined)
+  assert.equal(sent.identificationRequest?.expiresAt, undefined)
+  assert.equal(f.dispatches.length, 1)
+  assert.equal(f.dispatches[0].payload.handler, 'environment.identify')
+  const identified = await visionWorkResult(f, sent, sent.identificationEffectId!, {
+    matchesTarget: true, completionSatisfied: true, outcome: 'positive', description: 'Keys are visible', evidence: 'Keyring in this image',
+  })
+  const finishedPhase = (await wait.execute({ state: identified }, f.context, {})).state as ActiveTaskState
+  assert.equal(finishedPhase.stepIndex, 1)
+  assert.equal(finishedPhase.visualCompletionSatisfied, true)
+  assert.equal(finishedPhase.planningRequired, true)
+  assert.deepEqual(JSON.parse(finishedPhase.evidence[0]).result, identified.identification)
+  assert.equal((await wait.execute({ state: await f.advance(finishedPhase) }, f.context, {})).continue, false)
+  assert.equal(f.dispatches.length, 1, 'Stationary completion cannot issue Finish or other servo work')
+})
+
+test('selected-track steering follows that instance across reordered same-class detections', async () => {
+  const f = fixture({ steps: [{ ...search.steps[0], steering: { label: 'cup', gain: 100, trackId: 'query-a:2' } } as any] })
+  const objects = [
+    { label: 'cup', trackId: 'query-a:1', box: { x: .1, y: .2, width: .2, height: .3 } },
+    { label: 'cup', trackId: 'query-a:2', box: { x: .7, y: .2, width: .2, height: .3 } },
+  ]
+  const observe = (counter: number, items: typeof objects) => {
+    const now = Date.now()
+    recordEnvironmentObservation({ ...observation, state: { ...observation.state,
+      body: { authenticated: true, cameraReady: true, robotId: 'p4' },
+      gateway: { robots: { p4: { epoch: 1, connection_state: 'online' } } }, perception: {
+      version: 1, timeBasis: 'gateway_receipt', robotId: 'p4', epoch: 1, gatewayInstance: 'gateway',
+      frameCounter: counter, queryId: 'selected-cup', observedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 1000).toISOString(), backend: 'fixture', model: 'fixture',
+      summary: 'Two cups', objects: items, uncertainties: [],
+    } } })
+  }
+  try {
+    observe(1, objects)
+    const sent = await f.advance({ ...f.state, snapshotId: 'pending-capture' })
+    const updates = () => f.dispatches.filter(item => item.payload.input?.movementUpdate)
+    assert.equal(updates().length, 1)
+    assert.equal(updates()[0].payload.input.movementUpdate.actionId, 'motion')
+    assert.ok(Math.abs(updates()[0].payload.input.movementUpdate.controls.turn - (-10)) < 1e-9)
+    const acknowledged = await f.receive(sent, sent.pendingControls!.commandId, 'completed')
+    observe(2, [objects[1], objects[0]])
+    await f.advance(acknowledged)
+    assert.equal(updates().length, 1, 'Detection order cannot change selected-instance steering')
+    observe(3, [{ ...objects[1], box: { ...objects[1].box, x: .3 } }, objects[0]])
+    await f.advance(acknowledged)
+    assert.equal(updates().length, 2)
+    assert.ok(Math.abs(updates()[1].payload.input.movementUpdate.controls.turn - 30) < 1e-9)
+    assert.equal(updates()[1].payload.input.movementUpdate.revision, 2)
+    assert.equal(updates()[1].payload.input.movementUpdate.actionId, 'motion')
+  } finally { recordEnvironmentObservation(observation) }
+})
+
+
+test('acquisition continuation preserves instruction admission and consumes no synthetic user event', async () => {
+  const { executionEventWaitNode } = await import('../nodes/utility/execution-event-wait.node.js')
+  const entry = { role: 'user', content: 'Find my keys', timestamp: 123, meta: { idempotencyKey: 'original-turn' } }
+  const workResult = { environmentTaskEvidence: { kind: 'vision_acquisition', frameId: visionFrame.id },
+    activeTaskContinuation: { program: { steps: [{ kind: 'vision', operation: 'acquire', target: 'my keys' }] }, state: { stepIndex: 1 } } }
+  const context = { _graphExecutorIteration: 1, userMessage: entry.content,
+    graphExecution: { pendingEvents: () => [], waitForEvent: () => { throw new Error('No new user event exists') } } }
+  const inputs = { workResult, instructionEntry: entry }
+  const result = await executionEventWaitNode.execute(inputs, context as any, { drain: true, resultGraph: 'environment' })
+  assert.equal(result.invocation.graph, 'environment')
+  assert.equal(result.invocation.context.userMessageEntry, entry)
+  assert.deepEqual(result.invocation.context.environmentTaskEvidence, workResult.environmentTaskEvidence)
+  assert.deepEqual(result.invocation.context.executionEvents, [])
+  assert.equal(result.invocation.context.userMessage, undefined, 'The child inherits the original request, not a fabricated new message')
+  const later = await executionEventWaitNode.execute(inputs, { ...context, _graphExecutorIteration: 2 } as any, { drain: true })
+  assert.equal(later.invocation, null, 'A later event-tail pass cannot replay the acquisition handoff')
+  const autonomous = await executionEventWaitNode.execute(inputs, context as any, { drain: true, resultGraph: 'environment' })
+  assert.equal(autonomous.invocation.graph, 'environment')
+  const pending = [{ kind: 'user_steering', payload: { userMessage: 'Release the target', userMessageEntry: { ...entry, content: 'Release the target' } } }]
+  const correction = await executionEventWaitNode.execute(inputs, { ...context,
+    graphExecution: { pendingEvents: () => pending, waitForEvent: () => pending.shift() } } as any,
+    { drain: true, userGraph: 'environment', resultGraph: 'environment' })
+  assert.equal(correction.invocation.graph, 'environment')
+  assert.equal(correction.invocation.context.userMessage, 'Release the target')
+  assert.deepEqual(correction.invocation.context.environmentTaskEvidence, workResult.environmentTaskEvidence)
+})
+
+
+test('ended-session evidence releases a continuous task without completing its objective or running its next step', async () => {
+  const f = fixture({ steps: [...program.steps, { kind: 'action', action: { type: 'robotCommand', command: 'wave' } }] })
+  let state = await f.receive(f.state, 'motion', 'outcome_unknown')
+  state = await f.advance(state)
+  assert.equal(state.done, undefined)
+  const ended = await f.receive(state, 'motion', 'outcome_unknown', { executionEnded: true,
+    sessionReplacement: { previous: { gatewayInstance: 'gateway', epoch: 1 }, current: { gatewayInstance: 'gateway', epoch: 2 } } })
+  const before = f.dispatches.length
+  const finished = await f.advance(ended)
+  assert.equal(finished.done, true)
+  assert.equal(finished.objectiveComplete, false)
+  assert.equal(finished.motionId, undefined)
+  assert.equal(finished.feedback?.type, 'outcome_unknown')
+  assert.equal(f.task().feedback.executionEnded, true)
+  assert.equal(finished.stepIndex, 0)
+  assert.equal(f.dispatches.slice(before).some(item => item.payload.type === 'environment_command'), false)
+  const graphExecution = (f.context as any).graphExecution
+  Object.assign(graphExecution, { events: () => [], activeExecutions: () => [] })
+  assert.equal((await executionContextNode.execute({}, f.context, {})).needsGoalReview, true,
+    'The existing reviewer receives the unresolved objective once execution has ended')
+})
+
+for (const operation of ['acquire', 'select'] as const) {
+  test(`unretained ${operation} reference returns failure evidence without retrying or dispatching`, async () => {
+    const f = fixture({ steps: [operation === 'acquire'
+      ? { kind: 'vision', operation, target: 'user', referenceFrameId: 'None' }
+      : { kind: 'vision', operation, frameId: 'None', description: 'user', box: { x: .1, y: .2, width: .3, height: .4 } }] })
+    ;(f.context as any).graphExecution.frame = () => undefined
+    const result = await f.advance({ ...emptyVisionState(), image: visionFrame })
+    assert.equal(result.done, true)
+    assert.equal(result.objectiveComplete, false)
+    assert.equal(typeof result.identificationError, 'string')
+    assert.match(String(result.identificationError), /not retained by this execution/)
+    assert.equal(result.failure, undefined, 'A missing reference is not a physical receipt')
+    assert.equal(f.dispatches.length, 0)
+    assert.equal((await wait.execute({ state: result }, f.context, {})).continue, false)
+    const replay = await f.advance(result)
+    assert.equal(replay.identificationError, result.identificationError)
+    assert.equal(f.dispatches.length, 0)
+  })
+}
+
+test('locomotion endpoint requests Finish once and requires original terminal receipt, not update ACK', async () => {
+  const goal = { kind: 'distance' as const, direction: 'forward' as const, metres: 1, tolerance: .05 }
+  const action = { ...motion, locomotionGoal: goal }
+  const f = fixture({ steps: [{ kind: 'action', action }] })
+  const source = { available: true, source: 'calibrated-ground-plane', robotId: 'p4', referenceId: 'plane', observedAt: new Date().toISOString(),
+    xMetres: 0, yMetres: 0, headingDegrees: 0, uncertaintyMetres: .02 }
+  recordEnvironmentObservation({ ...observation, state: { ...observation.state, locomotionMeasurement: { position: { ...source, xMetres: 1 } } } })
+  const state = { ...f.state, action, locomotion: { initial: { position: source }, latest: { position: source }, reached: false } }
+  let result = await f.advance(state)
+  assert.equal(result.locomotion?.reached, true)
+  assert.equal(JSON.parse(result.pendingControls!.controls).speed, 0)
+  const finishId = result.pendingControls!.commandId
+  result = await f.advance(result)
+  assert.equal(f.dispatches.length, 1, 'repeated observation does not issue another Finish while the exact update is pending')
+  result = await f.receive(result, finishId, 'completed')
+  assert.equal(result.stepIndex, 0)
+  result = await f.receive(result, 'motion', 'completed')
+  assert.equal(result.stepIndex, 1)
+  assert.match(result.evidence.join('\n'), /locomotionGoal/)
+  recordEnvironmentObservation(observation)
+})
+
+test('locomotion missing evidence does not start; evidence loss finishes existing motion and remains incomplete', async () => {
+  const action = { ...motion, locomotionGoal: { kind: 'relativeTurn' as const, degrees: 90, tolerance: 2 } }
+  const f = fixture({ steps: [{ kind: 'action', action }] })
+  recordEnvironmentObservation({ ...observation, state: { ...observation.state, locomotionMeasurement: { yaw: { available: false, reason: 'IMU unavailable' } } } })
+  const notStarted = await f.advance({ stepIndex: 0, updateRevision: 0, evidence: [] })
+  assert.equal(notStarted.done, true)
+  assert.equal(f.dispatches.length, 0)
+  assert.equal(notStarted.objectiveComplete, false)
+  let running = await f.advance({ ...f.state, action })
+  assert.equal(JSON.parse(running.pendingControls!.controls).speed, 0)
+  running = await f.receive(running, 'motion', 'completed')
+  assert.equal(running.stepIndex, 0)
+  assert.equal(running.objectiveComplete, false)
+  assert.match(running.identificationError!.toString(), /IMU unavailable/)
+  recordEnvironmentObservation(observation)
+})
+
+test('locomotion uses the source expiry deadline to finish when telemetry falls silent', async t => {
+  const now = Date.now()
+  t.mock.timers.enable({ apis: ['Date'], now })
+  const action = { ...motion, locomotionGoal: { kind: 'relativeTurn' as const, degrees: 90, tolerance: 2 } }
+  const f = fixture({ steps: [{ kind: 'action', action }] })
+  const source = { available: true, source: 'imu', robotId: 'p4', referenceId: 'boot', observedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 50).toISOString(), degrees: 0, uncertaintyDegrees: null }
+  recordEnvironmentObservation({ ...observation, timestamp: new Date(now).toISOString(), state: { ...observation.state, locomotionMeasurement: { yaw: source } } })
+  let result = await f.advance({ ...f.state, action })
+  assert.equal(result.deadlineAt, now + 50)
+  const wake = result.deadlineEffectId
+  if (result.pendingControls) result = await f.receive(result, result.pendingControls.commandId, 'completed')
+  t.mock.timers.setTime(now + 51)
+  result = (await wait.execute({ state: { ...result, pendingEvents: [{ kind: 'work_result', payload: { effectId: wake, result: { state: 'completed' } } }] } }, f.context, {})).state
+  result = await f.advance(result)
+  assert.equal(JSON.parse(result.pendingControls!.controls).speed, 0)
+  assert.equal(result.locomotion?.reached, false)
+  assert.match(result.locomotion!.incomplete!, /unavailable/)
+  t.mock.timers.reset()
+  recordEnvironmentObservation(observation)
+})
+
+test('locomotion wait subscribes only to its selected sensor event channel', async () => {
+  const action = { ...motion, locomotionGoal: { kind: 'relativeTurn' as const, degrees: 90, tolerance: 2 } }
+  const f = fixture({ steps: [{ kind: 'action', action }] })
+  let reason = ''
+  ;(f.context as any).graphExecution.waitForEvent = (value: string) => { reason = value; throw new Error('WAIT') }
+  await assert.rejects(wait.execute({ state: { ...f.state, action } }, f.context, {}), /WAIT/)
+  assert.equal(reason, `active_task:${observation.sessionId}:perception:locomotion`)
+})
+
+test('locomotion metric target acquisition sends the exact retained frame before any gait admission', async () => {
+  const target = { frameId: 'retained-source', frameTimestamp: new Date().toISOString(), box: { x: .1, y: .2, width: .3, height: .4 },
+    groundContact: { x: .25, y: .6 } }
+  const action = { ...motion, locomotionGoal: { kind: 'approach' as const, target, proximity: { kind: 'metric' as const, metres: 1, tolerance: .1 } } }
+  const f = fixture({ steps: [{ kind: 'action', action }] })
+  ;(f.context as any).graphExecution.frame = (id: string) => id === target.frameId ? { id, timestamp: target.frameTimestamp,
+    dataUrl: 'data:image/jpeg;base64,c291cmNl', metadata: { robotId: 'p4', epoch: 3 } } : undefined
+  let result = await f.advance({ stepIndex: 0, updateRevision: 0, evidence: [] })
+  const request = f.dispatches[0].payload
+  assert.equal(request.handler, 'environment.visual-read')
+  assert.deepEqual(request.input.vision.groundContact, target.groundContact)
+  assert.equal(request.input.vision.sourceFrame.jpeg, 'c291cmNl')
+  assert.equal(request.input.vision.sourceFrame.frameId, 'retained-source')
+  assert.equal(result.motionId, undefined)
+  result = (await wait.execute({ state: { ...result, pendingEvents: [{ kind: 'work_result', payload: {
+    effectId: result.visionEffectId, result: { state: 'completed', result: { vision: { locomotionMeasurement: { target: {
+      available: false, reason: 'Ground point could not be tracked', source: 'calibrated-ground-plane', robotId: 'p4', referenceId: 'plane',
+      frameId: target.frameId, observedAt: target.frameTimestamp, uncertaintyMetres: null,
+    } } } } } } }] } }, f.context, {})).state
+  assert.equal(result.stepIndex, 0, 'Range acquisition is not completion of the selected approach')
+  result = await f.advance(result)
+  assert.equal(result.done, true)
+  assert.equal(result.objectiveComplete, false)
+  assert.equal(f.dispatches.filter(d => d.payload.handler === 'environment.command').length, 0)
+})
+
+test('locomotion follow passes its selected ending condition to the existing asynchronous evaluator', async () => {
+  const now = new Date().toISOString()
+  const target = { frameId: 'target-frame', frameTimestamp: now, box: { x: .2, y: .2, width: .3, height: .4 }, trackId: 'track', groundContact: { x: .3, y: .6 } }
+  const goal = { kind: 'follow' as const, target, proximity: { kind: 'metric' as const, metres: 1, tolerance: .1 }, endingCondition: 'The target reaches the doorway' }
+  const action = { ...motion, locomotionGoal: goal }
+  const f = fixture({ steps: [{ kind: 'behavior', motion: action, target: 'selected target', completionCriteria: 'Different phase text', candidateLabels: [], identifyEveryFrames: 10, steering: null }] })
+  const measurement = { target: { available: true, source: 'calibrated-ground-plane', robotId: 'p4', referenceId: 'plane',
+    frameId: 'current-frame', observedAt: now, trackId: 'track', groundContact: target.groundContact, rangeMetres: 1, uncertaintyMetres: .02 } }
+  recordEnvironmentObservation({ ...observation, state: { ...observation.state, locomotionMeasurement: measurement } })
+  const state = { ...f.state, action, locomotionTargetAcquired: true, image: { id: 'current-frame', timestamp: now, dataUrl: 'data:image/jpeg;base64,c291cmNl' } }
+  const result = await f.advance(state)
+  const inference = f.dispatches.find(d => d.payload?.handler === 'environment.identify')
+  assert.equal(inference.payload.input.completionCriteria, goal.endingCondition)
+  assert.equal(result.locomotion?.reached, false)
+  assert.equal(result.finishRequestedAt, undefined)
+  recordEnvironmentObservation(observation)
+})
+
+test('locomotion image-relative target loss cannot reuse an earlier matching box as current evidence', async () => {
+  const now = Date.now()
+  const target = { frameId: 'selected', frameTimestamp: new Date(now).toISOString(), box: { x: .2, y: .2, width: .2, height: .2 }, trackId: 'chosen' }
+  const action = { ...motion, locomotionGoal: { kind: 'approach' as const, target, proximity: { kind: 'imageRelative' as const, boxHeight: .5, tolerance: .02 } } }
+  const f = fixture({ steps: [{ kind: 'action', action }] })
+  const oldTarget = { available: true, source: 'visual-tracking', robotId: 'p4', referenceId: 'old', frameId: 'selected', trackId: 'chosen',
+    observedAt: new Date(now - 1).toISOString(), expiresAt: new Date(now + 1000).toISOString(), boxHeight: .2, uncertaintyMetres: null }
+  const perception = { version: 1, robotId: 'p4', epoch: 1, gatewayInstance: 'gateway', frameCounter: 2, timeBasis: 'gateway_receipt',
+    observedAt: new Date(now).toISOString(), expiresAt: new Date(now + 1000).toISOString(), backend: 'fixture', model: 'fixture', summary: 'No matching target', objects: [], uncertainties: [] }
+  recordEnvironmentObservation({ ...observation, state: { ...observation.state, perception, locomotionMeasurement: { target: oldTarget } } })
+  let state = await f.advance({ ...f.state, action, locomotion: { initial: { target: oldTarget }, latest: { target: oldTarget }, reached: false } })
+  assert.equal(JSON.parse(state.pendingControls!.controls).speed, 0)
+  assert.match(state.locomotion!.incomplete!, /absent/)
+  state = await f.receive(state, 'motion', 'completed')
+  assert.equal(state.objectiveComplete, false)
+  assert.equal(state.stepIndex, 0)
+  recordEnvironmentObservation(observation)
+})
+
+for (const failed of [false, true]) test(`locomotion frame-box selection ${failed ? 'failure stays incomplete' : 'returns actual receipt for track selection'} without starting a gait`, async () => {
+  const target = { frameId: 'exact-source', frameTimestamp: new Date().toISOString(), box: { x: .2, y: .3, width: .1, height: .2 } }
+  const goal = { kind: 'approach' as const, target, proximity: { kind: 'imageRelative' as const, boxHeight: .5, tolerance: .05 } }
+  const f = fixture({ steps: [{ kind: 'action', action: { ...motion, locomotionGoal: goal } }] })
+  const frame = { id: target.frameId, timestamp: target.frameTimestamp, dataUrl: 'data:image/jpeg;base64,c291cmNl' }
+  ;(f.context as any).graphExecution.frame = (id: string) => id === frame.id ? frame : undefined
+  let state = await f.advance({ stepIndex: 0, updateRevision: 0, evidence: [] })
+  assert.deepEqual(f.dispatches[0].payload.input.vision, { operation: 'select', frame, box: target.box, description: decision.objective })
+  assert.equal(state.motionId, undefined)
+  const receipt = { operation: 'select', queryId: 'actual-query', referenceFrameId: frame.id, tracking: true }
+  const result = failed ? { state: 'failed', error: { message: 'Selected source could not be decoded' } }
+    : { state: 'completed', result: { vision: receipt } }
+  state = (await wait.execute({ state: { ...state, pendingEvents: [{ kind: 'work_result', payload: { effectId: state.visionEffectId, result } }] } }, f.context, {})).state
+  state = await f.advance(state)
+  assert.equal(state.stepIndex, 0, 'Selection does not fulfill the movement goal')
+  assert.equal(state.motionId, undefined)
+  assert.equal(f.dispatches.filter(d => d.payload.handler === 'environment.command').length, 0)
+  if (failed) {
+    assert.match(String(state.identificationError), /could not be decoded/)
+    assert.equal(state.objectiveComplete, false)
+  } else {
+    assert.deepEqual(state.visionResult, receipt)
+    assert.equal(state.queryId, receipt.queryId)
+    assert.equal(state.planningRequired, true)
+    assert.equal(JSON.parse(state.evidence.at(-1)!).motionStarted, false)
+    assert.deepEqual(JSON.parse(state.evidence.at(-1)!).locomotionGoal, goal)
+    assert.equal(f.dispatches.length, 1, 'Returning for planning never reissues selection or starts a gait')
+  }
+})
+
+for (const lateral of [true, false]) test(`locomotion Crab correction preserves motion ownership with lateral support ${lateral}`, async () => {
+  const now = new Date().toISOString()
+  const position = { available: true, source: 'calibrated-ground-plane', robotId: 'p4', referenceId: 'plane', observedAt: now,
+    xMetres: 0, yMetres: 0, headingDegrees: 0, uncertaintyMetres: null }
+  const action = { ...motion, gait: 'crab' as const, direction: 'left' as const,
+    locomotionGoal: { kind: 'distance' as const, direction: 'left' as const, metres: 1, tolerance: .05 } }
+  const f = fixture({ steps: [{ kind: 'action', action }] })
+  recordEnvironmentObservation({ ...observation, capabilities: { ...observation.capabilities,
+    locomotion: { commands: ['crab'], goalKinds: ['distance'], lateral } },
+    state: { ...observation.state, locomotionMeasurement: { position: { ...position, yMetres: 1.2 } } } })
+  const state = await f.advance(lateral ? { ...f.state, action, locomotion: { initial: { position }, latest: { position }, reached: false } }
+    : { stepIndex: 0, updateRevision: 0, evidence: [] })
+  if (!lateral) {
+    assert.equal(state.done, true)
+    assert.equal(state.objectiveComplete, false)
+    assert.match(String(state.identificationError), /requires negotiated lateral/)
+    assert.equal(f.dispatches.length, 0)
+    recordEnvironmentObservation(observation)
+    return
+  }
+  const controls = JSON.parse(state.pendingControls!.controls)
+  assert.equal(state.motionId, 'motion')
+  assert.equal(state.pendingControls!.motionId, 'motion')
+  assert.equal(state.objectiveComplete, undefined)
+  assert.equal(state.finishRequestedAt, undefined)
+  if (lateral) {
+    assert.equal(controls.lateral, -100)
+    assert.ok(Math.abs(controls.forward) < 1e-12)
+    assert.equal(controls.turn, 0)
+  }
+  recordEnvironmentObservation(observation)
+})
+
+test('supported lateral updates retain simultaneous forward and turn under the original command', async () => {
+  recordEnvironmentObservation({ ...observation, capabilities: { ...observation.capabilities,
+    locomotion: { commands: ['crab'], goalKinds: ['visual'], lateral: true } } })
+  const action = { ...motion, gait: 'crab' as const, forward: 40, turn: -20, lateral: 35 }
+  const f = fixture({ steps: [{ kind: 'action', action }] })
+  const state = await f.advance({ ...f.state, action })
+  assert.deepEqual(JSON.parse(state.pendingControls!.controls), { speed: motion.speed, forward: 40, turn: -20, lateral: 35 })
+  assert.equal(state.pendingControls!.motionId, 'motion')
+  recordEnvironmentObservation(observation)
+})
+
+for (const available of [true, false]) test(`locomotion visual goal uses camera availability ${available} without recognition`, async () => {
+  const bridge = await import('./store.js')
+  bridge.setEnvironmentBridgeEnabled(true)
+  const unsubscribe = bridge.subscribeEnvironmentActions(observation.sessionId, () => {})
+  const now = Date.now()
+  const camera = { available, source: 'camera-frame', robotId: 'p4', referenceId: 'camera-session', frameId: 'frame',
+    observedAt: new Date(now).toISOString(), expiresAt: new Date(now + 10000).toISOString(), ...(!available ? { reason: 'camera unavailable' } : {}) }
+  const action = { ...motion, locomotionGoal: { kind: 'visual' as const, target: 'selected target', completionCriteria: 'Selected view is visible' } }
+  const f = fixture({ steps: [{ kind: 'behavior', motion: action, target: 'selected target', completionCriteria: 'Selected view is visible',
+    candidateLabels: [], identifyEveryFrames: 10, steering: null }] })
+  recordEnvironmentObservation({ ...observation, state: { ...observation.state, body: { authenticated: true, robotId: 'p4' }, locomotionMeasurement: { camera } } })
+  const state = await f.advance({ stepIndex: 0, updateRevision: 0, evidence: [] })
+  assert.equal(state.perception, undefined)
+  if (available) {
+    assert.ok(state.motionId)
+    assert.ok(state.snapshotId)
+    assert.equal(state.planningRequired, undefined, 'No recognition gap is invented for a camera-only goal')
+    assert.equal(state.deadlineAt, Date.parse(camera.expiresAt))
+  } else {
+    assert.equal(state.motionId, undefined)
+    assert.equal(state.objectiveComplete, false)
+    assert.equal(state.done, true)
+    assert.equal(f.dispatches.length, 0)
+  }
+  unsubscribe()
+  bridge.setEnvironmentBridgeEnabled(false)
+  recordEnvironmentObservation(observation)
+})
+
+test('locomotion visual camera loss during inference requests Finish but waits for original termination', async () => {
+  const action = { ...motion, locomotionGoal: { kind: 'visual' as const, target: 'selected target', completionCriteria: 'Selected view is visible' } }
+  const f = fixture({ steps: [{ kind: 'behavior', motion: action, target: 'selected target', completionCriteria: 'Selected view is visible',
+    candidateLabels: [], identifyEveryFrames: 10, steering: null }] })
+  const camera = { available: true, source: 'camera-frame', robotId: 'p4', referenceId: 'camera-session',
+    observedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 10000).toISOString() }
+  recordEnvironmentObservation({ ...observation, state: { ...observation.state, body: { authenticated: true, robotId: 'p4' }, locomotionMeasurement: { camera } } })
+  const image = { id: 'original-evaluator-frame', timestamp: new Date(Date.now() - 10000).toISOString(), dataUrl: 'data:image/jpeg;base64,c291cmNl' }
+  let state = await f.advance({ ...f.state, action, image })
+  assert.ok(state.identificationEffectId)
+  assert.equal(state.identificationRequest?.expiresAt, undefined, 'Current camera freshness is separate from the historical inference image')
+  state = await f.advance(state)
+  assert.equal(state.finishRequestedAt, undefined, 'Slow inference does not imply loss of the live camera')
+  recordEnvironmentObservation({ ...observation, state: { ...observation.state, locomotionMeasurement: { camera: { ...camera, available: false, reason: 'camera stream lost' } } } })
+  // Acknowledge the in-flight steering update before observing the requested Finish.
+  if (state.pendingControls) state = await f.receive(state, state.pendingControls.commandId, 'completed')
+  state = await f.advance(state)
+  assert.equal(JSON.parse(state.pendingControls!.controls).speed, 0)
+  assert.match(state.locomotion!.incomplete!, /camera stream lost/)
+  state = await f.receive(state, state.pendingControls!.commandId, 'completed')
+  recordEnvironmentObservation({ ...observation, state: { ...observation.state, locomotionMeasurement: { camera } } })
+  state = await f.advance(state)
+  assert.match(state.locomotion!.incomplete!, /camera stream lost/, 'Recovered camera does not erase the interrupted goal outcome')
+  assert.equal(state.done, undefined, 'Finish ACK is not original gait termination')
+  state = await f.receive(state, 'motion', 'completed')
+  assert.equal(state.done, true)
+  assert.equal(state.objectiveComplete, false)
+  recordEnvironmentObservation(observation)
+})
+
+for (const selectedLateral of [undefined, 35]) test(`locomotion Finish clears ${selectedLateral === undefined ? 'controller-derived' : 'model-selected'} lateral while retaining original receipt ownership`, async () => {
+  const position = { available: true, source: 'calibrated-ground-plane', robotId: 'p4', referenceId: 'plane', observedAt: new Date().toISOString(),
+    xMetres: 0, yMetres: 0, headingDegrees: 0, uncertaintyMetres: null }
+  const action = { ...motion, gait: 'crab' as const, lateral: selectedLateral,
+    locomotionGoal: { kind: 'distance' as const, direction: 'left' as const, metres: 1, tolerance: .05 } }
+  const f = fixture({ steps: [{ kind: 'action', action }] })
+  recordEnvironmentObservation({ ...observation, capabilities: { ...observation.capabilities,
+    locomotion: { commands: ['crab'], goalKinds: ['distance'], lateral: true } },
+    state: { ...observation.state, locomotionMeasurement: { position: { ...position, yMetres: 1 } } } })
+  let state = await f.advance({ ...f.state, action, locomotion: { initial: { position }, latest: { position }, reached: false } })
+  assert.equal(JSON.parse(state.pendingControls!.controls).lateral, 0)
+  assert.equal(JSON.parse(state.pendingControls!.controls).speed, 0)
+  state = await f.receive(state, state.pendingControls!.commandId, 'completed')
+  assert.equal(state.stepIndex, 0)
+  state = await f.receive(state, 'motion', 'completed')
+  assert.equal(state.stepIndex, 1)
+  recordEnvironmentObservation(observation)
+})

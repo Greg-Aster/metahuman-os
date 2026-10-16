@@ -48,8 +48,8 @@ export interface RouterCallOptions {
     stream?: boolean;
     /**
      * Request Big Brother for this specific call (hybrid mode).
-     * When bigBrotherMode.enabled=true and delegateAll=false,
-     * only calls with useBigBrother=true will route to Big Brother.
+     * Explicit CLI delegation for callers that select tool execution.
+     * Ordinary inference follows its assigned model role.
      */
     useBigBrother?: boolean;
     [key: string]: any;
@@ -149,7 +149,7 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   const username = ctx?.username || callOptions.userId;
 
   // Resolve the model for this role (using user-specific models.json if available)
-  const requestedModel = callOptions.modelId
+  const resolved = callOptions.modelId
     ? resolveModelById(callOptions.modelId, username, false)
     : effectiveCognitiveMode
     ? resolveModelForCognitiveMode(effectiveCognitiveMode, callOptions.role, username)
@@ -159,18 +159,8 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
   // Persona is now explicitly injected via persona_loader and persona_formatter nodes
   // in the cognitive graphs. This makes persona flow visible and editable in the graph editor.
   // Response Synthesizer applies persona voice to final output only.
-  let messages = callOptions.messages;
+  const messages = callOptions.messages;
   const hasImages = providerMessagesContainImages(messages);
-  const declaredCapabilities = requestedModel.capabilities.map(value => value.toLowerCase());
-  const needsVisionFallback = !callOptions.modelId && hasImages
-    && declaredCapabilities.length > 0
-    && !declaredCapabilities.some(value => value === 'vision' || value === 'image')
-    && callOptions.role !== 'orchestrator';
-  const resolved = needsVisionFallback
-    ? effectiveCognitiveMode
-      ? resolveModelForCognitiveMode(effectiveCognitiveMode, 'orchestrator', username)
-      : resolveModel('orchestrator', undefined, username)
-    : requestedModel;
 
   // Merge options: model defaults + call-specific options
   const mergedOptions = {
@@ -277,7 +267,6 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         hadThinking: !!thinking,
         thinkingLength: thinking?.length || 0,
         imageInput: hasImages,
-        capabilityFallback: needsVisionFallback ? 'orchestrator' : null,
       },
     });
 

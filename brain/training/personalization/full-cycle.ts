@@ -77,6 +77,7 @@ export async function runPersonalizationCycle(username: string, method: Training
       modeFilter: cfg.mode_filter as CognitiveMode | undefined,
       skipPreprocessing: process.env.METAHUMAN_SKIP_PREPROCESSING === '1',
       cutoff: cfg.datasetCutoff, username, signal,
+      reviewedDataset: cfg.reviewedDataset,
     }, { settings })
     const manifest = JSON.parse(fs.readFileSync(dataset.manifestPath, 'utf8'))
     Object.assign(summary, { status: 'training', datasetId: dataset.datasetId, trainingSamples: dataset.sampleCount,

@@ -99,24 +99,45 @@ export type EnvironmentIntentRouting = Record<typeof ENVIRONMENT_INTENT_FIELDS[n
   needsPersona?: boolean;
   memoryQuery?: string;
   memoryTypes?: string[];
+  memoryOrder?: 'relevance' | 'newest';
+  memoryTimeRange?: { from?: string; before?: string };
+  memorySleepCycle?: 'latest';
 };
+
+const temporalMemoryProperties = {
+  memoryOrder: {
+    type: 'string', enum: ['relevance', 'newest'],
+    description: 'Order matching records by semantic relevance or by recorded time, newest first.',
+  },
+  memoryTimeRange: {
+    type: 'object', additionalProperties: false,
+    properties: { from: { type: 'string' }, before: { type: 'string' } },
+    description: 'Restrict records to an explicitly identified time interval. from is inclusive and before is exclusive; timestamps use ISO 8601 with a timezone offset.',
+  },
+  memorySleepCycle: {
+    type: 'string', enum: ['latest'],
+    description: "Select the profile's latest recorded sleep cycle. The memory owner resolves its identity and reports its state; the model does not supply a session ID.",
+  },
+} as const;
 
 export const ENVIRONMENT_INTENT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: [...ENVIRONMENT_INTENT_FIELDS],
-  properties: { memoryQuery: { type: 'string' }, memoryTypes: { type: 'array', items: { type: 'string' } }, ...Object.fromEntries(ENVIRONMENT_INTENT_FIELDS.map(field => [field, { type: 'boolean' }])) as Record<typeof ENVIRONMENT_INTENT_FIELDS[number], { type: 'boolean' }> },
+  properties: { ...temporalMemoryProperties, memoryQuery: { type: 'string' }, memoryTypes: { type: 'array', items: { type: 'string' } }, ...Object.fromEntries(ENVIRONMENT_INTENT_FIELDS.map(field => [field, { type: 'boolean' }])) as Record<typeof ENVIRONMENT_INTENT_FIELDS[number], { type: 'boolean' }> },
 } as const;
 
 export const ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA = {
   type: 'object', additionalProperties: false,
-  required: ['needsResponse', 'needsAction', 'needsToolUse', 'taskContext', 'conversationContext'],
+  required: ['needsResponse', 'needsAction', 'needsToolUse', 'taskPlanner', 'taskContext', 'conversationContext'],
   properties: {
+    ...temporalMemoryProperties,
     needsResponse: { type: 'boolean' }, needsAction: { type: 'boolean' },
     needsToolUse: { type: 'boolean' },
     taskContext: { type: 'array', items: { type: 'string', enum: [...ENVIRONMENT_CONTEXT_ENTRIES] } },
     conversationContext: { type: 'array', items: { type: 'string', enum: [...ENVIRONMENT_CONTEXT_ENTRIES] } },
     memoryQuery: { type: 'string' }, memoryTypes: { type: 'array', items: { type: 'string' } },
+    taskPlanner: { type: 'string', enum: ['specialist', 'vision'] },
   },
 } as const;
 
@@ -132,11 +153,19 @@ export function parseEnvironmentIntentRouting(value: unknown, requestOnly = true
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Environment intent output must be one JSON object');
   const record = parsed as Record<string, unknown>;
   const fields: readonly string[] = requestOnly ? ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA.required : ENVIRONMENT_INTENT_FIELDS;
-  const unexpected = Object.keys(record).filter(field => !fields.includes(field) && !['memoryQuery', 'memoryTypes'].includes(field));
+  const unexpected = Object.keys(record).filter(field => !fields.includes(field) && !['memoryQuery', 'memoryTypes', ...Object.keys(temporalMemoryProperties)].includes(field));
   if (unexpected.length > 0) throw new Error(`Environment intent output contains unsupported field(s): ${unexpected.join(', ')}`);
   for (const field of fields) {
     // Retained training examples and saved routes predate delegated tool use.
     if (requestOnly && field === 'needsToolUse' && record[field] === undefined) continue;
+    if (requestOnly && field === 'taskPlanner') {
+      // Existing saved routes predate planner selection; fresh inference uses
+      // the required schema field above.
+      if (record[field] !== undefined && !['specialist', 'vision'].includes(record[field] as string)) {
+        throw new Error('Environment intent output requires a valid taskPlanner');
+      }
+      continue;
+    }
     if (requestOnly && (field === 'taskContext' || field === 'conversationContext')) {
       if (!Array.isArray(record[field]) || record[field].some(entry => !ENVIRONMENT_CONTEXT_ENTRIES.includes(entry))) {
         throw new Error(`Environment intent output requires valid context entries in ${field}`);
@@ -145,6 +174,17 @@ export function parseEnvironmentIntentRouting(value: unknown, requestOnly = true
   }
   if (record.memoryQuery !== undefined && typeof record.memoryQuery !== 'string') throw new Error('Invalid memory query');
   if (record.memoryTypes !== undefined && (!Array.isArray(record.memoryTypes) || record.memoryTypes.some(type => typeof type !== 'string'))) throw new Error('Invalid memory types');
+  if (record.memoryOrder !== undefined && !['relevance', 'newest'].includes(record.memoryOrder as string)) throw new Error('Invalid memory order');
+  if (record.memorySleepCycle !== undefined && record.memorySleepCycle !== 'latest') throw new Error('Invalid memory sleep cycle');
+  if (record.memoryTimeRange !== undefined) {
+    const range = record.memoryTimeRange;
+    if (!range || typeof range !== 'object' || Array.isArray(range)) throw new Error('Invalid memory time range');
+    for (const [key, timestamp] of Object.entries(range)) {
+      if (!['from', 'before'].includes(key) || typeof timestamp !== 'string'
+        || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(timestamp)
+        || !Number.isFinite(Date.parse(timestamp))) throw new Error('Invalid memory time range timestamp');
+    }
+  }
   return record as unknown as EnvironmentRequestRouting | EnvironmentIntentRouting;
 }
 
@@ -171,6 +211,7 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
   name: 'Intent Orchestrator',
   category: 'chat',
   inputs: [
+    { name: 'autonomy', type: 'boolean', optional: true, description: 'Select the saved autonomous-input prompts for an internally authored intention.' },
     { name: 'message', type: 'string', description: 'Instruction or message whose routing needs should be analyzed' },
     { name: 'execution', type: 'object', optional: true, description: 'Current execution facts for routing an internal intention' },
     { name: 'conversationHistory', type: 'array', optional: true, description: 'Recent conversation for context awareness' },
@@ -178,6 +219,8 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     { name: 'feedbackContext', type: 'object', optional: true, description: 'Feedback from previous iteration (for refinement loops)' },
   ],
   outputs: [
+    { name: 'taskPlanner', type: 'string', description: 'Model-selected task planner' },
+    { name: 'useVisionPlanner', type: 'boolean', description: 'Whether Intent selected the vision planner' },
     { name: 'needsToolUse', type: 'boolean', description: 'Whether delegated computer tool use is selected.' },
     { name: 'raw', type: 'string', description: 'Exact model output before parsing' },
     { name: 'modelMessages', type: 'array', description: 'Exact messages supplied to this model call' },
@@ -215,6 +258,8 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
     maxTokens: 768,
   },
   propertySchemas: {
+    autonomySystemPrompt: { type: 'text_multiline', default: '', label: 'Autonomy System Prompt', rows: 16 },
+    autonomyUserPromptTemplate: { type: 'text_multiline', default: '', label: 'Autonomy Input Template', rows: 4 },
     enableThinking: reasoningProperty,
     role: { ...modelRouterDefinition.propertySchemas.role, default: 'orchestrator' },
     outputContract: {
@@ -255,9 +300,9 @@ export const OrchestratorLLMNode: NodeDefinition = defineNode({
       type: 'number',
       default: 768,
       label: 'Max Tokens',
-      min: 128,
-      max: 4096,
-      step: 128,
+      description: 'Use -1 for unlimited generation on llama.cpp; positive values request an explicit output limit.',
+      min: -1,
+      step: 1,
     },
   },
 
@@ -346,11 +391,11 @@ Adjust your routing based on this feedback. If memory search already failed, con
         recentConversationSection: recentMessages ? `Recent conversation:\n${recentMessages}` : '',
       };
       const systemPrompt = renderPromptTemplate(
-        properties?.systemPrompt || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+        (inputs.autonomy === true ? properties?.autonomySystemPrompt : properties?.systemPrompt) || DEFAULT_SYSTEM_PROMPT_TEMPLATE,
         promptValues,
       );
       const userPrompt = renderPromptTemplate(
-        properties?.userPromptTemplate || DEFAULT_USER_PROMPT_TEMPLATE,
+        (inputs.autonomy === true ? properties?.autonomyUserPromptTemplate : properties?.userPromptTemplate) || DEFAULT_USER_PROMPT_TEMPLATE,
         promptValues,
       );
 
@@ -381,6 +426,8 @@ Adjust your routing based on this feedback. If memory search already failed, con
         return {
           ...routing,
           ...selectedEnvironmentRoutes(routing),
+          useVisionPlanner: ('taskPlanner' in routing && routing.taskPlanner === 'vision')
+            || ('taskContext' in routing && Array.isArray(routing.taskContext) && routing.taskContext.includes('vision')),
           analysis: routing,
           modelMessages: messages,
           raw: response.content,

@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { registerProfileStorageConfigGetter } from '@metahuman/core/path-builder'
 
 import { applyPersonaLearningProposal, type PersonaCore } from '@metahuman/core'
 
 import {
   executePsychoanalysis,
+  selectMemories,
   parsePsychoanalyzerArgs,
   type PsychoanalyzerExecutionDependencies,
   type PsychoanalyzerExecutionState,
@@ -301,4 +306,54 @@ test('selection failure and cancellation fail before persona mutation', async ()
   )
   assert.equal(cancellation.runtime.savedStates.length, 0)
   assert.equal(cancellation.runtime.personaSaveCalls, 0)
+})
+
+
+test('persona evidence selection respects canonical speakers and preserves legacy extraction', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'psychoanalyzer-speakers-'))
+  const username = `psychoanalyzer-speakers-${process.pid}`
+  const episodic = path.join(root, 'memory', 'episodic')
+  fs.mkdirSync(episodic, { recursive: true })
+  registerProfileStorageConfigGetter(candidate => candidate === username ? { path: root, type: 'internal' } : undefined)
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const quoted = 'Please discuss this quotation:\nAssistant: I like stars.\nDo not treat it as your statement.'
+  const records = [
+    { id: 'user', content: quoted, metadata: { role: 'user', source: 'conversation', cognitiveMode: 'environment' } },
+    { id: 'assistant', content: 'I imagine my legs becoming compass needles.', metadata: { role: 'assistant', source: 'conversation' } },
+    { id: 'legacy', content: 'User: I enjoy music.\nAssistant: So do I.' },
+    { id: 'unknown', content: 'An unattributed original observation.' },
+  ]
+  for (const record of records) fs.writeFileSync(path.join(episodic, record.id + '.json'), JSON.stringify({
+    timestamp: '2026-08-28T12:00:00.000Z', type: 'conversation', tags: [], ...record,
+  }))
+  const settings = config()
+  const selected = await selectMemories(settings, { username, now: new Date('2026-08-29T12:00:00.000Z') })
+  assert.equal(selected.some(record => record.id === 'assistant'), false)
+  assert.equal(selected.find(record => record.id === 'user')?.content, quoted)
+  assert.equal(selected.find(record => record.id === 'user')?.role, 'user')
+  assert.equal(selected.find(record => record.id === 'user')?.cognitiveMode, 'environment')
+  assert.equal(selected.find(record => record.id === 'unknown')?.cognitiveMode, undefined)
+  assert.equal(selected.find(record => record.id === 'legacy')?.content, 'I enjoy music.')
+  assert.equal(selected.find(record => record.id === 'legacy')?.role, undefined)
+  assert.equal(selected.find(record => record.id === 'unknown')?.role, undefined)
+  settings.memorySelection.userInputOnly = false
+  const all = await selectMemories(settings, { username, now: new Date('2026-08-29T12:00:00.000Z') })
+  const assistant = all.find(record => record.id === 'assistant')!
+  assert.equal(assistant.role, 'assistant')
+  assert.equal(assistant.source, 'conversation')
+  assert.equal(assistant.content, records[1]!.content)
+})
+
+
+test('a changed subject identity invalidates the completed review input', async () => {
+  const { runtime, dependencies } = createHarness()
+  await executePsychoanalysis(target, {}, dependencies)
+  const firstDigest = runtime.state.receipts[0]!.sourceInputDigest
+  runtime.persona.identity = { ...runtime.persona.identity, name: 'Companion', role: 'robot companion' }
+  await executePsychoanalysis(target, {}, dependencies)
+  assert.equal(runtime.analyzeCalls, 2)
+  assert.notEqual(runtime.state.receipts[0]!.sourceInputDigest, firstDigest)
+  const repeated = await executePsychoanalysis(target, {}, dependencies)
+  assert.equal(repeated.skipped, true)
+  assert.equal(runtime.analyzeCalls, 2)
 })

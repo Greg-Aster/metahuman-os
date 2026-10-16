@@ -98,8 +98,9 @@ export async function interpretInstructions(input: {
     }, undefined, signal, undefined, read)
     signal.throwIfAborted()
     if (state.status !== 'completed') throw state.error ?? new Error('Instruction interpretation did not complete')
-    return { ...input.identity, route: requireGraphNodeOutput(state, 'orchestrator_llm'),
-      response: graph.nodes.some(node => node.data.nodeType === 'environment_task_planner')
+    const route = requireGraphNodeOutput(state, 'orchestrator_llm')
+    return { ...input.identity, route,
+      response: route.needsAction === false ? undefined : graph.nodes.some(node => node.data.nodeType === 'environment_task_planner')
         ? requireGraphNodeOutput(state, 'environment_task_planner').rawResponse
         : requireGraphNodeOutput(state, 'model_router').response,
       memory: state.nodes.get(graph.nodes.find(node => node.data.nodeType === 'memory_router')?.id ?? '')?.outputs }

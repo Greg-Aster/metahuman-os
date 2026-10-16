@@ -571,6 +571,7 @@ export function captureEventWithDetails(content: string, opts: CaptureEventOptio
           type: event.type,
           tags: event.tags,
           entities: event.entities,
+          metadata: event.metadata,
           path: filepath,
         },
         metadata: { producer: 'memory-capture' },
@@ -937,10 +938,33 @@ export function updateEpisodicMemoryMetadata(
     throw new Error(`Episodic memory source changed after Curator review: ${input.relativePath}`);
   }
 
+  let updatedMetadata: EpisodicEventMetadata = { ...current.metadata, ...input.metadata };
+  if ('curated' in metadata) {
+    const previous = current.metadata ?? {};
+    const savedReviews = previous.curatorReviews;
+    const reviews: ToolParameters = savedReviews && typeof savedReviews === 'object' && !Array.isArray(savedReviews)
+      ? { ...savedReviews } : {};
+    if (typeof previous.curatorRecordId === 'string' && !reviews[previous.curatorRecordId]) {
+      reviews[previous.curatorRecordId] = toToolParameters({
+        recordFile: previous.curatorRecordFile, sourceHash: previous.curatorSourceHash,
+        policyVersion: previous.curatorPolicyVersion, status: previous.curationStatus,
+        reviewedAt: previous.curatedAt,
+      });
+    }
+    reviews[metadata.curatorRecordId] = {
+      recordFile: metadata.curatorRecordFile, sourceHash: metadata.curatorSourceHash,
+      policyVersion: metadata.curatorPolicyVersion, status: metadata.curationStatus,
+      reviewedAt: metadata.curatedAt,
+    };
+    updatedMetadata = { ...current.metadata, curated: true, curatedAt: metadata.curatedAt, curatorReviews: reviews };
+    for (const key of ['curatorRecordId', 'curatorRecordFile', 'curatorSourceHash', 'curatorPolicyVersion', 'curationStatus']) {
+      delete updatedMetadata[key];
+    }
+  }
   const candidate: EpisodicEvent = {
     ...current,
     ...(curation ? {} : { tags: input.tags, entities: input.entities }),
-    metadata: { ...current.metadata, ...input.metadata },
+    metadata: updatedMetadata,
   };
   const validation = validateEvent(candidate);
   if (!validation.valid || !validation.sanitized) {
@@ -953,7 +977,7 @@ export function updateEpisodicMemoryMetadata(
     ...current,
     tags: validation.sanitized.tags,
     entities: validation.sanitized.entities,
-    metadata: { ...current.metadata, ...input.metadata },
+    metadata: updatedMetadata,
   };
 
   const encrypted = input.relativePath.endsWith(ENCRYPTED_EXTENSION);

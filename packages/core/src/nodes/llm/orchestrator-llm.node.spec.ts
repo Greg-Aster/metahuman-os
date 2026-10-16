@@ -9,10 +9,12 @@ import {
 test('Environment intent selects context and routes without owning the later objective decision', () => {
   const routing = parseEnvironmentIntentRouting(JSON.stringify({
     needsResponse: true, needsAction: true, needsToolUse: false,
+    taskPlanner: 'vision',
     taskContext: ['environment', 'vision'],
     conversationContext: ['conversationHistory', 'robotStatus'],
   }));
   assert.equal(routing.needsAction, true);
+  assert.equal(routing.taskPlanner, 'vision');
   assert.deepEqual(ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA.required, Object.keys(routing));
   assert.equal('needsTaskLifecycle' in ENVIRONMENT_REQUEST_INTENT_JSON_SCHEMA.properties, false);
 });

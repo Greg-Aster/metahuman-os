@@ -28,6 +28,14 @@ export interface RunRemoteTrainingOptions {
   samples_used: number
   username: string
   signal?: AbortSignal
+  specialistJob?: {
+    specialist: 'intent' | 'task'
+    gpuType: string
+    volumeInGb: number
+    containerDiskInGb: number
+    maxHourlyCost: number
+    maxTotalCost: number
+  }
 }
 
 interface RunRemoteTrainingResult {
@@ -43,6 +51,8 @@ interface RunRemoteTrainingResult {
   gguf_path?: string
   s3_url?: string
   s3_key?: string
+  hourlyCost?: number
+  budgetDeadline?: string
   error?: string
   termination_error?: string
 }
@@ -121,6 +131,49 @@ function requireCommand(result: CommandResult, stage: string): void {
   if (result.exitCode !== 0) throw new Error(stage + ' failed: ' + result.stderr.trim() + ' (exit ' + result.exitCode + ')')
 }
 
+export function specialistRemoteReceipt(value: unknown, expected: { baseModel: string; configSha256: string; samples: number }) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Specialist candidate receipt is missing')
+  const result = value as Record<string, any>
+  if (result.version !== 1 || result.status !== 'candidate' || result.baseModel !== expected.baseModel
+    || result.configSha256 !== expected.configSha256 || result.trainingSamples !== expected.samples
+    || result.datasetId !== null || result.evaluationPolicy !== 'development' || result.evaluationSamples !== 0
+    || result.qualityGate !== 'external-evaluation-required' || result.activation !== 'not-activated'
+    || result.servingValidation !== 'required' || result.supervision !== 'final-assistant-only') {
+    throw new Error('Specialist receipt does not match the submitted complete-data fit')
+  }
+  if (!Number.isSafeInteger(result.supervisedTokens) || result.supervisedTokens < 1
+    || !/^[a-f0-9]{64}$/.test(result.templateSha256 ?? '') || !result.artifacts || typeof result.artifacts !== 'object') {
+    throw new Error('Specialist candidate has incomplete training or artifact evidence')
+  }
+  for (const [name, hash] of Object.entries(result.artifacts)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name) || name.includes('..') || typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) {
+      throw new Error('Specialist candidate artifact inventory is invalid')
+    }
+  }
+  if (!result.artifacts['adapter_model.safetensors'] || !result.artifacts['adapter_config.json'] || !result.artifacts['tokenizer_config.json']) {
+    throw new Error('Specialist candidate is missing its adapter or tokenizer')
+  }
+  return result as Record<string, unknown> & { artifacts: Record<string, string> }
+}
+
+function specialistBudgetDuration(job: NonNullable<RunRemoteTrainingOptions['specialistJob']>) {
+  if (![job.volumeInGb, job.containerDiskInGb, job.maxHourlyCost, job.maxTotalCost].every(n => Number.isFinite(n) && n > 0)
+    || !job.gpuType.trim() || job.maxTotalCost / job.maxHourlyCost * 3_600_000 <= 90_000) {
+    throw new Error('Invalid specialist pod budget')
+  }
+  return job.maxTotalCost / job.maxHourlyCost * 3_600_000 - 90_000
+}
+
+export function specialistRemoteBudget(gpuHourly: number, job: NonNullable<RunRemoteTrainingOptions['specialistJob']>, startedAt: number) {
+  const duration = specialistBudgetDuration(job)
+  const storageHourly = (job.volumeInGb + job.containerDiskInGb) * .10 / (30 * 24)
+  const hourly = gpuHourly + storageHourly
+  if (!Number.isFinite(gpuHourly) || gpuHourly <= 0 || !Number.isFinite(hourly) || hourly > job.maxHourlyCost || !Number.isFinite(startedAt)) {
+    throw new Error('Allocated pod price exceeds the approved hourly budget or is unavailable')
+  }
+  return { hourly, storageHourly, deadline: startedAt + duration }
+}
+
 export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise<RunRemoteTrainingResult> {
   opts.signal?.throwIfAborted()
   const provider = loadRunpodConfig(opts.username)
@@ -128,6 +181,14 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
   const cfg = JSON.parse(fs.readFileSync(opts.CONFIG_FILE, 'utf8'))
   const manifest = JSON.parse(fs.readFileSync(opts.DATASET_MANIFEST_FILE, 'utf8'))
   if (cfg.base_model !== manifest.baseModel) throw new Error('Config and frozen dataset base models differ')
+  const job = opts.specialistJob
+  if (job) specialistBudgetDuration(job)
+  if (job && (cfg.require_exact_messages !== true || cfg.specialist !== job.specialist
+    || manifest.owner !== 'environment-action-selector' || manifest.specialist !== job.specialist
+    || manifest.mode !== 'reused-development-settings-training' || manifest.priorHeldOutUsed !== false
+    || manifest.trainingRecords !== opts.samples_used || opts.EVAL_DATA_FILE)) {
+    throw new Error('Remote specialist job requires its complete development-only fit and frozen provenance')
+  }
   const key = process.env.RUNPOD_SSH_KEY_PATH || path.join(os.homedir(), '.ssh', 'id_ed25519')
   if (!fs.existsSync(key) || !fs.existsSync(key + '.pub')) throw new Error('Configure RUNPOD_SSH_KEY_PATH with an existing SSH key pair before training')
   const publicKey = fs.readFileSync(key + '.pub', 'utf8').trim()
@@ -135,7 +196,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
   const s3 = process.env.METAHUMAN_DISABLE_S3 === '0' ? loadS3ConfigFromEnv() : null
   if (process.env.METAHUMAN_DISABLE_S3 === '0' && !s3) throw new Error('S3 backup was requested but its credentials are incomplete')
   const script = path.join(systemPaths.root, 'docker/runpod-trainer/train_unsloth.py')
-  for (const file of [script, opts.CLEAN_DATA_FILE, opts.EVAL_DATA_FILE, opts.DATASET_MANIFEST_FILE, opts.CONFIG_FILE]) {
+  for (const file of [script, opts.CLEAN_DATA_FILE, ...(!job ? [opts.EVAL_DATA_FILE] : []), opts.DATASET_MANIFEST_FILE, opts.CONFIG_FILE]) {
     if (!fs.statSync(file).isFile()) throw new Error('Training input is not a file: ' + file)
   }
   fs.mkdirSync(opts.FINAL_ADAPTER_DIR, { recursive: true, mode: 0o700 })
@@ -151,8 +212,10 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
   const saveSummary = () => safeWriteJSON(opts.SUMMARY_FILE, {
     ...summary, username: opts.username, runLabel: opts.RUN_LABEL, datasetId: manifest.datasetId,
     baseModel: cfg.base_model, candidateDirectory: opts.FINAL_ADAPTER_DIR,
+    ...(job ? { specialistJob: job } : {}),
   })
   const controller = new AbortController()
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined
   const cancel = () => controller.abort(new Error('Remote training was cancelled'))
   process.once('SIGTERM', cancel)
   process.once('SIGINT', cancel)
@@ -162,8 +225,12 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
   saveSummary()
   try {
     controller.signal.throwIfAborted()
-    tracker.startStage('pod_creation', 'Requesting configured GPU: ' + provider.gpuType)
+    tracker.startStage('pod_creation', 'Requesting configured GPU: ' + (job?.gpuType ?? provider.gpuType))
     summary.creationRequestedAt = new Date().toISOString()
+    if (job) {
+      const maximumDuration = specialistBudgetDuration(job)
+      budgetTimer = setTimeout(() => controller.abort(new Error('Approved specialist training budget exhausted')), maximumDuration)
+    }
     saveSummary()
     // A create with an uncertain response must never be retried: it may have
     // allocated a billable pod. Persist its identifier immediately on receipt.
@@ -171,9 +238,10 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
       provider.apiKey,
       'mutation CreateTrainingPod($input: PodFindAndDeployOnDemandInput) { podFindAndDeployOnDemand(input: $input) { id } }',
       { input: {
-        templateId: provider.templateId, gpuTypeId: provider.gpuType, cloudType: 'ALL',
+        templateId: provider.templateId, gpuTypeId: job?.gpuType ?? provider.gpuType, cloudType: 'ALL',
         name: summary.podName, gpuCount: 1,
-        minVcpuCount: 4, minMemoryInGb: 32, volumeInGb: 306, containerDiskInGb: 40,
+        minVcpuCount: 4, minMemoryInGb: 32, volumeInGb: job?.volumeInGb ?? 306, containerDiskInGb: job?.containerDiskInGb ?? 40,
+        volumeMountPath: '/workspace/data',
         ports: '22/tcp', supportPublicIp: true, startSsh: true,
         env: [{ key: 'SSH_PUBLIC_KEY', value: publicKey }],
       } },
@@ -181,6 +249,14 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     if (!created.podFindAndDeployOnDemand?.id) throw new Error('RunPod creation has no pod receipt; inspect your provider account before retrying')
     summary.pod_id = created.podFindAndDeployOnDemand.id
     saveSummary()
+    if (job) {
+      const priced = await callRunpodGraphQL<{ pod: { costPerHr: number } | null }>(provider.apiKey,
+        'query SpecialistPodPrice($id: String!) { pod(input: {podId:$id}) { costPerHr } }', { id: summary.pod_id }, { signal: controller.signal })
+      const budget = specialistRemoteBudget(priced.pod?.costPerHr ?? NaN, job, Date.parse(summary.creationRequestedAt))
+      summary.hourlyCost = budget.hourly
+      summary.budgetDeadline = new Date(budget.deadline).toISOString()
+      saveSummary()
+    }
     tracker.completeStage('pod_creation')
     tracker.startStage('ssh_connection', 'Waiting for the pod and its exposed SSH port')
     let connection: SshConnection | undefined
@@ -209,12 +285,12 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     saveSummary()
     tracker.completeStage('ssh_connection')
     tracker.startStage('file_upload', 'Uploading frozen training and evaluation inputs')
-    const remoteRoot = '/workspace/metahuman-training-' + opts.RUN_LABEL
+    const remoteRoot = '/workspace/data/metahuman-training-' + opts.RUN_LABEL
     if (!/^[0-9A-Za-z_-]+$/.test(opts.RUN_LABEL)) throw new Error('Invalid run label')
     requireCommand(await ssh(connection, 'mkdir -m 700 ' + quoteShell(remoteRoot), { signal: controller.signal }), 'Run directory creation')
     const uploads = [
       [script, 'train_unsloth.py'], [path.join(systemPaths.root, 'docker/runpod-trainer/requirements.txt'), 'requirements.txt'],
-      [opts.CLEAN_DATA_FILE, 'train.jsonl'], [opts.EVAL_DATA_FILE, 'eval.jsonl'],
+      [opts.CLEAN_DATA_FILE, 'train.jsonl'], ...(!job ? [[opts.EVAL_DATA_FILE, 'eval.jsonl']] : []),
       [opts.DATASET_MANIFEST_FILE, 'dataset-manifest.json'], [opts.CONFIG_FILE, 'config.json'],
     ]
     const verified: Record<string, string> = {}
@@ -229,9 +305,10 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
       if (checksum.stdout.trim().split(/\s+/)[0] !== verified[name]) throw new Error('Uploaded checksum mismatch: ' + name)
       if (name === 'requirements.txt') {
         requireCommand(await ssh(connection,
-          '/workspace/unsloth-venv/bin/python -m pip check && /workspace/unsloth-venv/bin/python ' +
+          '/workspace/unsloth-venv/bin/python -m pip install --no-cache-dir -r ' + quoteShell(destination) +
+          ' && /workspace/unsloth-venv/bin/python -m pip check && /workspace/unsloth-venv/bin/python ' +
           quoteShell(remoteRoot + '/train_unsloth.py') + ' --check-environment',
-          { signal: controller.signal }), 'Pinned training environment validation')
+          { signal: controller.signal, stream: true }), 'Pinned training environment installation and validation')
       }
     }
     summary.upload_verification = createHash('sha256').update(JSON.stringify(verified)).digest('hex')
@@ -240,8 +317,8 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     tracker.startStage('training', 'Training and evaluating the serialized candidate')
     const command = [
       '/workspace/unsloth-venv/bin/python', remoteRoot + '/train_unsloth.py',
-      '--data', remoteRoot + '/train.jsonl', '--eval-data', remoteRoot + '/eval.jsonl',
-      '--manifest', remoteRoot + '/dataset-manifest.json', '--config', remoteRoot + '/config.json',
+      '--data', remoteRoot + '/train.jsonl', ...(!job ? ['--eval-data', remoteRoot + '/eval.jsonl', '--manifest', remoteRoot + '/dataset-manifest.json'] : []),
+      '--config', remoteRoot + '/config.json',
       '--output', remoteRoot + '/candidate',
     ].map(quoteShell).join(' ')
     requireCommand(await ssh(connection, command, { signal: controller.signal, stream: true }), 'Remote trainer')
@@ -249,7 +326,9 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     tracker.startStage('adapter_download', 'Verifying candidate artifacts')
     const receipt = await ssh(connection, 'cat ' + quoteShell(remoteRoot + '/candidate/training-result.json'), { signal: controller.signal })
     requireCommand(receipt, 'Read candidate receipt')
-    const result = parseTrainingCandidateResult(JSON.parse(receipt.stdout), manifest.datasetId, cfg.base_model)
+    const result = job ? specialistRemoteReceipt(JSON.parse(receipt.stdout), { baseModel: cfg.base_model,
+      configSha256: await sha256File(opts.CONFIG_FILE), samples: opts.samples_used })
+      : parseTrainingCandidateResult(JSON.parse(receipt.stdout), manifest.datasetId, cfg.base_model)
     if (cfg.gguf_conversion?.enabled && !result.artifacts['model.gguf']) throw new Error('Requested GGUF was not produced')
     for (const [name, expected] of Object.entries(result.artifacts)) {
       const localFile = path.join(opts.FINAL_ADAPTER_DIR, name)
@@ -269,6 +348,7 @@ export async function runRemoteTraining(opts: RunRemoteTrainingOptions): Promise
     summary.error = (error as Error).message
     tracker.fail(summary.error)
   } finally {
+    if (budgetTimer) clearTimeout(budgetTimer)
     // SIGTERM/SIGINT abort SSH, then reach provider cleanup. The durable summary
     // retains an unconfirmed pod receipt for the launcher's recovery/stop action.
     if (summary.creationRequestedAt) {

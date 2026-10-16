@@ -17,9 +17,22 @@ export interface EnvironmentPerception {
   expiresAt: string;
   backend: string;
   model: string;
+  queryId?: string;
   summary: string;
-  objects: Array<{ label: string; score?: number; box?: EnvironmentNormalizedBox; identity?: PersonIdentityEstimate }>;
+  objects: Array<{ label: string; score?: number; box?: EnvironmentNormalizedBox; trackId?: string; identity?: PersonIdentityEstimate }>;
   uncertainties: string[];
+}
+
+/** Associate recognition with supplied image bytes by full camera identity. */
+export function recognitionImageAssociation(
+  source: Record<string, unknown> | null,
+  frames: Array<{ id: string; metadata?: Record<string, unknown> }>,
+) {
+  const matchingVisualFrameIds = source ? frames.filter(frame => frame.metadata
+    && ['robotId', 'gatewayInstance', 'epoch', 'counter'].every(key => source[key] !== undefined
+      && source[key] === frame.metadata![key])).map(frame => frame.id) : [];
+  return { matchingVisualFrameIds,
+    imageAssociation: matchingVisualFrameIds.length ? 'exact_frame' : frames.length ? 'different_frame' : 'no_image' };
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -27,8 +40,8 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function text(value: unknown, label: string, limit: number, empty = false): string {
-  if (typeof value !== 'string' || value.length > limit || (!empty && !value.trim())) {
+function text(value: unknown, label: string, limit: number | null, empty = false): string {
+  if (typeof value !== 'string' || (limit !== null && value.length > limit) || (!empty && !value.trim())) {
     throw new Error(`${label} requires bounded text`);
   }
   return value.trim();
@@ -75,7 +88,7 @@ export function normalizeEnvironmentPerception(value: unknown): EnvironmentPerce
   const item = record(value, 'perception');
   const fields = ['version', 'robotId', 'epoch', 'gatewayInstance', 'frameCounter', 'timeBasis',
     'observedAt', 'expiresAt', 'backend', 'model', 'summary', 'objects', 'uncertainties'];
-  if (Object.keys(item).length !== fields.length || Object.keys(item).some(key => !fields.includes(key))
+  if (fields.some(key => !(key in item)) || Object.keys(item).some(key => !fields.includes(key) && key !== 'queryId')
     || item.version !== 1 || item.timeBasis !== 'gateway_receipt') {
     throw new Error('unsupported perception contract');
   }
@@ -91,10 +104,10 @@ export function normalizeEnvironmentPerception(value: unknown): EnvironmentPerce
   }
   const objects = item.objects.map(value => {
     const object = record(value, 'recognized object');
-    if (Object.keys(object).some(key => !['label', 'score', 'box', 'identity'].includes(key))) {
+    if (Object.keys(object).some(key => !['label', 'score', 'box', 'identity', 'trackId'].includes(key))) {
       throw new Error('recognized object contains unsupported fields');
     }
-    const label = text(object.label, 'object label', 80);
+    const label = text(object.label, 'object label', null);
     let box: EnvironmentNormalizedBox | undefined;
     if (object.box !== undefined) {
       const bounds = record(object.box, 'object box');
@@ -109,6 +122,7 @@ export function normalizeEnvironmentPerception(value: unknown): EnvironmentPerce
     const identity = object.identity === undefined ? undefined : personIdentity(object.identity);
     if (identity && (label !== 'person' || !box)) throw new Error('identity requires a localized person');
     return { label, ...(object.score !== undefined ? { score: unit(object.score) } : {}), ...(box ? { box } : {}),
+      ...(object.trackId !== undefined ? { trackId: text(object.trackId, 'track id', 80) } : {}),
       ...(identity ? { identity } : {}) };
   });
   return {
@@ -119,6 +133,7 @@ export function normalizeEnvironmentPerception(value: unknown): EnvironmentPerce
     observedAt: new Date(observedAt).toISOString(), expiresAt: new Date(expiresAt).toISOString(),
     backend: text(item.backend, 'backend', 80), model: text(item.model, 'model', 160),
     summary: text(item.summary, 'summary', 1000, true), objects,
+    ...(item.queryId !== undefined ? { queryId: text(item.queryId, 'query id', 160) } : {}),
     uncertainties: item.uncertainties.map(value => text(value, 'uncertainty', 240)),
   };
 }

@@ -57,7 +57,11 @@ function relevantMemoryItems(value: unknown): Array<string | Record<string, unkn
     .flatMap(memory => typeof memory === 'string' && memory.trim()
       ? [memory.trim() as string | Record<string, unknown>]
       : isRecord(memory) && typeof memory.content === 'string' && memory.content.trim()
-        ? [{ id: memory.id, type: memory.type, timestamp: memory.timestamp, content: memory.content.trim() }]
+        ? [{ id: memory.id, type: memory.type, timestamp: memory.timestamp, content: memory.content.trim(),
+            ...(memory.role !== undefined ? { role: memory.role } : {}),
+            ...(memory.source !== undefined ? { source: memory.source } : {}),
+            ...(memory.sleepSessionId !== undefined ? { sleepSessionId: memory.sleepSessionId } : {}),
+          }]
         : [])
     .slice(0, 3);
 }
@@ -67,6 +71,7 @@ export const environmentContextBuilderNode = defineNode({
   name: 'Environment Context Builder',
   category: 'environment',
   inputs: [
+    { name: 'autonomy', type: 'boolean', optional: true, description: 'Select the saved autonomous-input instructions.' },
     { name: 'toolWork', type: 'object', optional: true, description: 'Attributed delegated-work identity, state, result, and error.' },
     { name: 'plannerDecision', type: 'object', optional: true, description: 'Internally authored intention with its recorded observation, reason and time' },
     { name: 'robotObserver', type: 'object', optional: true, description: 'Source and cycle identity of the internally authored intention' },
@@ -76,9 +81,11 @@ export const environmentContextBuilderNode = defineNode({
     { name: 'sourceObservation', type: 'object', optional: true, description: 'Environment observation supplied before task execution' },
     { name: 'sourceExecution', type: 'object', optional: true, description: 'Execution context supplied before task execution' },
     { name: 'selectedContext', type: 'object', optional: true, description: 'Already selected evidence package from the task context builder' },
+    { name: 'continueHere', type: 'boolean', optional: true, description: 'Whether the task planner retained this turn instead of transferring it' },
     { name: 'selectedTask', type: 'object', optional: true, description: 'Parsed task selection and its admission result' },
     { name: 'program', type: 'object', optional: true, description: 'Program admitted by the task parser for execution, or null' },
     { name: 'taskResult', type: 'object', optional: true, description: 'Returned program progress, evidence and failure from the execution owner' },
+    { name: 'goalAssessment', type: 'object', optional: true, description: 'Completed goal assessment supplied before final response generation' },
     { name: 'resultImages', type: 'array', optional: true, description: 'Validated camera images returned by the selected program' },
     { name: 'resultFrames', type: 'array', optional: true, description: 'Recorded identities and times of the returned images' },
     { name: 'activeExecutions', type: 'array', optional: true, description: 'Unfinished executions available for steering or cancellation' },
@@ -119,9 +126,13 @@ export const environmentContextBuilderNode = defineNode({
   properties: {
     purpose: 'combined',
     planningDelegation: false,
+    specialistPrompt: '',
     systemPrompt: '',
   },
   propertySchemas: {
+    autonomySystemPrompt: { type: 'text_multiline', default: '', label: 'Autonomy System Prompt', rows: 16 },
+    specialistPrompt: { type: 'text_multiline', default: '', label: 'Specialist Instructions',
+      description: 'Instructions for the small Task model only; excluded from delegated and direct larger-planner messages.', rows: 5 },
     planningDelegation: { type: 'boolean', default: false, label: 'Allow Planning Delegation', description: 'Expose the approved optional larger-model planning output for task-only decisions.' },
     purpose: { type: 'select', default: 'combined', label: 'Context Purpose',
       description: 'Task and conversation select their own evidence. Combined preserves the contract of existing saved graphs.',
@@ -138,7 +149,8 @@ export const environmentContextBuilderNode = defineNode({
   async execute(inputs, context, properties) {
 
     // An interrupted program hands input to continuation before conversation recall.
-    if (properties?.purpose === 'conversation' && inputs.program && inputs.taskResult?.done !== true) return {};
+    if (properties?.purpose === 'conversation'
+      && (inputs.continueHere === false || inputs.program && inputs.taskResult?.done !== true)) return {};
     const consumer = properties?.purpose === 'conversation' ? 'conversation' : 'task';
     const routingAnalysis = selectedEnvironmentRoutes(isRecord(inputs.routingAnalysis) ? inputs.routingAnalysis : {}, consumer);
     const recalled = routingAnalysis.needsMemory === true && inputs.memoryWork
@@ -164,12 +176,12 @@ export const environmentContextBuilderNode = defineNode({
       : [];
     const effectiveObservation: EnvironmentObservation | null = observation;
 
-    const systemPrompt = String(properties?.systemPrompt ?? '');
+    const systemPrompt = String((inputs.autonomy === true ? properties?.autonomySystemPrompt : properties?.systemPrompt) ?? '');
     const conversationalInstruction = typeof inputs.instruction === 'string'
       ? inputs.instruction.trim()
       : '';
     const personaText = (Array.isArray(inputs.routingAnalysis?.taskContext) ? routingAnalysis.needsPersona : true) && typeof inputs.personaText === 'string'
-      ? inputs.personaText.trim().slice(0, 2_000)
+      ? inputs.personaText.trim()
       : '';
     const liveStatus = (routingAnalysis.needsRobotStatus === true || environmentSelected
       || (consumer === 'conversation' && Array.isArray(inputs.resultImages) && inputs.resultImages.length > 0)) && typeof context.username === 'string'
@@ -186,7 +198,7 @@ export const environmentContextBuilderNode = defineNode({
     const inputSource = plannerDecision ? 'autonomy' : 'user';
     const directUserTurn = Boolean(userInstruction);
     const replyToContent = directUserTurn && typeof context.replyToContent === 'string'
-      ? context.replyToContent.trim().slice(0, 500)
+      ? context.replyToContent.trim()
       : '';
     const includeRecentHistory = routingAnalysis.needsConversationHistory === true
       && (directUserTurn || Boolean(plannerDecision));
@@ -249,7 +261,6 @@ export const environmentContextBuilderNode = defineNode({
       memories: memoryItems,
       personaText,
       robotStatus,
-      liveStatus: robotStatus || !environmentSelected ? undefined : liveStatus,
       recognition: liveStatus?.recognition,
       replyToContent,
       inputSource,
@@ -257,11 +268,17 @@ export const environmentContextBuilderNode = defineNode({
       currentObservation: inputs.observationCurrent === true,
       currentVisionAvailable: currentVision,
     });
-    const message = plannerDecision ? JSON.stringify({ ...JSON.parse(envelope), plannerDecision,
+    const selectedSleepCycle = recalled?.selectedSleepCycle;
+    const taskEnvelope = context.environmentTaskEvidence || selectedSleepCycle !== undefined
+      ? JSON.stringify({ ...JSON.parse(envelope),
+          ...(context.environmentTaskEvidence ? { taskResultEvidence: context.environmentTaskEvidence } : {}),
+          ...(selectedSleepCycle !== undefined ? { selectedSleepCycle } : {}),
+        }) : envelope;
+    let message = plannerDecision ? JSON.stringify({ ...JSON.parse(taskEnvelope), plannerDecision,
       robotObserver: inputs.robotObserver ?? null,
       sourceObservationAt: inputs.sourceObservationAt ?? null,
       delegatedMemories: relevantMemoryItems(inputs.delegatedMemories),
-    }) : envelope;
+    }) : taskEnvelope;
     if (properties?.purpose === 'conversation') {
       const selected = Array.isArray(inputs.routingAnalysis?.conversationContext) ? JSON.parse(message) : inputs.selectedContext;
       const { capabilityRules: _rules, ...evidence } = selected;
@@ -296,6 +313,7 @@ export const environmentContextBuilderNode = defineNode({
       // frame times remain explicit alongside the new action evidence.
       if (returned && !hasReturnedImages) returned.currentEnvironment.visualFrames = environment?.visualFrames ?? [];
       const conversationMessage = serializeContext({ ...evidence,
+        ...(inputs.goalAssessment ? { goalAssessment: inputs.goalAssessment } : {}),
         ...(inputs.toolWork ? { toolWork: inputs.toolWork } : inputs.routingAnalysis?.needsToolUse === true
           ? { toolWork: { state: 'selected', request: rawInstruction } } : {}),
         ...(returned ? { currentEnvironment: returned.currentEnvironment,
@@ -303,12 +321,15 @@ export const environmentContextBuilderNode = defineNode({
         ...(taskResult ? { execution: inputs.execution ?? evidence.execution,
           taskResult: { done: taskResult.done, objectiveComplete: taskResult.objectiveComplete,
             stepIndex: taskResult.stepIndex, evidence: taskResult.evidence,
-            failure: taskResult.failure, capturedFrameIds: taskResult.capturedFrameIds } } : {}),
+            failure: taskResult.failure, identificationError: taskResult.identificationError, capturedFrameIds: taskResult.capturedFrameIds,
+            planningRequired: taskResult.planningRequired, acquisition: taskResult.acquisition,
+            visionResult: taskResult.visionResult, queryId: taskResult.queryId,
+            perception: taskResult.perception } } : {}),
         selectedTask: { ...selectedTask, commandDescriptions } });
       const images = hasReturnedImages ? inputs.resultImages : Array.isArray(inputs.routingAnalysis?.conversationContext)
         ? selectedImages : (Array.isArray(inputs.images) ? inputs.images : []);
       return { receivedInput: recalled?.receivedInput, selectedContext: evidence, message: conversationMessage, messages: [
-        { role: 'system', content: String(properties.systemPrompt ?? '').trim() },
+        { role: 'system', content: systemPrompt.trim() },
         { role: 'user', content: images.length ? [
           { type: 'text', text: `The attached images are what you saw at the corresponding visualFrames times.\n${conversationMessage}` }, ...images,
         ] : conversationMessage },
@@ -320,17 +341,39 @@ export const environmentContextBuilderNode = defineNode({
       activeExecutions,
       actions: promptObservation?.capabilities.actions ?? [],
       robotCommands: promptObservation?.capabilities.robotCommands ?? [],
+      locomotion: promptObservation?.capabilities.locomotion,
       expressions: promptObservation?.capabilities.expressionLibrary?.map(entry => entry.name) ?? [],
       actionRouteSelected,
+      // Detector operations are advertised interfaces, independent of whether
+      // intent selected recognition evidence for this model call.
+      visionOperations: (suppliedObservation?.state?.recognition as { visionOperations?: string[] } | undefined)?.visionOperations ?? [],
     });
 
-    const modelMessage = serializeContext(JSON.parse(message));
+    const readableContext = JSON.parse(message);
+    if (readableContext.currentEnvironment?.capabilities?.locomotion) {
+      const programSteps: Record<string, unknown>[] = [];
+      for (const branch of (jsonSchema as any).anyOf ?? []) {
+        const items = branch.properties?.program?.properties?.steps?.items;
+        for (const step of items?.anyOf ?? (items ? [items] : [])) {
+          if (step.properties?.kind?.const === 'behavior') programSteps.push(step);
+          if (step.properties?.kind?.const === 'action') {
+            const action = step.properties.action;
+            const locomotion = (action.anyOf ?? [action]).filter((choice: any) => choice.properties?.type?.enum?.includes('move'));
+            if (locomotion.length) programSteps.push({ ...step, properties: { ...step.properties, action: { anyOf: locomotion } } });
+          }
+        }
+      }
+      readableContext.currentEnvironment.capabilities.locomotion.programSteps = programSteps;
+      message = JSON.stringify(readableContext);
+    }
+    const modelMessage = serializeContext(readableContext);
     const planningSchema = withVisualObservationSchema(jsonSchema, selectedFrames);
     const planningMessages = [
       { role: 'system', content: selectorContext },
       { role: 'user', content: renderedContent(modelMessage) },
     ];
     const delegation = properties?.purpose === 'task' && properties.planningDelegation === true;
+    const specialistPrompt = delegation && typeof properties.specialistPrompt === 'string' ? properties.specialistPrompt.trim() : '';
     const delegatedSchema = delegation ? { ...planningSchema, anyOf: [...planningSchema.anyOf, {
       type: 'object', description: PLANNING_DELEGATION_DESCRIPTION,
       properties: { delegatePlanning: { const: true } }, required: ['delegatePlanning'], additionalProperties: false,
@@ -347,7 +390,7 @@ export const environmentContextBuilderNode = defineNode({
       jsonSchema: delegatedSchema,
       frames: selectedFrames,
       messages: [
-        { role: 'system', content: delegation ? `${selectorContext}\n\n${PLANNING_DELEGATION_DESCRIPTION}` : selectorContext },
+        { role: 'system', content: delegation ? [selectorContext, PLANNING_DELEGATION_DESCRIPTION, specialistPrompt].filter(Boolean).join("\n\n") : selectorContext },
         {
           role: 'user',
           content: renderedContent(modelMessage),

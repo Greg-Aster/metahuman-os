@@ -1,188 +1,63 @@
 import { defineNode, NodeInputValidationError } from '../types.js'
-import { visualObservationOutput } from '../environment/visual-observation-output.js'
-import type { RobotOperatorDecision } from './decision-parser.node.js'
-import {
-  ROBOT_AUTONOMY_EXECUTOR_TASK_ID,
-  ROBOT_AUTONOMY_NO_TASK_ID,
-  type RobotAutonomyTaskDescriptor,
-} from './autonomy-task-options.js'
+import { selectActivatedOperations, type ActivationAssessment, type ActivationUpdate } from '../../active-operator/activation.js'
+import type { AutonomyMode } from '../../queue/types.js'
 
-const REQUIRED_FIELDS = new Set([
-  'response',
-  'taskId',
-  'reason',
-  'observationSummary',
-  'instruction',
-])
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-}
-
-function cleanText(value: unknown, maxLength: number): string {
-  return typeof value === 'string'
-    ? value.replace(/\s+/g, ' ').trim().slice(0, maxLength)
-    : ''
-}
-
-function parseJson(value: unknown): unknown {
-  const raw = typeof value === 'string'
-    ? value
-    : isRecord(value) && typeof value.content === 'string'
-      ? value.content
-      : ''
-  try {
-    return JSON.parse(raw.trim())
-  } catch {
-    return null
-  }
-}
-
-function availableTasks(value: unknown): RobotAutonomyTaskDescriptor[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((entry): entry is RobotAutonomyTaskDescriptor => (
-    isRecord(entry)
-    && typeof entry.id === 'string'
-    && typeof entry.name === 'string'
-    && typeof entry.description === 'string'
-    && (entry.kind === 'agent' || entry.kind === 'environment-executor')
-    && typeof entry.handler === 'string'
-    && typeof entry.taskType === 'string'
-    && (entry.priority === 'low' || entry.priority === 'normal' || entry.priority === 'high')
-    && Array.isArray(entry.tags)
-  ))
-}
-
-function taskChoiceDescription(tasks: RobotAutonomyTaskDescriptor[]): string {
-  const choices = tasks.map(task => (
-    `${task.id}: ${cleanText(task.description, 280)}`
-  ))
-  choices.push(`${ROBOT_AUTONOMY_NO_TASK_ID}: start no downstream task; outward speech remains optional`)
-  return `Choose the single capability that best fits the supplied context. Meanings:\n${choices.join('\n')}`
-}
-
-export function buildRobotAutonomyControllerJsonSchema(tasks: unknown) {
-  const catalog = availableTasks(tasks)
-  const taskIds = catalog.map(task => task.id)
-  const decision = {
-    type: 'object',
-    additionalProperties: false,
-    required: [...REQUIRED_FIELDS],
-    properties: {
-      response: {
-        type: 'string',
-        maxLength: 500,
-        description: 'Optional concise first-person outward expression. Speech may accompany any task choice but does not prove that a task or physical action occurred.',
-      },
-      taskId: {
-        type: 'string',
-        enum: [...taskIds, ROBOT_AUTONOMY_NO_TASK_ID],
-        description: taskChoiceDescription(catalog),
-      },
-      reason: {
-        type: 'string',
-        minLength: 1,
-        maxLength: 500,
-        description: 'Why this capability is relevant now, based on supplied status and context rather than list order.',
-      },
-      observationSummary: {
-        type: 'string',
-        minLength: 1,
-        maxLength: 500,
-        description: 'A concise summary of supplied evidence. Narrative history is not current physical proof.',
-      },
-      instruction: {
-        type: 'string',
-        maxLength: 1_000,
-        description: 'For robot-autonomy-executor, one plain-language physical or sensing intention is required. For a catalog agent this may carry useful task context. For none it may be empty. This field is never spoken.',
-      },
-    },
-  } as const
-  const alternative = (ids: string[], requiresInstruction: boolean) => ({
-    ...decision,
-    properties: {
-      ...decision.properties,
-      taskId: { ...decision.properties.taskId, enum: ids },
-      instruction: { ...decision.properties.instruction, ...(requiresInstruction ? { minLength: 1 } : {}) },
-    },
-  })
-  // Complete alternatives are understood by the existing provider grammars.
-  // Only an Executor selection requires an instruction; agents and silence
-  // retain their existing optional context and outward-expression contracts.
-  return { anyOf: [
-    alternative([...taskIds.filter(id => id !== ROBOT_AUTONOMY_EXECUTOR_TASK_ID), ROBOT_AUTONOMY_NO_TASK_ID], false),
-    ...(taskIds.includes(ROBOT_AUTONOMY_EXECUTOR_TASK_ID)
-      ? [alternative([ROBOT_AUTONOMY_EXECUTOR_TASK_ID], true)] : []),
-  ] }
-}
-
-/** Shared choice contract for initial autonomy and result-driven continuation. */
-export function parseRobotAutonomyChoice(responseValue: unknown, taskCatalog: unknown, frames: import('../../environment-interface/types.js').EnvironmentVisualFrame[] = []) {
-  const parsed = parseJson(responseValue)
-  const tasks = availableTasks(taskCatalog)
-  const invalid = (error: string): never => { throw new NodeInputValidationError('response', error) }
-  if (!isRecord(parsed)) return invalid('Robot autonomy controller result was not a JSON object.')
-  if ([...REQUIRED_FIELDS].some(field => !(field in parsed)) || Object.keys(parsed).some(field => !REQUIRED_FIELDS.has(field) && field !== 'visualObservation')) {
-    return invalid('Robot autonomy controller result contains unexpected or missing fields.')
-  }
-
-  const taskId = cleanText(parsed.taskId, 100)
-  const reason = cleanText(parsed.reason, 500)
-  const observationSummary = cleanText(parsed.observationSummary, 500)
-  const instruction = cleanText(parsed.instruction, 1_000)
-  const response = cleanText(parsed.response, 500)
-  const task = tasks.find(candidate => candidate.id === taskId) ?? null
-  if (taskId !== ROBOT_AUTONOMY_NO_TASK_ID && !task) {
-    return invalid('Robot autonomy controller selected a task outside its available catalog.')
-  }
-  if (!reason || !observationSummary) {
-    return invalid('Robot autonomy controller requires a reason and observation summary.')
-  }
-  if (taskId === ROBOT_AUTONOMY_EXECUTOR_TASK_ID && !instruction) {
-    return invalid('Robot Autonomy Executor selection requires one high-level instruction.')
-  }
-
-  const executorDecision: RobotOperatorDecision | null = taskId === ROBOT_AUTONOMY_EXECUTOR_TASK_ID
-    ? { observed: observationSummary, instruction, reason }
-    : null
-  const taskDecision = task?.kind === 'agent'
-    ? { task, reason, observationSummary, ...(instruction ? { instruction } : {}) }
-    : null
+export function buildRobotAutonomyControllerJsonSchema(tasks: Array<{ id: string }>) {
   return {
-    visualObservation: visualObservationOutput(parsed.visualObservation, frames),
-    decisionReceipt: {
-      taskId,
-      reason,
-      observationSummary,
-      ...(instruction ? { instruction } : {}),
-      responseAuthored: Boolean(response),
-    },
-    taskDecision,
-    executorDecision,
-    response,
+    type: 'object', additionalProperties: false, required: ['updates'],
+    properties: { updates: { type: 'array', items: {
+      type: 'object', additionalProperties: false,
+      required: ['operationId', 'activation', 'reason', 'instruction'],
+      properties: {
+        operationId: { type: 'string', enum: tasks.map(task => task.id) },
+        activation: { type: 'number', minimum: 0, maximum: 100 },
+        reason: { type: 'string' }, instruction: { type: 'string' },
+      },
+    } } },
   }
+}
+
+export function parseRobotAutonomyChoice(value: unknown, operations: Array<{ id: string }>): ActivationUpdate[] {
+  const raw = typeof value === 'string' ? value : (value as { content?: string })?.content
+  let parsed: any
+  try { parsed = JSON.parse(raw ?? '') } catch { throw new NodeInputValidationError('response', 'Activation assessment is not JSON') }
+  if (!parsed || Object.keys(parsed).length !== 1 || !Array.isArray(parsed.updates)) {
+    throw new NodeInputValidationError('response', 'Activation assessment requires updates')
+  }
+  return parsed.updates.map((update: any) => {
+    if (!update || Object.keys(update).sort().join(',') !== 'activation,instruction,operationId,reason'
+      || !operations.some(operation => operation.id === update.operationId)
+      || typeof update.activation !== 'number' || !Number.isFinite(update.activation)
+      || update.activation < 0 || update.activation > 100
+      || typeof update.reason !== 'string' || typeof update.instruction !== 'string') {
+      throw new NodeInputValidationError('response', 'Activation update does not match the supplied operation contract')
+    }
+    return update as ActivationUpdate
+  })
 }
 
 export const robotAutonomyControllerParserNode = defineNode({
-  id: 'robot_autonomy_controller_parser',
-  name: 'Validate Autonomy Decision',
-  category: 'operator',
+  id: 'robot_autonomy_controller_parser', name: 'Read Activation Assessment', category: 'operator',
   inputs: [
-    { name: 'frames', type: 'array', optional: true, description: 'Exact images supplied to the controller model' },
-    { name: 'response', type: 'any', description: 'Strict JSON from the Robot Autonomy Controller LLM' },
-    { name: 'availableTasks', type: 'array', description: 'Exact task catalog supplied to the controller LLM' },
+    { name: 'response', type: 'any' },
+    { name: 'availableTasks', type: 'array' },
+    { name: 'activationState', type: 'object' },
   ],
   outputs: [
-    { name: 'visualObservation', type: 'object', description: 'Optional image interpretation independent of the selected task' },
-    { name: 'decisionReceipt', type: 'object', description: 'Validated record of the LLM selection and its supplied rationale' },
-    { name: 'taskDecision', type: 'object', description: 'Catalog-backed finite agent selection, or null when no agent task was selected' },
-    { name: 'executorDecision', type: 'object', description: 'High-level embodied intention only when Robot Autonomy Executor was selected' },
-    { name: 'response', type: 'string', description: 'Optional concise conversation authored by the LLM' },
+    { name: 'assessment', type: 'object' },
   ],
-  properties: {},
-  propertySchemas: {},
-  description: 'Validates one LLM-owned Full-mode decision against the exact task catalog it received. It does not select or execute work.',
-  async execute(inputs) {
-    return parseRobotAutonomyChoice(inputs.response, inputs.availableTasks, inputs.frames)
+  properties: {}, propertySchemas: {},
+  description: 'Records model-selected activation levels and applies the configured Semi or Full selection rule.',
+  async execute(inputs, context) {
+    const updates = parseRobotAutonomyChoice(inputs.response, inputs.availableTasks)
+    const state = inputs.activationState as { mode: AutonomyMode; previous: ActivationAssessment | null; assessedAt: string }
+    const assessedAt = new Date().toISOString()
+    const levels = { ...state.previous?.levels }
+    for (const update of updates) levels[update.operationId] = { ...update, assessedAt }
+    const assessment: ActivationAssessment = {
+      executionId: context.graphExecution!.executionId, assessedAt,
+      mode: state.mode, updates, levels, selected: selectActivatedOperations(updates, state.mode),
+    }
+    return { assessment }
   },
 })

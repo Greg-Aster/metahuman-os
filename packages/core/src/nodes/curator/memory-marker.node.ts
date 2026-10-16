@@ -8,7 +8,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { readCapturedEpisodicEvent, episodicSourceHash, updateEpisodicMemoryMetadata } from '../../memory.js';
 import { resolvePath } from '../../storage-client.js';
 import { CURATOR_POLICY_VERSION, parseStoredCuratedMemory, isSuccessfulCuration, sourcePathsForResult, type CuratorItemResult } from './contracts.js';
-import { curatedRecordFilename, readCuratedMemory } from './curated-store.js';
+import { curatedRecordFilename, readCuratedMemory, sourceCurationStatus } from './curated-store.js';
 
 export interface MarkCuratedResult {
   markedCount: number;
@@ -61,20 +61,14 @@ export function markCuratedResults(curatedResults: CuratorItemResult[], username
     for (const originalMemoryPath of originalMemoryPaths) {
       try {
         const memory = readCapturedEpisodicEvent(username, originalMemoryPath);
-        const metadata = memory.metadata && typeof memory.metadata === 'object' && !Array.isArray(memory.metadata)
-          ? memory.metadata
-          : {};
         const curationStatus = result.disposition;
         const curatorSourceHash = result.curated.provenance!.sourceHashes[memory.id];
         if (!curatorSourceHash || episodicSourceHash(memory) !== curatorSourceHash) {
           throw new Error('Source changed after Curator review');
         }
-        const unchanged = metadata.curated === true
-          && metadata.curatorRecordId === result.curated.id
-          && metadata.curatorRecordFile === curatorRecordFile
-          && metadata.curatorPolicyVersion === CURATOR_POLICY_VERSION
-          && metadata.curatorSourceHash === curatorSourceHash
-          && metadata.curationStatus === curationStatus;
+        const unchanged = sourceCurationStatus(username, memory, {
+          recordId: result.curated.id, recordFile: curatorRecordFile,
+        }).current;
 
         if (unchanged) {
           sourceAlreadyMarkedCount++;

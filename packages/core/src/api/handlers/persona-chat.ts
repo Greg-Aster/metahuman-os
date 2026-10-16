@@ -1,10 +1,11 @@
 /**
- * Persona Chat Handler - UNIFIED
+ * Persona conversation implementation for Work Coordinator chat jobs.
  *
  * Full cognitive graph pipeline for chat - SAME CODE for web and mobile.
  * Supports SSE streaming with real-time progress updates.
  *
- * This replaces the stopgap /api/chat handler with the full cognitive system.
+ * HTTP submissions enter through /api/unified-queue; the chat work handler
+ * invokes this implementation directly.
  */
 
 import type { UnifiedRequest, UnifiedResponse } from '../types.js';
@@ -576,8 +577,7 @@ async function* streamGraphExecution(params: GraphPipelineParams): AsyncGenerato
 // ============================================================================
 
 /**
- * GET /api/persona_chat - SSE streaming chat endpoint
- * POST /api/persona_chat - Same but with body
+ * Execute one admitted persona chat request and stream its graph results.
  */
 export async function handlePersonaChat(req: UnifiedRequest): Promise<UnifiedResponse> {
   console.log(`[persona-chat] 🔵 REQUEST RECEIVED at ${new Date().toISOString()}`);

@@ -230,7 +230,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const username = typeof context.username === 'string' ? context.username.trim() : '';
   const userId = typeof context.userId === 'string' ? context.userId.trim() : '';
   const temperature = (properties?.temperature as number) ?? 0.3;
-  const role = normalizeModelRole(properties?.role, 'orchestrator');
+  const role = normalizeModelRole(properties?.role, 'planner');
   const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
   const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
   const revisionContextTemplate = properties?.revisionContextTemplate ?? DEFAULT_REVISION_CONTEXT_TEMPLATE;
@@ -563,7 +563,7 @@ export const DesirePlanGeneratorNode: NodeDefinition = defineNode({
   properties: {
     enableThinking: false,
     temperature: 0.3,
-    role: 'orchestrator',
+    role: 'planner',
     systemPrompt: SYSTEM_PROMPT,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
     revisionContextTemplate: DEFAULT_REVISION_CONTEXT_TEMPLATE,
@@ -583,7 +583,7 @@ export const DesirePlanGeneratorNode: NodeDefinition = defineNode({
     },
     role: {
       type: 'select',
-      default: 'orchestrator',
+      default: 'planner',
       label: 'LLM Role',
       options: [...MODEL_ROLE_OPTIONS],
     },

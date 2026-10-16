@@ -1,4 +1,4 @@
-import type { PersonaCore } from './identity.js';
+import type { PersonaCore, GoalTier, GoalEntry } from './identity.js';
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
@@ -55,6 +55,15 @@ export function getActivePersonaGoals(persona: PersonaCore): string[] {
       return goal?.status === 'active' ? nonEmptyString(goal.goal) : null;
     })
     .filter((goal): goal is string => Boolean(goal));
+}
+
+export function getStandingPersonaGoals(persona: PersonaCore): Array<GoalEntry & { tier: GoalTier }> {
+  return (['shortTerm', 'midTerm', 'longTerm'] as const).flatMap(tier => {
+    const goals = persona.goals?.[tier];
+    return Array.isArray(goals) ? goals.flatMap(goal =>
+      goal && typeof goal === 'object' && ['active', 'planning', 'proposed', 'aspirational'].includes(goal.status)
+        ? [{ ...goal, tier }] : []) : [];
+  });
 }
 
 export function getPersonaBackground(persona: PersonaCore): string | null {

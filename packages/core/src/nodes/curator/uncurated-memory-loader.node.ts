@@ -8,7 +8,7 @@ import { defineNode, type NodeDefinition, type NodeExecutor } from '../types.js'
 import { scanEpisodicMemoryRecords } from '../../memory.js';
 import { resolvePath, getStorageStatus } from '../../storage-client.js';
 import type { EpisodicMemory } from './contracts.js';
-import { sourceCurationStatus } from './curated-store.js';
+import { curatedRecordFilename, sourceCurationStatus } from './curated-store.js';
 import { assembleCuratorSources } from './source-assembler.js';
 
 const execute: NodeExecutor = async (_inputs, context, properties) => {
@@ -30,7 +30,7 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
   if (!resolved.success || !resolved.path) throw new Error(resolved.error || 'Cannot resolve episodic storage');
   const candidates: (EpisodicMemory & { path: string })[] = [];
   const errors: string[] = [];
-  const currentPaths = new Set<string>();
+  const sourceByPath = new Map<string, EpisodicMemory>();
   for (const outcome of scanEpisodicMemoryRecords(context.userId)) {
     if (outcome.status === 'failed') {
       errors.push(`${outcome.relativePath}: ${outcome.error}`);
@@ -39,7 +39,7 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
     const memory = outcome.record.event;
     if (Date.parse(memory.timestamp) > cutoff) continue;
     const fullPath = path.join(resolved.path, outcome.record.relativePath);
-    if (sourceCurationStatus(context.userId, memory).current) currentPaths.add(fullPath);
+    sourceByPath.set(fullPath, memory);
     candidates.push({ ...memory, path: fullPath });
   }
 
@@ -47,7 +47,13 @@ const execute: NodeExecutor = async (_inputs, context, properties) => {
   // Assemble first: a changed side must bring its previously reviewed partner
   // back into the same review unit rather than becoming an orphan.
   const pending = assembled.memories.filter(memory =>
-    !(memory.sourcePaths ?? [memory.path]).every(sourcePath => currentPaths.has(sourcePath)));
+    !(memory.sourcePaths ?? [memory.path]).every(sourcePath => {
+      const source = sourceByPath.get(sourcePath);
+      return source && sourceCurationStatus(context.userId!, source, {
+        recordId: memory.id,
+        recordFile: curatedRecordFilename({ id: memory.id, originalTimestamp: memory.timestamp }),
+      }).current;
+    }));
   const memories = pending.slice(0, limit);
   return {
     memories,

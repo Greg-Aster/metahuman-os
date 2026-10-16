@@ -200,7 +200,9 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
       type,
       metadata: {
         sources: sourceIds,
+        ...(context.originatingCognitiveMode ? { cognitiveMode: context.originatingCognitiveMode } : {}),
         confidence: 0.7,
+        ...(context.sleepSessionId ? { sleepSessionId: context.sleepSessionId } : {}),
       },
     }));
     const durableInitial = durableCapture(username, dream, captureResult);
@@ -237,10 +239,12 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
         type: 'dream',
         metadata: {
           continuation: true,
+          ...(context.sleepSessionId ? { sleepSessionId: context.sleepSessionId } : {}),
           continuationIndex: continuation.index,
           ...(parentEventId ? { parentEventId } : {}),
           confidence: 0.6,
           sources: sourceIds,
+          ...(context.originatingCognitiveMode ? { cognitiveMode: context.originatingCognitiveMode } : {}),
         },
         },
       ));

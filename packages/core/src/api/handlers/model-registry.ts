@@ -30,6 +30,8 @@ import {
 } from '../../index.js';
 import {
   isModelRole,
+  BIG_BROTHER_MODEL_ID,
+  configuredBigBrotherModel,
   resolveModelById,
   resolveModelForCognitiveMode,
   invalidateModelCache,
@@ -37,12 +39,14 @@ import {
   migrateModelRegistry,
   parseModelRegistry,
   type ModelRegistry,
+  type ModelDefinition,
 } from '../../model-resolver.js';
 import type { CognitiveModeId } from '../../cognitive-mode.js';
 // NOTE: invalidateStatusCache was removed - statusCache no longer exists (was redundant)
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { getLlamaCppAdapters } from '../../providers/llama-cpp.js';
 import { compareEnvironmentSpecialistReports,
   type EnvironmentSpecialistEvaluationReport } from '../../environment-training-promotion.js';
@@ -296,14 +300,18 @@ export async function promoteEnvironmentSpecialist(input: {
   run: string;
   currentReport: string;
   evaluationReport: string;
+  ownerApproval?: { reason: string };
 }): Promise<string> {
   const currentEvidence = JSON.parse(fs.readFileSync(input.currentReport, 'utf8')) as EnvironmentSpecialistEvaluationReport;
   const candidateEvidence = JSON.parse(fs.readFileSync(input.evaluationReport, 'utf8')) as EnvironmentSpecialistEvaluationReport;
+  const comparison = compareEnvironmentSpecialistReports(currentEvidence, candidateEvidence);
+  const ownerApproval = input.ownerApproval?.reason.trim()
+    ? { reason: input.ownerApproval.reason.trim() } : undefined;
   if (candidateEvidence.specialist !== input.specialist
-    || !compareEnvironmentSpecialistReports(currentEvidence, candidateEvidence).promote) {
+    || (!comparison.promote && !ownerApproval)) {
     throw new Error('Environment candidate does not beat the current adapter under the approved comparison rule');
   }
-  const role = input.specialist === 'intent' ? 'environmentIntent' : 'environmentActionSelector';
+  const role = input.specialist === 'intent' ? 'orchestrator' : 'environmentActionSelector';
   const registry = readModelRegistry(input.username);
   const assigned = registry.cognitiveModeMappings?.environment?.[role];
   if (assigned !== input.previousModelId) throw new Error('Environment model role changed during training');
@@ -316,6 +324,10 @@ export async function promoteEnvironmentSpecialist(input: {
   if (!loaded.some(adapter => adapter.path === input.artifactPath)) {
     throw new Error('New Environment LoRA is not loaded by the selected llama.cpp service');
   }
+  const metadata = { ...previous.metadata };
+  // Registration annotations describe the previous artifact, not its successor.
+  delete metadata.trainingProvenance;
+  delete metadata.qualificationStatus;
   const modelId = llamaAdapterModelId(previous.model, previous.options.endpoint, input.artifactPath);
   registry.models[modelId] = {
     ...previous,
@@ -323,8 +335,10 @@ export async function promoteEnvironmentSpecialist(input: {
     roles: [role],
     description: `Environment ${input.specialist} specialist from ${input.run}`,
     options: { ...previous.options, lora: [{ path: input.artifactPath, scale: 1 }] },
-    metadata: { ...previous.metadata, specialist: input.specialist, run: input.run,
+    metadata: { ...metadata, specialist: input.specialist, run: input.run,
       artifactPath: input.artifactPath, evaluationReport: input.evaluationReport,
+      artifactSha256: createHash('sha256').update(fs.readFileSync(input.artifactPath)).digest('hex'),
+      promotionDecision: { comparison, currentReport: input.currentReport, ownerApproval: ownerApproval ?? null },
       activatedAt: new Date().toISOString() },
   };
   registry.cognitiveModeMappings ??= {};
@@ -370,19 +384,22 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
     let availableModels = collapseModelInventory(
       Object.entries(registry.models || {})
         .filter(([id]) => !isRetiredDevelopmentModelId(id))
-        .map(([id, config]) => ({
-          id,
-          provider: config.provider,
-          model: config.model,
-          roles: Array.from(new Set<string>(config.roles || [])),
-          capabilities: Array.from(new Set<string>(config.capabilities || [])),
-          description: config.description || '',
-          adapters: config.adapters || [],
-          baseModel: config.baseModel || null,
-          metadata: config.metadata || {},
-          options: config.options || {},
-          source: 'user-registry' as const
-        }))
+        .map(([id, stored]) => {
+          const config = stored.provider === 'big-brother' ? { ...configuredBigBrotherModel(user.username), roles: stored.roles } : stored;
+          return {
+            id,
+            provider: config.provider,
+            model: config.model,
+            roles: Array.from(new Set<string>(config.roles || [])),
+            capabilities: Array.from(new Set<string>(config.capabilities || [])),
+            description: config.description || '',
+            adapters: config.adapters || [],
+            baseModel: config.baseModel || null,
+            metadata: config.metadata || {},
+            options: config.options || {},
+            source: 'user-registry' as const
+          };
+        })
     )
 
 
@@ -436,7 +453,7 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
         return resolved.provider === 'llama-cpp'
           ? { ...model, provider: resolved.provider, model: resolved.model, capabilities: resolved.capabilities,
               options: resolved.options, adapters: resolved.adapters, baseModel: resolved.baseModel || null,
-              description: `Configured llama.cpp model: ${resolved.model}` }
+              description: model.description || `Configured llama.cpp model: ${resolved.model}` }
           : model;
       }));
     }
@@ -500,7 +517,12 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
 
     // Registered llama.cpp deployments remain selectable independently of server state.
     const cloudProviderSet = new Set(['runpod_serverless', 'huggingface', 'openai', 'openrouter', 'remote-server']);
-    const bigBrotherProviders = new Set(['claude-code', 'anthropic']);
+    const bigBrotherProviders = new Set(['big-brother']);
+    if (!availableModels.some(model => model.id === BIG_BROTHER_MODEL_ID)) {
+      const cli = configuredBigBrotherModel(user.username);
+      availableModels.push({ ...cli, id: BIG_BROTHER_MODEL_ID, capabilities: cli.capabilities ?? [],
+        baseModel: null, metadata: cli.metadata ?? {}, source: 'runtime-discovery' });
+    }
 
     // Discover vLLM LoRA adapters for the user
     let vllmLoras: Array<{
@@ -655,7 +677,9 @@ export async function handleAssignModelRole(req: UnifiedRequest): Promise<Unifie
     // NO SYSTEM REGISTRY FALLBACK - only dynamic discovery types
     if (!registry.models[modelId]) {
 
-      if (modelId.startsWith('llama-cpp-lora.')) {
+      if (modelId === BIG_BROTHER_MODEL_ID) {
+        registry.models[modelId] = configuredBigBrotherModel(user.username);
+      } else if (modelId.startsWith('llama-cpp-lora.')) {
         const config = loadBackendConfig().llamaCpp;
         const adapters = await getLlamaCppAdapters(config);
         const adapter = adapters.find(value => modelId === llamaAdapterModelId(config.model, config.endpoint, value.path));
@@ -856,6 +880,48 @@ export async function handleUpdateModelSettings(req: UnifiedRequest): Promise<Un
 
     const registry = readModelRegistry(user.username);
 
+    if (body?.operation === 'register') {
+      const candidate = body.model as ModelDefinition | undefined;
+      if (!candidate || candidate.provider !== 'llama-cpp'
+        || typeof candidate.model !== 'string' || !candidate.model.trim()
+        || typeof candidate.description !== 'string'
+        || !Array.isArray(candidate.adapters) || candidate.adapters.some(value => typeof value !== 'string')
+        || !Array.isArray(candidate.roles) || candidate.roles.some(value => typeof value !== 'string')
+        || !candidate.options || typeof candidate.options !== 'object' || Array.isArray(candidate.options)) {
+        return { status: 400, error: 'model must be an explicit llama-cpp ModelDefinition' };
+      }
+      const endpoint = candidate.options.endpoint;
+      try {
+        if (typeof endpoint !== 'string' || !['http:', 'https:'].includes(new URL(endpoint).protocol)) {
+          throw new Error('Invalid endpoint');
+        }
+      } catch {
+        return { status: 400, error: 'options.endpoint must be an HTTP(S) URL' };
+      }
+      const lora = candidate.options.lora ?? [];
+      if (!Array.isArray(lora) || lora.some(value => !value || typeof value.path !== 'string'
+        || !value.path || (value.scale !== undefined && (typeof value.scale !== 'number' || !Number.isFinite(value.scale))))) {
+        return { status: 400, error: 'options.lora must contain adapter paths and optional numeric scales' };
+      }
+      const adapterIdentity = lora.length === 1 ? lora[0].path : JSON.stringify(lora.map(value => value.path));
+      const registeredId = lora.length
+        ? llamaAdapterModelId(candidate.model, endpoint, adapterIdentity)
+        : `llama-cpp.${candidate.model}`;
+      const existing = registry.models[registeredId];
+      const saved: ModelDefinition = { ...existing, ...candidate,
+        options: { ...existing?.options, ...candidate.options },
+        ...(existing?.metadata || candidate.metadata
+          ? { metadata: { ...existing?.metadata, ...candidate.metadata } } : {}),
+      };
+      if (!isDeepStrictEqual(existing, saved)) {
+        registry.models[registeredId] = saved;
+        writeModelRegistry(user.username, registry);
+        await audit({ category: 'data_change', level: 'info', action: 'model_registered', actor: user.username,
+          details: { modelId: registeredId, provider: candidate.provider, profilePath: resolveModelsPath(user.username) } });
+      }
+      return successResponse({ success: true, modelId: registeredId, model: saved });
+    }
+
     const { globalSettings, modelId, capabilities, options } = body || {};
     if (modelId !== undefined) {
       if (typeof modelId !== 'string' || !modelId) {
@@ -880,6 +946,22 @@ export async function handleUpdateModelSettings(req: UnifiedRequest): Promise<Un
         }
 
         const nextOptions: Record<string, unknown> = {};
+        if (options.endpoint !== undefined) {
+          if (model.provider !== 'llama-cpp') {
+            return { status: 400, error: 'options.endpoint is supported only for llama-cpp models' };
+          }
+          let endpoint: URL;
+          try {
+            if (typeof options.endpoint !== 'string') throw new Error('Invalid endpoint');
+            endpoint = new URL(options.endpoint);
+          } catch {
+            return { status: 400, error: 'options.endpoint must be an HTTP(S) URL' };
+          }
+          if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') {
+            return { status: 400, error: 'options.endpoint must be an HTTP(S) URL' };
+          }
+          nextOptions.endpoint = options.endpoint;
+        }
         if (options.contextWindow !== undefined) {
           if (!Number.isInteger(options.contextWindow) || options.contextWindow < 512) {
             return { status: 400, error: 'options.contextWindow must be an integer of at least 512' };

@@ -128,8 +128,8 @@
         "label": "Infer Current Situation",
         "nodeType": "model_router",
         "properties": {
-          "role": "orchestrator",
-          "maxTokens": 768,
+          "role": "psychotherapist",
+          "maxTokens": -1,
           "temperature": 0.2,
           "format": "json"
         }

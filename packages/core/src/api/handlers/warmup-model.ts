@@ -79,6 +79,9 @@ export async function handleWarmupModel(req: UnifiedRequest): Promise<UnifiedRes
     const resolved = cognitiveMode
       ? resolveModelForCognitiveMode(cognitiveMode, role, user.username)
       : resolveModel(role, undefined, user.username);
+    if (resolved.provider === 'big-brother') {
+      return successResponse({ success: true, skipped: true, message: 'Big Brother starts on the selected role’s first request.' });
+    }
     const warmupKey = JSON.stringify([user.username, role, cognitiveMode, resolved.id,
       resolved.provider, resolved.model, resolved.options, resolved.adapters]);
     // Skip only if this assignment has already been warmed.

@@ -66,7 +66,7 @@ const execute: NodeExecutor = async (inputs, context, properties) => {
   const personaContext = typeof inputs.personaContext === 'string' ? inputs.personaContext.trim() : '';
   const userId = typeof context.userId === 'string' ? context.userId.trim() : '';
   const temperature = (properties?.temperature as number) ?? 0.2;
-  const role = normalizeModelRole(properties?.role, 'persona');
+  const role = normalizeModelRole(properties?.role, 'psychotherapist');
   const systemPrompt = properties?.systemPrompt ?? SYSTEM_PROMPT;
   const userPromptTemplate = properties?.userPromptTemplate ?? DEFAULT_USER_PROMPT_TEMPLATE;
 
@@ -154,7 +154,7 @@ export const DesireAlignmentReviewerNode: NodeDefinition = defineNode({
   properties: {
     enableThinking: false,
     temperature: 0.2,
-    role: 'persona',
+    role: 'psychotherapist',
     systemPrompt: SYSTEM_PROMPT,
     userPromptTemplate: DEFAULT_USER_PROMPT_TEMPLATE,
   },
@@ -171,7 +171,7 @@ export const DesireAlignmentReviewerNode: NodeDefinition = defineNode({
     },
     role: {
       type: 'select',
-      default: 'persona',
+      default: 'psychotherapist',
       label: 'LLM Role',
       options: [...MODEL_ROLE_OPTIONS],
     },

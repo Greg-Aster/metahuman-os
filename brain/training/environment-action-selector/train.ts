@@ -3,7 +3,7 @@ import { access, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve, sep } from 'node:path'
 import {
   getProfilePaths, listUsers, readEnvironmentTrainingBank, readEnvironmentTrainingReviews,
-  validateEnvironmentSelectorOutput,
+  validateEnvironmentSelectorOutput, loadRunpodConfig,
 } from '@metahuman/core'
 import { isPlanningDelegation, parseEnvironmentIntentRouting } from '@metahuman/core/nodes'
 
@@ -24,6 +24,7 @@ import {
 } from './generate-training-data.js'
 import { DEVELOPMENT_CASES, EVALUATION_CASES } from './generate-training-data.js'
 import type { Specialist } from './development-cases.js'
+import { runRemoteTraining } from '../personalization/lora-trainer.js'
 
 const CONFIG_PATH = resolve(ACTION_SELECTOR_DIRECTORY, 'training-qwen3.5-0.8b.json')
 const TRAINER_PATH = resolve(REPOSITORY_ROOT, 'docker/runpod-trainer/train_unsloth.py')
@@ -32,12 +33,17 @@ const OUTPUT_ROOT = resolve(REPOSITORY_ROOT, 'out/environment-action-selector/tr
 
 interface TrainingOptions {
   outputPath: string
+  baseModel?: string
   specialist: Specialist
   folds: number[]
   finalFromPath?: string
   selectionReportPath?: string
   dryRun: boolean
   reviewedDataPath?: string
+  reuseSettingsFromPath?: string
+  remoteProfile?: string
+  remoteMaxHourly?: number
+  remoteMaxTotal?: number
 }
 
 interface TrainingConfig {
@@ -91,6 +97,9 @@ function parseOptions(arguments_: string[]): TrainingOptions {
     if (argument === '--specialist' && (value === 'intent' || value === 'task')) {
       options.specialist = value
       index += 1
+    } else if (argument === '--base-model' && ['unsloth/Qwen3.5-0.8B', 'unsloth/Qwen3.5-2B'].includes(value)) {
+      options.baseModel = value
+      index += 1
     } else if (argument === '--dry-run') {
       options.dryRun = true
     } else if (argument === '--output' && value) {
@@ -105,6 +114,18 @@ function parseOptions(arguments_: string[]): TrainingOptions {
     } else if (argument === '--reviewed-data' && value) {
       options.reviewedDataPath = resolve(value)
       index += 1
+    } else if (argument === '--reuse-settings-from' && value) {
+      options.reuseSettingsFromPath = resolve(value)
+      index += 1
+    } else if (argument === '--remote-profile' && value) {
+      options.remoteProfile = value
+      index += 1
+    } else if (argument === '--remote-max-hourly' && value) {
+      options.remoteMaxHourly = Number(value)
+      index += 1
+    } else if (argument === '--remote-max-total' && value) {
+      options.remoteMaxTotal = Number(value)
+      index += 1
     } else if (argument === '--fold' && value) {
       const fold = Number.parseInt(value, 10)
       if (!Number.isInteger(fold) || fold < 0 || fold >= DEVELOPMENT_FOLD_COUNT) {
@@ -117,7 +138,7 @@ function parseOptions(arguments_: string[]): TrainingOptions {
       throw new Error(`Unknown or incomplete argument: ${argument}`)
     }
   }
-  options.outputPath ||= resolve(OUTPUT_ROOT, `${options.specialist}-${options.reviewedDataPath ? 'reviewed' : 'cv'}-001`)
+  options.outputPath ||= resolve(OUTPUT_ROOT, `${options.specialist}-${options.baseModel === 'unsloth/Qwen3.5-2B' ? '2b-' : ''}${options.reviewedDataPath ? 'reviewed' : 'cv'}-001`)
   if (Boolean(options.finalFromPath) !== Boolean(options.selectionReportPath)) {
     throw new Error('--final-from and --selection-report are required together')
   }
@@ -126,6 +147,13 @@ function parseOptions(arguments_: string[]): TrainingOptions {
   }
   if (options.reviewedDataPath && (options.finalFromPath || selectedFold)) {
     throw new Error('--reviewed-data cannot be combined with --final-from or --fold')
+  }
+  if (options.reuseSettingsFromPath && (options.finalFromPath || options.reviewedDataPath || selectedFold)) {
+    throw new Error('--reuse-settings-from cannot be combined with --final-from, --reviewed-data or --fold')
+  }
+  if (options.remoteProfile && (!options.reuseSettingsFromPath
+    || ![options.remoteMaxHourly, options.remoteMaxTotal].every(n => typeof n === 'number' && Number.isFinite(n) && n > 0))) {
+    throw new Error('Remote specialist training requires one reused-settings fit and explicit positive hourly/total budgets')
   }
   return options
 }
@@ -233,12 +261,31 @@ async function runTrainer(
   validationPath: string | undefined,
   configPath: string,
   adapterPath: string,
+  options?: TrainingOptions,
 ): Promise<void> {
   try {
     await access(resolve(adapterPath, 'adapter_config.json'))
     throw new Error(`${label}: adapter already exists at ${adapterPath}`)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (options?.remoteProfile) {
+    const finalRoot = resolve(adapterPath, '..')
+    const provenancePath = resolve(finalRoot, 'run-provenance.json')
+    const provenance = await readJson<{ trainingRecords: number }>(provenancePath)
+    const runLabel = `${options.specialist}-${new Date().toISOString().replace(/[^0-9A-Za-z_-]/g, '-')}`
+    const remote = await runRemoteTraining({
+      DATE_STR: new Date().toISOString().slice(0, 10), RUN_LABEL: runLabel,
+      WORK_LOCAL: finalRoot, OUT_ROOT: options.outputPath, FINAL_ADAPTER_DIR: adapterPath,
+      RAW_DATA_FILE: trainingPath, CLEAN_DATA_FILE: trainingPath, EVAL_DATA_FILE: '',
+      DATASET_MANIFEST_FILE: provenancePath, CONFIG_FILE: configPath,
+      SUMMARY_FILE: resolve(finalRoot, 'remote-training-summary.json'),
+      samples_used: provenance.trainingRecords, username: options.remoteProfile,
+      specialistJob: { specialist: options.specialist, gpuType: loadRunpodConfig(options.remoteProfile).gpuType!, volumeInGb: 20, containerDiskInGb: 40,
+        maxHourlyCost: options.remoteMaxHourly!, maxTotalCost: options.remoteMaxTotal! },
+    })
+    if (!remote.training_success || !remote.terminated) throw new Error(remote.error ?? remote.termination_error ?? 'Remote specialist training failed')
+    return
   }
   const childArguments = [
     TRAINER_PATH,
@@ -380,23 +427,81 @@ async function trainFinalAdapter(
   console.log(`Final action-selector adapter complete under ${finalRoot}`)
 }
 
+/** Reuse development-selected settings while fitting the current complete development corpus. */
+async function trainWithSelectedSettings(
+  options: TrainingOptions,
+  config: TrainingConfig,
+  records: ActionSelectorTrainingRecord[],
+  priorHeldOutDigest: string,
+): Promise<void> {
+  const sourceRoot = options.reuseSettingsFromPath!
+  if (!sourceRoot.startsWith(`${OUTPUT_ROOT}${sep}`)) {
+    throw new Error('Selected settings must come from an archived action-selector run')
+  }
+  const [previousConfig, provenance] = await Promise.all([
+    readJson<TrainingConfig>(resolve(sourceRoot, 'training-config.json')),
+    readJson<{
+      owner: string; mode: string; specialist: Specialist; baseModel: string;
+      epochs: number; archivedDatasetDigest: string; priorHeldOutUsed: boolean;
+      selectionEvidence: { path: string; digest: string };
+    }>(resolve(sourceRoot, 'run-provenance.json')),
+  ])
+  if (provenance.owner !== config.owner || provenance.mode !== 'final-development-training'
+    || provenance.specialist !== options.specialist || !['unsloth/Qwen3.5-0.8B', 'unsloth/Qwen3.5-2B'].includes(provenance.baseModel)
+    || provenance.priorHeldOutUsed !== false || previousConfig.base_model !== provenance.baseModel
+    || previousConfig.specialist !== options.specialist || previousConfig.require_exact_messages !== true
+    || previousConfig.train_on_responses_only !== true || previousConfig.num_train_epochs !== provenance.epochs) {
+    throw new Error('Selected settings require a matching development-selected final training run')
+  }
+  const report = await readJson<DevelopmentSelectionReport>(resolve(REPOSITORY_ROOT, provenance.selectionEvidence.path))
+  if (sha256(report) !== provenance.selectionEvidence.digest || report.owner !== config.owner
+    || report.specialist !== options.specialist || report.split !== 'development-cross-validation'
+    || report.priorHeldOutUsed !== false || selectedEpochCount(report.checkpointPolicy) !== provenance.epochs) {
+    throw new Error('Archived settings selection evidence does not match its development report')
+  }
+  // Sequence capacity belongs to the current complete messages, never to an earlier run.
+  const recipe: TrainingConfig = { ...previousConfig, base_model: config.base_model }
+  delete recipe.max_seq_length
+  if (previousConfig.base_model !== config.base_model) delete recipe.base_model_revision
+  const finalRoot = resolve(options.outputPath, 'final')
+  console.log(`Reused settings: ${sourceRoot}; ${provenance.epochs} epochs on ${records.length} current development records`)
+  console.log(`Recipe source base: ${provenance.baseModel}; fit target base: ${config.base_model}. Source selection evidence does not qualify a different target base.`)
+  console.log(`Settings-selection dataset: ${provenance.archivedDatasetDigest}; current dataset: ${sha256(records)}`)
+  if (options.dryRun) return
+  await mkdir(finalRoot, { recursive: true })
+  const trainingPath = resolve(finalRoot, 'training.jsonl')
+  const configPath = resolve(finalRoot, 'training-config.json')
+  await Promise.all([
+    writeFile(trainingPath, `${records.map(record => JSON.stringify(record)).join('\n')}\n`),
+    writeFile(configPath, `${JSON.stringify(recipe, null, 2)}\n`),
+    writeFile(resolve(finalRoot, 'run-provenance.json'), `${JSON.stringify({
+      version: 1, owner: config.owner, mode: 'reused-development-settings-training',
+      specialist: options.specialist, baseModel: config.base_model, epochs: provenance.epochs,
+      trainingRecords: records.length, validationRecords: 0,
+      developmentDatasetDigest: sha256(records), priorHeldOutDigest, priorHeldOutUsed: false,
+      settingsSource: { path: sourceRoot, baseModel: provenance.baseModel, configDigest: sha256(previousConfig), provenanceDigest: sha256(provenance),
+        datasetDigest: provenance.archivedDatasetDigest, selectionEvidence: provenance.selectionEvidence },
+    }, null, 2)}\n`),
+  ])
+  await runTrainer('final adapter with reused settings', trainingPath, undefined, configPath, resolve(finalRoot, 'adapter'), options)
+}
+
 export async function main(arguments_: string[] = process.argv.slice(2)): Promise<void> {
   const options = parseOptions(arguments_)
   if (!options.outputPath.startsWith(`${OUTPUT_ROOT}${sep}`)) {
     throw new Error(`Training output must remain under ${OUTPUT_ROOT}`)
   }
   await Promise.all([access(PYTHON_PATH), access(TRAINER_PATH), access(CONFIG_PATH)])
-  const config = { ...await readJson<TrainingConfig>(CONFIG_PATH), specialist: options.specialist,
-    max_seq_length: options.specialist === 'task' ? 4096 : 1536,
+  const config = { ...await readJson<TrainingConfig>(CONFIG_PATH), ...(options.baseModel ? { base_model: options.baseModel } : {}), specialist: options.specialist,
     generation_max_new_tokens: options.specialist === 'task' ? 768 : 384,
   } as TrainingConfig
   if (
     config.owner !== 'environment-action-selector'
-    || config.base_model !== 'unsloth/Qwen3.5-0.8B'
+    || !['unsloth/Qwen3.5-0.8B', 'unsloth/Qwen3.5-2B'].includes(config.base_model ?? '')
     || config.require_exact_messages !== true
     || config.train_on_responses_only !== true
     || config.development_fold_count !== DEVELOPMENT_FOLD_COUNT
-  ) throw new Error('Training config does not match the system-owned Qwen3.5-0.8B action-selector contract')
+  ) throw new Error('Training config does not match the system-owned supported Qwen3.5 action-selector contract')
 
   if (options.finalFromPath) {
     await trainFinalAdapter(options, config)
@@ -434,6 +539,10 @@ export async function main(arguments_: string[] = process.argv.slice(2)): Promis
   const checkedInRecords = allRecords.filter(record => record.metadata.specialist === options.specialist)
   console.log(`Validated ${checkedInRecords.length} development-only action-selector records`)
   console.log(`Retired held-out content not loaded; one-shot digest ${priorLock.digest}`)
+  if (options.reuseSettingsFromPath) {
+    await trainWithSelectedSettings(options, config, checkedInRecords, priorLock.digest)
+    return
+  }
   console.log(`Folds: ${options.folds.join(', ')}${options.folds.length > 1 ? ' (sequential GPU jobs)' : ''}`)
 
   const jobs = options.folds.map(fold => async () => {

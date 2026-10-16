@@ -1,3 +1,4 @@
+import { readRecordedCognitiveMode } from '../cognitive-mode.js';
 /**
  * Work coordinator lifecycle facade.
  */
@@ -97,9 +98,6 @@ export function buildRobotOperatorManualTaskInput(
     throw new Error(`Agent '${agentId}' is not owned by Robot Operator`);
   }
   if (!config.enabled) throw new Error(`Agent '${agentId}' is disabled in Robot Operator configuration`);
-  if (config.lifecycle !== 'workflow' || !config.handler.startsWith('workflow.')) {
-    throw new Error(`Agent '${agentId}' does not have a maintained Robot Operator workflow`);
-  }
   const cycleId = randomUUID();
   return {
     type: agentTaskType(agentId),
@@ -395,6 +393,7 @@ export class QueueSystem extends EventEmitter {
       username,
       priority: 'normal',
       input: { agentId, args, triggeredBy: 'manual' },
+      originatingCognitiveMode: readRecordedCognitiveMode(username),
       metadata: { producer: 'manual-agent-control', agentId },
     });
   }
@@ -440,18 +439,13 @@ export class QueueSystem extends EventEmitter {
   }
 
   /** The queue is a view/control surface for saved executions, not their owner. */
-  getExecutions(username: string) {
+  getExecutions(username: string, terminalHistoryCount?: number) {
     const resolved = resolvePath({ username, category: 'state', subcategory: 'sessions', relativePath: 'executions.sqlite' });
     if (!resolved.success || !resolved.path) throw new Error(resolved.error || 'Execution storage cannot be resolved');
     if (!fs.existsSync(resolved.path)) return [];
     const store = openExecutionStore(username);
     try {
-      return store.list(username).map(record => ({
-        executionId: record.executionId, graph: record.definition.graphId, status: record.status,
-        waitingReason: record.waitingReason, updatedAt: new Date(record.updatedAt).toISOString(),
-        personResume: store.task(record.executionId)?.personResume,
-        liveWriter: Boolean(record.owner && (record.leaseUntil ?? 0) > Date.now()),
-      }));
+      return store.summaries(username, terminalHistoryCount);
     } finally { store.close(); }
   }
 

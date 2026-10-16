@@ -161,3 +161,48 @@ test('Psychoanalyzer analysis honors cancellation before model execution', async
   )
   assert.equal(called, false)
 })
+
+
+test('Psychoanalyzer role selection preserves prompt and configured inference settings', async () => {
+  const requests: any[] = []
+  const dependencies = { callModel: (async (request: any) => {
+    requests.push(request)
+    return { content: JSON.stringify({ summary: 'No change', confidence: 0.8, changes: [] }) }
+  }) as any }
+  await executePsychoanalyzerAnalysis(inputs(), context, {}, dependencies)
+  await executePsychoanalyzerAnalysis(inputs(), context, { role: 'persona' }, dependencies)
+  await executePsychoanalyzerAnalysis(inputs({ role: 'curator' }), context, { role: 'persona' }, dependencies)
+  assert.deepEqual(requests.map(request => request.role), ['psychotherapist', 'persona', 'curator'])
+  for (const request of requests.slice(1)) {
+    assert.deepEqual(request.messages, requests[0].messages)
+    assert.deepEqual(request.options, requests[0].options)
+    assert.equal(request.cognitiveMode, 'agent')
+  }
+})
+
+
+test('Psychoanalyzer passes supplied speaker and source attribution without inventing unknown authors', async () => {
+  const known = { ...memory, role: 'assistant', source: 'conversation', cognitiveMode: 'environment', content: 'Assistant: quoted original content' }
+  const unknown = { ...memory, id: 'unknown' }
+  await executePsychoanalyzerAnalysis(inputs({ memories: [known, unknown] }), context, {}, {
+    callModel: (async (request: any) => {
+      const prompt = request.messages[0].content
+      assert.deepEqual(JSON.parse(prompt.split('\n\nSUBJECT IDENTITY:\n')[1].split('\n\nCURRENT LEARNABLE PERSONA:')[0]), persona.identity)
+      assert.match(prompt, /Statements about another person do not by themselves establish/)
+      const evidence = JSON.parse(prompt.split('\n\nEVIDENCE:\n')[1])
+      assert.deepEqual(evidence, [known, unknown])
+      return { content: JSON.stringify({ summary: 'No durable change', confidence: 0.9, changes: [] }) }
+    }) as any,
+  })
+})
+
+
+test('Psychoanalyzer preserves an explicit instruction override while supplying factual identity', async () => {
+  await executePsychoanalyzerAnalysis(inputs(), context, { instruction: 'Owner supplied instruction' }, {
+    callModel: (async (request: any) => {
+      assert.ok(request.messages[0].content.startsWith('Owner supplied instruction\n\nSUBJECT IDENTITY:'))
+      assert.doesNotMatch(request.messages[0].content, /Statements about another person/)
+      return { content: JSON.stringify({ summary: 'No change', confidence: 0.8, changes: [] }) }
+    }) as any,
+  })
+})

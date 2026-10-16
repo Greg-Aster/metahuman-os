@@ -27,14 +27,17 @@ export async function handleGetTrainingDatasetStats(req: UnifiedRequest): Promis
       maxSamples: req.query?.maxSamples === 'all' ? null : req.query?.maxSamples ? Number(req.query.maxSamples) : undefined,
       recentDays: req.query?.recentDays ? Number(req.query.recentDays) : undefined,
       olderSamples: req.query?.olderSamples ? Number(req.query.olderSamples) : undefined,
-      personaContext: trainingPersonaContext(user.username, settings),
+      personaContexts: {
+      'human-continuation': trainingPersonaContext(user.username, settings, 'human-continuation'),
+      'assistant-continuation': trainingPersonaContext(user.username, settings, 'assistant-continuation'),
+    },
       history: readTrainingDatasetHistory(user.username),
     });
     return successResponse({
       ...inspection.stats,
       selection: {
         trainingSamples: selected.train.length, evaluationSamples: selected.evaluation.length,
-        objective: settings.objective, cutoff: selected.cutoff, excluded: selected.excluded,
+        objective: settings.objective, objectivesByMode: settings.objectivesByMode, cutoff: selected.cutoff, excluded: selected.excluded,
       },
       errors: inspection.errors,
     });

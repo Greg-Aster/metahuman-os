@@ -76,8 +76,11 @@ function createNavigationStore(defaultValue: string) {
 // Navigation store with URL hash persistence - survives dev server reloads
 export const activeView = createNavigationStore('chat');
 
-export type DashboardSection = 'overview' | 'tasks' | 'approvals' | 'operator' | 'sleep' | 'agent-catalog' | 'trigger-manager';
+export type DashboardSection = 'overview' | 'tasks' | 'approvals' | 'sleep' | 'agent-catalog' | 'trigger-manager';
 export type SystemSection = 'chat' | 'settings' | 'backend' | 'security' | 'network' | 'storage' | 'addons' | 'agent-catalog' | 'trigger-manager';
+
+export type AgencySection = 'desires' | 'operator';
+export const agencySection = writable<AgencySection>('desires');
 
 export const dashboardSection = writable<DashboardSection>('overview');
 export const systemSection = writable<SystemSection>('settings');

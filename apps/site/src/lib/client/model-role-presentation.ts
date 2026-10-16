@@ -24,16 +24,15 @@ export function buildModelRoleSections(workflows: WorkflowModelSummary[], mode: 
   const workflow = workflows.find(item => item.key === mode);
   const primaryRoles = new Set(workflow?.models
     .filter(binding => binding.selection === 'role').map(binding => binding.role));
-  const roles: ModelRolePresentation[] = MODEL_ROLE_OPTIONS.map(({ value, label }) => {
+  const roles: ModelRolePresentation[] = MODEL_ROLE_OPTIONS.map(({ value, label, description }) => {
     const usage = workflows.flatMap(item => item.models
       .filter(binding => binding.role === value && binding.selection === 'role')
       .map(binding => `${item.name}: ${binding.label}`));
     return {
       role: value,
-      label: value === 'environmentIntent' ? 'Intent orchestrator'
-        : value === 'orchestrator' ? 'General orchestrator' : label,
+      label,
       description: [
-        `Choose the model assigned to the ${value} role for this mode.`,
+        description,
         ...new Set(usage),
       ].join('\n'),
     };

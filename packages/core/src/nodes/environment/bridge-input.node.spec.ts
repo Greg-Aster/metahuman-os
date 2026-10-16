@@ -299,3 +299,43 @@ test('Environment Bridge Input never mixes diagnostics from another bridge sessi
   assert.equal(result.batteryVoltage, 7.2);
   assert.equal(result.diagnostics, null);
 });
+
+
+test('a boot observation uses later same-body telemetry for its camera interface without replacing the event', async () => {
+  const timestamp = '2026-10-13T23:33:23.551Z';
+  const observation: EnvironmentObservation = {
+    environmentId: 'ainekio', adapter: 'ainekio-gateway', sessionId: 'boot-session', timestamp,
+    capabilities: { actions: ['robotCommand'], robotCommands: ['stretch', 'stand'], visual: false },
+    state: { body: { robotId: 'p4', cameraReady: false },
+      bodyEvent: { name: 'body_event', kind: 'wake', reason: 'boot', event_id: 'boot-1' },
+      gateway: { robots: { p4: { epoch: 7, status: { camera_ready: false } } } } },
+    text: [],
+  };
+  const original = structuredClone(observation);
+  recordEnvironmentBridgeTelemetry({ sessionId: 'boot-session', robotId: 'p4',
+    robotStatus: { kind: 'robot.status', robot_id: 'p4', epoch: 7, camera_ready: true, output_armed: false } });
+  const result = await environmentBridgeInputNode.execute({}, { environmentObservation: observation }, {});
+  assert.equal(result.isTriggeringObservation, true);
+  assert.equal(result.observation.timestamp, timestamp);
+  assert.deepEqual(result.observation.state.bodyEvent, original.state!.bodyEvent);
+  assert.deepEqual(result.observation.capabilities.actions, ['robotCommand', 'captureImage']);
+  assert.equal(result.observation.capabilities.visual, true);
+  assert.equal(result.observation.state.body.cameraReady, true);
+  assert.equal(result.observation.state.gateway.robots.p4.status.output_armed, false);
+  assert.deepEqual(observation, original, 'the durable boot evidence is immutable');
+});
+
+test('boot interface refresh does not import status from a different robot or connection epoch', async () => {
+  const observation: EnvironmentObservation = {
+    environmentId: 'ainekio', adapter: 'ainekio-gateway', sessionId: 'boot-session', timestamp: new Date().toISOString(),
+    capabilities: { actions: ['robotCommand'], visual: false },
+    state: { body: { robotId: 'p4', cameraReady: false }, gateway: { robots: { p4: { epoch: 7 } } } },
+  };
+  for (const [robot_id, epoch] of [['p4', 8], ['other', 7]] as const) {
+    recordEnvironmentBridgeTelemetry({ sessionId: 'boot-session', robotId: robot_id,
+      robotStatus: { kind: 'robot.status', robot_id, epoch, camera_ready: true } });
+    const result = await environmentBridgeInputNode.execute({}, { environmentObservation: observation }, {});
+    assert.deepEqual(result.observation.capabilities.actions, ['robotCommand']);
+    assert.equal(result.observation.state.body.cameraReady, false);
+  }
+});

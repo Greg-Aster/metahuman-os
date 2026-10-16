@@ -17,8 +17,10 @@ const core = await import('@metahuman/core')
 core.setAuditEnabled(false)
 const graphs = path.join(root, 'etc/cognitive-graphs')
 fs.mkdirSync(path.join(graphs, 'custom'), { recursive: true })
-const valid = fs.readFileSync(new URL('../../etc/cognitive-graphs/robot-autonomy-controller-mode.json', import.meta.url), 'utf8')
+fs.mkdirSync(path.join(root, 'logs/run'), { recursive: true })
+const valid = fs.readFileSync(new URL('../../../etc/cognitive-graphs/robot-autonomy-controller-mode.json', import.meta.url), 'utf8')
 let selectedGraph = 'controller-a'
+let mode: 'reactive' | 'semi' | 'full' = 'reactive'
 let items: QueuedTask[] = []
 let history: QueuedTask[] = []
 let runtime: RobotOperatorRuntimeState | undefined
@@ -29,7 +31,8 @@ const coreMock = mock.module('@metahuman/core', { namedExports: {
   ...core,
   acquireLock: () => ({ release() {} }),
   initGlobalLogger: () => {},
-  getOperatorMode: () => 'full',
+  getOperatorMode: () => mode,
+  readSystemActivityTimestamp: () => 0,
   getCurrentlyActiveUser: () => ({ username: 'fixture-owner', role: 'owner' }),
   isRobotOperatorChildEnabled: () => true,
   isSleepRuntimeActive: () => false,
@@ -46,7 +49,7 @@ const queueMock = mock.module('@metahuman/core/queue', { namedExports: {
     return task
   },
 } })
-const { run } = await import('./robot-operator.js')
+const { run } = await import('./index.js')
 
 async function until(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 3_000
@@ -57,11 +60,28 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 function wakeQueue() { core.persistQueueState({ items, history, inFlightRemote: [], lastUpdated: new Date().toISOString() }) }
 
-test('real Full service admits only a loadable Controller, independently of history and selected child failures', async () => {
-  fs.writeFileSync(path.join(graphs, 'controller-a-mode.json'), '{invalid json')
+test('Active Operator assesses in Semi and Full without waiting for selected operations', async () => {
+  fs.writeFileSync(path.join(graphs, 'controller-a-mode.json'), valid)
   const priorSignalHandlers = process.listeners('SIGTERM')
   const running = run()
   try {
+    await until(() => runtime?.lifecycle === 'dormant')
+    assert.equal(admitted, 0, 'Reactive must not admit autonomous work')
+    mode = 'semi'
+    fs.writeFileSync(path.join(root, 'etc/active-operator.json'), JSON.stringify({ autonomyMode: mode }))
+    await until(() => admitted === 1)
+    assert.equal(items[0].handler, 'workflow.robot-autonomy-controller')
+    assert.equal(items[0].metadata?.producer, 'robot-operator', 'saved work retains its owner identity')
+    assert.equal(items[0].source, 'autonomy')
+    mode = 'reactive'
+    fs.writeFileSync(path.join(root, 'etc/active-operator.json'), JSON.stringify({ autonomyMode: mode }))
+    await until(() => runtime?.lifecycle === 'dormant')
+    assert.equal(admitted, 1)
+    items = []
+    admitted = 0
+    fs.writeFileSync(path.join(graphs, 'controller-a-mode.json'), '{invalid json')
+    mode = 'full'
+    fs.writeFileSync(path.join(root, 'etc/active-operator.json'), JSON.stringify({ autonomyMode: mode }))
     await until(() => runtime?.lifecycle === 'failed')
     assert.equal(admitted, 0)
     // Arbitrary Coordinator changes and history eviction do not admit bad work.
@@ -92,14 +112,24 @@ test('real Full service admits only a loadable Controller, independently of hist
     selectedGraph = 'controller-a'
     fs.writeFileSync(path.join(graphs, 'custom/controller-a-mode.json'), valid)
     await until(() => admitted === 3)
-    // A saved execution is resumed directly, even if fresh Controller config is invalid.
-    selectedGraph = 'missing'
-    items = []
-    executions = [{ executionId: 'saved-execution', checkpointVersion: 4, waitingReason: 'user_or_autonomy', resumePending: false }] as typeof executions
+    // An unrelated action wait does not block assessment.
+    items = [{ id: 'ongoing-motion', username: 'fixture-owner', state: 'waiting', handler: 'environment.command', input: {} }] as QueuedTask[]
+    executions = [{ executionId: 'motion-execution', status: 'waiting', stimulusAgent: 'boredom-movement',
+      checkpointVersion: 4, waitingReason: 'action_result', resumePending: false }] as typeof executions
     wakeQueue()
     await until(() => admitted === 4)
-    assert.equal(items[0].handler, 'graph.signal')
-    assert.equal(items[0].input.executionId, 'saved-execution')
+    assert.equal(items[1].handler, 'workflow.robot-autonomy-controller')
+    // A yielded assessment itself is still one live decision, not a new tick.
+    items = []
+    executions = [{ executionId: 'assessment-execution', status: 'waiting', stimulusAgent: 'robot-autonomy-controller',
+      checkpointVersion: 4, waitingReason: 'work_result', resumePending: false }] as typeof executions
+    wakeQueue()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(admitted, 4)
+    // Releasing that assessment immediately admits the next decision.
+    executions = []
+    wakeQueue()
+    await until(() => admitted === 5)
   } finally {
     for (const handler of process.listeners('SIGTERM')) {
       if (!priorSignalHandlers.includes(handler)) handler.call(process, 'SIGTERM')

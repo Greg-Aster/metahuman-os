@@ -73,6 +73,7 @@ export const robotOperatorInputNode = defineNode({
       inputSource: context.graphExecution?.task()?.desireId ? 'autonomy' : robotObserver?.triggerSource ?? 'user',
       responseMetadata: robotObserver?.triggerSource === 'autonomy'
         ? {
+            source: 'autonomy',
             dialogueSource: robotObserver.requestedBy,
             correlationId: robotObserver.cycleId,
             tags: ['robot-operator', robotObserver.requestedBy, 'autonomy-trigger'],

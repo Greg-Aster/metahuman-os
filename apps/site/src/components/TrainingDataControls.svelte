@@ -5,7 +5,8 @@
   export let settings: TrainingDataSettings = parseTrainingDataSettings();
   export let disabled = false;
   const dispatch = createEventDispatcher<{ settingsChange: TrainingDataSettings }>();
-  $: visibleTypes = settings.objective === 'human-continuation' ? ['conversation'] : [...TRAINING_MEMORY_TYPES];
+  $: includesAssistantTargets = [settings.objective, ...Object.values(settings.objectivesByMode)].includes('assistant-continuation');
+  $: visibleTypes = includesAssistantTargets ? [...TRAINING_MEMORY_TYPES] : ['conversation'];
 
   function update(change: Partial<TrainingDataSettings>) {
     dispatch('settingsChange', { ...settings, ...change });
@@ -18,8 +19,20 @@
 </script>
 
 <fieldset {disabled} class="p-4 rounded-lg border border-gray-700 space-y-5 disabled:opacity-60">
+  {#each ['dual', 'environment'] as mode}
+    <label class="block text-sm">
+      <span class="block font-semibold mb-2">{mode === 'dual' ? 'Dual Consciousness training target' : 'Environment training target'}</span>
+      <select class="w-full p-2 rounded border border-gray-600 bg-white dark:bg-gray-900"
+        value={settings.objectivesByMode[mode as 'dual' | 'environment']}
+        on:change={(event) => update({ objectivesByMode: { ...settings.objectivesByMode,
+          [mode]: (event.target as HTMLSelectElement).value as TrainingObjective } })}>
+        <option value="human-continuation">My next reply</option>
+        <option value="assistant-continuation">Persona / assistant reply</option>
+      </select>
+    </label>
+  {/each}
   <label class="block text-sm">
-    <span class="block font-semibold mb-2">Training target</span>
+    <span class="block font-semibold mb-2">Agent and Emulation training target</span>
     <select class="w-full p-2 rounded border border-gray-600 bg-white dark:bg-gray-900"
       value={settings.objective}
       on:change={(event) => update({ objective: (event.target as HTMLSelectElement).value as TrainingObjective })}>
@@ -28,19 +41,15 @@
     </select>
   </label>
   <p class="text-sm text-gray-500">
-    {#if settings.objective === 'human-continuation'}
-      Learns your reply after an earlier assistant message in the same conversation.
-      Both sides must have a current review and a verified message order.
-    {:else}
-      Learns the persona's reply to its preceding prompt. Recorded conversations and generated examples keep separate provenance.
-    {/if}
+    Uses the mode saved with each conversation. Human targets learn your next reply after an earlier assistant message;
+    assistant targets learn the persona's reply to its preceding prompt. Reviews, message order and source provenance remain required.
   </p>
   <label class="flex items-center justify-between gap-4 text-sm">
     <span><strong>Use my persona as context</strong><span class="block text-xs text-gray-500 mt-1">Includes the saved persona with every example.</span></span>
     <input type="checkbox" checked={settings.includePersona}
       on:change={(event) => update({ includePersona: (event.target as HTMLInputElement).checked })} />
   </label>
-  {#if settings.objective === 'assistant-continuation'}
+  {#if includesAssistantTargets}
     <label class="block text-sm">
       <span class="font-semibold">Generated examples limit: {settings.maxSyntheticPercent}%</span>
       <input class="w-full" type="range" min="0" max="50" step="1" value={settings.maxSyntheticPercent}

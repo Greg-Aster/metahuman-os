@@ -38,14 +38,13 @@ export const modelRouterDefinition: Omit<NodeDefinition, 'execute' | 'color' | '
       options: [...MODEL_ROLE_OPTIONS],
     },
     maxTokens: {
-      type: 'slider',
+      type: 'number',
       default: 2048,
       label: 'Max Tokens',
-      description: 'Maximum completion length. A limit that is too small can truncate structured output before it becomes valid JSON.',
+      description: 'Completion token setting. Use -1 for unlimited generation on llama.cpp; positive values request an explicit output limit.',
       advanced: true,
-      min: 256,
-      max: 8192,
-      step: 256,
+      min: -1,
+      step: 1,
     },
     temperature: {
       type: 'slider',
