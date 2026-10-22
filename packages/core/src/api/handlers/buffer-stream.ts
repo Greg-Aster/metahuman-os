@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { UnifiedHandler } from '../types.js';
 import { badRequestResponse, streamResponse } from '../types.js';
 import { getBufferNotificationPath, loadBufferForUser } from '../../conversation-buffer.js';
+import { eventBus } from '../../infrastructure/event-bus/client.js';
 
 type BufferMode = 'conversation' | 'inner' | 'system' | 'robot';
 
@@ -38,6 +39,7 @@ async function* streamBufferUpdates(
   const timers = new Map<BufferMode, NodeJS.Timeout>();
   let wake: (() => void) | undefined;
   let closed = false;
+  let unsubscribeLive: (() => void) | undefined;
   const push = (data: Record<string, unknown>) => {
     if (closed) return;
     queue.push(sse(data));
@@ -50,6 +52,8 @@ async function* streamBufferUpdates(
     timers.clear();
     for (const watcher of watchers) watcher.close();
     watchers.length = 0;
+    unsubscribeLive?.();
+    unsubscribeLive = undefined;
     wake?.();
     wake = undefined;
   };
@@ -72,6 +76,13 @@ async function* streamBufferUpdates(
   signal?.addEventListener('abort', close, { once: true });
   try {
     if (signal?.aborted) return;
+    if (modes.includes('conversation')) {
+      unsubscribeLive = eventBus.subscribe(event => {
+        if (event.event === 'conversation.feed' && event.data?.username === username) {
+          push({ type: 'conversation', message: event.data.message });
+        }
+      });
+    }
     for (const mode of modes) {
       try {
         const notifyPath = getBufferNotificationPath(username, mode);

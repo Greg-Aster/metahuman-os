@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   projectBufferFeed,
+  receiveLiveConversation,
   replaceBufferSlice,
   stampBufferSource,
   type BufferView,
@@ -61,5 +62,22 @@ assert.deepEqual(
   ['sit queued', 'unvoiced', 'spoken', 'service started'],
   'Replacement preserves global chronological order',
 );
+
+const live = { role: 'assistant', content: 'brief reaction', timestamp: 25,
+  meta: { liveConversation: true, idempotencyKey: 'reaction-1' } };
+let liveMessages = receiveLiveConversation<TestMessage>([], live);
+liveMessages = receiveLiveConversation(liveMessages, { ...live });
+assert.equal(liveMessages.length, 1, 'Replay of one delivery identity projects one reply');
+liveMessages = receiveLiveConversation(liveMessages, {
+  ...live, timestamp: 35, meta: { ...live.meta, idempotencyKey: 'reaction-2' },
+});
+assert.equal(liveMessages.length, 2, 'Separate events with equal text remain visible');
+const updatedBuffers = replaceBufferSlice(all, 'conversation', [{ role: 'user', content: 'updated', timestamp: 50 }]);
+assert.deepEqual(projectBufferFeed([...updatedBuffers, ...liveMessages], new Set<BufferView>(['conversation']))
+  .map(message => message.content), ['brief reaction', 'brief reaction', 'updated']);
+assert.deepEqual(projectBufferFeed([...updatedBuffers, ...liveMessages], new Set<BufferView>(['inner']))
+  .map(message => message.content), ['unvoiced']);
+assert.ok(updatedBuffers.every(message => !message.meta?.liveConversation),
+  'Live view state never enters canonical buffer snapshots');
 
 console.log('buffer-feed.spec.ts: all assertions passed');

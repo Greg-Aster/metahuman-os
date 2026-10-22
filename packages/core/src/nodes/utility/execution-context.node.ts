@@ -60,6 +60,7 @@ export const executionContextNode = defineNode({
   id: 'execution_context', name: 'Current Execution', category: 'context',
   description: 'Reads this execution’s checkpointed objective and ordered events. Robot Status and conversation history do not own or replace this task.',
   inputs: [
+    { name: 'routingAnalysis', type: 'object', optional: true, description: 'Intent routing decision for this workflow pass' },
     { name: 'responseEntry', type: 'message', optional: true, description: 'Delivered response from this workflow pass' },
     { name: 'instructionEntry', type: 'message', optional: true, description: 'Original admitted input for continuation' },
     { name: 'resultContext', type: 'object', optional: true, description: 'Returned task observation context' },
@@ -88,12 +89,15 @@ export const executionContextNode = defineNode({
     const hasReviewableGoal = hasActiveTask && !task?.desireId
     const needsGoalReview = hasReviewableGoal && !awaitingInput && (!inputs.taskResult || inputs.taskResult.done === true)
     const responseEntry = inputs.responseEntry ?? context.environmentResponseEntry
+    const routingAnalysis = inputs.routingAnalysis ?? context.environmentRoutingAnalysis
     return {
       reviewContext: { ...inputs.resultContext,
+        environmentRoutingAnalysis: routingAnalysis,
         userMessageEntry: inputs.instructionEntry ?? context.userMessageEntry,
         environmentResponseEntry: responseEntry },
       activeExecutions: context.graphExecution.activeExecutions(),
       context: { executionId: context.graphExecution.executionId, task,
+        ...(routingAnalysis ? { routingAnalysis } : {}),
         ...(responseEntry ? { responseEntry } : {}),
         latestEventSequence: events.at(-1)?.sequence ?? 0,
         observationEncoding: 'First observation is complete; later observationChanges replace or remove the named path relative to the previous observation. Image references retain their recorded time.',

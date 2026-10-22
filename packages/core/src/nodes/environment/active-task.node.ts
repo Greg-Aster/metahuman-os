@@ -164,6 +164,8 @@ export const environmentActiveTaskStepNode = defineNode({
     const execution = context.graphExecution!
     const program = context.activeProgram as EnvironmentTaskProgram
     const decision = context.activeTaskDecision as EnvironmentTaskDecision
+    const receiptObjective = decision.requiredCompletionBasis === 'action_result'
+      && decision.continuationPolicy === 'none' && program.steps.length > 0 && program.steps.every(step => step.kind !== 'vision')
     const sessionId = context.activeTaskSessionId as string
     const state: ActiveTaskState = structuredClone(inputs.state ?? context.activeTaskInitialState ?? { stepIndex: 0, updateRevision: 0, evidence: [] })
     context.abortSignal?.throwIfAborted()
@@ -188,7 +190,8 @@ export const environmentActiveTaskStepNode = defineNode({
       objective: previous?.desireId ? previous.objective : decision.objective!,
       completionCriteria: previous?.desireId ? previous.completionCriteria : decision.completionCriteria!,
       instruction: previous?.instruction ?? context.userMessage ?? decision.objective!, source: previous?.source ?? 'environment',
-      decision: { ...decision, outcome: complete ? 'complete' : state.done || state.failure ? 'continue' : decision.outcome, objectiveComplete: complete,
+      decision: { ...decision, outcome: complete ? 'complete' : state.done && state.failure && receiptObjective ? 'failed'
+        : decision.outcome, objectiveComplete: complete,
         ...(reason ? { reason } : {}),
         observationSummary: state.perception?.summary ?? state.identification?.description ?? decision.observationSummary,
         completionEvidence: complete ? state.evidence.join('\n') : decision.completionEvidence },
@@ -391,8 +394,7 @@ export const environmentActiveTaskStepNode = defineNode({
       // The wait owner advances each phase only from its matching result. A
       // finite objective whose selected completion basis is those receipts ends
       // here; visual/state interpretation remains with objective confirmation.
-      state.objectiveComplete = decision.requiredCompletionBasis === 'action_result'
-        && decision.continuationPolicy === 'none' && program.steps.length > 0 && program.steps.every(step => step.kind !== 'vision')
+      state.objectiveComplete = receiptObjective
       record(state.objectiveComplete); return { state }
     }
     if (step.kind === 'vision') {
@@ -546,8 +548,8 @@ export const environmentActiveTaskStepNode = defineNode({
       if (step.kind === 'action' && (step.action.continuous || goal)) updateMovement({ ...step.action, ...locomotionControls })
       record(); return { state }
     }
+    if (step.motion === null && state.identification) { record(); return { state } }
     if (state.identification?.matchesTarget && state.identification.completionSatisfied) {
-      if (step.motion === null) { record(); return { state } }
       state.finishRequestedAt ??= Date.now()
       scheduleDeadline(state.finishRequestedAt + FINISH_TIMEOUT_MS)
       // Finish is a speed-zero update of the original gait. Its ACK is not
@@ -642,9 +644,8 @@ export const environmentActiveTaskWaitNode = defineNode({
       return { state, continue: !routeInput() }
     }
     const phase = program.steps[state.stepIndex]
-    if (phase?.kind === 'behavior' && phase.motion === null
-      && state.identification?.matchesTarget && state.identification.completionSatisfied) {
-      state.visualCompletionSatisfied = true
+    if (phase?.kind === 'behavior' && phase.motion === null && state.identification) {
+      state.visualCompletionSatisfied = state.identification.matchesTarget && state.identification.completionSatisfied
       if (state.stepIndex + 1 === program.steps.length) state.planningRequired = true
       return advance(JSON.stringify({ type: 'visual_observation', result: state.identification,
         frameIds: state.capturedFrameIds }))

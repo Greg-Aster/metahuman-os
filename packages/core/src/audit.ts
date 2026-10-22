@@ -57,8 +57,9 @@ export function purgeOldAuditLogs(): void {
     let purgedCount = 0;
 
     for (const file of files) {
-      if (file.endsWith('.ndjson')) {
-        const fileDate = file.replace('.ndjson', '');
+      const datedLog = /^(\d{4}-\d{2}-\d{2})\.ndjson(?:\.gz)?$/.exec(file);
+      if (datedLog) {
+        const fileDate = datedLog[1];
         if (fileDate < cutoffStr) {
           const filePath = path.join(auditDir, file);
           fs.unlinkSync(filePath);

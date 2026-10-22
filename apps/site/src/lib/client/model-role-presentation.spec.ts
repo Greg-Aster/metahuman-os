@@ -61,3 +61,22 @@ test('every category presents its exact shared definition and label', () => {
   }
   assert.equal(roles.some(item => String(item.role) === 'environmentIntent'), false);
 });
+
+test('Lightweight remains independently selectable and shows its configured body-event usage', () => {
+  const withBodyEvents = [...workflows, {
+    key: 'robot-body-response', name: 'Robot Body Response', models: [
+      { nodeId: 'response', label: 'Body Response', role: 'lightweight', selection: 'role' },
+    ],
+  }];
+  const sections = buildModelRoleSections(withBodyEvents, 'environment');
+  const roles = sections.flatMap(section => section.roles);
+  assert.equal(roles.filter(item => item.role === 'lightweight').length, 1);
+  const lightweight = roles.find(item => item.role === 'lightweight')!;
+  assert.equal(lightweight.label, 'Lightweight');
+  assert.match(lightweight.description, /Robot Body Response: Body Response/);
+  assert.equal(sections[1].roles.includes(lightweight), true);
+  assert.deepEqual(buildModelRoleSections(withBodyEvents, 'robot-body-response')[0].roles
+    .map(item => item.role), ['lightweight']);
+  assert.equal(buildModelRoleSections([], 'environment').flatMap(section => section.roles)
+    .some(item => item.role === 'lightweight'), true);
+});

@@ -95,6 +95,23 @@ test('Environment Mode robot speech bypasses the browser queue exactly once', as
   assert.equal(rendered, 1);
 });
 
+test('fast body speech uses the originating robot session through the existing renderer', async () => {
+  let rendered = 0;
+  const result = await deliverTTSOutput({ ...request, source: 'fast-body-event', sessionId: 'event-body' }, {
+    getSettings: () => ({ provider: 'kokoro', outputTarget: 'robot', speechDisabled: false }),
+    queue: () => { throw new Error('Body event speech must not enter the browser queue'); },
+    renderRobot: async (options) => {
+      rendered += 1;
+      assert.equal(options.sessionId, 'event-body');
+      assert.equal(options.text, request.text);
+      return { actionId: 'body-event-speech', requestId: options.requestId, totalChunks: 1 };
+    },
+  });
+  assert.equal(rendered, 1);
+  assert.equal(result.accepted, true);
+  assert.equal(result.deliveryId, 'body-event-speech');
+});
+
 test('the main speech disable state blocks server-owned robot synthesis', async () => {
   let queued = 0;
   let rendered = 0;

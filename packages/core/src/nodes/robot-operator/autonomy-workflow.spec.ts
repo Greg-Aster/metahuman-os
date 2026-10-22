@@ -419,3 +419,24 @@ test('input join preserves each source and producers replace inherited source-sp
   assert.equal(Object.hasOwn(dispatch.invocation.context, 'bodyEventDecision'), true)
   assert.equal(dispatch.invocation.context.bodyEventDecision, undefined)
 })
+
+test('body event decisions preserve null instructions only for no-action results', async () => {
+  const { bodyEventDecisionNode } = await import('../environment/body-event.node.js')
+  for (const instruction of ['', null]) {
+    const decision = { decision: 'none', instruction, reason: 'The supplied evidence does not require another response.' }
+    const result = await bodyEventDecisionNode.execute({ response: JSON.stringify(decision) }, {}, {})
+    assert.equal(result.delegate, false)
+    assert.equal(result.invocation, null)
+    assert.deepEqual(result.decision, decision, 'The parsed result is preserved without manufacturing an instruction')
+  }
+  for (const instruction of [null, '', '  ', undefined, 0, {}]) {
+    await assert.rejects(() => bodyEventDecisionNode.execute({ response: JSON.stringify({ decision: 'delegate',
+      instruction, reason: 'A response was selected.' }) }, {}, {}), /Event decision requires/)
+  }
+  for (const instruction of [undefined, 0, {}]) {
+    await assert.rejects(() => bodyEventDecisionNode.execute({ response: JSON.stringify({ decision: 'none',
+      instruction, reason: 'No response was selected.' }) }, {}, {}), /Event decision requires/)
+  }
+  await assert.rejects(() => bodyEventDecisionNode.execute({ response: JSON.stringify({ decision: 'none',
+    instruction: null, reason: null }) }, {}, {}), /Event decision requires/)
+})

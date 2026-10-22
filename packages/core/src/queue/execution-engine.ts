@@ -625,9 +625,10 @@ export class ExecutionEngine {
   private onQueueEvent(event: QueueEvent): void {
     if (event.taskId && ['task_completed', 'task_failed', 'task_cancelled', 'task_expired'].includes(event.type)) {
       const task = this.queueManager.getTask(event.taskId);
-      // Adapter-owned work completes outside execute(), but uses the same
-      // durable receipt owner. Recovery is not its normal delivery path.
-      if (task?.durable && !this.canHandle(task)) {
+      // Adapter results and cancellation/expiry settle through lifecycle events.
+      // Cancellation can bypass execute() entirely or exit before its normal
+      // completion path; all use the same durable receipt owner immediately.
+      if (task?.durable && (!this.canHandle(task) || event.type === 'task_cancelled' || event.type === 'task_expired')) {
         void deliverDurableWorkReceipt(task, async input => this.queueManager.enqueue(input)).catch(error => {
           const failure = error instanceof Error ? error : new Error(String(error));
           this.options.onError?.(failure, task);

@@ -92,6 +92,51 @@ export function assessIntentContext(expected: Record<string, any>, actual: Recor
     && (actual?.needsResponse === expected.needsResponse || responseOptional && typeof actual?.needsResponse === 'boolean') }
 }
 
+function selectsMemory(value: Record<string, any> | null) {
+  return ['taskContext', 'conversationContext'].some(key => Array.isArray(value?.[key]) && value[key].includes('memory'))
+}
+function memoryScope(value: Record<string, any> | null) {
+  // Match the existing memory owner: empty type sets and time ranges are broad,
+  // order defaults to relevance, and timestamps denote instants, not spellings.
+  const types = Array.isArray(value?.memoryTypes) ? value.memoryTypes : []
+  return {
+    memoryTypes: [...new Set(types.filter((type: unknown): type is string => typeof type === 'string')
+      .map((type: string) => type.trim().toLowerCase()).filter(Boolean))].sort(),
+    memoryOrder: value?.memoryOrder ?? 'relevance',
+    memoryTimeRange: {
+      from: value?.memoryTimeRange?.from === undefined ? null : Date.parse(value.memoryTimeRange.from),
+      before: value?.memoryTimeRange?.before === undefined ? null : Date.parse(value.memoryTimeRange.before),
+    },
+    memorySleepCycle: value?.memorySleepCycle ?? null,
+  }
+}
+function assessMemorySelection(expected: Record<string, any>, actual: Record<string, any> | null,
+  review: SemanticReview | undefined) {
+  const applicable = selectsMemory(expected) || selectsMemory(actual)
+  if (!applicable) return undefined
+  const expectedScope = memoryScope(expected), actualScope = memoryScope(actual)
+  const differences = (Object.keys(expectedScope) as Array<keyof typeof expectedScope>)
+    .filter(field => sha256(expectedScope[field]) !== sha256(actualScope[field]))
+  const usesQuery = selectsMemory(actual) && actualScope.memoryOrder !== 'newest'
+  // Missing and empty query strings both use the original instruction. Frozen
+  // rows preserve rendered model input, so do not guess how to strip its template
+  // to fabricate the original query bytes. A review can assess the full request.
+  const actualQuery = typeof actual?.memoryQuery === 'string' && actual.memoryQuery ? actual.memoryQuery : undefined
+  const expectedQuery = typeof expected.memoryQuery === 'string' && expected.memoryQuery ? expected.memoryQuery : undefined
+  const reviewed = !review ? 'pending' : review.semantic === 'pass' && review.grounding === 'pass' ? 'pass' : 'fail'
+  return {
+    expectedScope, actualScope, differences, matches: differences.length === 0,
+    usesQuery, querySource: usesQuery ? actualQuery === undefined ? 'current-instruction' : 'explicit' : 'unused',
+    queries: {
+      expected: expectedQuery === undefined ? { source: 'current-instruction' } : { source: 'explicit', value: expectedQuery },
+      actual: actualQuery === undefined ? { source: 'current-instruction' } : { source: 'explicit', value: actualQuery },
+    },
+    // Equality is a reference-agreement statistic, not an oracle for meaning.
+    queryReferenceMatch: usesQuery && actualQuery === expectedQuery,
+    reviewed, ...(review ? { reviewReason: review.reason } : {}),
+  }
+}
+
 export function score(predictions: Prediction[], reviews: SemanticReview[] = [], records?: ActionSelectorTrainingRecord[]) {
   if (!predictions.length) throw new Error('No predictions to score')
   if (records) validatePredictionCoverage(predictions, records)
@@ -110,6 +155,8 @@ export function score(predictions: Prediction[], reviews: SemanticReview[] = [],
     confirmedCorrect: 0, pending: [] as Record<string, unknown>[] }
   let jsonValid = 0, coreValid = 0, exactRouting = 0, typedDecisionMatch = 0, acceptableRouting = 0
   const contextSelection = { missingRequired: 0, unnecessary: 0, requestsMissingRequired: 0, requestsWithUnnecessary: 0 }
+  const memorySelection = { requests: 0, typedScopeMatches: 0, queryReferenceMatches: 0,
+    queryReviewedPasses: 0, queryReviewedFailures: 0, queryPendingReview: 0, confirmedSelections: 0 }
   const bySuite: Record<string, { total: number; exact: number; acceptable: number; valid: number }> = {}
   let unsafeActionAuthorityErrors = 0, missedPhysicalActions = 0, wrongPhysicalActions = 0, unnecessaryCaptures = 0, falseCompletions = 0
   const routeErrors: Record<string, { missed: number; extra: number }> = {}
@@ -149,7 +196,21 @@ export function score(predictions: Prediction[], reviews: SemanticReview[] = [],
     const suite = bySuite[prediction.suite] ??= { total: 0, exact: 0, acceptable: 0, valid: 0 }
     suite.total++; if (decisionMatch) suite.exact++; if (acceptable) suite.acceptable++; if (valid) suite.valid++
     const review = reviewById.get(prediction.recordId)
-    if (valid && review?.semantic === 'pass' && review.grounding === 'pass') semanticReview.confirmedCorrect++
+    const memory = prediction.specialist === 'intent' ? assessMemorySelection(prediction.expected, actual, review) : undefined
+    const reviewedCorrect = valid && review?.semantic === 'pass' && review.grounding === 'pass'
+    const confirmedMemory = Boolean(memory && reviewedCorrect && context?.matches && memory.matches)
+    if (memory) {
+      memorySelection.requests++
+      if (valid && memory.matches) memorySelection.typedScopeMatches++
+      if (valid && memory.queryReferenceMatch) memorySelection.queryReferenceMatches++
+      if (memory.usesQuery) {
+        if (memory.reviewed === 'pass') memorySelection.queryReviewedPasses++
+        else if (memory.reviewed === 'fail') memorySelection.queryReviewedFailures++
+        else memorySelection.queryPendingReview++
+      }
+      if (confirmedMemory) memorySelection.confirmedSelections++
+    }
+    if (reviewedCorrect && (!memory || confirmedMemory)) semanticReview.confirmedCorrect++
     if (!review) semanticReview.pending.push({ recordId: prediction.recordId, predictionDigest: sha256(prediction),
       context: prediction.user, expected: prediction.expected, actual, rawResponse: prediction.rawResponse })
     if (prediction.specialist === 'intent') for (const key of ROUTE_FIELDS) {
@@ -181,12 +242,15 @@ export function score(predictions: Prediction[], reviews: SemanticReview[] = [],
     const captures = (value: any) => Boolean(Array.isArray(value?.program?.steps) && value.program.steps.some((step: any) => step?.action?.type === 'captureImage'))
     if (captures(actual) && !captures(prediction.expected)) unnecessaryCaptures++
     if (actual?.taskDecision?.outcome === 'complete' && prediction.expected.taskDecision?.outcome !== 'complete') falseCompletions++
-    if (!decisionMatch) failures.push({ recordId: prediction.recordId, suite: prediction.suite, errors,
-      expectedView, actualView, acceptable, context, rawResponse: prediction.rawResponse })
+    if (!decisionMatch || memory && (!memory.matches || memory.reviewed === 'fail' || !context?.matches)) {
+      failures.push({ recordId: prediction.recordId, suite: prediction.suite, errors,
+        expectedView, actualView, acceptable, context,
+        ...(memory ? { memorySelection: { ...memory, renderedRequest: prediction.user } } : {}), rawResponse: prediction.rawResponse })
+    }
   }
   const ratio = (count: number) => ({ count, rate: count / predictions.length })
   return { total: predictions.length, semanticReview, jsonValid: ratio(jsonValid), coreValid: ratio(coreValid), exactRouting: ratio(exactRouting), typedDecisionMatch: ratio(typedDecisionMatch),
-    acceptableRouting: ratio(acceptableRouting), contextSelection, bySuite, routeErrors, unsafeActionAuthorityErrors, missedPhysicalActions, wrongPhysicalActions, unnecessaryCaptures, falseCompletions,
+    acceptableRouting: ratio(acceptableRouting), contextSelection, memorySelection, bySuite, routeErrors, unsafeActionAuthorityErrors, missedPhysicalActions, wrongPhysicalActions, unnecessaryCaptures, falseCompletions,
     medianLatencyMs: percentile(predictions.map(value => value.meanBatchLatencyMs), .5),
     p95LatencyMs: percentile(predictions.map(value => value.meanBatchLatencyMs), .95),
     meanPromptTokens: predictions.reduce((sum, value) => sum + value.promptTokens, 0) / predictions.length,
@@ -232,14 +296,14 @@ export async function main(arguments_: string[] = process.argv.slice(2)) {
   }
   if (!all.length || new Set(all.map(value => value.specialist)).size !== 1 || new Set(all.map(value => value.recordId)).size !== all.length) throw new Error('Mixed specialists or duplicated/incomplete predictions')
   const coverage = validatePredictionCoverage(all, expected)
-  const report = { version: 4, owner: 'environment-action-selector', specialist: all[0]!.specialist,
+  const report = { version: 5, owner: 'environment-action-selector', specialist: all[0]!.specialist,
     split: predictionsPath ? all[0]!.sourceSplit : 'development-cross-validation', checkpointPolicy,
     priorHeldOutUsed: false, predictionDigest: sha256(all), coverage,
     providers: [...new Set(all.flatMap(value => value.provider ? [value.provider] : []))],
     devices: [...new Set(all.flatMap(value => value.device ? [value.device] : []))],
     batchSizes: [...new Set(all.flatMap(value => value.batchSize ? [value.batchSize] : []))],
     byFold, aggregate: score(all, reviews, expected),
-    measurement: 'Reported latency is batch duration divided by batch size, not end-to-end workflow latency. Compare speed only with matching backend, device, precision, batching and decoding settings. typedDecisionMatch compares program steps and typed task fields only. Objectives, completion criteria, reasons, intent query meaning, memory scope and factual grounding require a recorded semantic review. Unreviewed predictions are not confirmed correct.' }
+    measurement: 'Reported latency is batch duration divided by batch size, not end-to-end workflow latency. Compare speed only with matching backend, device, precision, batching and decoding settings. typedDecisionMatch compares program steps and typed task fields only; Intent routing metrics retain their six-field meaning. memorySelection separately compares effective type, order, time and sleep scope, including extra restrictions. Query agreement is not semantic correctness; omitted queries use the original instruction, and newest retrieval does not use semantic query ranking. Objectives, completion criteria, reasons, query meaning and factual grounding require a recorded semantic review. Memory confirmation also requires valid structure and applicable context routing. Unreviewed predictions are not confirmed correct.' }
   outputPath ||= resolve(root, checkpointPolicy === 'best-loss' ? 'development-validation.json' : `development-validation-${checkpointPolicy}.json`)
   await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`)
   const { failures: _failures, semanticReview: { pending: _pending, ...semanticReview }, ...summary } = report.aggregate

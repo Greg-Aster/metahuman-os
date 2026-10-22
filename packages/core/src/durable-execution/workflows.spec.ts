@@ -1591,18 +1591,20 @@ test('speech chunks admit during a live parent writer and replay without duplica
   })
 })
 
-test('body event workflow may decline without calling Environment Mode', async () => {
+for (const instruction of ['', null]) test(`body event workflow may decline with ${instruction === null ? 'null' : 'empty'} instruction without calling Environment Mode`, async () => {
   await withUserContext(user, async () => {
     const current = freshObservation('body-none')
     current.state = { ...current.state, bodyEvent: { name: 'body_event', event_id: 'none-event',
       data: { kind: 'rapid_movement', rotation_dps: 200 } } }
     recordEnvironmentObservation(current)
     const before = calls.length
-    replies.push({ decision: 'none', instruction: '', reason: 'The reported movement belongs to the current action.' })
+    const decision = { decision: 'none', instruction, reason: 'The reported movement belongs to the current action.' }
+    replies.push(decision)
     const result = await run({ graph: graph('body-event-trigger'), context: { ...context(current), userMessage: '' } })
     assert.equal(result.status, 'completed', result.error?.stack)
     assert.equal(calls.length, before + 1)
     assert.equal(result.nodes.get('environment')?.status, 'skipped')
+    assert.deepEqual(result.nodes.get('decision')?.outputs?.decision, decision)
     assert.equal(replies.length, 0)
   })
 })

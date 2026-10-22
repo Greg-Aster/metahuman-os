@@ -339,3 +339,47 @@ test('boot interface refresh does not import status from a different robot or co
     assert.equal(result.observation.state.body.cameraReady, false);
   }
 });
+
+test('disconnected camera availability stays separate from retained diagnostics and independent images', async () => {
+  const observation: EnvironmentObservation = {
+    environmentId: 'ainekio', adapter: 'ainekio-gateway', sessionId: 'disconnected-camera',
+    timestamp: new Date().toISOString(),
+    capabilities: { actions: ['sendText'], visual: false },
+    state: { body: { authenticated: false, robotId: null, cameraReady: false }, gateway: { robots: {} } },
+  };
+  const historicalStatus = { kind: 'robot.status', robot_id: 'p4', epoch: 7, camera_ready: true };
+  for (let flush = 0; flush < 2; flush++) {
+    recordEnvironmentBridgeTelemetry({ sessionId: observation.sessionId, robotId: 'p4', robotStatus: historicalStatus });
+    const result = await environmentBridgeInputNode.execute({}, { environmentObservation: observation }, {});
+    assert.equal(result.bodyAuthenticated, false);
+    assert.equal(result.cameraReady, false);
+    assert.equal(result.observation.state.body.cameraReady, false);
+    assert.equal(result.capabilities.visual, false);
+    assert.deepEqual(result.capabilities.actions, ['sendText']);
+    assert.deepEqual(result.diagnostics.robotStatus, historicalStatus, 'Historical diagnostics stay available');
+    assert.deepEqual(result.bodyStatus, historicalStatus);
+  }
+
+  const independentCamera: EnvironmentObservation = { ...observation,
+    capabilities: { actions: ['sendText', 'captureImage'], visual: true },
+    visual: { id: 'independent-frame', timestamp: observation.timestamp, mimeType: 'image/jpeg', source: 'independent-camera' },
+  };
+  const independent = await environmentBridgeInputNode.execute({}, { environmentObservation: independentCamera }, {});
+  assert.equal(independent.cameraReady, false, 'The disconnected body camera remains unavailable');
+  assert.equal(independent.capabilities.visual, true, 'The independent camera remains available');
+  assert.deepEqual(independent.capabilities.actions, ['sendText', 'captureImage']);
+  assert.deepEqual(independent.visual, independentCamera.visual);
+
+  const reconnected: EnvironmentObservation = { ...observation,
+    state: { body: { authenticated: true, robotId: 'p4', cameraReady: false },
+      gateway: { robots: { p4: { epoch: 8, status: { camera_ready: false } } } } },
+  };
+  const oldEpoch = await environmentBridgeInputNode.execute({}, { environmentObservation: reconnected }, {});
+  assert.equal(oldEpoch.cameraReady, false, 'Prior-epoch diagnostics cannot override projected camera status');
+  recordEnvironmentBridgeTelemetry({ sessionId: observation.sessionId, robotId: 'p4',
+    robotStatus: { ...historicalStatus, epoch: 8 } });
+  const currentEpoch = await environmentBridgeInputNode.execute({}, { environmentObservation: reconnected }, {});
+  assert.equal(currentEpoch.cameraReady, true);
+  assert.equal(currentEpoch.capabilities.visual, true);
+  assert.deepEqual(currentEpoch.capabilities.actions, ['sendText', 'captureImage']);
+});

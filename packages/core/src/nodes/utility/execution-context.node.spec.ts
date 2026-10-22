@@ -30,6 +30,35 @@ test('input drain does not invent a workflow and preserves newly received human 
   assert.equal(next.invocation.context.environmentTaskEvidence, undefined)
 })
 
+test('finite body-event input drain ends without parking and preserves admitted human takeover', async () => {
+  const pending: any[] = []
+  const waits: string[] = []
+  const graphExecution = { pendingEvents: () => pending, waitForEvent: (reason: string) => {
+    waits.push(reason)
+    if (!pending.length) throw new Error('waiting for ' + reason)
+    return pending.shift()
+  } }
+  const context = { graphExecution, _graphExecutorIteration: 1, userMessage: '',
+    bodyEventDecision: { instruction: 'Assess the body event.', sourceObservationAt: '2026-10-19T19:37:00Z' } } as any
+  const properties = { drain: false, userGraph: 'environment', autonomyGraph: 'robot-autonomy-controller' }
+  assert.deepEqual(await executionEventWaitNode.execute({}, context, properties), { invocation: null })
+  assert.deepEqual(waits, [], 'An unresolved objective does not park a finite event invocation')
+  const received = { userMessage: 'Wait for my next instruction.', userMessageEntry: {
+    role: 'user', content: 'Wait for my next instruction.', timestamp: 1234,
+    meta: { idempotencyKey: 'actual-human-input' },
+  } }
+  pending.push({ kind: 'user_steering', payload: received })
+  const next = await executionEventWaitNode.execute({}, context, properties)
+  assert.equal(next.invocation.graph, 'environment')
+  assert.deepEqual(next.invocation.context.userMessageEntry, received.userMessageEntry)
+  assert.equal(next.invocation.context.userMessage, received.userMessage)
+  assert.deepEqual(waits, ['pending_input'])
+  await assert.rejects(executionEventWaitNode.execute({}, { ...context, ...received }, properties),
+    /waiting for user_or_autonomy/, 'A genuine human turn retains the conversational wait')
+  await assert.rejects(executionEventWaitNode.execute({}, { ...context, userMessageEntry: received.userMessageEntry }, properties),
+    /waiting for user_or_autonomy/, 'Recorded human admission remains authoritative across an internal handoff')
+})
+
 test('unfinished program handoffs do not start Goal Review before task results return', async () => {
   const graphExecution = { executionId: 'execution', task: () => ({
     objective: 'Inspect the target', decision: { outcome: 'continue', requiredCompletionBasis: 'visual_observation' },
@@ -38,6 +67,25 @@ test('unfinished program handoffs do not start Goal Review before task results r
     const result = await executionContextNode.execute({ taskResult: { done } }, { graphExecution } as any, {})
     assert.equal(result.needsGoalReview, done)
   }
+})
+
+test('Goal Review receives the current Intent routes without treating a selected reply as delivered', async () => {
+  const graphExecution = { executionId: 'execution', task: () => ({
+    objective: 'Inspect the target', decision: { outcome: 'continue', requiredCompletionBasis: 'visual_observation' },
+  }), events: () => [], activeExecutions: () => [] }
+  for (const needsResponse of [false, true]) {
+    const routingAnalysis = { needsResponse, needsAction: true, taskContext: ['environment'], conversationContext: [] }
+    const parent = await executionContextNode.execute({ routingAnalysis }, { graphExecution } as any, {})
+    const child = await executionContextNode.execute({}, { ...parent.reviewContext, graphExecution } as any, {})
+    assert.deepEqual(child.context.routingAnalysis, routingAnalysis)
+    assert.equal(child.context.responseEntry, undefined)
+    assert.equal(child.needsGoalReview, true, 'Reply selection does not decide goal completion')
+    const nextTurn = { ...routingAnalysis, needsResponse: !needsResponse }
+    const replaced = await executionContextNode.execute({ routingAnalysis: nextTurn }, { ...parent.reviewContext, graphExecution } as any, {})
+    assert.deepEqual(replaced.context.routingAnalysis, nextTurn, 'A new turn replaces the inherited routing decision')
+  }
+  const withoutRoute = await executionContextNode.execute({}, { graphExecution } as any, {})
+  assert.equal(withoutRoute.context.routingAnalysis, undefined, 'Standalone review does not invent a route')
 })
 
 test('final context carries assessment and returned evidence', async () => {

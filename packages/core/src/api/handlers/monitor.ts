@@ -34,7 +34,6 @@ export async function handleGetMonitor(req: UnifiedRequest): Promise<UnifiedResp
         return successResponse({
           ...snapshot,
           agents: snapshot.runningAgents,
-          recentLogs: getAgentLogs(undefined, 50),
         });
       }
 

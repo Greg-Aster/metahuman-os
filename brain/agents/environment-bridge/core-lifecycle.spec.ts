@@ -34,7 +34,11 @@ let fixtureSocket: FakeWebSocket;
 class FakeWebSocket extends EventEmitter {
   static OPEN = 1;
   readyState = 1;
-  constructor() { super(); fixtureSocket = this; queueMicrotask(() => this.emit('open')); }
+  constructor(_url: string, options: { maxPayload: number }) {
+    super();
+    assert.equal(options.maxPayload, 0, 'The environment connection must not reject observations by total message size');
+    fixtureSocket = this; queueMicrotask(() => this.emit('open'));
+  }
   send(payload: string | Buffer, callback?: (error?: Error) => void) {
     if (Buffer.isBuffer(payload)) {
       sent++;
@@ -115,6 +119,7 @@ test('reconnect backlog preserves every observation while independent feedback i
   const originalFetch = globalThis.fetch;
   const controller = new AbortController();
   const delivered: string[] = [];
+  const largeVisual = { dataUrl: `data:image/jpeg;base64,${'a'.repeat(600_000)}` };
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   let receipt!: () => void;
@@ -132,7 +137,8 @@ test('reconnect backlog preserves every observation while independent feedback i
         setImmediate(() => {
           for (let index = 0; index < 256; index++) fixtureSocket.emit('message', JSON.stringify({
             type: 'environment.observation', observation: { id: `replay-${index}`, environmentId: 'ainekio',
-              adapter: 'ainekio-gateway', sessionId: 'robot-session', timestamp: new Date().toISOString(), capabilities: { actions: [] } },
+              adapter: 'ainekio-gateway', sessionId: 'robot-session', timestamp: new Date().toISOString(), capabilities: { actions: [] },
+              ...(index === 34 ? { visual: largeVisual } : {}) },
           }), false);
           fixtureSocket.emit('message', JSON.stringify({ type: 'environment.feedback', feedback: {
             id: 'new-receipt', actionId: 'new-action', type: 'completed', timestamp: new Date().toISOString(), message: 'Done',
@@ -143,6 +149,7 @@ test('reconnect backlog preserves every observation while independent feedback i
     if (pathname === '/api/environment-bridge/observation') {
       const body = JSON.parse(String(options?.body));
       delivered.push(body.id);
+      if (body.id === 'replay-34') assert.deepEqual(body.visual, largeVisual, 'Large camera data reaches Core unchanged');
       if (delivered.length === 1) await held;
     } else if (pathname === '/api/environment-bridge/action-result') {
       return Response.json({ success: true, action: { id: 'new-action' } });

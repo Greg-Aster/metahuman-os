@@ -26,7 +26,7 @@
   import { connectProposalsStream, disconnectProposalsStream } from '../stores/proposals';
   import { autonomyModeDefinition, nextAutonomyMode, type AutonomyMode } from '../lib/client/active-operator-modes';
   import { setActiveOperatorMode, triggerManagerSnapshot, useTriggerManager } from '../lib/stores/trigger-manager';
-  import { projectBufferFeed, replaceBufferSlice, stampBufferSource } from '../lib/client/buffer-feed';
+  import { projectBufferFeed, receiveLiveConversation, replaceBufferSlice, stampBufferSource } from '../lib/client/buffer-feed';
   import { setInnerDialogueSpeechVisible } from '../lib/client/inner-dialogue-speech-visibility';
 
   // Component state
@@ -43,6 +43,8 @@
   let reconcilingChatTaskId: string | null = null;
   let queuedChatStreams = new Map<string, EventSource>();
   let bufferStream: EventSource | null = null;
+  // Live workflow replies are local view state, never a conversation buffer or cache.
+  let liveConversationMessages: ChatMessage[] = [];
   let isTabVisible = true;
   // View selection: VS Code-style multi-select
   // All three tabs can be combined for unified feed
@@ -108,7 +110,7 @@
     conversationSessionId
   } = messagesApi;
 
-  $: displayMessages = projectBufferFeed($messages, selectedViews);
+  $: displayMessages = projectBufferFeed([...$messages, ...liveConversationMessages], selectedViews);
 
   function showTransientSystemMessage(message: string) {
     transientStatus = message;
@@ -1848,6 +1850,8 @@
           messagesApi.pushMessage('system', `Buffer update failed (${data.mode || 'connection'}): ${data.error}`);
         } else if (data.type === 'update' && Array.isArray(data.messages)) {
           messages.update(msgs => replaceBufferSlice(msgs, data.mode, data.messages));
+        } else if (data.type === 'conversation' && data.message) {
+          liveConversationMessages = receiveLiveConversation(liveConversationMessages, data.message);
         }
       } catch (error) {
         messagesApi.pushMessage('system', `Buffer update failed: ${(error as Error).message}`);
@@ -1904,6 +1908,7 @@
     // which canonical buffer is mutated.
     const serverCleared = await messagesApi.clearServerBuffer();
     if (serverCleared) {
+      if (composeTarget === 'conversation') liveConversationMessages = [];
       console.log(`[ChatInterface] ${composeTarget} buffer cleared successfully`);
       await fetchAllSelectedBuffers();
     } else {

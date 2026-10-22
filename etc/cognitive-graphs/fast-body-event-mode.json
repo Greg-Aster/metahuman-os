@@ -1,0 +1,392 @@
+{
+  "version": "1.0",
+  "format": "svelte-flow",
+  "name": "Fast Body Event",
+  "description": "",
+  "cognitiveMode": "environment",
+  "scheduler": {
+    "version": 1,
+    "activation": "demand",
+    "skippedState": "explicit",
+    "sideEffectOrder": "serial-topological",
+    "maxLoopIterations": 0
+  },
+  "last_modified": "2026-10-19T23:28:48.058Z",
+  "nodes": [
+    {
+      "id": "event",
+      "type": "environmentNode",
+      "position": {
+        "x": -900,
+        "y": -225
+      },
+      "data": {
+        "label": "Body Event Gateway",
+        "nodeType": "fast_body_event_context",
+        "properties": {
+          "tippedPrompt": "You are Ainekio, a robot experiencing excessive tilt. React aloud to the tilt with one brief, nervous reaction. Use self-directed dark humor without insulting, blaming or ordering anyone around. Speak directly about what is happening, without a story or descriptions of imaginary damage. One exclamation only; no explanation or follow-up. Return JSON with speech containing only the words to say.",
+          "rapidMovementPrompt": "You are Ainekio, a robot being shaken or moved fast. React aloud to the movement with one brief, nervous reaction. Use self-directed dark humor without insulting, blaming or ordering anyone around. Speak directly about what is happening, without a story or descriptions of imaginary damage. One exclamation only; no explanation or follow-up. Return JSON with speech containing only the words to say.",
+          "motorStallPrompt": "You are Ainekio, a robot. Your body reports a motor stall. Briefly ask for help with the stalled joint or joints identified in the supplied event. Use a gentle, nervous tone with optional self-directed dark humor. Keep the request clear and grounded in the reported information; do not invent damage, causes or repairs. One short request only; no explanation or follow-up. Return JSON with speech containing only the words to say."
+        }
+      }
+    },
+    {
+      "id": "tipped-face",
+      "type": "environmentNode",
+      "position": {
+        "x": 120,
+        "y": -390
+      },
+      "data": {
+        "label": "Tipped Face",
+        "nodeType": "environment_face_expression",
+        "properties": {
+          "expression": "confused",
+          "sessionId": "",
+          "operation": "set",
+          "timeoutMs": 60000,
+          "background": false
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "control"
+          ]
+        }
+      }
+    },
+    {
+      "id": "movement-face",
+      "type": "environmentNode",
+      "position": {
+        "x": 645,
+        "y": -390
+      },
+      "data": {
+        "label": "Rapid Movement Face",
+        "nodeType": "environment_face_expression",
+        "properties": {
+          "expression": "surprised",
+          "sessionId": "",
+          "operation": "set",
+          "timeoutMs": 60000,
+          "background": false
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "control"
+          ]
+        }
+      }
+    },
+    {
+      "id": "model",
+      "type": "llmNode",
+      "position": {
+        "x": 340,
+        "y": 360
+      },
+      "data": {
+        "label": "Lightweight Reaction",
+        "nodeType": "model_router",
+        "properties": {
+          "enableThinking": false,
+          "role": "lightweight",
+          "maxTokens": 2048,
+          "temperature": 0.3,
+          "repeatPenalty": 1,
+          "format": "json"
+        }
+      }
+    },
+    {
+      "id": "reaction",
+      "type": "environmentNode",
+      "position": {
+        "x": 1050,
+        "y": 825
+      },
+      "data": {
+        "label": "Reaction Speech",
+        "nodeType": "fast_body_event_response",
+        "properties": {}
+      }
+    },
+    {
+      "id": "feed",
+      "type": "outputNode",
+      "position": {
+        "x": 1365,
+        "y": 255
+      },
+      "data": {
+        "label": "Conversation Feed",
+        "nodeType": "stream_writer",
+        "properties": {
+          "publishToConversation": true
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "response"
+          ]
+        }
+      }
+    },
+    {
+      "id": "speech",
+      "type": "outputNode",
+      "position": {
+        "x": 1395,
+        "y": 960
+      },
+      "data": {
+        "label": "Speak Reaction",
+        "nodeType": "tts",
+        "properties": {
+          "source": "fast-body-event",
+          "defaultMode": "conversation"
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "conversation"
+          ]
+        }
+      }
+    },
+    {
+      "id": "release-face",
+      "type": "environmentNode",
+      "position": {
+        "x": 1965,
+        "y": 270
+      },
+      "data": {
+        "label": "Reset Event Expression",
+        "nodeType": "environment_face_expression",
+        "properties": {
+          "expression": "",
+          "sessionId": "",
+          "operation": "release",
+          "timeoutMs": 60000,
+          "background": false
+        },
+        "activation": {
+          "mode": "required-inputs",
+          "requiredInputs": [
+            "token"
+          ]
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "event-eventKind-tipped-face-control",
+      "source": "event",
+      "target": "tipped-face",
+      "sourceHandle": "eventKind",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "data",
+        "when": {
+          "output": "eventKind",
+          "equals": "tipped"
+        }
+      }
+    },
+    {
+      "id": "event-sessionId-tipped-face-sessionId",
+      "source": "event",
+      "target": "tipped-face",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "event-eventKind-movement-face-control",
+      "source": "event",
+      "target": "movement-face",
+      "sourceHandle": "eventKind",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "data",
+        "when": {
+          "output": "eventKind",
+          "equals": "rapid_movement"
+        }
+      }
+    },
+    {
+      "id": "event-sessionId-movement-face-sessionId",
+      "source": "event",
+      "target": "movement-face",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "event-messages-model-messages",
+      "source": "event",
+      "target": "model",
+      "sourceHandle": "messages",
+      "targetHandle": "messages",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "event-jsonSchema-model-jsonSchema",
+      "source": "event",
+      "target": "model",
+      "sourceHandle": "jsonSchema",
+      "targetHandle": "jsonSchema",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "model-response-reaction-response",
+      "source": "model",
+      "target": "reaction",
+      "sourceHandle": "response",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "reaction-speech-feed-response",
+      "source": "reaction",
+      "target": "feed",
+      "sourceHandle": "speech",
+      "targetHandle": "response",
+      "type": "default",
+      "data": {
+        "kind": "data",
+        "when": {
+          "output": "speech",
+          "notEquals": ""
+        }
+      }
+    },
+    {
+      "id": "reaction-speech-speech-conversation",
+      "source": "reaction",
+      "target": "speech",
+      "sourceHandle": "speech",
+      "targetHandle": "conversation",
+      "type": "default",
+      "data": {
+        "kind": "data",
+        "when": {
+          "output": "speech",
+          "notEquals": ""
+        }
+      }
+    },
+    {
+      "id": "event-sessionId-speech-sessionId",
+      "source": "event",
+      "target": "speech",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "tipped-face-token-release-face-token",
+      "source": "tipped-face",
+      "target": "release-face",
+      "sourceHandle": "token",
+      "targetHandle": "token",
+      "type": "default",
+      "data": {
+        "kind": "data",
+        "when": {
+          "output": "success",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "movement-face-token-release-face-token",
+      "source": "movement-face",
+      "target": "release-face",
+      "sourceHandle": "token",
+      "targetHandle": "token",
+      "type": "default",
+      "data": {
+        "kind": "data",
+        "when": {
+          "output": "success",
+          "truthy": true
+        }
+      }
+    },
+    {
+      "id": "event-sessionId-release-face-sessionId",
+      "source": "event",
+      "target": "release-face",
+      "sourceHandle": "sessionId",
+      "targetHandle": "sessionId",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    },
+    {
+      "id": "feed-release-face-order",
+      "source": "feed",
+      "target": "release-face",
+      "sourceHandle": "completed",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "control"
+      }
+    },
+    {
+      "id": "speech-release-face-order",
+      "source": "speech",
+      "target": "release-face",
+      "sourceHandle": "queued",
+      "targetHandle": "control",
+      "type": "default",
+      "data": {
+        "kind": "control"
+      }
+    },
+    {
+      "id": "speech-delivery-release-face-delivery",
+      "source": "speech",
+      "target": "release-face",
+      "sourceHandle": "delivery",
+      "targetHandle": "delivery",
+      "type": "default",
+      "data": {
+        "kind": "data"
+      }
+    }
+  ],
+  "viewport": {
+    "x": 862.765025390505,
+    "y": 536.6460959247815,
+    "zoom": 0.8235933370437993
+  }
+}

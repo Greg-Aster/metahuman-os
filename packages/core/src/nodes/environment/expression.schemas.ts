@@ -8,6 +8,7 @@ export const faceExpressionSchema = {
     { name: 'feedback', type: 'object', optional: true },
     { name: 'token', type: 'string', optional: true },
     { name: 'sessionId', type: 'string', optional: true },
+    { name: 'delivery', type: 'object', optional: true },
   ],
   outputs: [
     { name: 'commands', type: 'array', description: 'Display commands admitted by the Coordinator' },

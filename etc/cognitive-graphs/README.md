@@ -3,10 +3,16 @@
 This directory contains the built-in executable graphs used by Core's graph
 executor and the web editor.
 
-- Every graph that emits outward conversation owns one `conversation_buffer`
+- Graphs that retain outward conversation own one `conversation_buffer`
   instance and routes its exact admitted entries to `memory_capture`. Interactive
   modes connect both user input and response; autonomous conversational graphs
   connect only their response.
+- `fast-body-event-mode.json` is the owner-approved live-only exception: typed
+  tipping and rapid-movement events send editable preset faces immediately and
+  use one Lightweight model call for brief speech. Existing Stream Writer feed
+  publication and TTS delivery do not append conversational buffers or memories.
+  Execution evidence and command receipts remain durable. Boot/wake and other
+  body events retain `body-event-trigger-mode.json` and its Environment delegation.
 - `dual-mode.json`, `agent-mode.json`, `emulation-mode.json`, and
   `environment-mode.json` own the four interactive conversation modes.
 - Agent and workflow graphs own bounded background work such as curation,

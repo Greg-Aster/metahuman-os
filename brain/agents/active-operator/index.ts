@@ -7,6 +7,7 @@ import {
   getQueueStateDir, initGlobalLogger, isRobotOperatorChildEnabled, isSleepRuntimeActive,
   loadQueueState, loadRobotOperatorConfig, onAuthenticatedSessionChange, robotOperatorChildGraph,
   loadGraphForMode, SLEEP_RUNTIME_FILE, systemPaths, writeRobotOperatorRuntimeState,
+  loadActiveOperatorConfig, readSystemActivityTimestamp,
   type RobotOperatorChildRuntimeState, type RobotOperatorStimulusAgent,
 } from '@metahuman/core'
 import { submitCoordinatorWork } from '@metahuman/core/queue'
@@ -24,6 +25,14 @@ export async function run(): Promise<void> {
   let pending = false
   let lastTaskId: string | undefined
   let lastAdmittedAt: string | undefined
+  let semiIdleSince = Date.now()
+  let previousMode: ReturnType<typeof getOperatorMode> | undefined
+  let assessmentWasActive = false
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined
+  const clearInactivityTimer = () => {
+    if (inactivityTimer) clearTimeout(inactivityTimer)
+    inactivityTimer = undefined
+  }
   const publish = (lifecycle: 'armed' | 'dormant' | 'admitting' | 'failed' | 'stopped', reason: string) => {
     const config = loadRobotOperatorConfig()
     const children = Object.fromEntries(CHILDREN.map(id => [id, {
@@ -33,27 +42,49 @@ export async function run(): Promise<void> {
     }])) as Record<RobotOperatorStimulusAgent, RobotOperatorChildRuntimeState>
     writeRobotOperatorRuntimeState({ mode: getOperatorMode(), lifecycle, reason, children })
   }
+  const waitForSemiInactivity = () => {
+    const mode = getOperatorMode()
+    if (mode !== previousMode) {
+      semiIdleSince = Date.now()
+      previousMode = mode
+    }
+    if (mode !== 'semi') return false
+    const minutes = loadActiveOperatorConfig().semiInactivityMinutes
+    const due = Math.max(semiIdleSince, readSystemActivityTimestamp() ?? 0) + minutes * 60_000
+    const remaining = due - Date.now()
+    if (remaining <= 0) return false
+    clearInactivityTimer()
+    inactivityTimer = setTimeout(() => { inactivityTimer = undefined; void assess() }, Math.min(remaining, 2_147_483_647))
+    publish('armed', `Waiting for ${minutes} minutes of inactivity; next assessment at ${new Date(due).toISOString()}`)
+    return true
+  }
   async function assess(): Promise<void> {
     if (stopped) return
     if (checking) { pending = true; return }
     checking = true
+    clearInactivityTimer()
     try {
       const config = loadRobotOperatorConfig()
       const mode = getOperatorMode()
       if (!config.enabled || mode === 'reactive' || isSleepRuntimeActive() || !isRobotOperatorChildEnabled(CONTROLLER)) {
+        semiIdleSince = Date.now()
+        previousMode = mode
         publish('dormant', mode === 'reactive' ? 'Reactive mode' : 'Active Operator is inactive')
         return
       }
       const user = getCurrentlyActiveUser()
-      if (!user || user.role !== 'owner') { publish('dormant', 'No active installation owner'); return }
+      if (!user || user.role !== 'owner') { semiIdleSince = Date.now(); publish('dormant', 'No active installation owner'); return }
       const queue = loadQueueState()?.items ?? []
       const evaluating = queue.some(task => task.username === user.username && task.handler === `workflow.${CONTROLLER}`
         && ['queued', 'leased', 'waiting'].includes(task.state))
         || activeRobotExecutions(user.username).some(execution => execution.stimulusAgent === CONTROLLER)
-      if (evaluating) { publish('armed', 'Assessing operation activation'); return }
+      if (evaluating) { assessmentWasActive = true; publish('armed', 'Assessing operation activation'); return }
+      if (assessmentWasActive) { assessmentWasActive = false; semiIdleSince = Date.now() }
+      if (waitForSemiInactivity()) return
       await loadGraphForMode(config.robotAutonomyControllerGraph, user.username)
       // Re-read mode after asynchronous graph loading; Mode Controller owns admission.
       if (stopped || getOperatorMode() === 'reactive') return
+      if (waitForSemiInactivity()) return
       const cycleId = randomUUID()
       publish('admitting', 'Activation assessment')
       const task = await submitCoordinatorWork({ type: 'generic', handler: `workflow.${CONTROLLER}`,
@@ -64,6 +95,7 @@ export async function run(): Promise<void> {
         metadata: { producer: SERVICE_ID, childAgent: CONTROLLER, admission: 'activation-assessment' } })
       lastTaskId = task.id
       lastAdmittedAt = new Date().toISOString()
+      assessmentWasActive = true
       publish('armed', 'Assessing operation activation')
     } catch (error) {
       console.error(`[${SERVICE_ID}] Activation assessment admission failed:`, error)
@@ -87,7 +119,7 @@ export async function run(): Promise<void> {
   const unsubscribe = onAuthenticatedSessionChange(() => void assess())
   let finish!: () => void
   const ended = new Promise<void>(resolve => { finish = resolve })
-  const shutdown = () => { stopped = true; publish('stopped', 'Shutdown'); finish() }
+  const shutdown = () => { stopped = true; clearInactivityTimer(); publish('stopped', 'Shutdown'); finish() }
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
   void assess()

@@ -8,6 +8,7 @@ import type { DispatchRecord } from './types.js'
 import { queueTTS, getTTSQueueState, TTS_DELIVERY_MAX_AGE_MS } from '../tts/delivery-queue.js'
 import { writeBufferEntry, type CanonicalBufferMode, type ConversationMessage } from '../conversation-buffer.js'
 import { getAuthenticatedRuntimeId, getCurrentlyActiveUser } from '../sessions.js'
+import { eventBus } from '../infrastructure/event-bus/client.js'
 
 /** The same admission contract is used by relay and by an early accepting worker. */
 export function executionWorkInput(store: ExecutionStore, effect: DispatchRecord): TaskInput {
@@ -100,6 +101,20 @@ export async function relayExecutionOutbox(
       if (!await writeBufferEntry(store.get(executionId).username, request.mode, request.message)) {
         throw new ExecutionDeliveryError('Buffer admission was rejected')
       }
+      store.completeProjection(effect.effectId)
+      continue
+    }
+    if (effect.kind === 'conversation_feed') {
+      const request = effect.payload as { content: string; timestamp: number; cognitiveMode?: string }
+      eventBus.emit('graph', 'conversation.feed', {
+        username: execution.username,
+        message: { role: 'assistant', content: request.content, timestamp: request.timestamp,
+          meta: { liveConversation: true, idempotencyKey: effect.effectId,
+            executionId, source: 'stream_writer',
+            ...(request.cognitiveMode ? { cognitiveMode: request.cognitiveMode } : {}) } },
+      }, { requestId: executionId })
+      // This is admission to the existing live event transport, not a browser
+      // acknowledgement. Conversation history and memory are deliberately untouched.
       store.completeProjection(effect.effectId)
       continue
     }

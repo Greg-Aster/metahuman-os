@@ -20,8 +20,15 @@ export const StreamWriterNode: NodeDefinition = defineNode({
     { name: 'displayTrigger', type: 'any', description: 'Trigger for display_buffer node' },
   ],
   description: 'Streams response to client (terminal node)',
+  properties: { publishToConversation: false },
+  propertySchemas: {
+    publishToConversation: {
+      type: 'boolean', default: false, label: 'Publish to Conversation',
+      description: 'Publishes the response to the live conversation interface without adding it to conversation buffers or memory.',
+    },
+  },
 
-  execute: async (inputs, _context) => {
+  execute: async (inputs, context, properties) => {
     // Named inputs with array fallback
     const inputData = inputs.response ?? inputs[0];
 
@@ -74,6 +81,15 @@ export const StreamWriterNode: NodeDefinition = defineNode({
     }
 
     console.log('[StreamWriter]', response.substring(0, 100) + (response.length > 100 ? '...' : ''));
+
+    if (properties?.publishToConversation === true) {
+      if (!context.graphExecution) throw new Error('Conversation feed delivery requires the durable graph runtime');
+      context.graphExecution.dispatch({ kind: 'conversation_feed', payload: {
+        content: response,
+        timestamp: Date.now(),
+        ...(context.cognitiveMode ? { cognitiveMode: context.cognitiveMode } : {}),
+      } });
+    }
 
     return {
       output: response,

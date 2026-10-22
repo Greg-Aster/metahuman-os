@@ -12,13 +12,6 @@
   type AgentVariableType = 'text' | 'number' | 'port' | 'url' | 'select' | 'multiselect' | 'toggle' | 'secretRef' | 'readonly';
   type AgentVariableApplyMode = 'live' | 'restart' | 'nextBoot' | 'readonly';
 
-  interface AgentLog {
-    timestamp: string;
-    level: 'info' | 'warn' | 'error';
-    message: string;
-    agent: string;
-  }
-
   interface AgentError {
     timestamp: string;
     agent: string;
@@ -28,25 +21,6 @@
     exitCode?: number | null;
     stderr?: string;
     stdout?: string;
-  }
-
-  interface AgentMetrics {
-    agent: string;
-    totalRuns: number;
-    successfulRuns: number;
-    failedRuns: number;
-    lastRun?: string;
-    lastError?: string;
-    recentActivity: {
-      last5m: number;
-      last1h: number;
-      today: number;
-    };
-    successRate: {
-      last5m: number;
-      last1h: number;
-      overall: number;
-    };
   }
 
   interface AgentVariable {
@@ -80,7 +54,6 @@
     uptime?: number;
     startedAt?: string;
     lastActivity?: string;
-    metrics: AgentMetrics;
     errors: string[];
   }
 
@@ -96,7 +69,6 @@
     dependencyHealth: 'ok' | 'configured' | 'connecting' | 'missing' | 'unavailable' | 'failed' | 'unknown';
     latestTask?: string;
     variables: AgentVariable[];
-    logs: AgentLog[];
     errors: AgentError[];
     diagnostics?: EnvironmentBridgeDiagnosticsSnapshot;
   }
@@ -104,7 +76,6 @@
   let connected = false;
   let eventSourceHandle: EventSource | null = null;
   let runningAgents: AgentCard[] = [];
-  let recentCompletions: AgentCard[] = [];
   let recentFailures: AgentCard[] = [];
   let startableAgents: AgentDescriptor[] = [];
   let agentData: Record<string, AgentDataPanel> = {};
@@ -124,7 +95,7 @@
   $: selectedAgent = selectedAgentName ? agentData[selectedAgentName] : undefined;
   $: selectedAgentStartable = Boolean(selectedAgent && startableAgents.some(agent => agent.id === selectedAgent.agentId));
   $: if (!selectedAgentName) {
-    selectedAgentName = visibleAgents[0]?.name || recentFailures[0]?.name || recentCompletions[0]?.name || startableAgents[0]?.id || '';
+    selectedAgentName = visibleAgents[0]?.name || recentFailures[0]?.name || startableAgents[0]?.id || '';
   }
   $: if (!selectedStartAgent || !startableAgents.some(agent => agent.id === selectedStartAgent)) {
     selectedStartAgent = startableAgents[0]?.id || '';
@@ -213,9 +184,6 @@
     return 'bg-gray-400';
   }
 
-  function logLineClass(level: AgentLog['level']): string {
-    return level === 'error' ? 'text-red-600 dark:text-red-300' : '';
-  }
 
   function errorSourceLabel(error: AgentError): string {
     const parts = [
@@ -241,7 +209,6 @@
 
   function applyPayload(data: any) {
     runningAgents = data.runningAgents || data.agents || [];
-    recentCompletions = data.recentCompletions || [];
     recentFailures = data.recentFailures || [];
     startableAgents = data.startableAgents || [];
     agentData = data.agentData || {};
@@ -418,7 +385,7 @@
           showFeedback('error', data.error);
         } else if (data.type === 'connected') {
           connected = true;
-        } else if (data.type === 'snapshot' || data.type === 'metrics') {
+        } else if (data.type === 'snapshot') {
           applyPayload(data);
         }
       } catch (err) {
@@ -457,9 +424,6 @@
               {connected ? 'Live stream' : 'Connecting'}
             </span>
             <span>{visibleAgents.length} active</span>
-            {#if recentCompletions.length > 0}
-              <span>{recentCompletions.length} completed</span>
-            {/if}
             {#if recentFailures.length > 0}
               <span class="text-red-600 dark:text-red-300">{recentFailures.length} failed</span>
             {/if}
@@ -563,33 +527,6 @@
         {/if}
       </section>
 
-      {#if recentCompletions.length > 0}
-        <section class="mt-4 space-y-2">
-          <div class="flex items-center justify-between">
-            <h3 class="m-0 text-[0.68rem] font-semibold uppercase text-gray-500 dark:text-gray-400">Completed One-Shot Runs</h3>
-            <span class="text-[0.68rem] text-gray-500 dark:text-gray-400">{recentCompletions.length}</span>
-          </div>
-          <div class="space-y-1.5">
-            {#each recentCompletions as agent}
-              <button
-                class={`w-full rounded border px-2.5 py-2 text-left transition ${selectedAgentName === agent.name ? 'border-emerald-600 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-950/30' : 'border-gray-200 bg-white hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:hover:bg-gray-900'}`}
-                on:click={() => selectedAgentName = agent.name}
-              >
-                <div class="flex items-center gap-2">
-                  <span class="h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
-                  <span class="min-w-0 flex-1 truncate text-sm font-medium">{agent.displayName}</span>
-                  <span class="shrink-0 text-[0.68rem] font-semibold uppercase text-emerald-700 dark:text-emerald-300">completed</span>
-                </div>
-                <div class="mt-1 flex items-center justify-between gap-2 text-[0.68rem] text-gray-500 dark:text-gray-400">
-                  <span>{agent.metrics.successfulRuns} successful run{agent.metrics.successfulRuns === 1 ? '' : 's'} today</span>
-                  <span>{formatTimestamp(agent.lastActivity || agent.metrics.lastRun)}</span>
-                </div>
-              </button>
-            {/each}
-          </div>
-        </section>
-      {/if}
-
       {#if recentFailures.length > 0}
         <section class="mt-4 space-y-2">
           <div class="flex items-center justify-between">
@@ -608,7 +545,7 @@
                     <span class="min-w-0 flex-1 truncate text-sm font-medium">{agent.displayName}</span>
                     <span class="shrink-0 text-[0.68rem] font-semibold uppercase text-red-700 dark:text-red-300">error</span>
                   </div>
-                  <div class="mt-1 truncate text-[0.68rem] text-red-700 dark:text-red-300">{agent.metrics.lastError || 'Start failed'}</div>
+                  <div class="mt-1 truncate text-[0.68rem] text-red-700 dark:text-red-300">{agent.errors[0] || 'Start failed'}</div>
                 </button>
                 <button
                   class="rounded border border-red-300 px-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-800 dark:text-red-200 dark:hover:bg-red-950/30"
@@ -766,25 +703,6 @@
                 {/each}
               </div>
             {/if}
-
-            <div>
-              <div class="mb-1 flex items-center justify-between text-[0.68rem] font-semibold uppercase text-gray-500 dark:text-gray-400">
-                <span>Task Log</span>
-                <span>{selectedAgent.logs.length}</span>
-              </div>
-              {#if selectedAgent.logs.length === 0}
-                <div class="rounded bg-gray-50 px-2 py-2 text-xs text-gray-500 dark:bg-gray-900 dark:text-gray-400">No task output recorded today.</div>
-              {:else}
-                <div class="max-h-36 overflow-y-auto rounded bg-gray-50 px-2 py-1 font-mono text-[0.65rem] leading-relaxed dark:bg-gray-900">
-                  {#each selectedAgent.logs.slice(-12) as log}
-                    <div class={`border-b border-gray-200 py-1 last:border-b-0 dark:border-gray-800 ${logLineClass(log.level)}`}>
-                      <span class="text-gray-500">{formatTimestamp(log.timestamp)}</span>
-                      <span>{log.message}</span>
-                    </div>
-                  {/each}
-                </div>
-              {/if}
-            </div>
           </div>
         {/if}
       </section>

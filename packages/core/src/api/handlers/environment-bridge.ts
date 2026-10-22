@@ -40,6 +40,7 @@ import {
   type EnvironmentObservation,
   mergeEnvironmentActionTiming,
   environmentActionStageDurations,
+  resolveBodyEventGraph,
 } from '../../environment-interface/index.js';
 import { submitRobotBridgeRecord } from '../../buffer-admission.js';
 import { getCurrentlyActiveUser } from '../../sessions.js';
@@ -254,7 +255,7 @@ export async function handleEnvironmentBridgeObservation(
     const observation = sanitizeEnvironmentBridgeObservation(timedObservation);
     recordEnvironmentBridgeDiagnosticObservation(observation);
     const username = resolveUsername()?.trim() ?? '';
-    const graph = isBodyTriggerObservation(observation) ? 'body-event-trigger'
+    const graph = isBodyTriggerObservation(observation) ? resolveBodyEventGraph(observation)
       : requestHeader(req, 'x-metahuman-environment-graph')?.trim() || 'environment';
     const stateOnly = !environmentObservationNeedsCognition(observation);
     const graphQueued = Boolean(username)

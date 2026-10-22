@@ -1,6 +1,6 @@
 /**
  * Agent Monitor - Track and monitor running agents
- * Provides real-time status and log streaming
+ * Provides live lifecycle status and controls
  */
 
 import fs, { existsSync, readFileSync } from 'node:fs';
@@ -38,7 +38,6 @@ import type {
   AgentLog,
   AgentMonitorCard,
   AgentMonitorSnapshot,
-  AgentRunMetrics,
   AgentStatus,
   AgentVariableDescriptor,
   AgentCatalogEntry,
@@ -67,7 +66,6 @@ export type {
   AgentLog,
   AgentMonitorCard,
   AgentMonitorSnapshot,
-  AgentRunMetrics,
   AgentStatus,
   AgentVariableApplyMode,
   AgentVariableDescriptor,
@@ -77,7 +75,6 @@ export type {
 const LOG_PREFIX = '[agent-monitor]';
 
 function monitorCardForAgent(name: string, descriptor: AgentDescriptor, status?: AgentStatus): AgentMonitorCard {
-  const metrics = getAgentMetrics(name);
   return {
     name,
     displayName: descriptor.name,
@@ -88,13 +85,11 @@ function monitorCardForAgent(name: string, descriptor: AgentDescriptor, status?:
     uptime: status?.uptime,
     startedAt: status?.startedAt,
     lastActivity: status?.lastActivity,
-    metrics,
     errors: status?.errors ?? [],
   };
 }
 
 function monitorCardForFailure(failure: AgentFailureEntry, descriptor: AgentDescriptor): AgentMonitorCard {
-  const metrics = getAgentMetrics(failure.agent);
   return {
     name: failure.agent,
     displayName: descriptor.name,
@@ -103,26 +98,7 @@ function monitorCardForFailure(failure: AgentFailureEntry, descriptor: AgentDesc
     status: 'error',
     pid: failure.pid,
     lastActivity: failure.timestamp,
-    metrics: {
-      ...metrics,
-      failedRuns: Math.max(metrics.failedRuns, 1),
-      lastRun: metrics.lastRun ?? failure.timestamp,
-      lastError: failure.error,
-    },
     errors: [failure.error, failure.stderr].filter(Boolean) as string[],
-  };
-}
-
-function latestTaskFromLogs(logs: AgentLog[]): string | undefined {
-  return logs.slice().reverse().find(log => log.level !== 'error')?.message;
-}
-
-function errorFromLog(log: AgentLog): AgentError {
-  return {
-    timestamp: log.timestamp,
-    agent: log.agent,
-    message: log.message,
-    source: 'audit',
   };
 }
 
@@ -210,10 +186,8 @@ function environmentBridgeReadiness(
 }
 
 function dataPanelForAgent(card: AgentMonitorCard, descriptor: AgentDescriptor): AgentDataPanel {
-  const logs = (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote') ? [] : getAgentLogs(card.name, 80);
-  const errors = logs.filter(log => log.level === 'error').slice(-10).map(errorFromLog);
   const bridgeStatus = (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote')
-    ? environmentBridgeReadiness(card.status, descriptor, [...card.errors, ...errors.map(error => error.message)])
+    ? environmentBridgeReadiness(card.status, descriptor, card.errors)
     : undefined;
   return {
     agentId: card.name,
@@ -225,10 +199,9 @@ function dataPanelForAgent(card: AgentMonitorCard, descriptor: AgentDescriptor):
     uptime: card.uptime,
     readiness: bridgeStatus?.readiness ?? (card.status === 'running' ? 'ready' : card.status === 'error' ? 'failed' : 'unknown'),
     dependencyHealth: bridgeStatus?.dependencyHealth ?? (card.errors.length > 0 ? 'failed' : 'unknown'),
-    latestTask: bridgeStatus?.latestTask ?? latestTaskFromLogs(logs),
+    latestTask: bridgeStatus?.latestTask,
     variables: descriptor.variables,
-    logs,
-    errors,
+    errors: [],
     diagnostics: (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote')
       ? getEnvironmentBridgeDiagnosticsSnapshot()
       : undefined,
@@ -236,13 +209,6 @@ function dataPanelForAgent(card: AgentMonitorCard, descriptor: AgentDescriptor):
 }
 
 function dataPanelForFailure(card: AgentMonitorCard, descriptor: AgentDescriptor, failure: AgentFailureEntry): AgentDataPanel {
-  const logs = getAgentLogs(card.name, 80);
-  const failureLog: AgentLog = {
-    timestamp: failure.timestamp,
-    level: 'error',
-    message: failure.stderr || failure.error,
-    agent: failure.agent,
-  };
   const bridgeStatus = (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote')
     ? environmentBridgeReadiness('error', descriptor, [failure.error, failure.stderr ?? ''])
     : undefined;
@@ -257,7 +223,6 @@ function dataPanelForFailure(card: AgentMonitorCard, descriptor: AgentDescriptor
     dependencyHealth: bridgeStatus?.dependencyHealth ?? 'failed',
     latestTask: bridgeStatus?.latestTask ?? failure.error,
     variables: descriptor.variables,
-    logs: [...logs, failureLog].slice(-80),
     errors: [errorFromFailure(failure)],
     diagnostics: (card.name === 'environment-bridge-local' || card.name === 'environment-bridge-remote')
       ? getEnvironmentBridgeDiagnosticsSnapshot()
@@ -484,8 +449,6 @@ export function getAgentStatuses(): AgentStatus[] {
       }
     }
     let status: AgentStatus['status'] = 'stopped';
-    const logs = getAgentLogs(name, 100);
-    let lastActivity = logs.slice(-1)[0]?.timestamp;
     let uptime: number | undefined;
 
     if (registryInfo && isProcessRunning(registryInfo.pid)) {
@@ -493,7 +456,6 @@ export function getAgentStatuses(): AgentStatus[] {
       const startTime = new Date(registryInfo.startTime).getTime();
       uptime = Math.floor((Date.now() - startTime) / 1000);
 
-      lastActivity = logs.slice(-1)[0]?.timestamp ?? registryInfo.startTime;
     }
 
     statuses.push({
@@ -501,101 +463,12 @@ export function getAgentStatuses(): AgentStatus[] {
       pid: registryInfo?.pid,
       status,
       startedAt: registryInfo?.startTime,
-      lastActivity,
       uptime,
       errors: [],
     });
   }
 
   return statuses;
-}
-
-/**
- * Get enhanced agent metrics with time windows
- */
-export function getAgentMetrics(agentName: string): AgentRunMetrics {
-  const now = Date.now();
-  const logs = getAgentLogs(agentName, 5000);
-
-  // Filter logs by time windows
-  const last5m = logs.filter(l => now - new Date(l.timestamp).getTime() < 5 * 60 * 1000);
-  const last1h = logs.filter(l => now - new Date(l.timestamp).getTime() < 60 * 60 * 1000);
-
-  const isStart = (m: string) => {
-    const s = m.toLowerCase();
-    return (
-      s === 'agent_started' ||
-      s === 'agent_cycle_started' ||
-      s.includes('starting') ||
-      s.includes('started') ||
-      s.includes('waking up') ||
-      s.includes('drifting into a dream')
-    );
-  };
-
-  const isComplete = (m: string, level: AgentLog['level']) => {
-    const s = m.toLowerCase();
-    return (
-      s === 'agent_completed' ||
-      s === 'agent_cycle_completed' ||
-      (s === 'agent_stopped' && level !== 'error') ||
-      s.includes('generated new insight') ||
-      s.includes('triggering') ||
-      s.includes('triggered') ||
-      s.includes('finished') ||
-      s.includes('completed')
-    );
-  };
-
-  const isFail = (m: string, level: AgentLog['level']) => {
-    const s = m.toLowerCase();
-    return (
-      level === 'error' ||
-      s === 'agent_failed' ||
-      s === 'agent_cycle_failed' ||
-      /failed|error|exited with code/.test(s)
-    );
-  };
-
-  // Calculate metrics
-  const totalStarts = logs.filter(l => isStart(l.message)).length;
-  const totalCompleted = logs.filter(l => isComplete(l.message, l.level)).length;
-  const totalFailed = logs.filter(l => isFail(l.message, l.level)).length;
-  const successfulRuns = DESCRIPTORS[agentName]?.kind === 'one-shot'
-    ? Math.min(totalStarts, totalCompleted)
-    : totalCompleted;
-
-  const last5mStarts = last5m.filter(l => isStart(l.message)).length;
-  const last5mCompleted = last5m.filter(l => isComplete(l.message, l.level)).length;
-  const last5mFailed = last5m.filter(l => isFail(l.message, l.level)).length;
-
-  const last1hStarts = last1h.filter(l => isStart(l.message)).length;
-  const last1hCompleted = last1h.filter(l => isComplete(l.message, l.level)).length;
-  const last1hFailed = last1h.filter(l => isFail(l.message, l.level)).length;
-
-  const lastRunLog = logs.filter(l => isStart(l.message)).slice(-1)[0];
-  const lastErrorLog = logs.filter(l => l.level === 'error').slice(-1)[0];
-
-  const result: AgentRunMetrics = {
-    agent: agentName,
-    totalRuns: totalStarts,
-    successfulRuns,
-    failedRuns: totalFailed,
-    lastRun: lastRunLog?.timestamp,
-    lastError: lastErrorLog?.message,
-    recentActivity: {
-      last5m: last5mStarts,
-      last1h: last1hStarts,
-      today: totalStarts,
-    },
-    successRate: {
-      last5m: last5mStarts > 0 ? Math.min(100, Math.round((last5mCompleted / last5mStarts) * 100)) : 0,
-      last1h: last1hStarts > 0 ? Math.min(100, Math.round((last1hCompleted / last1hStarts) * 100)) : 0,
-      overall: totalStarts > 0 ? Math.min(100, Math.round((totalCompleted / totalStarts) * 100)) : 0,
-    },
-  };
-
-  return result;
 }
 
 export function getAgentMonitorSnapshot(): AgentMonitorSnapshot {
@@ -638,13 +511,6 @@ export function getAgentMonitorSnapshot(): AgentMonitorSnapshot {
   const runningAgents = cards
     .filter(card => card.status === 'running')
     .sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''));
-  const recentCompletions = cards
-    .filter(card => card.kind === 'one-shot'
-      && card.status === 'stopped'
-      && card.metrics.successfulRuns > 0
-      && !failureByName.has(card.name))
-    .sort((a, b) => (b.lastActivity ?? '').localeCompare(a.lastActivity ?? ''))
-    .slice(0, 10);
   const recentFailures = failures
     .map(failure => {
       const descriptor = descriptors.get(failure.agent) ?? buildAgentDescriptor(failure.agent, configuredAgent(monitorConfig, failure.agent), catalogById.get(failure.agent));
@@ -684,7 +550,6 @@ export function getAgentMonitorSnapshot(): AgentMonitorSnapshot {
   return {
     timestamp: new Date().toISOString(),
     runningAgents,
-    recentCompletions,
     recentFailures,
     startableAgents,
     bootAgents,

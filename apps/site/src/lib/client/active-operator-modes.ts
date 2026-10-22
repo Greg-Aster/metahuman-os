@@ -20,7 +20,7 @@ export const AUTONOMY_MODES: AutonomyModeDefinition[] = [
     id: 'semi',
     label: 'Semi-autonomous',
     badge: 'S',
-    description: 'Active Operator requests each operation updated to 100% activation.',
+    description: 'After the configured inactivity interval, Active Operator assesses operations and requests those updated to 100% activation.',
     buttonClass: 'semi',
   },
   {

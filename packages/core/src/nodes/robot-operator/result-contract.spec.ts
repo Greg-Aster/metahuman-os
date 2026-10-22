@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import fs from 'node:fs'
 import { NodeInputValidationError } from '../types.js'
 import { withVisualObservationSchema } from '../../visual-observation.js'
 import {
@@ -10,8 +11,22 @@ import {
   buildRobotAutonomyControllerJsonSchema,
   robotAutonomyControllerParserNode,
 } from './autonomy-controller-parser.node.js'
+import { ENVIRONMENT_COMPLETION_BASES, ENVIRONMENT_TASK_OUTCOMES } from '../environment/helpers.js'
 
 const ROBOT_GOAL_REVIEW_JSON_SCHEMA = buildRobotGoalReviewJsonSchema()
+
+test('human and autonomy Task instructions advertise the actual completion-basis contract', () => {
+  const graph = JSON.parse(fs.readFileSync(new URL('../../../../../etc/cognitive-graphs/environment-mode.json', import.meta.url), 'utf8'))
+  const task = graph.nodes.find((node: any) => node.data.nodeType === 'environment_context_builder' && node.data.properties.purpose === 'task')
+  for (const field of ['systemPrompt', 'autonomySystemPrompt']) {
+    const outcomes = task.data.properties[field].match(/outcome describes objective progress and allows ([^.]+)\./)[1]
+      .replace(/, or /g, ', ').split(', ')
+    assert.deepEqual(outcomes, [...ENVIRONMENT_TASK_OUTCOMES])
+    const listed = task.data.properties[field].match(/requiredCompletionBasis identifies evidence of completion and allows ([^.]+)\./)[1]
+      .replace(/, or /g, ', ').split(', ')
+    assert.deepEqual(listed, ENVIRONMENT_COMPLETION_BASES.filter(value => value !== 'none'))
+  }
+})
 
 test('Goal Review does not expose conversation delivery as a goal completion basis', async () => {
   for (const branch of ROBOT_GOAL_REVIEW_JSON_SCHEMA.anyOf) {

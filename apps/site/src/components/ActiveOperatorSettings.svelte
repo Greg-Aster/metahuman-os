@@ -4,6 +4,7 @@
   import { AUTONOMY_MODES, type AutonomyMode } from '../lib/client/active-operator-modes';
 
   let autonomyMode: AutonomyMode = 'reactive';
+  let semiInactivityMinutes = 5;
   let loading = false;
   let saving = false;
   let error = '';
@@ -20,10 +21,30 @@
       const config = await response.json();
       if (!response.ok) throw new Error(config.error || 'Failed to load Active Operator configuration');
       autonomyMode = config.autonomyMode || 'reactive';
+      semiInactivityMinutes = config.semiInactivityMinutes;
     } catch (caught) {
       error = (caught as Error).message;
     } finally {
       loading = false;
+    }
+  }
+
+  async function saveInactivity() {
+    saving = true;
+    error = '';
+    try {
+      const response = await apiFetch('/api/active-operator/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ semiInactivityMinutes }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to save inactivity interval');
+      semiInactivityMinutes = result.semiInactivityMinutes;
+    } catch (caught) {
+      error = (caught as Error).message;
+    } finally {
+      saving = false;
     }
   }
 
@@ -87,6 +108,18 @@
       </button>
     {/each}
   </div>
+
+  <form class="mt-4" on:submit|preventDefault={saveInactivity}>
+    <label class="block text-sm text-white" for="semi-inactivity-minutes">Semi Auto inactivity (minutes)</label>
+    <div class="mt-2 flex items-center gap-2">
+      <input id="semi-inactivity-minutes" type="number" min="0" step="any" required
+        class="min-w-0 flex-1 rounded border border-white/10 bg-transparent p-2 text-white"
+        bind:value={semiInactivityMinutes} disabled={loading || saving} />
+      <button type="submit" class="rounded border border-white/10 px-3 py-2 text-white"
+        disabled={loading || saving || !(semiInactivityMinutes > 0)}>Save</button>
+    </div>
+    <p class="mt-2 text-xs text-gray-500">Default: 5 minutes. Recorded activity restarts the countdown. After an assessment finishes, Semi Auto waits another interval before assessing again. Full Auto does not use this interval.</p>
+  </form>
 
   {#if autonomyMode === 'full'}
     <button class="danger-button mt-4" disabled={saving} on:click={emergencyStop}>Emergency stop autonomy</button>

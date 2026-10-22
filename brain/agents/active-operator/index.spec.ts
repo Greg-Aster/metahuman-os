@@ -5,6 +5,9 @@ import path from 'node:path'
 import { Socket } from 'node:net'
 import test, { mock } from 'node:test'
 import type { QueuedTask, RobotOperatorRuntimeState } from '@metahuman/core'
+const sleep = (ms: number) => new Promise(resolve => realSetTimeout(resolve, ms))
+const realSetTimeout = globalThis.setTimeout
+const realNow = Date.now
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-full-admission-'))
 process.env.METAHUMAN_ROOT = root
@@ -26,13 +29,16 @@ let history: QueuedTask[] = []
 let runtime: RobotOperatorRuntimeState | undefined
 let executions: ReturnType<typeof core.activeRobotExecutions> = []
 let admitted = 0
+let inactivityMinutes = 5
+let activityAt = 0
 const configuration = { ...core.loadRobotOperatorConfig(), enabled: true }
 const coreMock = mock.module('@metahuman/core', { namedExports: {
   ...core,
   acquireLock: () => ({ release() {} }),
   initGlobalLogger: () => {},
   getOperatorMode: () => mode,
-  readSystemActivityTimestamp: () => 0,
+  readSystemActivityTimestamp: () => activityAt,
+  loadActiveOperatorConfig: () => ({ autonomyMode: mode, semiInactivityMinutes: inactivityMinutes }),
   getCurrentlyActiveUser: () => ({ username: 'fixture-owner', role: 'owner' }),
   isRobotOperatorChildEnabled: () => true,
   isSleepRuntimeActive: () => false,
@@ -52,31 +58,68 @@ const queueMock = mock.module('@metahuman/core/queue', { namedExports: {
 const { run } = await import('./index.js')
 
 async function until(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 3_000
+  const deadline = realNow() + 3_000
   while (!predicate()) {
-    assert.ok(Date.now() < deadline, 'Full admission did not reach expected state')
-    await new Promise(resolve => setTimeout(resolve, 10))
+    assert.ok(realNow() < deadline, 'Active Operator did not reach expected state')
+    await sleep(10)
   }
 }
 function wakeQueue() { core.persistQueueState({ items, history, inFlightRemote: [], lastUpdated: new Date().toISOString() }) }
 
-test('Active Operator assesses in Semi and Full without waiting for selected operations', async () => {
+test('Semi uses configurable inactivity while Full assesses without waiting for selected operations', async () => {
   fs.writeFileSync(path.join(graphs, 'controller-a-mode.json'), valid)
   const priorSignalHandlers = process.listeners('SIGTERM')
   const running = run()
   try {
     await until(() => runtime?.lifecycle === 'dormant')
     assert.equal(admitted, 0, 'Reactive must not admit autonomous work')
+    mock.timers.enable({ apis: ['Date', 'setTimeout'], now: realNow() })
     mode = 'semi'
     fs.writeFileSync(path.join(root, 'etc/active-operator.json'), JSON.stringify({ autonomyMode: mode }))
+    await until(() => runtime?.reason.startsWith('Waiting for 5 minutes') === true)
+    mock.timers.tick(299_999)
+    assert.equal(admitted, 0, 'Entering Semi starts the configured inactivity period')
+    activityAt = Date.now()
+    core.recordSystemActivity(activityAt)
+    await sleep(30)
+    mock.timers.tick(1)
+    await sleep(30)
+    assert.equal(admitted, 0, 'Activity cancels the original deadline')
+    for (let i = 0; i < 3; i++) { wakeQueue(); await sleep(20) }
+    mock.timers.tick(299_998)
+    assert.equal(admitted, 0, 'Queue bookkeeping neither bypasses nor resets inactivity')
+    mock.timers.tick(1)
     await until(() => admitted === 1)
     assert.equal(items[0].handler, 'workflow.robot-autonomy-controller')
     assert.equal(items[0].metadata?.producer, 'robot-operator', 'saved work retains its owner identity')
     assert.equal(items[0].source, 'autonomy')
+    items = []
+    wakeQueue()
+    await until(() => runtime?.reason.startsWith('Waiting for 5 minutes') === true)
+    mock.timers.tick(299_999)
+    assert.equal(admitted, 1, 'Finishing an assessment does not immediately retrigger it')
+    mock.timers.tick(1)
+    await until(() => admitted === 2)
+    items = []
+    wakeQueue()
+    await until(() => runtime?.reason.startsWith('Waiting for 5 minutes') === true)
+    inactivityMinutes = 1
+    fs.writeFileSync(path.join(root, 'etc/active-operator.json'), JSON.stringify({ autonomyMode: mode, semiInactivityMinutes: 1 }))
+    await until(() => runtime?.reason.startsWith('Waiting for 1 minutes') === true)
+    mock.timers.tick(59_999)
+    assert.equal(admitted, 2)
+    mock.timers.tick(1)
+    await until(() => admitted === 3)
+    items = []
+    wakeQueue()
+    await until(() => runtime?.reason.startsWith('Waiting for 1 minutes') === true)
     mode = 'reactive'
     fs.writeFileSync(path.join(root, 'etc/active-operator.json'), JSON.stringify({ autonomyMode: mode }))
     await until(() => runtime?.lifecycle === 'dormant')
-    assert.equal(admitted, 1)
+    mock.timers.tick(600_000)
+    await sleep(30)
+    assert.equal(admitted, 3, 'Reactive cancels the inactivity timer')
+    mock.timers.reset()
     items = []
     admitted = 0
     fs.writeFileSync(path.join(graphs, 'controller-a-mode.json'), '{invalid json')
@@ -87,7 +130,7 @@ test('Active Operator assesses in Semi and Full without waiting for selected ope
     // Arbitrary Coordinator changes and history eviction do not admit bad work.
     for (let index = 0; index < 4; index++) {
       wakeQueue()
-      await new Promise(resolve => setTimeout(resolve, 25))
+      await sleep(25)
       assert.equal(admitted, 0)
     }
     // Changing the selected graph recovers even if A itself is still broken.
@@ -124,7 +167,7 @@ test('Active Operator assesses in Semi and Full without waiting for selected ope
     executions = [{ executionId: 'assessment-execution', status: 'waiting', stimulusAgent: 'robot-autonomy-controller',
       checkpointVersion: 4, waitingReason: 'work_result', resumePending: false }] as typeof executions
     wakeQueue()
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await sleep(50)
     assert.equal(admitted, 4)
     // Releasing that assessment immediately admits the next decision.
     executions = []
@@ -135,6 +178,7 @@ test('Active Operator assesses in Semi and Full without waiting for selected ope
       if (!priorSignalHandlers.includes(handler)) handler.call(process, 'SIGTERM')
     }
     await running
+    mock.timers.reset()
     coreMock.restore()
     queueMock.restore()
     fs.rmSync(root, { recursive: true, force: true })

@@ -85,7 +85,6 @@ async function* streamMonitorUpdates(signal: AbortSignal | undefined): AsyncGene
 
   watchPath(path.join(systemPaths.logs, 'agents'));
   watchPath(path.join(systemPaths.run, 'locks'));
-  watchPath(path.join(systemPaths.logs, 'audit'));
   watchPath(path.join(systemPaths.root, 'etc', 'agents.json'));
 
   signal?.addEventListener('abort', close, { once: true });

@@ -286,3 +286,166 @@ test('planner selection is scored separately from context and action routes', ()
   assert.equal(result.routeErrors['taskPlanner.specialist']!.extra, 1)
   assert.equal(score([prediction(expected, expected, 'intent')]).acceptableRouting.count, 1)
 })
+
+const memoryIntent = (scope: Record<string, unknown> = {}) => ({
+  needsResponse: true, needsAction: false, needsToolUse: false, taskPlanner: 'specialist',
+  taskContext: [], conversationContext: ['memory'], ...scope,
+})
+const memoryReview = (sample: ReturnType<typeof prediction>, verdict: 'pass' | 'fail' = 'pass') => ({
+  recordId: sample.recordId, predictionDigest: sha256(sample), semantic: verdict, grounding: verdict,
+  reason: verdict === 'pass' ? 'Reviewed request, selected scope and query preserve the intended retrieval.' : 'The selected query asks for unrelated information.',
+})
+
+test('memory scope compares owner defaults, type sets and timestamp instants without changing route agreement', () => {
+  const expected = memoryIntent({ memoryTypes: ['conversation', 'dream'], memorySleepCycle: 'latest',
+    memoryTimeRange: { from: '2031-04-03T08:00:00+02:00', before: '2031-04-04T08:00:00+02:00' } })
+  const actual = memoryIntent({ memoryTypes: [' DREAM ', 'conversation', 'dream'], memoryOrder: 'relevance',
+    memorySleepCycle: 'latest', memoryTimeRange: { from: '2031-04-03T06:00:00Z', before: '2031-04-04T06:00:00Z' } })
+  const sample = prediction(expected, actual, 'intent')
+  const result = score([sample], [memoryReview(sample)])
+  assert.equal(result.coreValid.count, 1)
+  assert.equal(result.exactRouting.count, 1)
+  assert.equal(result.acceptableRouting.count, 1)
+  assert.equal(result.memorySelection.typedScopeMatches, 1)
+  assert.equal(result.memorySelection.confirmedSelections, 1)
+  assert.equal(result.semanticReview.confirmedCorrect, 1)
+  const broad = prediction(memoryIntent(), memoryIntent({ memoryTypes: [], memoryTimeRange: {}, memoryOrder: 'relevance' }), 'intent')
+  assert.equal(score([broad], [memoryReview(broad)]).memorySelection.confirmedSelections, 1)
+})
+
+test('missing and invented memory restrictions remain failures despite matching routes and passing semantic reviews', () => {
+  const restrictions = [
+    { memoryTypes: ['dream'] }, { memoryOrder: 'newest' }, { memorySleepCycle: 'latest' },
+    { memoryTimeRange: { from: '2031-04-03T06:00:00Z' } },
+    { memoryTimeRange: { before: '2031-04-04T06:00:00Z' } },
+  ]
+  for (const restriction of restrictions) for (const [expected, actual] of [
+    [memoryIntent(restriction), memoryIntent()], [memoryIntent(), memoryIntent(restriction)],
+  ]) {
+    const sample = prediction(expected!, actual, 'intent')
+    const result = score([sample], [memoryReview(sample)])
+    assert.equal(result.exactRouting.count, 1)
+    assert.equal(result.acceptableRouting.count, 1, 'Headline routing agreement still measures the six route fields')
+    assert.equal(result.memorySelection.typedScopeMatches, 0)
+    assert.equal(result.memorySelection.confirmedSelections, 0)
+    assert.equal(result.semanticReview.confirmedCorrect, 0)
+    assert.equal(result.failures.length, 1, 'A memory defect must remain locatable when routing matches')
+    assert.ok((result.failures[0]!.memorySelection as { differences: string[] }).differences.length > 0)
+  }
+  const shifted = prediction(memoryIntent({ memoryTimeRange: { from: '2031-04-03T06:00:00Z' } }),
+    memoryIntent({ memoryTimeRange: { from: '2031-04-03T07:00:00Z' } }), 'intent')
+  assert.equal(score([shifted], [memoryReview(shifted)]).memorySelection.confirmedSelections, 0)
+})
+
+test('optional query omission uses request meaning and accepts reviewed semantic equivalents', () => {
+  const expected = memoryIntent({ memoryQuery: 'seed exchange schedule' })
+  for (const scope of [{}, { memoryQuery: '' }, { memoryQuery: 'when the community seed exchange is planned' }]) {
+    const sample = { ...prediction(expected, memoryIntent(scope), 'intent'),
+      user: 'Current user message: Find saved information about the seed exchange schedule.' }
+    const pending = score([sample])
+    assert.equal(pending.memorySelection.typedScopeMatches, 1)
+    assert.equal(pending.memorySelection.queryReferenceMatches, 0)
+    assert.equal(pending.memorySelection.queryPendingReview, 1)
+    assert.equal(pending.memorySelection.confirmedSelections, 0)
+    assert.equal(pending.failures.length, 0, 'Unreviewed equivalence is pending, not an omitted-field failure')
+    const reviewed = score([sample], [memoryReview(sample)])
+    assert.equal(reviewed.memorySelection.queryReviewedPasses, 1)
+    assert.equal(reviewed.memorySelection.confirmedSelections, 1)
+    assert.equal(reviewed.semanticReview.confirmedCorrect, 1)
+  }
+  const exact = prediction(expected, expected, 'intent')
+  const result = score([exact])
+  assert.equal(result.memorySelection.queryReferenceMatches, 1)
+  assert.equal(result.memorySelection.queryPendingReview, 1)
+  assert.equal(result.memorySelection.confirmedSelections, 0, 'Exact reference text is not a semantic review')
+})
+
+test('query review failures retain per-record evidence and stale reviews cannot confirm changed predictions', () => {
+  const sample = prediction(memoryIntent({ memoryQuery: 'seed exchange schedule' }),
+    memoryIntent({ memoryQuery: 'unrelated engine repair' }), 'intent')
+  const result = score([sample], [memoryReview(sample, 'fail')])
+  assert.equal(result.exactRouting.count, 1)
+  assert.equal(result.memorySelection.queryReviewedFailures, 1)
+  assert.equal(result.memorySelection.confirmedSelections, 0)
+  assert.equal(result.failures.length, 1)
+  assert.equal((result.failures[0]!.memorySelection as { querySource: string }).querySource, 'explicit')
+  assert.equal((result.failures[0]!.memorySelection as { reviewed: string }).reviewed, 'fail')
+  const detail = result.failures[0]!.memorySelection as {
+    queries: { expected: { source: string; value: string }; actual: { source: string; value: string } }
+    reviewReason: string; renderedRequest: string
+  }
+  assert.deepEqual(detail.queries.expected, { source: 'explicit', value: 'seed exchange schedule' })
+  assert.deepEqual(detail.queries.actual, { source: 'explicit', value: 'unrelated engine repair' })
+  assert.equal(detail.reviewReason, memoryReview(sample, 'fail').reason)
+  assert.equal(detail.renderedRequest, sample.user)
+  const changed = { ...sample, rawResponse: JSON.stringify(memoryIntent({ memoryQuery: 'seed exchange schedule' })) }
+  assert.throws(() => score([changed], [memoryReview(sample)]), /stale semantic review/)
+})
+
+test('newest retrieval ignores semantic-query wording while retaining typed scope and review requirements', () => {
+  const expected = memoryIntent({ memoryTypes: ['dream'], memoryOrder: 'newest', memoryQuery: 'dream' })
+  for (const scope of [{}, { memoryQuery: 'a completely different query' }, { memoryQuery: '' }]) {
+    const actual = memoryIntent({ memoryTypes: ['dream'], memoryOrder: 'newest', ...scope })
+    const sample = prediction(expected, actual, 'intent')
+    const pending = score([sample])
+    assert.equal(pending.memorySelection.queryPendingReview, 0)
+    assert.equal(pending.memorySelection.queryReferenceMatches, 0)
+    assert.equal(pending.memorySelection.confirmedSelections, 0)
+    const reviewed = score([sample], [memoryReview(sample)])
+    assert.equal(reviewed.memorySelection.confirmedSelections, 1)
+    assert.equal(reviewed.memorySelection.queryReviewedPasses, 0)
+  }
+})
+
+test('memory confirmation requires valid structure and applicable consumer routing', () => {
+  const expected = memoryIntent({ memoryTypes: ['dream'] })
+  for (const patch of [
+    { conversationContext: [] }, { taskContext: ['memory'], conversationContext: [] },
+    { needsAction: true }, { memoryTypes: [7] }, { memoryTimeRange: { from: 'yesterday' } },
+  ]) {
+    const sample = prediction(expected, { ...expected, ...patch }, 'intent')
+    const result = score([sample], [memoryReview(sample)])
+    assert.equal(result.memorySelection.confirmedSelections, 0)
+    assert.equal(result.semanticReview.confirmedCorrect, 0)
+    assert.equal(result.failures.length, 1)
+  }
+  const unexpected = prediction({ ...memoryIntent(), conversationContext: [] }, memoryIntent(), 'intent')
+  assert.equal(score([unexpected], [memoryReview(unexpected)]).memorySelection.confirmedSelections, 0)
+})
+
+test('annotated alternative recall sources remain eligible for reviewed confirmation', () => {
+  const expected = memoryIntent()
+  const sample = prediction(expected, { ...expected, conversationContext: ['conversationHistory'] }, 'intent')
+  const record = { system: '', user: sample.user, output: JSON.stringify(expected), jsonSchema: {}, metadata: {
+    recordId: sample.recordId, sourceCaseId: sample.sourceCaseId, specialist: 'intent', sourceSplit: 'development',
+    developmentFold: 0, suite: sample.suite, risk: sample.risk, instructionIndex: 0, contextVariation: 'clean', systemOwned: true,
+    contextRequirements: { conversationContext: { required: [], optional: [], anyOf: [['memory', 'conversationHistory']] } },
+  } } as ActionSelectorTrainingRecord
+  const result = score([sample], [memoryReview(sample)], [record])
+  assert.equal(result.exactRouting.count, 0)
+  assert.equal(result.acceptableRouting.count, 1)
+  assert.equal(result.memorySelection.confirmedSelections, 1)
+  assert.equal(result.memorySelection.queryPendingReview, 0, 'No semantic lookup is selected on this allowed history route')
+})
+
+test('whitespace-only queries retain explicit-query semantics instead of silently becoming fallback', () => {
+  const sample = prediction(memoryIntent(), memoryIntent({ memoryQuery: '   ' }), 'intent')
+  const result = score([sample], [memoryReview(sample, 'fail')])
+  assert.equal(result.memorySelection.queryReferenceMatches, 0)
+  assert.equal(result.memorySelection.queryReviewedFailures, 1)
+  assert.equal((result.failures[0]!.memorySelection as { querySource: string }).querySource, 'explicit')
+})
+
+test('unused memory hints on a no-memory route do not create retrieval requirements', () => {
+  const expected = { ...memoryIntent(), conversationContext: [] }
+  const actual = { ...expected, memoryQuery: 'dream', memoryTypes: ['dream'], memoryOrder: 'newest',
+    memorySleepCycle: 'latest', memoryTimeRange: { before: '2034-05-08T13:30:00Z' } }
+  const sample = prediction(expected, actual, 'intent')
+  const result = score([sample], [memoryReview(sample)])
+  assert.equal(result.coreValid.count, 1)
+  assert.equal(result.exactRouting.count, 1)
+  assert.equal(result.acceptableRouting.count, 1)
+  assert.equal(result.memorySelection.requests, 0)
+  assert.equal(result.semanticReview.confirmedCorrect, 1)
+  assert.equal(result.failures.length, 0)
+})

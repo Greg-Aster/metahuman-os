@@ -10,25 +10,6 @@ export interface AgentStatus {
   errors?: string[];
 }
 
-export interface AgentRunMetrics {
-  agent: string;
-  totalRuns: number;
-  successfulRuns: number;
-  failedRuns: number;
-  lastRun?: string;
-  lastError?: string;
-  recentActivity: {
-    last5m: number;
-    last1h: number;
-    today: number;
-  };
-  successRate: {
-    last5m: number;
-    last1h: number;
-    overall: number;
-  };
-}
-
 export interface AgentFailureEntry {
   agent: string;
   timestamp: string;
@@ -94,7 +75,6 @@ export interface AgentMonitorCard {
   uptime?: number;
   startedAt?: string;
   lastActivity?: string;
-  metrics: AgentRunMetrics;
   errors: string[];
 }
 
@@ -110,7 +90,6 @@ export interface AgentDataPanel {
   dependencyHealth: 'ok' | 'configured' | 'connecting' | 'missing' | 'unavailable' | 'failed' | 'unknown';
   latestTask?: string;
   variables: AgentVariableDescriptor[];
-  logs: AgentLog[];
   errors: AgentError[];
   diagnostics?: EnvironmentBridgeDiagnosticsSnapshot;
 }
@@ -118,7 +97,6 @@ export interface AgentDataPanel {
 export interface AgentMonitorSnapshot {
   timestamp: string;
   runningAgents: AgentMonitorCard[];
-  recentCompletions: AgentMonitorCard[];
   recentFailures: AgentMonitorCard[];
   startableAgents: AgentDescriptor[];
   bootAgents: AgentBootEntry[];

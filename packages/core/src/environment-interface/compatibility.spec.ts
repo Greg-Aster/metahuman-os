@@ -219,6 +219,43 @@ try {
   assert.equal(readinessObservation?.capabilities.visual, false);
   assert.equal(readinessObservation?.capabilities.actions.includes('captureImage'), false);
 
+  const disconnectedCamera: EnvironmentObservation = {
+    environmentId: 'ainekio', adapter: 'ainekio-gateway', sessionId: 'robot-1',
+    timestamp: readinessTimestamp,
+    capabilities: { actions: ['sendText'], visual: false },
+    state: { body: { authenticated: false, robotId: null, cameraReady: false }, gateway: { robots: {} } },
+  };
+  recordEnvironmentObservation(disconnectedCamera);
+  const disconnectedState = readEnvironmentBridgeState().sessions['robot-1']!.latestObservation;
+  const previousCameraStatus = { robot_id: 'robot-1', epoch: 7, camera_ready: true };
+  for (let flush = 0; flush < 2; flush++) {
+    recordEnvironmentRobotStatus('robot-1', previousCameraStatus);
+    assert.deepEqual(readEnvironmentBridgeState().sessions['robot-1']!.latestObservation, disconnectedState,
+      'Repeated historical telemetry cannot restore a disconnected body camera');
+  }
+
+  recordEnvironmentObservation({ ...disconnectedCamera,
+    capabilities: { actions: ['sendText', 'captureImage'], visual: true },
+    visual: { ...cachedFrame, source: 'independent-camera' },
+  });
+  const independentCameraState = readEnvironmentBridgeState().sessions['robot-1']!.latestObservation;
+  recordEnvironmentRobotStatus('robot-1', { ...previousCameraStatus, camera_ready: false });
+  assert.deepEqual(readEnvironmentBridgeState().sessions['robot-1']!.latestObservation, independentCameraState,
+    'Disconnected body telemetry cannot alter an independently advertised camera');
+
+  recordEnvironmentObservation({ ...disconnectedCamera,
+    state: { body: { authenticated: true, robotId: 'robot-1', cameraReady: false },
+      gateway: { robots: { 'robot-1': { epoch: 8, status: { camera_ready: false } } } } },
+  });
+  recordEnvironmentRobotStatus('robot-1', previousCameraStatus);
+  assert.equal(readEnvironmentBridgeState().sessions['robot-1']!.latestObservation?.capabilities.visual, false,
+    'Reconnection does not import camera readiness from the preceding epoch');
+  recordEnvironmentRobotStatus('robot-1', { ...previousCameraStatus, epoch: 8 });
+  readinessObservation = readEnvironmentBridgeState().sessions['robot-1']!.latestObservation;
+  assert.equal(readinessObservation?.capabilities.visual, true);
+  assert.equal(readinessObservation?.capabilities.actions.includes('captureImage'), true);
+  assert.equal(manager.getAllTasks().length, 0, 'Camera status transitions must not dispatch work');
+
   resetState();
   const delayed = enqueueEnvironmentAction({
     type: 'robotCommand',

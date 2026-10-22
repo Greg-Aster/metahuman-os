@@ -67,7 +67,7 @@ test('all feedback wakeups use the same execution resource regardless of the pri
   } finally { store.close() }
 })
 
-async function fixture(username: string, handler?: string, physical = false) {
+async function fixture(username: string, handler?: string, physical = false, action = { type: 'robotCommand', command: 'walk' } as Record<string, unknown>) {
   const store = openExecutionStore(username)
   assert.ok(String(store.db.name).startsWith(root + path.sep))
   const record = store.create(username, definition)
@@ -82,7 +82,7 @@ async function fixture(username: string, handler?: string, physical = false) {
           ...(physical ? { actionId: `${effectId}:action` } : {}),
           payload: physical ? {
             type: 'environment_command', handler: 'environment.command', resource: `body:${effectId}`,
-            source: 'environment', username, input: { id: `${effectId}:action`, sessionId: effectId, type: 'robotCommand', command: 'walk' },
+            source: 'environment', username, input: { id: `${effectId}:action`, sessionId: effectId, ...action },
           } : { type: 'generic', handler, resource: 'local-llm', source: 'system', username, input: {} },
         }],
       } : {}) } }, channel_versions: {}, versions_seen: {},
@@ -631,6 +631,92 @@ test('instruction interpretation recovery reuses its finite work identity and pu
   } finally { store.close() }
 })
 
+for (const phase of ['abort', 'return-after-cancel', 'queued-cancel', 'queued-expire', 'restart'] as const) {
+  test(`finite speech ${phase} delivers its terminal receipt without replaying the finished graph`, async () => {
+    const username = `speech-receipt-${phase}`
+    authenticate(username)
+    const store = openExecutionStore(username)
+    const manager = new UnifiedQueueManager()
+    const errors: Error[] = []
+    const engine = phase === 'restart' ? undefined
+      : new ExecutionEngine({ onError: error => errors.push(error) }, manager)
+    engine?.unregisterHandler('graph.resume')
+    let calls = 0
+    let entered!: () => void
+    const started = new Promise<void>(resolve => { entered = resolve })
+    engine?.registerHandler('tts.robot-speech', async (_task, context) => {
+      calls++
+      entered()
+      return new Promise<Record<string, unknown>>((resolve, reject) => {
+        context.signal.addEventListener('abort', () => phase === 'return-after-cancel'
+          ? resolve({ actionIds: ['must-not-be-reported-as-delivered'] })
+          : reject(new DOMException('Speech replaced', 'AbortError')), { once: true })
+      })
+    })
+    const record = store.create(username, definition)
+    const lease = store.claim(record.executionId, definition)
+    const effectId = randomUUID()
+    try {
+      await new ExecutionCheckpointer(store, lease).put({ configurable: { thread_id: record.executionId } }, {
+        v: 4, id: randomUUID(), ts: new Date().toISOString(),
+        channel_values: { queue: [], nodeEntries: [['speech', { status: 'completed', outputs: { queued: true } }]],
+          executionTransition: { transitionId: randomUUID(), dispatches: [{ effectId, kind: 'coordinator_work',
+            payload: { type: 'generic', handler: 'tts.robot-speech', resource: 'speech-render',
+              source: 'environment', username, input: { text: 'Attributed reaction', sessionId: 'body', requestId: effectId } } }] } },
+        channel_versions: {}, versions_seen: {},
+      }, { source: 'loop', step: 0, parents: {} })
+      const task = manager.enqueue(executionWorkInput(store, store.dispatch(effectId)))
+      store.acknowledgeAdmission(effectId, task.id)
+      store.settle(lease, 'completed')
+      store.release(lease)
+      assert.equal(store.get(record.executionId).waitingReason, 'effect_delivery')
+      const checkpointVersion = store.get(record.executionId).checkpointVersion
+      if (phase === 'abort' || phase === 'return-after-cancel') {
+        engine!.start()
+        await started
+        assert.equal(store.dispatch(effectId).status, 'accepted')
+        manager.cancel(task.id, 'Replaced by newer speech')
+      } else if (phase === 'queued-expire') manager.expire(task.id)
+      else if (phase === 'queued-cancel') manager.cancel(task.id, 'Replaced before rendering')
+      else {
+        assert.ok(manager.claim(task.id))
+        store.acceptAction(effectId)
+        manager.cancel(task.id, 'Replaced by newer speech')
+        manager.acknowledgeCancellation(task.id)
+        assert.equal(store.dispatch(effectId).status, 'accepted', 'Reproduce a persisted missing terminal handoff')
+        const restarted = new UnifiedQueueManager()
+        restarted.importState(JSON.parse(JSON.stringify(manager.exportState())))
+        await recoverDurableExecutions(restarted, 30)
+        await recoverDurableExecutions(restarted, 30)
+        assert.equal(restarted.getAllTasks().length, 0, 'Recovery must not enqueue another render or graph invocation')
+      }
+      const until = Date.now() + 1_000
+      while (store.dispatch(effectId).status !== 'completed') {
+        assert.ok(Date.now() < until, 'Terminal cancellation must reach the graph without a maintenance sweep')
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+      const expectedState = phase === 'queued-expire' ? 'expired' : 'cancelled'
+      assert.equal(manager.getTask(task.id)?.state, expectedState)
+      assert.equal(manager.getTask(task.id)?.result, undefined, 'Cancelled speech must not acquire a successful delivery result')
+      const events = store.events(record.executionId)
+      const receipts = events.filter(event => event.kind === 'work_result')
+      assert.equal(receipts.length, 1)
+      assert.equal((receipts[0].payload as any).result.state, expectedState)
+      assert.equal(events.filter(event => event.kind === 'physical_result').length, 0)
+      assert.equal(store.get(record.executionId).status, 'completed', 'Only the exhausted workflow delivery is settled')
+      assert.equal(store.get(record.executionId).checkpointVersion, checkpointVersion)
+      assert.equal(calls, phase === 'abort' || phase === 'return-after-cancel' ? 1 : 0)
+      assert.equal(manager.getAllTasks().length, 0)
+      await deliverDurableWorkReceipt(manager.getTask(task.id)!, async input => manager.enqueue(input), store)
+      assert.deepEqual(store.events(record.executionId), events, 'Receipt replay must reuse the committed outcome')
+      assert.deepEqual(errors, [])
+    } finally {
+      await engine?.stop()
+      store.close()
+    }
+  })
+}
+
 test('terminal display recovery settles finished old graphs without rerunning them or claiming physical success', async () => {
   const username = 'display-delivery-recovery'
   authenticate(username)
@@ -701,3 +787,58 @@ test('terminal display recovery settles finished old graphs without rerunning th
     } finally { store.close() }
   }
 })
+
+for (const format of ['result-only', 'confirmation-and-result', 'unsettled'] as const) {
+  test(`cancelled unstarted speech recovers across restart without another dispatch (${format})`, async () => {
+    const username = `cancelled-speech-${format}`
+    authenticate(username)
+    const manager = new UnifiedQueueManager()
+    const entry = await fixture(username, 'environment.command', true, { type: 'speak', speechArtifactId: 'fixture-audio' })
+    const store = openExecutionStore(username)
+    try {
+      const task = manager.enqueue(executionWorkInput(store, store.dispatch(entry.effectId)))
+      store.acknowledgeAdmission(entry.effectId, task.id)
+      const lease = store.claim(entry.executionId, definition)
+      store.settle(lease, 'failed')
+      store.release(lease)
+      manager.cancel(task.id, 'Parent execution ended before work started')
+      const receipt = manager.getTask(task.id)!
+      if (format === 'confirmation-and-result') store.confirmUndispatched(entry.effectId, receipt)
+      if (format !== 'unsettled') {
+        // The incident records contain this correlated cancellation result,
+        // without a separate dispatch_cancelled marker.
+        store.deliverActionResult(entry.executionId, task.input.id, {
+          eventId: `work:${task.id}:not-sent`, kind: 'physical_result', actionId: task.input.id,
+          workItemId: task.id, payload: { action: task.input, feedback: {
+            id: `work:${task.id}:not-sent`, actionId: task.input.id, type: 'cancelled',
+            timestamp: receipt.completedAt, message: receipt.cancellationReason,
+            data: { producer: 'work-coordinator', delivery: { outcome: 'not_sent' } },
+          } },
+        }, false, true)
+      }
+      const recorded = store.events(entry.executionId)
+      await recoverDurableExecutions(manager, 30)
+      if (format !== 'unsettled') assert.deepEqual(store.events(entry.executionId), recorded,
+        'An already recorded cancellation requires no additional marker')
+      const afterRecovery = store.events(entry.executionId)
+      const beforeVersion = store.db.pragma('data_version', { simple: true })
+      const restarted = new UnifiedQueueManager()
+      restarted.importState(JSON.parse(JSON.stringify(manager.exportState())))
+      await recoverDurableExecutions(restarted, 30)
+      await deliverDurableWorkReceipt(restarted.getTask(task.id)!, async () => {
+        throw new Error('A cancelled receipt must not enqueue work')
+      }, store)
+      assert.deepEqual(store.events(entry.executionId), afterRecovery)
+      assert.equal(store.db.pragma('data_version', { simple: true }), beforeVersion,
+        'Repeated startup recovery must not rewrite settled cancellation records')
+      assert.equal(store.dispatch(entry.effectId).status, 'completed', 'Delivery bookkeeping is settled')
+      assert.equal(store.get(entry.executionId).status, 'failed', 'The failed workflow stays failed')
+      assert.equal(store.pendingDispatches().length, 0)
+      assert.equal(afterRecovery.filter(event => event.kind === 'physical_result').length, 1)
+      const result = afterRecovery.find(event => event.kind === 'physical_result')!.payload as any
+      assert.equal(result.feedback.type, 'cancelled', 'Settled bookkeeping does not mean successful playback')
+      assert.equal(result.feedback.data.delivery.outcome, 'not_sent')
+      assert.equal(restarted.getAllTasks().length, 0)
+    } finally { store.close() }
+  })
+}

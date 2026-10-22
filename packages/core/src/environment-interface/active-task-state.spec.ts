@@ -145,7 +145,7 @@ for (const basis of ['action_result', 'visual_observation', 'environment_state',
     assert.equal(state.done, true)
     assert.equal(state.objectiveComplete, complete)
     assert.equal(f.task().decision.objective, decision.objective)
-    assert.equal(f.task().decision.outcome, complete ? 'complete' : 'continue')
+    assert.equal(f.task().decision.outcome, complete ? 'complete' : decision.outcome)
     assert.equal(f.task().actionStatus, 'completed', 'Physical result is independent of remaining objective interpretation')
     assert.deepEqual(f.task().feedback, { actionId: 'motion', type: 'completed', message: 'Explicit completed', observedAt: received.feedback!.timestamp })
     assert.equal(f.dispatches.length, 0)
@@ -177,6 +177,7 @@ for (const type of ['failed', 'rejected', 'expired', 'cancelled', 'outcome_unkno
     const result = await f.receive({ ...f.state, action: { type: 'robotCommand', command: 'bow' } }, 'motion', type)
     const final = await f.advance(result)
     assert.equal(final.objectiveComplete, false)
+    assert.equal(f.task().decision.outcome, 'failed', 'A terminal failure cannot request continuation of a one-off receipt objective')
     assert.equal(f.task().actionStatus, type)
     assert.equal(f.task().feedback.type, type)
     assert.equal(f.dispatches.length, 0)
@@ -189,6 +190,19 @@ test('bounded objectives remain open after one program returns', async () => {
   const result = await f.advance(await f.receive(f.state, 'motion', 'completed'))
   assert.equal(result.done, true)
   assert.equal(result.objectiveComplete, false)
+  assert.equal(f.task().decision.outcome, decision.outcome)
+})
+
+test('a failed program preserves the selected goal decision without manufacturing continued pursuit', async () => {
+  const f = fixture({ steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'bow' } }] })
+  Object.assign(f.context, { activeTaskDecision: { ...decision, requiredCompletionBasis: 'action_result', continuationPolicy: 'bounded' } })
+  const result = await f.advance(await f.receive({ ...f.state, action: { type: 'robotCommand', command: 'bow' } }, 'motion', 'rejected'))
+  assert.equal(result.done, true)
+  assert.equal(result.objectiveComplete, false)
+  assert.equal(f.task().decision.outcome, decision.outcome)
+  assert.equal(f.task().feedback.type, 'rejected')
+  assert.deepEqual(await f.advance(result), result)
+  assert.equal(f.dispatches.length, 0, 'A retained goal does not dispatch another program on re-entry')
 })
 
 test('Goal Review confirms returned actions and does not generate tasks from text-only or unfinished work', async () => {
@@ -339,7 +353,7 @@ test('failed asynchronous motion generation reaches the planner without dispatch
   const final = await f.advance(received.state)
   assert.equal(final.done, true)
   assert.equal(final.objectiveComplete, false)
-  assert.equal(f.task().decision.outcome, 'continue')
+  assert.equal(f.task().decision.outcome, decision.outcome)
   assert.match(f.task().decision.reason, /Remote motion server unavailable/)
   assert.equal(f.dispatches.length, 1, 'Only the original remote generation job was admitted')
 })
@@ -1187,25 +1201,78 @@ test('finished vision configuration returns evidence for planning without interr
   }
 })
 
-test('stationary visual behavior evaluates its image without a movement or finish command', async () => {
-  const f = fixture({ steps: [{ kind: 'behavior', target: 'keys', completionCriteria: 'Keys are visible',
-    motion: null, candidateLabels: ['keys'], identifyEveryFrames: 1, steering: null }] })
-  const sent = await f.advance({ ...emptyVisionState(), image: visionFrame })
-  assert.equal(sent.identificationError, undefined)
-  assert.equal(sent.motionId, undefined)
-  assert.equal(sent.identificationRequest?.expiresAt, undefined)
-  assert.equal(f.dispatches.length, 1)
-  assert.equal(f.dispatches[0].payload.handler, 'environment.identify')
-  const identified = await visionWorkResult(f, sent, sent.identificationEffectId!, {
-    matchesTarget: true, completionSatisfied: true, outcome: 'positive', description: 'Keys are visible', evidence: 'Keyring in this image',
+for (const outcome of ['positive', 'negative', 'ambiguous'] as const) {
+  test(`stationary visual behavior returns its ${outcome} assessment without another capture or goal completion`, async () => {
+    const f = fixture({ steps: [{ kind: 'behavior', target: 'keys', completionCriteria: 'Keys are visible',
+      motion: null, candidateLabels: ['keys'], identifyEveryFrames: 1, steering: null }] })
+    const previousFeedback: EnvironmentFeedback = { id: 'previous-completed', actionId: 'previous-action', type: 'completed',
+      message: 'Previous action completed', timestamp: new Date().toISOString() }
+    const sent = await f.advance({ ...emptyVisionState(), image: visionFrame, completedActionId: 'previous-action',
+      feedback: previousFeedback, evidence: ['Previous action completed'] })
+    assert.equal(sent.identificationError, undefined)
+    assert.equal(sent.motionId, undefined)
+    assert.equal(sent.identificationRequest?.expiresAt, undefined)
+    assert.equal(f.dispatches.length, 1)
+    assert.equal(f.dispatches[0].payload.handler, 'environment.identify')
+    const assessment = { matchesTarget: outcome === 'positive', completionSatisfied: outcome === 'positive', outcome,
+      description: 'Returned image assessment', evidence: 'Evidence from this captured frame' }
+    const identified = await visionWorkResult(f, sent, sent.identificationEffectId!, assessment)
+    const ready = await f.advance(identified)
+    assert.equal(f.dispatches.length, 1, 'An accepted stationary assessment returns to planning before another capture')
+    const finishedPhase = (await wait.execute({ state: ready }, f.context, {})).state as ActiveTaskState
+    assert.equal(finishedPhase.stepIndex, 1)
+    assert.equal(finishedPhase.visualCompletionSatisfied, outcome === 'positive')
+    assert.equal(finishedPhase.planningRequired, true)
+    assert.deepEqual(JSON.parse(finishedPhase.evidence[1]).result, assessment)
+    assert.deepEqual(JSON.parse(finishedPhase.evidence[1]).frameIds, [visionFrame.id])
+    assert.equal(finishedPhase.completedActionId, 'previous-action')
+    assert.deepEqual(finishedPhase.feedback, previousFeedback)
+    const final = await f.advance(finishedPhase)
+    assert.equal((await wait.execute({ state: final }, f.context, {})).continue, false)
+    assert.notEqual(final.objectiveComplete, true, 'Finishing an observation is not proof of whole-goal success')
+    assert.equal(f.task().decision.objectiveComplete, false)
+    assert.equal(f.dispatches.length, 1, 'Stationary assessment cannot issue Finish or other servo work')
+    const { environmentActiveTaskNode } = await import('../nodes/environment/active-task.node.js')
+    const graphDir = path.join(root, 'etc', 'cognitive-graphs')
+    fs.mkdirSync(graphDir, { recursive: true })
+    fs.copyFileSync(new URL('../../../../etc/cognitive-graphs/robot-active-task-mode.json', import.meta.url),
+      path.join(graphDir, 'robot-active-task-mode.json'))
+    const output = await environmentActiveTaskNode.execute({ program: (f.context as any).activeProgram,
+      taskDecision: decision, sessionId: observation.sessionId }, { username: 'fixture', graphExecution: {
+      callGraph: async () => ({ nodes: new Map([['wait', { definition: { type: 'environment_active_task_wait' },
+        status: 'completed', outputs: { state: final } }]]) }),
+      frame: (id: string) => id === visionFrame.id ? visionFrame : undefined, task: f.task,
+    } } as any, {})
+    assert.equal(output.completed, false)
+    assert.deepEqual(JSON.parse(output.planningResult.environmentTaskEvidence.evidence[1]).result, assessment)
+    assert.deepEqual(output.planningResult.activeTaskContinuation.state.feedback, previousFeedback)
+    assert.equal(output.planningResult.activeTaskContinuation.state.planningRequired, undefined)
+    assert.equal(output.resultObservation.visual.id, visionFrame.id)
   })
-  const finishedPhase = (await wait.execute({ state: identified }, f.context, {})).state as ActiveTaskState
-  assert.equal(finishedPhase.stepIndex, 1)
-  assert.equal(finishedPhase.visualCompletionSatisfied, true)
-  assert.equal(finishedPhase.planningRequired, true)
-  assert.deepEqual(JSON.parse(finishedPhase.evidence[0]).result, identified.identification)
-  assert.equal((await wait.execute({ state: await f.advance(finishedPhase) }, f.context, {})).continue, false)
-  assert.equal(f.dispatches.length, 1, 'Stationary completion cannot issue Finish or other servo work')
+}
+
+test('stationary assessment preserves remaining programmed steps before the planning handoff', async () => {
+  const f = fixture({ steps: [{ kind: 'behavior', target: 'keys', completionCriteria: 'Keys are visible',
+    motion: null, candidateLabels: ['keys'], identifyEveryFrames: 1, steering: null },
+    { kind: 'vision', operation: 'release' }] })
+  const sent = await f.advance({ ...emptyVisionState(), image: visionFrame })
+  const assessment = { matchesTarget: false, completionSatisfied: false, outcome: 'negative',
+    description: 'No keys visible', evidence: 'No matching target in this frame' }
+  const identified = await visionWorkResult(f, sent, sent.identificationEffectId!, assessment)
+  const ready = await f.advance(identified)
+  assert.equal(f.dispatches.length, 1)
+  const observed = (await wait.execute({ state: ready }, f.context, {})).state as ActiveTaskState
+  assert.equal(observed.stepIndex, 1)
+  assert.notEqual(observed.planningRequired, true)
+  const releasing = await f.advance(observed)
+  assert.equal(f.dispatches.length, 2)
+  assert.equal(f.dispatches[1].payload.input.vision.operation, 'release')
+  const released = await visionWorkResult(f, releasing, releasing.visionEffectId!, { vision: { operation: 'release' } })
+  assert.equal(released.stepIndex, 2)
+  assert.equal(released.planningRequired, true)
+  assert.deepEqual(JSON.parse(released.evidence[0]).result, assessment)
+  assert.deepEqual(JSON.parse(released.evidence[1]).result, { operation: 'release' })
+  assert.notEqual(released.objectiveComplete, true)
 })
 
 test('selected-track steering follows that instance across reordered same-class detections', async () => {

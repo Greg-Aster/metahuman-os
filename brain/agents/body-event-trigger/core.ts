@@ -1,5 +1,5 @@
 import { cognitiveGraphPath, getTargetUser, loadGraphFile, runGraph, withUserContext,
-  getLatestEnvironmentObservation } from '@metahuman/core'
+  getLatestEnvironmentObservation, resolveBodyEventGraph } from '@metahuman/core'
 import type { AgentContext, AgentInput, AgentResult } from '@metahuman/agent-runtime'
 import { randomUUID } from 'node:crypto'
 
@@ -12,7 +12,7 @@ export async function runEventTrigger(username?: string, observation?: any, requ
   const incoming = observation ?? { ...source, text: [], state: { ...source.state,
     bodyEvent: { name: 'body_event', event_id: randomUUID(), robot_id: source.state?.body?.robotId,
       data: { kind: 'request', source: 'user', request } } } }
-  const loaded = await loadGraphFile(cognitiveGraphPath('body-event-trigger-mode.json'))
+  const loaded = await loadGraphFile(cognitiveGraphPath(`${resolveBodyEventGraph(incoming)}-mode.json`))
   if (!loaded) throw new Error('Body Event Trigger workflow is missing')
   return withUserContext({ userId: target.userId, username: target.username, role: target.role }, async () => {
     const state = await runGraph({ graph: loaded.graph, signal, context: {

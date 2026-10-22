@@ -213,7 +213,7 @@ function takeAdapterActions(sessionId: string, limit = 10) {
   return received.splice(0, limit)
 }
 
-function completeAction(current: EnvironmentObservation, expectedType: string, frameId: string, completion: 'completed' | 'failed' = 'completed') {
+function completeAction(current: EnvironmentObservation, expectedType: string, frameId: string, completion: 'completed' | 'failed' | 'rejected' = 'completed') {
   const actions = takeAdapterActions(current.sessionId!, 10)
   assert.equal(actions.length, 1, 'Exactly one chosen physical effect should be dispatched')
   const action = actions[0]
@@ -324,6 +324,10 @@ test('selected action and assessment return before one final Persona response is
       replies.push(assessment, 'The target is beside the fixture box.')
       state = await run({ graph: graph('environment'), context: ctx, executionId: state.executionId })
       assert.equal(calls.length - before, 3, 'Goal Review returns before queued conversation inference')
+      const reviewContext = JSON.parse(calls.at(-1)!.messages[1].content)
+      assert.equal(reviewContext.execution.routingAnalysis.needsResponse, true,
+        'The review sees the reply selected by Intent before Persona has generated it')
+      assert.equal(reviewContext.execution.responseEntry, undefined)
       state = await settleSpeech(state, 'environment', ctx)
       assert.equal(state.status, 'completed', state.error?.stack)
       assert.equal(calls.length - before, 4)
@@ -344,7 +348,7 @@ test('Intent-selected reply conveys Goal Review request_user then genuinely wait
     const current = { ...freshObservation('review-clarification'), visual: undefined }
     recordEnvironmentObservation(current)
     const ctx = context(current)
-    replies.push(intent(true, true), { program: null, taskDecision: { ...presetChoice().taskDecision, outcome: 'continue' } },
+    replies.push(intent(true, true), { program: null, taskDecision: { ...presetChoice().taskDecision, outcome: 'observe' } },
       goalReview('request_user'), 'Which of the two targets do you mean?')
     let state = await run({ graph: graph('environment'), context: ctx })
     state = await settleSpeech(state, 'environment', ctx)
@@ -367,6 +371,53 @@ test('finite action-result goal completes without Goal Review', async () => {
     assert.equal(state.nodes.get('review-remaining-objective')?.status,'skipped')
   })
 })
+
+test('recorded reflection rejection ends its one-off task and delivers one reply without opening a goal wait', async () => {
+  await withUserContext(user, async () => {
+    const current = { ...freshObservation('reflection-rejection'), visual: undefined }
+    current.capabilities.robotCommands = ['stand', 'stop']
+    recordEnvironmentObservation(current)
+    const disconnect = connectAdapter(current.sessionId!)
+    const instruction = 'Ask what useful embodied participation means in this moment: Offer to keep company with a specific interested expression.'
+    const ctx = { ...controllerContext(current), robotOperatorContext: {
+      ...controllerContext(current).robotOperatorContext,
+      plannerDecision: { observed: 'The explicit dated context describes an interest in companionship.',
+        instruction, reason: 'Ask what helpful participation means in this particular situation.' },
+    } }
+    const response = 'The stand command was rejected. What kind of company would you like?'
+    const before = calls.length
+    // Preserve the actual erroneous Task selection to prove that a rejected
+    // one-off program does not become a new continuing goal in the executor.
+    replies.push(intent(true, true), {
+      taskDecision: { objective: 'What does a companion look like in this moment?',
+        completionCriteria: 'The selected program has a correlated completion receipt.', outcome: 'act',
+        reason: 'The current request selects this activity.', continuationPolicy: 'none', requiredCompletionBasis: 'action_result' },
+      program: { steps: [{ kind: 'action', action: { type: 'robotCommand', command: 'stand' } }] },
+    })
+    try {
+      let state = await run({ graph: graph('environment'), context: ctx })
+      assert.equal(state.status, 'waiting', state.error?.stack)
+      completeAction(current, 'robotCommand', 'rejected-stand', 'rejected')
+      replies.push(response)
+      state = await run({ graph: graph('environment'), context: ctx, executionId: state.executionId })
+      assert.equal(state.nodes.get('review-remaining-objective')?.status, 'skipped')
+      state = await settleSpeech(state, 'environment', ctx)
+      assert.equal(state.status, 'completed', state.error?.stack)
+      assert.equal(calls.length - before, 3, 'Only Intent, Task and Persona run; failure does not manufacture a review')
+      const saved = snapshot(state.executionId!)
+      assert.equal(saved.task?.decision.outcome, 'failed')
+      assert.equal(saved.task?.decision.objectiveComplete, false)
+      assert.equal(saved.task?.feedback?.type, 'rejected')
+      assert.equal(saved.record.waitingReason, undefined)
+      assert.equal(loadBufferForUser(username, 'conversation').messages.filter(entry => entry.content === response).length, 1)
+      const callCount = calls.length
+      const again = await run({ graph: graph('environment'), context: ctx, executionId: state.executionId })
+      assert.equal(again.status, 'completed')
+      assert.equal(calls.length, callCount, 'Re-entry neither repeats the reply nor retries the rejected command')
+      assert.equal(takeAdapterActions(current.sessionId!).length, 0)
+    } finally { disconnect() }
+  })
+})
 test('a conversational objective waiting for user input remains persisted', async () => {
   await withUserContext(user, async () => {
     const {state,saved}=await probe('user-input-goal','environment',false,false,{...presetChoice().taskDecision,objective:'Keep an ongoing conversation with me.',completionCriteria:'The participant concludes the conversation.',outcome:'request_user',requiredCompletionBasis:'user_input',continuationPolicy:'none'})
@@ -375,10 +426,128 @@ test('a conversational objective waiting for user input remains persisted', asyn
     assert.equal(saved.record.waitingReason,'user_or_autonomy')
   })
 })
+
+for (const action of [false, true]) test(`finite Body Event invocation ends with unresolved goal evidence after selected work (action=${action})`, async () => {
+  await withUserContext(user, async () => {
+    const current = { ...freshObservation('finite-body-event'), visual: undefined,
+      state: { ...observation.state, bodyEvent: { name: 'body_event', event_id: randomUUID(),
+        robot_id: 'fixture-robot', epoch: 1, data: { kind: 'boot', reason: 'wake' } } } }
+    recordEnvironmentObservation(current)
+    const disconnect = connectAdapter(current.sessionId!)
+    const ctx = { ...context(current), userMessage: '' }
+    const before = calls.length
+    replies.push({ decision: 'delegate', instruction: objective, reason: 'Assess the reported body event.' },
+      intent(true, false), action ? presetChoice() : {
+        program: null, taskDecision: { ...presetChoice().taskDecision, outcome: 'wait' },
+      })
+    try {
+      let state = await run({ graph: graph('body-event-trigger'), context: ctx })
+      assert.notEqual(state.status, 'failed', state.error?.stack)
+      if (action) {
+        assert.equal(state.status, 'waiting', 'A dispatched physical action still requires its real receipt')
+        assert.notEqual(snapshot(state.executionId!).record.waitingReason, 'user_or_autonomy')
+        assert.equal(snapshot(state.executionId!).task?.decision.objectiveComplete, false)
+        const original = snapshot(state.executionId!).task!
+        const completed = completeAction(current, 'robotCommand', 'body-event-after')
+        replies.push(goalReview('wait'))
+        state = await run({ graph: graph('body-event-trigger'), context: ctx, executionId: state.executionId })
+        const saved = snapshot(state.executionId!).task!
+        assert.equal(saved.objectiveId, original.objectiveId)
+        assert.equal(saved.actionId, completed.action.id)
+        assert.equal(saved.feedback?.type, 'completed', 'The action receipt is retained without inventing goal success')
+      }
+      assert.equal(state.status, 'completed', state.error?.stack)
+      const saved = snapshot(state.executionId!)
+      assert.equal(saved.record.waitingReason, undefined)
+      assert.equal(saved.task?.decision.outcome, 'wait')
+      assert.equal(saved.task?.decision.objectiveComplete, false)
+      assert.equal(saved.task?.objective, objective)
+      assert.equal(calls.length - before, action ? 4 : 3)
+      const callCount = calls.length
+      const again = await run({ graph: graph('body-event-trigger'), context: ctx, executionId: state.executionId })
+      assert.equal(again.status, 'completed')
+      assert.equal(calls.length, callCount, 'Repeated entry does not reinterpret the event or select more work')
+      assert.deepEqual(takeAdapterActions(current.sessionId!), [])
+    } finally { disconnect() }
+  })
+})
+
+test('finite Body Event receives a pending human turn without draining its continuing conversation', async () => {
+  await withUserContext(user, async () => {
+    const current = { ...freshObservation('body-event-human-takeover'), visual: undefined,
+      state: { ...observation.state, bodyEvent: { name: 'body_event', event_id: randomUUID(),
+        robot_id: 'fixture-robot', epoch: 1, data: { kind: 'boot', reason: 'wake' } } } }
+    recordEnvironmentObservation(current)
+    const ctx = { ...context(current), userMessage: '' }
+    const humanText = 'Keep an ongoing conversation with me.'
+    const userMessageEntry = { role: 'user' as const, content: humanText, timestamp: Date.now(),
+      meta: { idempotencyKey: randomUUID() } }
+    const before = calls.length
+    replies.push({ decision: 'delegate', instruction: objective, reason: 'Assess the reported body event.' },
+      intent(true, false), () => {
+        const store = openExecutionStore(username)
+        try {
+          const record = store.list(username).find(record => store.entry(record.executionId).context.requestId === ctx.requestId)
+          assert.ok(record)
+          store.deliverEvent(record.executionId, { eventId: randomUUID(), kind: 'user_steering',
+            payload: { userMessage: humanText, userMessageEntry } })
+        } finally { store.close() }
+        return { program: null, taskDecision: { ...presetChoice().taskDecision, outcome: 'wait' } }
+      }, intent(true, false), { program: null, taskDecision: {
+        ...presetChoice().taskDecision, objective: humanText, outcome: 'request_user',
+        completionCriteria: 'The participant concludes the conversation.',
+        requiredCompletionBasis: 'user_input', continuationPolicy: 'none',
+      } })
+    const state = await run({ graph: graph('body-event-trigger'), context: ctx })
+    assert.equal(state.status, 'waiting', state.error?.stack)
+    const saved = snapshot(state.executionId!)
+    assert.equal(saved.record.waitingReason, 'user_or_autonomy')
+    assert.equal(saved.task?.objective, humanText)
+    assert.equal(saved.task?.decision.objectiveComplete, false)
+    assert.equal(calls.length - before, 5, 'The admitted human turn receives its own Intent and Task decisions')
+    assert.equal(saved.events.filter(event => event.kind === 'user_steering').length, 1)
+    assert.deepEqual((saved.events.find(event => event.kind === 'user_steering')!.payload as any).userMessageEntry, userMessageEntry)
+  })
+})
+
+test('a retained goal releases work capacity while new conversation and motion execute on the same body', async () => {
+  await withUserContext(user, async () => {
+    const { state: retained, saved, ctx, current } = await probe('retained-goal-admission', 'environment', false, false, {
+      ...presetChoice().taskDecision, outcome: 'request_user', requiredCompletionBasis: 'user_input', continuationPolicy: 'none',
+    })
+    assert.equal(retained.status, 'waiting')
+    assert.equal(saved.record.owner, null, 'An input-waiting goal has no execution writer')
+    assert.equal(manager.getAllTasks().some(work => work.state === 'leased'
+      && work.durable?.executionId === retained.executionId), false)
+    const disconnect = connectAdapter(current.sessionId!)
+    try {
+      replies.push(intent(false, true), 'I am here with you.')
+      const chatContext = { ...ctx, requestId: randomUUID(), userMessage: 'How are you today?' }
+      let chat = await run({ graph: graph('environment'), context: chatContext })
+      chat = await settleSpeech(chat, 'environment', chatContext)
+      assert.equal(chat.status, 'completed', chat.error?.stack)
+      assert.equal(snapshot(chat.executionId!).task, null)
+
+      replies.push(intent(true, false), { ...presetChoice(), executionDisposition: 'new', targetExecutionId: '', taskDecision: {
+        ...presetChoice().taskDecision, requiredCompletionBasis: 'action_result', continuationPolicy: 'none',
+      } })
+      const motionContext = { ...ctx, requestId: randomUUID(), userMessage: 'Walk forward once.' }
+      let motion = await run({ graph: graph('environment'), context: motionContext })
+      assert.equal(motion.status, 'waiting', motion.error?.stack)
+      completeAction(current, 'robotCommand', 'new-action-completed')
+      motion = await run({ graph: graph('environment'), context: motionContext, executionId: motion.executionId })
+      assert.equal(motion.status, 'completed', motion.error?.stack)
+      const preserved = snapshot(retained.executionId!)
+      assert.equal(preserved.record.status, 'waiting')
+      assert.equal(preserved.task?.objectiveId, saved.task?.objectiveId)
+      assert.equal(preserved.task?.decision.objectiveComplete, false, 'Unrelated work does not manufacture goal success')
+    } finally { disconnect() }
+  })
+})
 for (const entry of ['environment', 'autonomy']) test(`${entry}: unfinished goal without an action stays eligible for continuation`, async () => {
   await withUserContext(user, async () => {
     const start = calls.length
-    const {state,saved,ctx} = await probe('nonphysical-goal',entry,false,false,{...presetChoice().taskDecision,outcome:'continue',continuationPolicy:'none'})
+    const {state,saved,ctx} = await probe('nonphysical-goal',entry,false,false,{...presetChoice().taskDecision,outcome:'observe',continuationPolicy:'none'})
     assert.equal(saved.task?.decision.objectiveComplete,false)
     assert.equal(state.status,'waiting','An unfinished selected goal must remain available to the Full Auto continuation owner')
     assert.equal(calls.length - start, 3, 'The unfinished task is assessed once; the reviewer explicitly selects wait')
@@ -391,7 +560,7 @@ for (const entry of ['environment', 'autonomy']) test(`${entry}: unfinished goal
 })
 for (const firstAction of [false, true]) test(`Full Auto resumes a goal with preserved intent and history (firstAction=${firstAction})`, async () => {
   await withUserContext(user, async () => {
-    const {state,saved,ctx,current} = await probe('continuing-goal','environment',firstAction,false,firstAction ? presetChoice().taskDecision : { ...presetChoice().taskDecision, outcome: 'continue' })
+    const {state,saved,ctx,current} = await probe('continuing-goal','environment',firstAction,false,firstAction ? presetChoice().taskDecision : { ...presetChoice().taskDecision, outcome: 'observe' })
     assert.equal(state.status,'waiting')
     assert.equal(saved.record.waitingReason,'user_or_autonomy')
     const start = calls.length
@@ -433,7 +602,7 @@ for (const basis of ['visual_observation', 'environment_state']) test(`visual go
       const start = calls.length
       const answer = `The image shows the fixture target beside a blue box (${basis}).`
       replies.push({ ...intent(true, true), taskPlanner: 'vision', taskContext: ['environment', 'vision', 'executionContext'], conversationContext: ['vision'] },
-        { program: null, taskDecision: { outcome: 'continue', objective: 'Locate the target in the attached image.',
+        { program: null, taskDecision: { outcome: 'observe', objective: 'Locate the target in the attached image.',
           completionCriteria: 'Visual evidence identifies the target location.',
           reason: 'The attached frame provides enough visual evidence to answer the request.',
           requiredCompletionBasis: basis, continuationPolicy: 'none' } },
@@ -461,7 +630,7 @@ for (const entry of ['environment', 'autonomy']) test(`${entry}: unfinished asse
       const ctx = { ...context(current), userMessage: 'Please inspect the target' }
       const before = calls.length
       const assessment = goalReview('wait')
-      replies.push(intent(true, true), { taskDecision: { ...presetChoice().taskDecision, outcome: 'continue' }, program: null },
+      replies.push(intent(true, true), { taskDecision: { ...presetChoice().taskDecision, outcome: 'observe' }, program: null },
         assessment, 'The target has not been identified in the available evidence.')
       let state = await run({ graph: graph(entry === 'autonomy' ? 'environment' : entry), context: ctx })
       const original = snapshot(state.executionId!).task!
@@ -587,7 +756,7 @@ test('restart joins a saved answer after assessment without repeating either mod
     try {
       const ctx = { ...context(current), userMessage: 'Please tell me what you see' }
       replies.push(intent(true, true), { program: null, taskDecision: { ...presetChoice().taskDecision,
-        outcome: 'continue', requiredCompletionBasis: 'action_result', continuationPolicy: 'none' } },
+        outcome: 'observe', requiredCompletionBasis: 'action_result', continuationPolicy: 'none' } },
         goalCompletion('recorded observation'), 'Saved description from the available observation.')
       const started = await run({ graph: graph('environment'), context: ctx })
       const conversation = manager.getAllTasks().find(work => work.handler === 'environment.conversation'

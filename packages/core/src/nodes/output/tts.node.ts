@@ -34,12 +34,14 @@ interface TTSOutputDependencies {
     username: string;
     text: string;
     requestId: string;
+    sessionId?: string;
   }) => Promise<RobotSpeechDelivery>;
   createRequestId: () => string;
 }
 
 const ROBOT_SPEECH_WORKFLOW_SOURCES = new Set([
   'environment-mode',
+  'fast-body-event',
 ]);
 
 const defaultTTSOutputDependencies: TTSOutputDependencies = {
@@ -55,6 +57,7 @@ export async function deliverTTSOutput(
     text: string;
     mode: 'conversation' | 'inner';
     source: string;
+    sessionId?: string;
     generation?: number;
     execution?: GraphNodeExecution;
     signal?: AbortSignal;
@@ -100,7 +103,7 @@ export async function deliverTTSOutput(
 
     try {
       if (request.execution) {
-        const sessionId = getRobotSpeakerSession();
+        const sessionId = request.sessionId || getRobotSpeakerSession();
         if (!sessionId) throw new Error('The Environment Bridge robot speaker is not ready');
         const loaded = await loadGraphForMode('robot-speech', request.username);
         request.signal?.throwIfAborted();
@@ -116,6 +119,7 @@ export async function deliverTTSOutput(
         username: request.username,
         text: request.text,
         requestId: dependencies.createRequestId(),
+        sessionId: request.sessionId,
       });
       return {
         accepted: true,
@@ -182,10 +186,12 @@ export const TTSNode: NodeDefinition = defineNode({
     { name: 'conversation', type: 'string', optional: true, description: 'Text to speak in conversation mode' },
     { name: 'innerDialogue', type: 'string', optional: true, description: 'Text to speak in inner dialogue mode' },
     { name: 'text', type: 'string', optional: true, description: 'Text to speak (defaults to conversation mode)' },
+    { name: 'sessionId', type: 'string', optional: true, description: 'Robot session receiving the speech.' },
   ],
   outputs: [
     { name: 'queued', type: 'boolean', description: 'Whether text was accepted for TTS delivery' },
     { name: 'itemId', type: 'string', description: 'ID of the TTS queue item or robot speech action' },
+    { name: 'delivery', type: 'object', optional: true },
     { name: 'text', type: 'string', description: 'Text accepted for TTS delivery' },
   ],
   properties: {
@@ -277,6 +283,7 @@ export const TTSNode: NodeDefinition = defineNode({
         text,
         mode,
         source,
+        sessionId: typeof inputs.sessionId === 'string' ? inputs.sessionId : undefined,
         execution: context.graphExecution,
         signal: context.abortSignal,
         generation: typeof context.ttsGeneration === 'number'

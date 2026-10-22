@@ -26,6 +26,38 @@ const { validateSvelteFlowGraph } = await import('../cognitive-graph-schema.js')
 const manager = getQueueManager()
 after(() => { eventBus.disconnect(); fs.rmSync(root, { recursive: true, force: true }) })
 
+test('body-event reaction tokens survive release and distinguish replacement faces', async t => {
+  const { environmentFaceExpressionNode } = await import('../nodes/environment/expression.node.js')
+  const { environmentSendActionNode } = await import('../nodes/environment/send-action.node.js')
+  const dispatched: any[] = []
+  t.mock.method(environmentSendActionNode, 'execute', async (input: any) => {
+    dispatched.push(input.action)
+    return { success: true, targetSessionId: 'body' } as any
+  })
+  for (const kind of ['tipped', 'rapid_movement']) {
+    const context: any = { graphExecution: { occurrenceId: `fixture-${kind}` },
+      environmentObservation: { state: { bodyEvent: { name: 'body_event', data: { kind } } } } }
+    const reaction = await environmentFaceExpressionNode.execute({ control: kind }, context,
+      { expression: 'surprised', timeoutMs: 60000 })
+    assert.match(reaction.token, /^be_[a-f0-9]{29}$/)
+    assert.equal(dispatched.at(-1).displayTimeoutMs, 60000)
+    const wire = dispatched.at(-1)
+    assert.equal(wire.displayToken, reaction.token)
+    const repeated = await environmentFaceExpressionNode.execute({ control: kind }, context,
+      { expression: 'surprised', timeoutMs: 60000 })
+    assert.equal(repeated.token, reaction.token)
+    await environmentFaceExpressionNode.execute({ token: reaction.token }, context, { operation: 'release' })
+    assert.equal(dispatched.at(-1).displayToken, reaction.token)
+    assert.equal(dispatched.at(-1).displayRelease, true)
+    const replacement = await environmentFaceExpressionNode.execute({ control: 'finished' }, context, { expression: 'happy' })
+    assert.match(replacement.token, /^[a-f0-9]{32}$/)
+    assert.notEqual(replacement.token, reaction.token)
+  }
+  const ordinary = await environmentFaceExpressionNode.execute({ control: 'tipped' },
+    { requestId: 'ordinary-face' } as any, { expression: 'confused' })
+  assert.match(ordinary.token, /^[a-f0-9]{32}$/)
+})
+
 test('Face Expression node delivers one display command and preserves recorded posture', async () => {
   const timestamp = new Date().toISOString()
   const pose = { version: 1, jointMapVersion: 1, kind: 'reference', reference: 'stand',

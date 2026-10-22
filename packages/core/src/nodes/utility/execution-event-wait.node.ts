@@ -23,7 +23,14 @@ export const executionEventWaitNode = defineNode({
   },
   async execute(inputs, context, properties) {
     if (!context.graphExecution) throw new Error('Continuation requires a durable execution')
-    if (properties?.drain) {
+    // A body event is a finite invocation. Its unresolved objective remains in
+    // the execution record; waiting for a future event is not unfinished work
+    // in this invocation. Genuine admitted user input retains its own lifecycle.
+    // Body Event supplies its intention separately and clears these user fields.
+    const hasUserInput = Boolean(context.userMessage)
+      || (inputs.instructionEntry ?? context.userMessageEntry)?.role === 'user'
+    const finiteBodyEvent = Boolean(context.bodyEventDecision) && !hasUserInput
+    if (properties?.drain || finiteBodyEvent) {
       // Supplied input belongs to this graph pass. Later event-tail occurrences
       // consume only newly admitted events, never the earlier input again.
       const supplied = context._graphExecutorIteration === 1 ? inputs.receivedInput : null
@@ -46,13 +53,13 @@ export const executionEventWaitNode = defineNode({
           environmentObservationCurrent: received.environmentObservation ? received.environmentObservationCurrent : false }
       }
       if (!kind && workResult) return { invocation: {
-        graph: properties.resultGraph ?? 'environment',
+        graph: properties?.resultGraph ?? 'environment',
         context: { ...workResult, executionEvents: events,
           userMessageEntry: inputs.instructionEntry ?? context.userMessageEntry,
           environmentInterpretation: undefined, pendingInstructionTurns: undefined },
       } }
       return { invocation: kind ? {
-        graph: kind === 'user_steering' ? properties.userGraph : properties.autonomyGraph,
+        graph: kind === 'user_steering' ? properties?.userGraph : properties?.autonomyGraph,
         context: { ...payload, executionEvents: events },
       } : null }
     }

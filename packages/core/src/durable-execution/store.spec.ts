@@ -163,6 +163,7 @@ test('Robot Status selects the same current task without decoding unrelated exec
     add('first-user', 'running', '2026-01-01T00:00:08.000Z', 'abandon');
     add('first-user', 'waiting', '2026-01-01T00:00:07.000Z', 'cancel');
     add('first-user', 'waiting', '2026-01-01T00:00:06.000Z', 'continue', true);
+    add('first-user', 'running', '2026-01-01T00:00:05.000Z', 'failed');
     add('second-user', 'running', '2026-01-01T00:00:10.000Z');
     for (let i = 0; i < 100; i++) store.create('first-user', definition);
     const prepare = store.db.prepare.bind(store.db);
@@ -173,7 +174,7 @@ test('Robot Status selects the same current task without decoding unrelated exec
     store.codec.decode = ((value: string) => { decodes++; return decode(value); }) as typeof store.codec.decode;
     assert.deepEqual(store.projectedTask('first-user'), active);
     assert.equal(queries, 1);
-    assert.equal(decodes, 5, "only this profile's task records need decoding");
+    assert.equal(decodes, 6, "only this profile's task records need decoding");
     const latest = add('first-user', 'running', '2026-01-01T00:00:02.000Z');
     assert.deepEqual(store.projectedTask('first-user'), latest);
     prepare("UPDATE executions SET status='completed' WHERE username=?").run('first-user');
@@ -712,6 +713,39 @@ test('non-dispatch confirmation requires the exact cancelled never-started Coord
   f.store.release(f.lease)
   assert.equal(await f.saver.pruneTerminal(Date.now() + 1), 1)
   f.store.close()
+})
+
+test('settled non-dispatch recovery requires a correlated cancelled not-sent result', async () => {
+  for (const mismatch of ['none', 'action', 'work', 'feedback-action', 'outcome', 'type', 'kind']) {
+    const f = fixture()
+    try {
+      await checkpoint(f, { transitionId: 'speech', dispatches: [
+        { effectId: 'speech', kind: 'coordinator_work', actionId: 'utterance', payload: { input: { type: 'speak' } } },
+      ] })
+      f.store.acknowledgeAdmission('speech', 'job')
+      f.store.settle(f.lease, 'failed')
+      const result = f.store.appendEvent(f.execution.executionId, {
+        eventId: 'work:job:not-sent', kind: mismatch === 'kind' ? 'work_result' : 'physical_result',
+        actionId: mismatch === 'action' ? 'other' : 'utterance',
+        workItemId: mismatch === 'work' ? 'other' : 'job',
+        payload: { feedback: {
+          actionId: mismatch === 'feedback-action' ? 'other' : 'utterance',
+          type: mismatch === 'type' ? 'completed' : 'cancelled',
+          data: { delivery: { outcome: mismatch === 'outcome' ? 'unknown' : 'not_sent' } },
+        } },
+      })
+      f.store.db.prepare("UPDATE execution_outbox SET status='completed' WHERE effect_id='speech'").run()
+      const receipt = { id: 'job', state: 'cancelled' as const,
+        durable: { executionId: f.execution.executionId, effectId: 'speech', recovery: 'reconcile' as const } }
+      if (mismatch === 'none') {
+        assert.deepEqual(f.store.confirmUndispatched('speech', receipt), result)
+        assert.throws(() => f.store.confirmUndispatched('speech', { ...receipt, startedAt: new Date().toISOString() }), /does not prove/)
+        assert.throws(() => f.store.confirmUndispatched('speech', { ...receipt, id: 'other' }), /does not prove/)
+      } else assert.throws(() => f.store.confirmUndispatched('speech', receipt), /not eligible/, mismatch)
+      assert.equal(f.store.events(f.execution.executionId).length, 1)
+      assert.equal(f.store.dispatch('speech').status, 'completed')
+    } finally { f.store.close() }
+  }
 })
 
 test('claimed action evidence survives terminal parents without authorizing another dispatch', async () => {

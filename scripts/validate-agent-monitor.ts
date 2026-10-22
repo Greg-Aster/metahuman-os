@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { mock } from 'node:test';
 import type { UnifiedRequest } from '../packages/core/src/api/types';
 
 const SOURCE_ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -198,11 +199,47 @@ async function main() {
     failDetails(snapshot.runningAgents.filter(agent => agent.status !== 'running').map(agent => `${agent.name}:${agent.status}`)),
   ));
 
-  checks.push(check(
-    'recentCompletions contains only completed one-shot cards',
-    snapshot.recentCompletions.every(agent => agent.kind === 'one-shot' && agent.status === 'stopped' && agent.metrics.successfulRuns > 0),
-    failDetails(snapshot.recentCompletions.map(agent => `${agent.name}:${agent.kind}:${agent.status}`)),
-  ));
+  const auditDirectory = path.join(runtimeRoot, 'logs', 'audit');
+  fs.mkdirSync(auditDirectory, { recursive: true });
+  const today = new Date().toISOString().slice(0, 10);
+  const todayLog = path.join(auditDirectory, `${today}.ndjson`);
+  fs.writeFileSync(todayLog, JSON.stringify({ timestamp: new Date().toISOString(),
+    actor: 'reflector', level: 'info', event: 'agent_completed' }) + '\n');
+  let auditReads = 0;
+  const originalRead = fs.readFileSync;
+  const reads = mock.method(fs, 'readFileSync', (...args: any[]) => {
+    if (String(args[0]).startsWith(auditDirectory + path.sep)) auditReads++;
+    return (originalRead as any)(...args);
+  });
+  try {
+    const { handleGetMonitor } = await import('../packages/core/src/api/handlers/monitor');
+    for (let repeat = 0; repeat < 3; repeat++) {
+      const current = getAgentMonitorSnapshot();
+      assert.equal('recentCompletions' in current, false);
+      assert.ok(current.runningAgents.every(card => !('metrics' in card)));
+      assert.ok(Object.values(current.agentData).every(panel => !('logs' in panel)));
+      const response = await handleGetMonitor({ ...ownerRequest('/api/monitor', {}), method: 'GET' });
+      assert.equal(response.status, 200);
+      assert.equal('recentLogs' in (response.data ?? {}), false);
+    }
+    checks.push(check('repeated monitor snapshots and overview reads never scan audit logs', auditReads === 0));
+    const { getAgentLogs } = await import('@metahuman/core/agent-monitor');
+    assert.equal(getAgentLogs('reflector')[0]?.message, 'agent_completed');
+    checks.push(check('manual diagnostic log access remains available', auditReads === 1));
+  } finally {
+    reads.mock.restore();
+  }
+
+  const { purgeOldAuditLogs } = await import('@metahuman/core/audit');
+  for (const file of ['2000-01-01.ndjson', '2000-01-02.ndjson.gz', `${today}.ndjson.gz`, 'notes.ndjson', '2000-01-01.txt']) {
+    fs.writeFileSync(path.join(auditDirectory, file), 'fixture');
+  }
+  purgeOldAuditLogs();
+  checks.push(check('audit retention removes dated old plain and compressed logs only',
+    !fs.existsSync(path.join(auditDirectory, '2000-01-01.ndjson'))
+    && !fs.existsSync(path.join(auditDirectory, '2000-01-02.ndjson.gz'))
+    && [today + '.ndjson', today + '.ndjson.gz', 'notes.ndjson', '2000-01-01.txt']
+      .every(file => fs.existsSync(path.join(auditDirectory, file)))));
 
   checks.push(check(
     'startableAgents excludes active agents',

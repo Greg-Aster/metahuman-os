@@ -51,3 +51,24 @@ test('spoken Stop carrying an earlier body event reaches Environment Mode unchan
   assert.equal(environmentObservationNeedsCognition({ ...body, text: [], metadata: {} } as any), false,
     'A retained event in a state snapshot is context, not another event invocation')
 })
+
+for (const kind of ['tipped', 'rapid_movement', 'servo_stall']) {
+  test(`${kind} uses the fast body workflow without duplicate admission`, async () => {
+    const timestamp = new Date().toISOString()
+    const observation = { id: `${kind}-observation`, sessionId: `session-${kind}`, environmentId: 'ainekio',
+      adapter: 'ainekio-gateway', timestamp, capabilities: { actions: [] },
+      metadata: { perceptionEvent: 'body_event' },
+      state: { bodyEvent: { name: 'body_event', event_id: `${kind}-event`, data: {
+        kind, ...(kind === 'servo_stall' ? { joints: [{ id: 0, name: 'rear_left_shoulder' }],
+          reason: 'no_position_progress', outputs_released: true } : { source: 'imu' }),
+      } } } }
+    const req: any = { body: observation, headers: { authorization: 'Bearer fixture-token' } }
+    const response = await handleEnvironmentBridgeObservation(req, () => 'fixture')
+    assert.equal(response.status, 200)
+    const work = getQueueManager().getTask((response.data as any).workId)
+    assert.equal(work?.input.graph, 'fast-body-event')
+    assert.deepEqual(work?.input.observation.state.bodyEvent, observation.state.bodyEvent)
+    const replay = await handleEnvironmentBridgeObservation(req, () => 'fixture')
+    assert.equal((replay.data as any).workId, work?.id)
+  })
+}

@@ -280,7 +280,7 @@ export const environmentBridgeInputNode = defineNode({
       freeHeapBytes: optionalNumber(bodyStatus?.heap),
       sdAvailable: optionalBoolean(bodyStatus?.sd),
       motionAvailable: optionalBoolean(body?.motionAvailable),
-      cameraReady: optionalBoolean(bodyStatus?.camera_ready) ?? optionalBoolean(body?.cameraReady),
+      cameraReady: optionalBoolean(body?.cameraReady) ?? optionalBoolean(bodyStatus?.camera_ready),
       microphoneReady: optionalBoolean(body?.microphoneReady),
       speakerReady: optionalBoolean(body?.speakerReady),
       cameraDrops: optionalNumber(bodyStatus?.cam_drops),

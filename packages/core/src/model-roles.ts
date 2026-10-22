@@ -5,6 +5,7 @@ export const MODEL_ROLE_OPTIONS = [
   { value: 'persona', label: 'Persona', description: "Expresses the robot's identity, personality, conversation and self-directed intentions." },
   { value: 'autonomy', label: 'Autonomy', description: 'Selects self-directed activities and develops autonomous intentions.' },
   { value: 'environmentActionSelector', label: 'Task Decisions', description: 'Selects concrete supported actions and task controls for a routed request.' },
+  { value: 'lightweight', label: 'Lightweight', description: 'Produces brief responses and simple decisions for time-sensitive events.' },
   { value: 'curator', label: 'Curator', description: 'Reviews, attributes and prepares saved records for memory and training.' },
   { value: 'coder', label: 'Coder', description: 'Generates and analyzes code and technical solutions.' },
   { value: 'planner', label: 'Planner', description: 'Develops and revises plans for complex or multi-step tasks.' },

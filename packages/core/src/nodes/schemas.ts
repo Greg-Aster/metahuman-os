@@ -1,4 +1,5 @@
 import { bodyEventContextSchema, bodyEventDecisionSchema, environmentEventRequestSchema } from './environment/body-event.schemas.js';
+import { fastBodyEventContextSchema, fastBodyEventResponseSchema } from './environment/fast-body-event.schemas.js';
 import { reasoningProperty } from './llm/model-router.schema.js';
 /**
  * Browser-safe Node Schemas Export
@@ -314,6 +315,7 @@ export const nodeSchemas: NodeSchema[] = [
     "name": "Current Execution",
     "category": "context",
     "inputs": [
+      { name: 'routingAnalysis', type: 'object', optional: true, description: 'Intent routing decision for this workflow pass' },
       { name: 'responseEntry', type: 'message', optional: true, description: 'Delivered response from this workflow pass' },
       { name: 'instructionEntry', type: 'message', optional: true, description: 'Original admitted input for continuation' },
       { name: 'resultContext', type: 'object', optional: true, description: 'Returned task observation context' },
@@ -3027,6 +3029,13 @@ export const nodeSchemas: NodeSchema[] = [
     category: 'output',
     inputs: [{ name: 'response', type: 'string' }],
     outputs: [{ name: 'output', type: 'string', description: 'Output text' }],
+    properties: { publishToConversation: false },
+    propertySchemas: {
+      publishToConversation: {
+        type: 'boolean', default: false, label: 'Publish to Conversation',
+        description: 'Publishes the response to the live conversation interface without adding it to conversation buffers or memory.',
+      },
+    },
     description: 'Streams response to client',
   }),
   defineSchema({
@@ -3045,7 +3054,10 @@ export const nodeSchemas: NodeSchema[] = [
     id: 'tts',
     name: 'Text to Speech',
     category: 'output',
-    inputs: [{ name: 'text', type: 'string', description: 'Text to speak' }],
+    inputs: [
+      { name: 'text', type: 'string', description: 'Text to speak' },
+      { name: 'sessionId', type: 'string', optional: true, description: 'Robot session receiving the speech.' },
+    ],
     outputs: [],
     properties: { provider: '', autoPlay: true },
     description: 'Converts text to speech',
@@ -4345,7 +4357,8 @@ Object.assign(getNodeSchema('orchestrator_llm')!.propertySchemas!, {
 });
 getNodeSchema('conversation_history')!.inputs.push({ name: 'includeInnerDialogue', type: 'boolean', optional: true, description: 'Input-specific selection of inner dialogue alongside conversation.' });
 
-nodeSchemas.push(...[bodyEventContextSchema, bodyEventDecisionSchema, environmentEventRequestSchema]
+nodeSchemas.push(...[bodyEventContextSchema, bodyEventDecisionSchema, environmentEventRequestSchema,
+  fastBodyEventContextSchema, fastBodyEventResponseSchema]
   .map(schema => ({ ...schema, ...categoryColors.environment })));
 
 // Helper function to get schema by ID

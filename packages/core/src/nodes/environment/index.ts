@@ -8,6 +8,7 @@ export { environmentTrainingOutputNode } from './training-output.node.js';
 export { environmentTrainingReviewInputNode, environmentTrainingReviewSaveNode } from './training-review.node.js';
 export { freestyleRequestInputNode, freestyleTrainingOutputNode } from './freestyle-training.node.js';
 export { bodyEventContextNode, bodyEventDecisionNode, environmentEventRequestNode } from './body-event.node.js';
+export { fastBodyEventContextNode, fastBodyEventResponseNode } from './fast-body-event.node.js';
 export { environmentFeedbackNode } from './feedback.node.js';
 export { environmentMapInputNode } from './map-input.node.js';
 export { environmentContextBuilderNode } from './context-builder.node.js';

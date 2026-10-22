@@ -16,9 +16,16 @@ const parse = (choice: unknown, current = observation) => environmentActionParse
   response: JSON.stringify(choice), observation: current, sessionId: current.sessionId,
 }, {}, {})
 
+test('Task cannot select the retired continue outcome with or without a program', async () => {
+  for (const program of [null, { steps: [action('stand')] }]) {
+    await assert.rejects(parse({ response: '', program,
+      taskDecision: { ...taskDecision, outcome: 'continue' } }), /outcome/)
+  }
+})
+
 test('one model-owned outcome defines completion independently of conversational responses', async () => {
   const choice = { response: 'We can begin.', program: null,
-    taskDecision: { ...taskDecision, outcome: 'continue', requiredCompletionBasis: 'user_input' } }
+    taskDecision: { ...taskDecision, outcome: 'request_user', requiredCompletionBasis: 'user_input' } }
   assert.equal(validateEnvironmentSelectorOutput(JSON.stringify(choice)).value?.taskDecision?.objectiveComplete, false)
   assert.equal(validateEnvironmentSelectorOutput(JSON.stringify({ ...choice,
     taskDecision: { ...choice.taskDecision, outcome: 'complete' } })).value?.taskDecision?.objectiveComplete, true)

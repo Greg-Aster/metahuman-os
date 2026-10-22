@@ -205,6 +205,8 @@ export async function callLLM(callOptions: RouterCallOptions): Promise<RouterRes
         temperature: mergedOptions.temperature,
         maxTokens: mergedOptions.maxTokens || mergedOptions.num_predict,
         topP: mergedOptions.topP || mergedOptions.top_p,
+        topK: mergedOptions.topK,
+        seed: mergedOptions.seed,
         repeatPenalty: mergedOptions.repeatPenalty || mergedOptions.repeat_penalty,
         format: mergedOptions.format,
         jsonSchema: mergedOptions.jsonSchema,

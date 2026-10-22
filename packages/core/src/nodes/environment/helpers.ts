@@ -38,7 +38,6 @@ export interface EnvironmentMovementRequest {
 
 export const ENVIRONMENT_TASK_OUTCOMES = [
   'complete',
-  'continue',
   'observe',
   'act',
   'report',

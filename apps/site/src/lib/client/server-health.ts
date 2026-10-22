@@ -33,8 +33,6 @@ const QUALITY_THRESHOLDS = {
   excellent: 100,   // < 100ms
   good: 250,        // < 250ms
   fair: 500,        // < 500ms
-  poor: 1000,       // < 1000ms
-  // >= 1000ms or failed = offline
 };
 
 // Default configuration
@@ -67,8 +65,7 @@ function calculateQuality(latencyMs: number, connected: boolean): HealthStatus['
   if (latencyMs < QUALITY_THRESHOLDS.excellent) return 'excellent';
   if (latencyMs < QUALITY_THRESHOLDS.good) return 'good';
   if (latencyMs < QUALITY_THRESHOLDS.fair) return 'fair';
-  if (latencyMs < QUALITY_THRESHOLDS.poor) return 'poor';
-  return 'offline';
+  return 'poor';
 }
 
 /**
@@ -83,10 +80,10 @@ export async function checkHealth(): Promise<HealthStatus> {
   const start = Date.now();
 
   // Determine health check URL based on platform
-  // Use the lightweight, side-effect-free status endpoint for health checks.
+  // Check the existing session endpoint; the full status report probes backends and memory.
   const healthUrl = isReactNativeWebView()
-    ? 'http://127.0.0.1:4322/api/status'
-    : '/api/status';
+    ? 'http://127.0.0.1:4322/api/auth/me'
+    : '/api/auth/me';
 
   // Check server health
   try {

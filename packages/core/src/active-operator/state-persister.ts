@@ -18,6 +18,9 @@ function normalizeConfig(loaded: Partial<ActiveOperatorConfig>): ActiveOperatorC
     autonomyMode: ['reactive', 'semi', 'full'].includes(loaded.autonomyMode || '')
       ? loaded.autonomyMode!
       : DEFAULT_CONFIG.autonomyMode,
+    semiInactivityMinutes: typeof loaded.semiInactivityMinutes === 'number'
+      && Number.isFinite(loaded.semiInactivityMinutes) && loaded.semiInactivityMinutes > 0
+      ? loaded.semiInactivityMinutes : DEFAULT_CONFIG.semiInactivityMinutes,
   };
 }
 

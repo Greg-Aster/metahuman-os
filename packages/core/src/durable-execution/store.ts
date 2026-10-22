@@ -211,7 +211,7 @@ export class ExecutionStore {
     }))
     candidates.sort((a, b) => {
       const active = (candidate: typeof a) => ['running', 'waiting'].includes(candidate.record.status)
-        && !candidate.task.decision.objectiveComplete && !['abandon', 'cancel'].includes(candidate.task.decision.outcome)
+        && !candidate.task.decision.objectiveComplete && !['abandon', 'cancel', 'complete', 'failed'].includes(candidate.task.decision.outcome)
       return Number(active(b)) - Number(active(a)) || b.task.updatedAt.localeCompare(a.task.updatedAt)
     })
     return candidates[0]?.task ?? null
@@ -641,6 +641,16 @@ export class ExecutionStore {
       }
       const recorded = this.findEvent(effect.executionId, `work:${receipt.id}:undispatched`)
       if (recorded) return recorded
+      // A correlated not-sent result already confirms non-dispatch, even when
+      // it was recorded without the separate cancellation marker.
+      const result = this.findEvent(effect.executionId, `work:${receipt.id}:not-sent`)
+      const feedback = (result?.payload as { feedback?: {
+        type?: string; actionId?: string; data?: { delivery?: { outcome?: string } }
+      } } | undefined)?.feedback
+      if (result?.kind === 'physical_result' && effect.actionId
+        && result.actionId === effect.actionId && result.workItemId === receipt.id
+        && feedback?.actionId === effect.actionId && feedback.type === 'cancelled'
+        && feedback.data?.delivery?.outcome === 'not_sent') return result
       const speech = (effect.payload as { input?: { type?: string } }).input?.type === 'speak'
       if ((!['failed', 'cancelled'].includes(this.get(effect.executionId).status) && !this.isDisplayDispatch(effect) && !speech)
         || effect.kind !== 'coordinator_work' || !['pending', 'admitted', 'cancelled'].includes(effect.status)) {
@@ -648,8 +658,7 @@ export class ExecutionStore {
       }
       const event = this.insertEvent(effect.executionId, {
         eventId: `work:${receipt.id}:undispatched`, kind: 'dispatch_cancelled', workItemId: receipt.id,
-        payload: this.findEvent(effect.executionId, `work:${receipt.id}:undispatched`)?.payload
-          ?? { effectId, reason: this.isDisplayDispatch(effect)
+        payload: { effectId, reason: this.isDisplayDispatch(effect)
             ? 'Display delivery cancelled before work started' : speech
               ? 'Speech delivery cancelled before work started' : 'Execution ended before work started' },
       })
@@ -917,7 +926,7 @@ export class ExecutionStore {
       // Coordinator intents: a pending receipt may conceal enqueue-before-ack,
       // and accepted/unknown effects still need their external outcome.
       this.db.prepare(`UPDATE execution_outbox SET status = 'cancelled' WHERE execution_id = ?
-        AND status = 'pending' AND kind IN ('buffer_entry', 'robot_status', 'local_tts', 'execution_event')`)
+        AND status = 'pending' AND kind IN ('buffer_entry', 'conversation_feed', 'robot_status', 'local_tts', 'execution_event')`)
         .run(executionId)
     }
     const rows = this.db.prepare(`SELECT effect_id FROM execution_outbox WHERE execution_id = ?
@@ -1037,7 +1046,7 @@ export class ExecutionStore {
 
   completeProjection(effectId: string): void {
     const effect = this.dispatch(effectId)
-    if (!['robot_status', 'local_tts', 'buffer_entry'].includes(effect.kind)) throw new ExecutionConflictError('Not a local output delivery')
+    if (!['robot_status', 'local_tts', 'buffer_entry', 'conversation_feed'].includes(effect.kind)) throw new ExecutionConflictError('Not a local output delivery')
     this.db.prepare("UPDATE execution_outbox SET status = 'completed' WHERE effect_id = ? AND status != 'cancelled'").run(effectId)
   }
 

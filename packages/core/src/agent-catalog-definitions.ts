@@ -244,7 +244,7 @@ export const AGENT_CATALOG_DEFINITIONS: Record<string, AgentCatalogDefinition> =
   'robot-goal-review': {
     id: 'robot-goal-review',
     displayName: 'Robot Goal Review',
-    description: 'Reviews the current execution objective and returned evidence; may complete, continue, wait, request the user, abandon, speak, or select a catalog-backed activity.',
+    description: 'Reviews the current execution objective and returned evidence; may complete, wait, request the user, or abandon.',
     lifecycle: 'workflow',
     handler: 'workflow.robot-goal-review',
     taskType: 'generic',

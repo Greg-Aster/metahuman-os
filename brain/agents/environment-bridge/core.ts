@@ -19,7 +19,6 @@ import {
 } from '@metahuman/core/environment-interface';
 import { ROOT } from '@metahuman/core/paths';
 import {
-  audioTransportLimits,
   parseAudioUtteranceMessage,
   transcribeAudioUtterance,
   type AudioUtteranceMetadata,
@@ -36,7 +35,6 @@ import { encodeRobotSpeechMessage } from './speech-transport.js';
 const LOG_PREFIX = '[environment-bridge]';
 const PROTOCOL_VERSION = 1;
 const RECONNECT_DELAY_MS = 2_000;
-const MAX_MESSAGE_BYTES = audioTransportLimits.maxMessageBytes;
 const MAX_PENDING_AUDIO_UTTERANCES = 2;
 const DIAGNOSTIC_TELEMETRY_INTERVAL_MS = 1_000;
 const MAX_DIAGNOSTIC_EVENTS_PER_WINDOW = 20;
@@ -297,7 +295,7 @@ export async function consumeActionStream(
 
 async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<void> {
   const websocket = new WebSocket(config.adapterUrl, {
-    maxPayload: MAX_MESSAGE_BYTES,
+    maxPayload: 0,
     perMessageDeflate: false,
   });
   const localAbort = new AbortController();
@@ -764,7 +762,6 @@ async function connectOnce(config: BridgeConfig, signal: AbortSignal): Promise<v
         let orderingKey: string | undefined;
         let dependency: Promise<void> | undefined;
         try {
-          if (incoming.length > MAX_MESSAGE_BYTES) throw new Error('Environment adapter message exceeds its size limit');
           message = JSON.parse(incoming.toString()) as Record<string, unknown>;
           if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('Invalid adapter message');
           const telemetry = message.telemetry as Record<string, unknown> | undefined;

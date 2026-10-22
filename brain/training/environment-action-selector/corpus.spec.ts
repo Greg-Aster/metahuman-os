@@ -348,9 +348,13 @@ test('fresh intent evaluation is separate from development and the old regressio
   const regression = await buildDevelopmentRecords(REGRESSION_CASES)
   const intent = (records: typeof development) => records.filter(record => record.metadata.specialist === 'intent'
     && !record.metadata.suite.startsWith('speech-program-') && !record.metadata.suite.startsWith('planner-boundary-'))
-  assert.equal(intent(development).length, 1280)
-  assert.equal(new Set(intent(development).map(record => record.user)).size, 1280)
-  assert.equal(intent(evaluation).length, 253)
+  const previousIntent = (records: typeof development) => intent(records).filter(record =>
+    !/^intent-(development|evaluation)-memory-/.test(record.metadata.sourceCaseId))
+  assert.equal(previousIntent(development).length, 1280, 'Previous Intent development families remain intact')
+  assert.equal(previousIntent(evaluation).length, 253, 'Previous Intent evaluation families remain intact')
+  assert.equal(intent(development).length, 1387)
+  assert.equal(new Set(intent(development).map(record => record.user)).size, 1387)
+  assert.equal(intent(evaluation).length, 311)
   assert.equal(intent(regression).length, 46)
   const liveVisionFailure = intent(regression).find(record => record.user === 'Current user message: What can you see in front of you right now?')!
   assert.ok(liveVisionFailure)

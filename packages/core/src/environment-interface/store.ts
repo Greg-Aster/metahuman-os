@@ -416,6 +416,7 @@ export function applyRobotStatusToEnvironmentObservation(
   const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
     ? body as Record<string, unknown>
     : null;
+  if (bodyRecord?.authenticated === false) return observation;
   const statusRobotId = typeof robotStatus.robot_id === 'string'
     ? robotStatus.robot_id
     : undefined;

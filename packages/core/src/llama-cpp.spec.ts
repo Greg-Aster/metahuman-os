@@ -424,7 +424,7 @@ test('image input never substitutes another category and Vision retains its endp
   try {
     await assert.rejects(callLLM({ userId: 'fixture', cognitiveMode: 'environment',
       role: 'environmentActionSelector', messages: imageMessages }), /not configured for image/)
-    assert.deepEqual(calls, [], 'unsupported selected Task does not dispatch to the image-capable Orchestrator')
+    assert.equal(calls.length, 0, 'unsupported selected Task does not dispatch to the image-capable Orchestrator')
     const response = await callLLM({ userId: 'fixture', cognitiveMode: 'environment',
       role: 'environmentVision', messages: imageMessages })
     assert.equal(response.modelId, 'selected-vision')
@@ -468,4 +468,106 @@ test('Autonomy adapter assignment is isolated from Persona on the same llama.cpp
   }
   assert.equal(resolveModelForCognitiveMode('environment', 'persona', 'autonomy-fixture').id, 'base')
   assert.equal(resolveModelForCognitiveMode('environment', 'autonomy', 'autonomy-fixture').id, 'trained')
+})
+
+test('Lightweight uses the shared unadapted base while Intent and Task retain their own adapters', async () => {
+  healthyFetch()
+  saveBackendConfig({ activeBackend: 'llama-cpp', llamaCpp: config })
+  const username = 'lightweight-fixture'
+  const profile = getProfilePaths(username)
+  fs.mkdirSync(profile.etc, { recursive: true })
+  const registryPath = path.join(profile.etc, 'models.json')
+  const shared = { provider: 'llama-cpp', model: config.model, capabilities: ['text'] }
+  fs.writeFileSync(registryPath, JSON.stringify({
+    version: '1.0.0', description: 'Independent Lightweight fixture',
+    defaults: { orchestrator: 'intent', environmentActionSelector: 'task' },
+    models: {
+      base: { ...shared, roles: [], adapters: [], options: { endpoint: config.endpoint, lora: [] } },
+      intent: { ...shared, roles: ['orchestrator'], adapters: ['/intent.gguf'],
+        options: { endpoint: config.endpoint, lora: [{ path: '/intent.gguf', scale: 1 }] } },
+      task: { ...shared, roles: ['environmentActionSelector'], adapters: ['/task.gguf'],
+        options: { endpoint: config.endpoint, lora: [{ path: '/task.gguf', scale: 1 }] } },
+    },
+    cognitiveModeMappings: { environment: { orchestrator: 'intent', environmentActionSelector: 'task' },
+      agent: { orchestrator: 'intent', environmentActionSelector: 'task' } },
+  }))
+  assert.throws(() => resolveModelForCognitiveMode('environment', 'lightweight', username), /No default model/)
+  const before = JSON.parse(fs.readFileSync(registryPath, 'utf8'))
+  const assigned = await handleAssignModelRole({ method: 'POST',
+    user: { isAuthenticated: true, username, role: 'owner' },
+    body: { cognitiveMode: 'environment', role: 'lightweight', modelId: 'base' } } as any)
+  assert.equal(assigned.status, 200)
+  const expected = structuredClone(before)
+  expected.models.base.roles.push('lightweight')
+  expected.cognitiveModeMappings.environment.lightweight = 'base'
+  assert.deepEqual(JSON.parse(fs.readFileSync(registryPath, 'utf8')), expected)
+  assert.throws(() => resolveModelForCognitiveMode('agent', 'lightweight', username), /No default model/)
+  const originalRespond = respond
+  respond = async (url, init) => String(url).endsWith('/lora-adapters')
+    ? Response.json([{ id: 2, path: '/intent.gguf', scale: 0 }, { id: 3, path: '/task.gguf', scale: 0 }])
+    : originalRespond(url, init)
+  const { ModelRouterNode } = await import('./nodes/llm/model-router.node.js')
+  for (const role of ['orchestrator', 'lightweight', 'environmentActionSelector', 'lightweight'] as const) {
+    const result = await ModelRouterNode.execute!({ messages },
+      { username, cognitiveMode: 'environment' }, { role, maxTokens: -1 })
+    assert.equal(result.response, 'OK')
+    const request = requests.filter(item => item.url.endsWith('/v1/chat/completions')).at(-1)!
+    assert.equal(request.url, `${config.endpoint}/v1/chat/completions`)
+    assert.equal(request.body.model, config.model)
+    assert.deepEqual(request.body.lora, role === 'lightweight' ? []
+      : [{ id: role === 'orchestrator' ? 2 : 3, scale: 1 }])
+  }
+})
+
+test('router preserves per-model topK and seed, per-call zero overrides and absent sampling options', async () => {
+  healthyFetch()
+  saveBackendConfig({ activeBackend: 'llama-cpp', llamaCpp: config })
+  const { callLLM } = await import('./model-router.js')
+  const username = 'sampling-fixture'
+  const profile = getProfilePaths(username)
+  fs.mkdirSync(profile.etc, { recursive: true })
+  const registryPath = path.join(profile.etc, 'models.json')
+  const shared = { provider: 'llama-cpp', model: config.model, capabilities: ['text'] }
+  fs.writeFileSync(registryPath, JSON.stringify({
+    version: '1.0.0', description: 'Sampling isolation fixture',
+    defaults: { lightweight: 'base', orchestrator: 'intent', environmentActionSelector: 'task' },
+    models: {
+      base: { ...shared, roles: ['lightweight'], adapters: [],
+        options: { endpoint: config.endpoint, lora: [], topK: 40, seed: 71 } },
+      intent: { ...shared, roles: ['orchestrator'], adapters: ['/intent.gguf'],
+        options: { endpoint: config.endpoint, lora: [{ path: '/intent.gguf', scale: 1 }], topK: 1, seed: 5 } },
+      task: { ...shared, roles: ['environmentActionSelector'], adapters: ['/task.gguf'],
+        options: { endpoint: config.endpoint, lora: [{ path: '/task.gguf', scale: 1 }], topK: 8, seed: 19 } },
+      unconfigured: { ...shared, roles: [], adapters: [], options: { endpoint: config.endpoint, lora: [] } },
+    },
+  }))
+  const originalRespond = respond
+  respond = async (url, init) => String(url).endsWith('/lora-adapters')
+    ? Response.json([{ id: 2, path: '/intent.gguf', scale: 0 }, { id: 3, path: '/task.gguf', scale: 0 }])
+    : originalRespond(url, init)
+  const configured = {
+    lightweight: { topK: 40, seed: 71, lora: [] },
+    orchestrator: { topK: 1, seed: 5, lora: [{ id: 2, scale: 1 }] },
+    environmentActionSelector: { topK: 8, seed: 19, lora: [{ id: 3, scale: 1 }] },
+  }
+  for (const role of ['lightweight', 'orchestrator', 'environmentActionSelector', 'lightweight'] as const) {
+    await callLLM({ userId: username, role, messages })
+    const request = requests.filter(item => item.url.endsWith('/v1/chat/completions')).at(-1)!
+    assert.equal(request.url, `${config.endpoint}/v1/chat/completions`)
+    assert.equal(request.body.top_k, configured[role].topK)
+    assert.equal(request.body.seed, configured[role].seed)
+    assert.deepEqual(request.body.lora, configured[role].lora)
+  }
+  const saved = fs.readFileSync(registryPath, 'utf8')
+  await callLLM({ userId: username, role: 'lightweight', messages, options: { topK: 0, seed: 0 } })
+  const zero = requests.at(-1)!.body
+  assert.equal(zero.top_k, 0)
+  assert.equal(zero.seed, 0)
+  await callLLM({ userId: username, role: 'lightweight', messages, options: { seed: 123 } })
+  assert.equal(requests.at(-1)!.body.top_k, 40)
+  assert.equal(requests.at(-1)!.body.seed, 123)
+  await callLLM({ userId: username, role: 'lightweight', modelId: 'unconfigured', messages })
+  assert.equal(Object.hasOwn(requests.at(-1)!.body, 'top_k'), false)
+  assert.equal(Object.hasOwn(requests.at(-1)!.body, 'seed'), false)
+  assert.equal(fs.readFileSync(registryPath, 'utf8'), saved, 'per-call options do not change saved sampling settings')
 })

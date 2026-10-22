@@ -2,15 +2,31 @@ import { defineNode } from '../types.js'
 import { faceExpressionSchema, expressionFeedbackSchema } from './expression.schemas.js'
 import { environmentSendActionNode } from './send-action.node.js'
 import { createHash } from 'node:crypto'
+import { robotSpeechDeliveryProgress } from '../../tts/robot-speech.js'
 
 export const environmentFaceExpressionNode = defineNode({
   ...faceExpressionSchema,
   async execute(inputs, context, properties) {
     const feedback = inputs.feedback ?? {}
-    const token = inputs.token ?? feedback.token ?? createHash('sha256')
+    const event = context.environmentObservation?.state?.bodyEvent
+    // The body-event branch supplies its event kind as control. Attribute that
+    // initial reaction only; subsequent replacement faces keep ordinary tokens.
+    const reaction = event?.name === 'body_event' && inputs.control === event.data?.kind
+      && ['tipped', 'rapid_movement'].includes(inputs.control)
+    const generatedToken = createHash('sha256')
       .update(context.graphExecution?.occurrenceId ?? String(context.requestId)).digest('hex').slice(0, 32)
+    const token = inputs.token ?? feedback.token ?? (reaction ? `be_${generatedToken.slice(0, 29)}` : generatedToken)
     const release = (feedback.operation ?? properties?.operation) === 'release'
     if (release && !inputs.token && !feedback.token) throw new Error('Releasing an expression requires its token')
+    if (release && inputs.delivery?.accepted && inputs.delivery.route === 'robot') {
+      const execution = context.graphExecution!
+      // Only this release waits. The existing durable event owner releases the
+      // worker while speech renders/plays, without gating any other channel.
+      while (['rendering', 'playing'].includes(
+        robotSpeechDeliveryProgress(inputs.delivery, execution.events()).status)) {
+        execution.waitForEvent('robot_result')
+      }
+    }
     const result = await environmentSendActionNode.execute({
       action: { type: 'faceExpression',
         expression: release ? undefined : inputs.expression ?? feedback.expression ?? properties?.expression,

@@ -33,7 +33,8 @@ export const bodyEventDecisionNode = defineNode({
     try { decision = JSON.parse(inputs.response) }
     catch { throw new NodeInputValidationError('response', 'Event decision must be JSON') }
     if (!decision || !['delegate', 'none'].includes(decision.decision)
-      || typeof decision.instruction !== 'string' || typeof decision.reason !== 'string'
+      || (typeof decision.instruction !== 'string' && !(decision.decision === 'none' && decision.instruction === null))
+      || typeof decision.reason !== 'string'
       || (decision.decision === 'delegate' && !decision.instruction.trim())) {
       throw new NodeInputValidationError('response', 'Event decision requires decision, instruction and reason')
     }

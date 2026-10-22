@@ -185,8 +185,8 @@ test('Robot Status storage keeps deterministic facts and bounded history in one 
 })
 
 test('Robot Status projects execution lifecycle without rewriting or reviving its objective', async () => {
-  for (const state of ['running', 'waiting', 'completed', 'failed', 'cancelled'] as const) {
-    const username = `status-execution-${state}`
+  for (const outcome of ['act', 'failed']) for (const state of ['running', 'waiting', 'completed', 'failed', 'cancelled'] as const) {
+    const username = `status-execution-${state}-${outcome}`
     const store = openExecutionStore(username)
     try {
       const definition = { graphId: 'status-owner-fixture', graphHash: 'fixture-v1', runtimeVersion: 'fixture-v1',
@@ -196,7 +196,7 @@ test('Robot Status projects execution lifecycle without rewriting or reviving it
       const task = { objectiveId: randomUUID(), executionId: execution.executionId,
         objective: 'Inspect the work area.', completionCriteria: 'Report the observed target location.',
         instruction: 'Inspect the work area and report the target location.', source: 'user',
-        decision: { outcome: 'act', objectiveComplete: false, reason: 'Inspect another area.' },
+        decision: { outcome, objectiveComplete: false, reason: outcome === 'failed' ? 'The selected action was rejected.' : 'Inspect another area.' },
         selectedAction: null, actionId: '', actionStatus: '', feedback: null, baselineFrame: null,
         updatedAt: new Date().toISOString() }
       await new ExecutionCheckpointer(store, lease).put({ configurable: { thread_id: execution.executionId } }, {
@@ -211,8 +211,8 @@ test('Robot Status projects execution lifecycle without rewriting or reviving it
       const read = await robotStatusNode.execute!({}, { username }, { historyLimit: 3 })
       assert.equal(read.task.executionStatus, state)
       assert.equal(read.task.objective, task.objective, 'Historical objectives remain inspectable')
-      assert.equal(read.context.situation.currentGoal, ['running', 'waiting'].includes(state) ? task.objective : '')
-      assert.equal(read.context.situation.currentIntent, ['running', 'waiting'].includes(state) ? task.decision.reason : '',
+      assert.equal(read.context.situation.currentGoal, outcome === 'act' && ['running', 'waiting'].includes(state) ? task.objective : '')
+      assert.equal(read.context.situation.currentIntent, outcome === 'act' && ['running', 'waiting'].includes(state) ? task.decision.reason : '',
         'Terminal executions retain their decision as history, not current intent')
       assert.deepEqual(store.task(execution.executionId), task, 'A status read cannot rewrite the execution decision')
       const saved = saveRobotStatus(username, situation, sources)

@@ -168,10 +168,17 @@ export async function handleUpdateActiveOperatorConfig(req: UnifiedRequest): Pro
     }
 
     const input = { ...(req.body || {}) };
-    const body = { autonomyMode: input.autonomyMode };
+    const body = {
+      ...(input.autonomyMode !== undefined ? { autonomyMode: input.autonomyMode } : {}),
+      ...(input.semiInactivityMinutes !== undefined ? { semiInactivityMinutes: input.semiInactivityMinutes } : {}),
+    };
     const requestedMode = body.autonomyMode as AutonomyMode | undefined;
     if (requestedMode && !['reactive', 'semi', 'full'].includes(requestedMode)) {
       return { status: 400, error: 'autonomyMode must be reactive, semi, or full' };
+    }
+    if (body.semiInactivityMinutes !== undefined && (typeof body.semiInactivityMinutes !== 'number'
+      || !Number.isFinite(body.semiInactivityMinutes) || body.semiInactivityMinutes <= 0)) {
+      return { status: 400, error: 'semiInactivityMinutes must be a positive number' };
     }
     const config = updateActiveOperatorConfig(body);
     if (requestedMode) await getModeController().setMode(requestedMode, req.user.username);

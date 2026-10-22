@@ -411,7 +411,7 @@ export function loadRobotStatus(username: string): RobotStatusSnapshot | null {
 
 function currentGoal(task: RobotStatusTask | null): string {
   const active = task && (task.executionStatus === undefined || ['running', 'waiting'].includes(task.executionStatus))
-    && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete'].includes(task.decision.outcome)
+    && !task.decision.objectiveComplete && !['abandon', 'cancel', 'complete', 'failed'].includes(task.decision.outcome)
   return active ? task.objective : ''
 }
 

@@ -172,6 +172,7 @@ test('one buffer stream preserves mode, timestamp and speaker, exposes read erro
   let failInner = true;
   const owner = load('./buffer-stream.ts', ['handleBufferStream', 'streamBufferUpdates', 'isBufferMode', 'sse'], {
     fs: io.fs, path, streamResponse,
+    eventBus: { subscribe: () => () => {} },
     getBufferNotificationPath: (_user: string, mode: string) => `/fixture/${mode}`,
     loadBufferForUser: (_user: string, mode: string) => {
       if (mode === 'inner' && failInner) throw new Error('Fixture read failure');
@@ -202,7 +203,10 @@ test('monitor read and watcher failures are delivered, and disconnect releases s
   const io = fileIO();
   let released = 0;
   const owner = load('./monitor-stream.ts', ['handleMonitorStream', 'streamMonitorUpdates', 'sse'], {
-    fs: io.fs, path, streamResponse, systemPaths: { logs: '/fixture/logs', run: '/fixture/run', root: '/fixture' },
+    fs: { ...io.fs, watch: (target: string, listener: (...args: any[]) => void) => {
+      assert.notEqual(target, '/fixture/logs/audit', 'monitor must not subscribe to audit writes');
+      return io.fs.watch(target, listener);
+    } }, path, streamResponse, systemPaths: { logs: '/fixture/logs', run: '/fixture/run', root: '/fixture' },
     getAgentMonitorSnapshot: () => { throw new Error('Fixture snapshot failed'); },
     subscribeEnvironmentBridgeState: () => () => { released++; },
     subscribeEnvironmentBridgeDiagnostics: () => () => { released++; },

@@ -355,7 +355,7 @@ test('Environment selector schema describes conversation or an ordered program w
   assert.equal(activity.properties.taskDecision.additionalProperties, false)
   const outcomes = activity.properties.taskDecision.properties.outcome.enum
   assert.ok(outcomes.includes('act'))
-  assert.ok(outcomes.includes('continue'))
+  assert.equal(outcomes.includes('continue'), false)
   assert.equal(outcomes.includes('complete'), false, 'Selecting a program is not proof of execution')
   const required = buildEnvironmentSelectorJsonSchema({ ...capabilities, requireAction: true }) as any
   assert.deepEqual(required.anyOf, [activity], 'Requiring action uses the same complete program contract')
