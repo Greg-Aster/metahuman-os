@@ -79,7 +79,7 @@ function getCorsHeaders(origin: string | null, host: string | null, method: stri
 
   return {
     ...(origin ? { 'Access-Control-Allow-Origin': origin } : {}),
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Cookie, Authorization',
     'Access-Control-Allow-Credentials': 'true',
     'Vary': 'Origin',

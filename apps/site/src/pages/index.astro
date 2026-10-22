@@ -5,6 +5,7 @@ import RightSidebar from '../components/RightSidebar.svelte';
 import CenterContent from '../components/CenterContent.svelte';
 import ThemeToggle from '../components/ThemeToggle.astro';
 import AuthGate from '../components/AuthGate.svelte';
+import BackendConnectionStatus from '../components/BackendConnectionStatus.svelte';
 import '../styles/tailwind.css';
 import '../styles/chat-animations.css';
 ---
@@ -38,32 +39,24 @@ import '../styles/chat-animations.css';
     <!-- PERFORMANCE FIX: Bootstrap critical data before component hydration -->
     <!-- This pre-fetches status data so it's ready when components hydrate -->
     <!-- UNIFIED ARCHITECTURE: Both React Native and web use same fetch API -->
-    <script is:inline>
-      // Check for React Native WebView
-      const isReactNative = typeof window !== 'undefined' && 
-        (window.ReactNativeWebView || window.location?.origin?.includes('127.0.0.1:4322'));
-
-      // UNIFIED ARCHITECTURE:
-      // - React Native: Fetch from local Node.js server (127.0.0.1:4322)
-      // - Web: Fetch from same-origin server
-      // Both use identical fetch API, no special handling needed
-      if (!isReactNative) {
+    <script>
+      import { apiFetch, getApiBaseUrl, isHostedUi, isMobileApp } from '../lib/client/api-config';
+      if (!isMobileApp() && (!isHostedUi() || getApiBaseUrl())) {
         // Web only: fetch critical status data immediately
-        fetch('/api/status', { cache: 'no-store', credentials: 'same-origin' })
+        apiFetch('/api/status', { cache: 'no-store' })
           .then(res => res.json())
           .then(data => {
-            window.__MH_BOOTSTRAP_STATUS__ = data;
+            (window as any).__MH_BOOTSTRAP_STATUS__ = data;
             console.log('[bootstrap] Status data pre-fetched');
           })
           .catch(err => {
             console.error('[bootstrap] Failed to pre-fetch status:', err);
           });
-      } else {
-        console.log('[bootstrap] Mobile: skipping bootstrap fetch (local-first architecture)');
       }
     </script>
   </head>
   <body>
+    <BackendConnectionStatus client:only="svelte" />
     <!-- Authentication Gate - ONLY renders children when authenticated -->
     <!-- Main app is a child, so it DOES NOT load until user is logged in -->
     <AuthGate client:only="svelte">

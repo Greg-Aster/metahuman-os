@@ -1,14 +1,7 @@
 /**
- * API Configuration for Mobile/Web
- *
- * LOCAL-FIRST ARCHITECTURE:
- * - Mobile app is a STANDALONE program, NOT a thin client
- * - API calls on mobile go to local handlers (empty base URL)
- * - Server URL is ONLY used for explicit sync operations
- * - Web app uses relative paths (same origin = same machine)
- *
- * The mobile app bundles the UI and handles operations locally.
- * Server connection is OPTIONAL and only for syncing profiles.
+ * Browser transport owner. Local web and mobile use their same-origin API;
+ * the hosted static UI uses the backend selected in this browser.
+ * Profile sync has its own server selection, independent of UI transport.
  */
 
 // Default servers for explicit profile sync.
@@ -21,6 +14,20 @@ const DEFAULT_SERVERS = {
 // Cache for server URL (avoid async calls on every request)
 let cachedServerUrl: string | null = null;
 let cacheInitialized = false;
+
+declare const __METAHUMAN_STATIC_UI__: boolean | undefined;
+const BACKEND_STORAGE_KEY = 'mh_backend_url';
+
+export function isHostedUi(): boolean {
+  return typeof __METAHUMAN_STATIC_UI__ !== 'undefined' && __METAHUMAN_STATIC_UI__;
+}
+
+/** Save only the chosen address. Authentication remains on that backend. */
+export function setBackendUrl(url: string): void {
+  const normalized = normalizeUrl(url);
+  if (normalized) localStorage.setItem(BACKEND_STORAGE_KEY, normalized);
+  else localStorage.removeItem(BACKEND_STORAGE_KEY);
+}
 
 /**
  * Check if running in React Native WebView
@@ -66,18 +73,15 @@ export async function initServerUrl(): Promise<void> {
 }
 
 /**
- * Get the base URL for API calls (sync version using cache)
+ * Get the selected API destination synchronously.
  *
- * LOCAL-FIRST ARCHITECTURE:
- * - Mobile: Returns empty string (local nodejs-mobile handles requests)
- * - Web: Returns empty string (same-origin server)
- *
- * Remote server URL is ONLY used for explicit sync operations via getSyncServerUrl()
+ * The hosted UI stores its backend address in the browser. This never changes
+ * the local web/mobile execution contract or the profile sync destination.
  */
 export function getApiBaseUrl(): string {
-  // Both mobile and web use empty string (local/same-origin)
-  // Mobile handles requests via nodejs-mobile (through nodeBridge)
-  // Web handles requests via same-origin server
+  if (isHostedUi() && typeof window !== 'undefined') {
+    return localStorage.getItem(BACKEND_STORAGE_KEY) || '';
+  }
   return '';
 }
 
@@ -92,11 +96,10 @@ export function getSyncServerUrl(): string {
 /**
  * Get the base URL for API calls (async version)
  *
- * LOCAL-FIRST: Always returns empty string (local/same-origin)
- * Use getSyncServerUrlAsync() for explicit sync operations
+ * Uses the same transport destination as the synchronous owner.
  */
 export async function getApiBaseUrlAsync(): Promise<string> {
-  return '';  // Local-first: all API calls go to local/same-origin
+  return getApiBaseUrl();
 }
 
 /**
@@ -171,16 +174,20 @@ export function getDefaultServers(): typeof DEFAULT_SERVERS {
 /**
  * Build a full API URL from a path
  * @param path - API path starting with /api/ (e.g., '/api/status')
- * @returns Full URL for mobile, relative path for web
+ * @returns A backend URL for hosted UI API paths; otherwise the original path.
  *
  * @example
  * // In mobile app:
  * apiUrl('/api/status') // => '/api/status'
  *
+ * // Hosted UI with desktop.ainek.io selected:
+ * apiUrl('/api/status') // => 'https://desktop.ainek.io/api/status'
+ *
  * // In web browser:
  * apiUrl('/api/status') // => '/api/status'
  */
 export function apiUrl(path: string): string {
+  if (!path.startsWith('/api/')) return path;
   return `${getApiBaseUrl()}${path}`;
 }
 
@@ -265,24 +272,18 @@ function reportAction(detail: {
 /**
  * Fetch wrapper that automatically uses the correct API base URL
  *
- * UNIFIED ARCHITECTURE:
- * - React Native: Standard fetch to local Node.js server (http://127.0.0.1:4322)
- * - Web: Standard fetch to same-origin server
- *
- * Both platforms use the same fetch API - no special handling needed!
+ * Cookies belong to the selected backend. Cross-origin hosted requests include
+ * them; local web and mobile retain their existing same-origin behavior.
  *
  * @param path - API path starting with /api/
  * @param init - Fetch options
  * @returns Fetch response
  */
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  // Both React Native and Web use standard fetch
-  // React Native WebView automatically routes to local Node.js server
-  // Web uses relative paths to same-origin server
   const url = apiUrl(path);
   const options: RequestInit = {
     ...init,
-    credentials: init?.credentials ?? 'same-origin',
+    credentials: init?.credentials ?? (getApiBaseUrl() ? 'include' : 'same-origin'),
   };
   const method = options.method || 'GET';
   const shouldReport = shouldReportAction(path, method);
@@ -335,29 +336,23 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 /**
  * Create an EventSource for SSE streaming
  *
- * UNIFIED APPROACH:
- * - Web: Uses native EventSource (same-origin, cookies work automatically)
- * - React Native: EventSource works with local Node.js server on 127.0.0.1:4322
- *
- * Both platforms can use EventSource because:
- * - React Native WebView loads from same origin as Node.js server
- * - Cookies and auth work identically on both platforms
+ * Uses the same destination and credentials as ordinary API requests.
+ * Mounted views retain ownership of stream lifetime and browser reconnection.
  *
  * @param path - API path with query string
  * @returns EventSource instance
  */
 export function apiEventSource(path: string): EventSource {
-  // Both platforms use standard EventSource
-  return new EventSource(path);
+  return new EventSource(apiUrl(path), { withCredentials: Boolean(getApiBaseUrl()) });
 }
 
-/** Normalize a sync source URL, preserving explicit HTTP for local servers. */
+/** Normalize a server URL, preserving explicit HTTP for local servers. */
 export function normalizeUrl(url: string): string {
   if (!url.trim()) return '';
   const input = url.trim();
   const normalized = new URL(/^https?:/i.test(input) ? input : `https://${input}`);
   if (normalized.protocol !== 'http:' && normalized.protocol !== 'https:') {
-    throw new Error('Sync server URL must use http or https');
+    throw new Error('Server URL must use http or https');
   }
   return normalized.toString().replace(/\/+$/, '');
 }

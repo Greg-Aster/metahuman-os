@@ -88,7 +88,7 @@ assert.ok(
 );
 assert.match(
   queueConsumer,
-  /new EventSource\(`\/api\/tts-queue-stream\?consumerId=\$\{encodeURIComponent\(consumerId\)\}/,
+  /apiEventSource\(`\/api\/tts-queue-stream\?consumerId=\$\{encodeURIComponent\(consumerId\)\}/,
   'the app-level consumer must identify itself to the node-owned local TTS queue',
 );
 assert.match(

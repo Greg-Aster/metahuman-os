@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '../lib/client/api-config';
   import { onMount } from 'svelte';
 
   interface Chapter {
@@ -41,7 +42,7 @@
   // Load chapter list on mount
   onMount(async () => {
     try {
-      const response = await fetch('/api/user-guide');
+      const response = await apiFetch('/api/user-guide');
       if (!response.ok) throw new Error('Failed to load user guide');
 
       const data = await response.json();
@@ -78,7 +79,7 @@
 
   async function loadChapter(chapterId: string) {
     try {
-      const response = await fetch(`/api/user-guide/${encodeURIComponent(chapterId)}`);
+      const response = await apiFetch(`/api/user-guide/${encodeURIComponent(chapterId)}`);
       if (!response.ok) throw new Error('Chapter not found');
 
       const data = await response.json();
@@ -123,7 +124,7 @@
 
     searching = true;
     try {
-      const response = await fetch(`/api/user-guide/search?q=${encodeURIComponent(query)}`);
+      const response = await apiFetch(`/api/user-guide/search?q=${encodeURIComponent(query)}`);
       if (!response.ok) throw new Error('Search is unavailable');
       const data = await response.json();
       searchResults = data.results || [];

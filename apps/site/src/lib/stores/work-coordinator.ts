@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { apiEventSource } from '../client/api-config';
 import type { TriggerManagerSnapshot } from './trigger-manager';
 
 export interface WorkView {
@@ -57,7 +58,7 @@ export function useWorkCoordinator(): () => void {
   users++;
   if (!stream) {
     coordinatorConnection.set('connecting');
-    stream = new EventSource('/api/queue-stream');
+    stream = apiEventSource('/api/queue-stream');
     stream.onopen = () => {
       coordinatorConnection.set('live');
       coordinatorError.set('');

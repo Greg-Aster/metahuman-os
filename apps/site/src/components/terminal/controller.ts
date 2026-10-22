@@ -1,4 +1,4 @@
-import { apiFetch } from '../../lib/client/api-config'
+import { apiEventSource, apiFetch } from '../../lib/client/api-config'
 import type { TerminalEvent, TerminalSession, TerminalState } from '@metahuman/core/terminal/types'
 
 /** Owns only this mounted view's requests and subscription. Sessions live in the agent. */
@@ -44,7 +44,7 @@ export class TerminalController {
     this.inputQueue = ''
     const generation = ++this.generation
     this.stream?.close()
-    this.stream = new EventSource(`/api/terminal/events${id ? `?id=${encodeURIComponent(id)}` : ''}`)
+    this.stream = apiEventSource(`/api/terminal/events${id ? `?id=${encodeURIComponent(id)}` : ''}`)
     this.stream.onmessage = message => {
       if (generation !== this.generation || this.abort.signal.aborted) return
       try {

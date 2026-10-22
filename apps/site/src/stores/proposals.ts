@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import { apiFetch } from '../lib/client/api-config';
+import { apiEventSource, apiFetch } from '../lib/client/api-config';
 
 /**
  * Proposals store - real-time state for operator proposals
@@ -96,7 +96,7 @@ export function connectProposalsStream(): void {
   disconnectProposalsStream();
 
   try {
-    connectionHandle = new EventSource('/api/operator-proposals/stream');
+    connectionHandle = apiEventSource('/api/operator-proposals/stream');
     const source = connectionHandle;
     source.onopen = () => {
       proposalsStore.update((s) => ({ ...s, connected: true, error: null }));

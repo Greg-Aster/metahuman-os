@@ -126,6 +126,7 @@ test('buffer reconnect and teardown preserve speech and Queue; network errors do
   const { sources, Source } = fixture();
   const queue = new Source('/api/queue-stream');
   const context = vm.createContext({ EventSource: Source, console: { log() {}, error() {} },
+    apiEventSource: (path: string) => new Source(path),
     document: { hidden: false }, selectedViews: new Set(['conversation', 'inner', 'system']),
     bufferStream: null,
     messages: { update(fn: (value: unknown[]) => unknown[]) { fn([]); } },
@@ -164,6 +165,7 @@ test('proposal listeners are installed once per stream, including across native 
   }
   let state: any = { connected: false, proposals: [] };
   const context = vm.createContext({ EventSource: Source, connectionHandle: null, console,
+    apiEventSource: (path: string) => new Source(path),
     proposalsStore: { update: (fn: (value: any) => any) => { state = fn(state); } },
   });
   const text = readFileSync(new URL('../../stores/proposals.ts', import.meta.url), 'utf8');

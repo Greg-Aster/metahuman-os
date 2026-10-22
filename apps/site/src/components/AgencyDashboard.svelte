@@ -3,7 +3,7 @@
   import { readServerEvents } from '../lib/client/sse';
   import { slide } from 'svelte/transition';
   import { isOwner } from '../stores/security-policy';
-  import { apiFetch } from '../lib/client/api-config';
+  import { apiEventSource, apiFetch } from '../lib/client/api-config';
 
   // Track last load time to avoid redundant reloads
   let lastLoadTime = 0;
@@ -1287,7 +1287,7 @@
 
     try {
       // Use streaming endpoint to show progress
-      const eventSource = new EventSource(`/api/agency/desires/${id}/outcome-review-stream`);
+      const eventSource = apiEventSource(`/api/agency/desires/${id}/outcome-review-stream`);
       streamEventSource = eventSource;
 
       eventSource.onmessage = async (event) => {

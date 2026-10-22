@@ -9,6 +9,27 @@ import { compiledAgents } from './compiled-agents.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
+const staticUi = process.env.MH_SITE_OUTPUT === 'static';
+const staticPages = ['index', 'debug', 'audit', 'monitor', 'tasks', 'guide', 'user-guide'];
+
+// Publish UI shells only. API routes, middleware, and the filesystem-backed
+// events page belong to the local server and must never be prerendered here.
+function staticUiRoutes() {
+  return {
+    name: 'metahuman-static-ui',
+    hooks: {
+      'astro:config:setup': ({ injectRoute }) => {
+        for (const page of staticPages) {
+          injectRoute({
+            pattern: page === 'index' ? '/' : `/${page}`,
+            entrypoint: new URL(`./src/pages/${page}.astro`, import.meta.url),
+            prerender: true,
+          });
+        }
+      },
+    },
+  };
+}
 const exposureMode = process.env.MH_EXPOSURE_MODE === 'shared' ? 'shared' : 'local';
 const sharedHosts = (process.env.MH_ALLOWED_HOSTS || '')
   .split(',')
@@ -62,19 +83,28 @@ function compiledRuntimeCheck() {
 
 export default defineConfig({
   integrations: [
+    ...(staticUi ? [staticUiRoutes()] : []),
     tailwind({ applyBaseStyles: true }),
     svelte()
   ],
-  adapter: node({
+  adapter: staticUi ? undefined : node({
     mode: 'standalone'
   }),
   server: {
     host: exposureMode === 'shared' ? true : '127.0.0.1',
   },
-  output: 'server',
+  output: staticUi ? 'static' : 'server',
+  ...(staticUi ? {
+    srcDir: './src-static',
+    outDir: './dist-static',
+    site: 'https://mh.ainek.io',
+  } : {}),
   vite: {
-    define: { __METAHUMAN_EXECUTABLE_HASH__: JSON.stringify(sourceExecutableHash(repoRoot)) },
-    plugins: [externalizeMetahumanCoreForClient(), compiledRuntimeCheck(), compiledAgents(repoRoot)],
+    define: {
+      __METAHUMAN_EXECUTABLE_HASH__: JSON.stringify(sourceExecutableHash(repoRoot)),
+      __METAHUMAN_STATIC_UI__: JSON.stringify(staticUi),
+    },
+    plugins: [externalizeMetahumanCoreForClient(), ...(staticUi ? [] : [compiledRuntimeCheck(), compiledAgents(repoRoot)])],
     logLevel: 'warn', // Show warnings and errors, allow console.log from API handlers
     clearScreen: false, // Don't clear terminal on restart
     resolve: {

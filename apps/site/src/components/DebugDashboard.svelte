@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
+  import { apiEventSource } from '../lib/client/api-config';
 
   interface MetaHumanEvent {
     timestamp: string;
@@ -45,7 +46,7 @@
   $: requestIds = [...new Set(events.filter(e => e.requestId).map(e => e.requestId!))];
 
   function connect() {
-    stream = new EventSource('/api/event-bus-stream');
+    stream = apiEventSource('/api/event-bus-stream');
     stream.onopen = () => { connected = true; };
     stream.onmessage = async (event) => {
       try {

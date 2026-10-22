@@ -1841,7 +1841,7 @@
     const modes: string[] = [...selectedViews];
     if (selectedViews.has('system')) modes.push('robot');
     if (!modes.length) return;
-    const source = new EventSource(`/api/buffer-stream?mode=${modes.join(',')}`);
+    const source = apiEventSource(`/api/buffer-stream?mode=${modes.join(',')}`);
     bufferStream = source;
     source.onmessage = (event) => {
       try {
