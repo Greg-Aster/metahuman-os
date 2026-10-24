@@ -565,16 +565,8 @@ export async function handleGetModelRegistry(req: UnifiedRequest): Promise<Unifi
       description: 'Configured llama.cpp model', options: { ...llamaConfig, lora: [] },
       metadata: {}, source: 'user-registry',
     });
-    if (availableBackends.llamaCpp?.running) {
-      const adapters = await getLlamaCppAdapters(llamaConfig);
-      for (const adapter of adapters) availableModels.push({
-        id: llamaAdapterModelId(llamaConfig.model, llamaConfig.endpoint, adapter.path), provider: 'llama-cpp', model: llamaConfig.model,
-        roles: [], capabilities: llamaConfig.capabilities, adapters: [adapter.path], baseModel: llamaConfig.model,
-        description: `${llamaConfig.model} + ${path.basename(adapter.path)}`,
-        options: { ...llamaConfig, lora: [{ path: adapter.path, scale: 1 }] },
-        metadata: {}, source: 'user-registry',
-      });
-    }
+    // Registered adapters remain visible while their model is unloaded. Inventory
+    // reads must not call /lora-adapters: that endpoint can wake the model.
 
     availableModels = collapseModelInventory(availableModels);
     const llamaModels = availableModels.filter(model => model.provider === 'llama-cpp');

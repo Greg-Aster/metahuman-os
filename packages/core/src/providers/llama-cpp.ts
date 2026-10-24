@@ -71,7 +71,9 @@ async function requestJson(endpoint: string, route: string, init: {
     const url = new URL(`${endpoint.replace(/\/$/, '')}${route}`)
     const text = await new Promise<string>((resolve, reject) => {
       const request = (url.protocol === 'https:' ? requestHttps : requestHttp)(url, {
-        method: init.method, headers: init.headers, signal,
+        // Native router responses finish a proxied connection. Use a dedicated
+        // socket so Node cannot reuse it before the peer's close event arrives.
+        method: init.method, headers: init.headers, signal, agent: false,
       }, response => {
         response.setEncoding('utf8')
         void (async () => {
@@ -100,7 +102,7 @@ export async function getLlamaCppStatus(config: LlamaCppConfig): Promise<{ runni
     const health = await requestJson(config.endpoint, '/health', {}, 2000)
     if (health?.status !== 'ok') throw new Error('llama.cpp is not ready')
     const models = await requestJson(config.endpoint, '/v1/models', {}, 2000)
-    if (!Array.isArray(models?.data) || !models.data.some((model: { id?: string }) => model?.id === config.model)) {
+    if (!Array.isArray(models?.data) || !models.data.some((model: { id?: string; aliases?: string[] }) => model?.id === config.model || model?.aliases?.includes(config.model))) {
       throw new Error(`llama.cpp is not serving the configured model ${config.model}`)
     }
     return { running: true }
@@ -109,8 +111,10 @@ export async function getLlamaCppStatus(config: LlamaCppConfig): Promise<{ runni
   }
 }
 
-export async function getLlamaCppAdapters(config: LlamaCppConfig): Promise<Array<{ id: number; path: string; scale: number }>> {
-  return requestJson(config.endpoint, '/lora-adapters', {}, 2000)
+export async function getLlamaCppAdapters(config: LlamaCppConfig, signal?: AbortSignal): Promise<Array<{ id: number; path: string; scale: number }>> {
+  // Adapter discovery on an inference path may cold-load the model. Its caller
+  // owns cancellation; the ordinary health-check deadline does not apply.
+  return requestJson(config.endpoint, `/lora-adapters?model=${encodeURIComponent(config.model)}`, { signal })
 }
 
 export async function callLlamaCpp(
@@ -132,7 +136,7 @@ export async function callLlamaCpp(
   onProgress?.({ phase: 'running', message: `Generating with llama.cpp (${config.model})` })
   // Server IDs may change when adapters are reloaded in a different order.
   const loadedAdapters = options.lora?.some(adapter => adapter.path)
-    ? await getLlamaCppAdapters(config) : []
+    ? await getLlamaCppAdapters(config, options.signal) : []
   const lora = options.lora?.map(adapter => {
     const id = adapter.path ? loadedAdapters.find(loaded => loaded.path === adapter.path)?.id : adapter.id
     if (id === undefined) throw new Error(`llama.cpp adapter is not loaded: ${adapter.path}`)
@@ -168,7 +172,14 @@ export async function callLlamaCpp(
   if (typeof message?.content !== 'string' || !message.content.trim()) {
     throw new Error(`llama.cpp returned no assistant text (finish reason: ${choice?.finish_reason || 'missing'})`)
   }
-  if (response.model && response.model !== config.model) throw new Error('llama.cpp returned a different model than requested')
+  if (response.model && response.model !== config.model) {
+    // Native router presets may canonicalize an identifier while retaining the
+    // configured name as an explicit alias. Accept only that advertised identity.
+    const inventory = await requestJson(config.endpoint, '/v1/models', { signal: options.signal })
+    const matches = inventory?.data?.some((model: { id?: string; aliases?: string[] }) =>
+      model.id === response.model && model.aliases?.includes(config.model))
+    if (!matches) throw new Error('llama.cpp returned a different model than requested')
+  }
   const usage = response.usage
   if (usage && ['prompt_tokens', 'completion_tokens', 'total_tokens'].some(key => !Number.isFinite(usage[key]) || usage[key] < 0)) {
     throw new Error('llama.cpp returned invalid token usage')

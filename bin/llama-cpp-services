@@ -1,23 +1,89 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
+"""Existing systemd lifecycle; llama.cpp owns on-demand model loading and sleep."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
 
-set -euo pipefail
+ROOT = Path(__file__).resolve().parent.parent
 
-case "${1:-}" in
-  start)
-    systemctl --user start \
-      llama-cpp.service \
-      llama-cpp-environment-2b.service
-    ;;
-  stop)
-    services=(llama-cpp.service llama-cpp-environment-intent.service llama-cpp-environment-speck-intent.service)
-    optional_state=$(systemctl --user show --property=LoadState --value llama-cpp-environment-2b.service)
-    if [[ "$optional_state" != "not-found" ]]; then
-      services+=(llama-cpp-environment-2b.service)
-    fi
-    systemctl --user stop "${services[@]}"
-    ;;
-  *)
-    echo "Usage: $0 start|stop" >&2
-    exit 2
-    ;;
-esac
+
+def systemctl(*args):
+    return subprocess.run(['systemctl', '--user', *args], check=True,
+                          text=True, stdout=subprocess.PIPE).stdout
+
+
+def services(operation):
+    units = [line.split()[0] for line in systemctl(
+        'list-unit-files', '--type=service', '--no-legend', '--no-pager').splitlines() if line.strip()]
+    # Uninstantiated systemd templates have no process or effective properties.
+    units = [unit for unit in units if not unit.endswith('@.service')]
+    if not units:
+        return []
+    descriptions = systemctl('show', *units, '--property=Id,WorkingDirectory,ExecStart')
+    selected = []
+    for description in descriptions.strip().split('\n\n'):
+        properties = dict(line.split('=', 1) for line in description.splitlines() if '=' in line)
+        if properties.get('WorkingDirectory') != str(ROOT):
+            continue
+        command = properties.get('ExecStart', '')
+        on_demand = f'path={ROOT}/bin/llama-cpp-services ;' in command and ' serve ' in command
+        direct = re.search(r'path=[^;]*/llama-server ;', command) is not None
+        if on_demand or (operation == 'stop' and direct):
+            selected.append(properties['Id'])
+    return selected
+
+
+def serve(binary, arguments):
+    # Keep inference options in the existing unit. Only move its model identity
+    # into a native preset, so the listener starts without allocating weights.
+    remaining = []
+    identity = {}
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        key, separator, value = argument.partition('=')
+        if key in ('--model', '-m', '--alias', '-a', '--mmproj', '-mm'):
+            if not separator:
+                index += 1
+                value = arguments[index]
+            identity['model' if key in ('--model', '-m') else 'mmproj' if key in ('--mmproj', '-mm') else 'alias'] = value
+        else:
+            remaining.append(argument)
+        index += 1
+    model = identity['model']
+    alias = identity.get('alias', Path(model).name)
+    runtime = Path(os.environ['XDG_RUNTIME_DIR']) / 'metahuman-llama'
+    runtime.mkdir(parents=True, exist_ok=True)
+    preset = runtime / (hashlib.sha256(json.dumps([binary, arguments]).encode()).hexdigest() + '.ini')
+    projector = f"mmproj = {identity['mmproj']}\n" if 'mmproj' in identity else ''
+    preset.write_text(f'version = 1\n\n[{alias}]\nalias = {alias}\nmodel = {model}\n{projector}load-on-startup = false\n')
+    # Five minutes is the owner's installation policy. An explicit unit setting
+    # can configure another native idle interval without an application timer.
+    if not any(arg.split('=')[0] == '--sleep-idle-seconds' for arg in remaining):
+        remaining += ['--sleep-idle-seconds', '300']
+    os.execv(binary, [binary, *remaining, '--models-preset', str(preset)])
+
+
+def main():
+    operation = sys.argv[1] if len(sys.argv) > 1 else ''
+    if operation == 'serve':
+        serve(sys.argv[2], sys.argv[3:])
+    elif operation in ('start', 'stop'):
+        selected = services(operation)
+        if selected:
+            systemctl(operation, *selected)
+    else:
+        print('Usage: llama-cpp-services start|stop|serve LLAMA_SERVER [arguments...]', file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except subprocess.CalledProcessError as error:
+        sys.exit(error.returncode)

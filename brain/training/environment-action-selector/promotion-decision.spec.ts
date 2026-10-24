@@ -94,7 +94,11 @@ test('2B activation and rollback touch only its existing service and preserve th
   fs.writeFileSync(path.join(directory, 'systemctl'), `#!/bin/sh\necho "$*" >> '${log}'\n`, { mode: 0o755 })
   process.env.PATH = `${directory}:${originalPath}`
   process.env.XDG_CONFIG_HOME = directory
-  globalThis.fetch = async () => new Response(JSON.stringify([{ path: fs.readFileSync(unitPath, 'utf8').includes('/new.gguf') ? '/new.gguf' : '/old.gguf' }]))
+  globalThis.fetch = async (url) => {
+    if (new URL(String(url)).pathname === '/v1/models') return Response.json({ data: [{ id: 'fixture-base' }] })
+    assert.equal(new URL(String(url)).searchParams.get('model'), 'fixture-base')
+    return Response.json([{ path: fs.readFileSync(unitPath, 'utf8').includes('/new.gguf') ? '/new.gguf' : '/old.gguf' }])
+  }
   try {
     const input = { baseModel: 'unsloth/Qwen3.5-2B', previousPath: '/old.gguf', nextPath: '/new.gguf', endpoint: 'http://fixture:8086' }
     await assert.rejects(activateReviewedLora({ ...input, commit: async () => { throw new Error('commit failed') } }), /commit failed/)

@@ -81,10 +81,19 @@ async function awaitLoaded(endpoint: string, adapterPath: string): Promise<void>
   let lastError: unknown
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(new URL('/lora-adapters', endpoint), { signal: AbortSignal.timeout(2_000) })
-      if (!response.ok) throw new Error(`Adapter list returned HTTP ${response.status}`)
-      const adapters = await response.json() as Array<{ path?: string }>
-      if (adapters.some(adapter => adapter.path === adapterPath)) return
+      const inventory = await fetch(new URL('/v1/models', endpoint), { signal: AbortSignal.timeout(2_000) })
+      if (!inventory.ok) throw new Error(`Model inventory returned HTTP ${inventory.status}`)
+      const { data } = await inventory.json() as { data: Array<{ id: string }> }
+      for (const model of data) {
+        const url = new URL('/lora-adapters', endpoint)
+        url.searchParams.set('model', model.id)
+        // This explicit qualification request may load a sleeping model. A health
+        // probe's deadline must not interrupt native model loading.
+        const response = await fetch(url)
+        if (!response.ok) throw new Error(`Adapter list returned HTTP ${response.status}`)
+        const adapters = await response.json() as Array<{ path?: string }>
+        if (adapters.some(adapter => adapter.path === adapterPath)) return
+      }
       lastError = new Error('New LoRA was absent from the loaded adapter list')
     } catch (error) { lastError = error }
     await new Promise(resolveWait => setTimeout(resolveWait, 300))

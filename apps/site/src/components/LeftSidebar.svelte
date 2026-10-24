@@ -740,19 +740,6 @@
         if (result.needsRestart && modelId.startsWith('vllm-lora.')) {
           pendingLoraName = modelId.replace('vllm-lora.', '');
           showRestartModal = true;
-        } else {
-          warmupModel(role, mode).catch(err => {
-            console.warn(`Failed to warm up model for role ${role}:`, err);
-            const errorMsg = (err as Error).message || 'Unknown error';
-            alert(`Model warmup failed for ${modelRoleLabel(role)}:\n\n${errorMsg}\n\nThe model assignment was saved but may not work until the backend is available.`);
-            modelRoles = {
-              ...modelRoles,
-              [role]: {
-                ...modelRoles[role],
-                error: errorMsg
-              }
-            };
-          });
         }
 
         setTimeout(() => {
@@ -766,27 +753,6 @@
       modelConfigurationError = (error as Error).message;
     } finally {
       if (savingModelRole === role) savingModelRole = null;
-    }
-  }
-
-  async function warmupModel(role: string, cognitiveMode?: string): Promise<void> {
-    try {
-      const response = await apiFetch('/api/warmup-model', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role, cognitiveMode }),
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        console.log(`[warmup] Model for ${role} loaded in ${result.duration}ms`);
-      } else {
-        console.warn(`[warmup] Failed to warm up ${role}:`, result.error);
-      }
-    } catch (error) {
-      console.error(`[warmup] Error warming up ${role}:`, error);
-      throw error;
     }
   }
 

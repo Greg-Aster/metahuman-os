@@ -64,7 +64,7 @@ function healthyFetch() {
   requests.length = 0
   respond = async (url, init) => {
     requests.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined })
-    if (String(url).endsWith('/lora-adapters')) return Response.json([])
+    if (new URL(String(url)).pathname === '/lora-adapters') return Response.json([])
     if (String(url).endsWith('/health')) return Response.json({ status: 'ok' })
     if (String(url).endsWith('/v1/models')) return Response.json({ data: [{ id: config.model }] })
     if (String(url).endsWith('/v1/chat/completions')) return Response.json(success)
@@ -159,6 +159,56 @@ test('inference has no provider deadline and retains caller cancellation', async
   assert.equal((await callLlamaCpp(config, messages, { signal: caller.signal })).content, 'OK')
   assert.equal((await callLlamaCpp(config, messages)).content, 'OK')
   assert.deepEqual(deadlines, [], 'Inference must not manufacture a wall-clock deadline')
+})
+
+test('native response aliases must match the advertised selected deployment', async () => {
+  for (const advertised of [true, false]) {
+    respond = async url => new URL(String(url)).pathname === '/v1/models'
+      ? Response.json({ data: [{ id: 'canonical-name', aliases: advertised ? [config.model] : ['another-model'] }] })
+      : Response.json({ ...success, model: 'canonical-name' })
+    if (advertised) assert.equal((await callLlamaCpp(config, messages)).model, config.model)
+    else await assert.rejects(callLlamaCpp(config, messages), /different model/)
+  }
+})
+
+test('sleeping native router stays available through non-loading discovery and exact aliases', async () => {
+  const paths: string[] = []
+  respond = async url => {
+    const route = new URL(String(url)).pathname
+    paths.push(route)
+    if (route === '/health') return Response.json({ status: 'ok' })
+    if (route === '/v1/models') return Response.json({ data: [{ id: 'canonical-name', aliases: [config.model], status: { value: 'unloaded' } }] })
+    throw Error(`Health must not wake a model through ${route}`)
+  }
+  assert.deepEqual(await getLlamaCppStatus(config), { running: true })
+  assert.deepEqual(paths, ['/health', '/v1/models'])
+})
+
+test('sequential native router calls use dedicated HTTP connections', async () => {
+  const sockets = new Set<unknown>()
+  rawHandler = (request, response) => {
+    assert.equal(request.headers.connection, 'close')
+    sockets.add(request.socket)
+    response.setHeader('Content-Type', 'application/json')
+    response.end(JSON.stringify(success))
+  }
+  for (let index = 0; index < 3; index++) await callLlamaCpp(config, messages)
+  assert.equal(sockets.size, 3)
+})
+
+test('adapter cold loading keeps the selected model and caller cancellation without a health deadline', async () => {
+  const deadlines: number[] = []
+  const timeout = AbortSignal.timeout
+  mock.method(AbortSignal, 'timeout', (ms: number) => { deadlines.push(ms); return timeout(ms) })
+  const caller = new AbortController()
+  rawHandler = (request, _response) => {
+    assert.equal(request.url, `/lora-adapters?model=${encodeURIComponent(config.model)}`)
+    setImmediate(() => caller.abort(new Error('cancelled cold load')))
+  }
+  await assert.rejects(callLlamaCpp(config, messages, {
+    lora: [{ path: '/fixture.gguf', scale: 1 }], signal: caller.signal,
+  }), /cancelled cold load/)
+  assert.deepEqual(deadlines, [])
 })
 
 test('health timeout covers a stalled body and reports offline', async () => {
@@ -359,9 +409,21 @@ test('router sends an explicit small model to Ollama while inherited calls use l
   assert.equal(dispatched.length, 2)
 })
 
+test('opening model inventory does not load registered local adapters', async () => {
+  healthyFetch()
+  saveBackendConfig({ activeBackend: 'llama-cpp', llamaCpp: config })
+  const response = await handleGetModelRegistry({ method: 'GET', path: '/api/model-registry',
+    query: { cognitiveMode: 'environment' },
+    user: { username: 'fixture', userId: 'fixture', role: 'owner', isAuthenticated: true },
+  } as any)
+  assert.equal(response.status, 200)
+  assert.equal(requests.some(request => new URL(request.url).pathname === '/lora-adapters'), false)
+  assert.equal(requests.some(request => new URL(request.url).pathname === '/v1/chat/completions'), false)
+})
+
 test('named llama.cpp adapter selection resolves the current server ID after reload', async () => {
   respond = async (url, init) => {
-    if (String(url).endsWith('/lora-adapters')) return Response.json([{ id: 7, path: '/models/specialist.gguf', scale: 0 }])
+    if (new URL(String(url)).pathname === '/lora-adapters') return Response.json([{ id: 7, path: '/models/specialist.gguf', scale: 0 }])
     assert.deepEqual(JSON.parse(String(init?.body)).lora, [{ id: 7, scale: 1 }])
     return Response.json(success)
   }
@@ -418,7 +480,7 @@ test('image input never substitutes another category and Vision retains its endp
   respond = async (url, init) => {
     const request = { url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined }
     calls.push(request)
-    if (request.url.endsWith('/lora-adapters')) return Response.json([{ id: 9, path: '/vision.gguf', scale: 0 }])
+    if (new URL(request.url).pathname === '/lora-adapters') return Response.json([{ id: 9, path: '/vision.gguf', scale: 0 }])
     return Response.json({ ...success, model: request.body.model })
   }
   try {
@@ -429,7 +491,7 @@ test('image input never substitutes another category and Vision retains its endp
       role: 'environmentVision', messages: imageMessages })
     assert.equal(response.modelId, 'selected-vision')
     assert.equal(response.model, 'selected-vision')
-    assert.deepEqual(calls.map(call => call.url), [`${endpoints[2]}/lora-adapters`, `${endpoints[2]}/v1/chat/completions`])
+    assert.deepEqual(calls.map(call => call.url), [`${endpoints[2]}/lora-adapters?model=selected-vision`, `${endpoints[2]}/v1/chat/completions`])
     assert.deepEqual(calls[1].body.messages, imageMessages)
     assert.deepEqual(calls[1].body.lora, [{ id: 9, scale: 0.7 }])
   } finally { fs.writeFileSync(file, original) }
@@ -455,7 +517,7 @@ test('Autonomy adapter assignment is isolated from Persona on the same llama.cpp
     body: { cognitiveMode: 'environment', role: 'autonomy', modelId: 'trained' } } as any)
   assert.equal(assigned.status, 200)
   const originalRespond = respond
-  respond = async (url, init) => String(url).endsWith('/lora-adapters')
+  respond = async (url, init) => new URL(String(url)).pathname === '/lora-adapters'
     ? Response.json([{ id: 4, path: '/autonomy.gguf', scale: 0 }]) : originalRespond(url, init)
   const { ModelRouterNode } = await import('./nodes/llm/model-router.node.js')
   for (const role of ['autonomy', 'persona', 'autonomy', 'persona']) {
@@ -503,7 +565,7 @@ test('Lightweight uses the shared unadapted base while Intent and Task retain th
   assert.deepEqual(JSON.parse(fs.readFileSync(registryPath, 'utf8')), expected)
   assert.throws(() => resolveModelForCognitiveMode('agent', 'lightweight', username), /No default model/)
   const originalRespond = respond
-  respond = async (url, init) => String(url).endsWith('/lora-adapters')
+  respond = async (url, init) => new URL(String(url)).pathname === '/lora-adapters'
     ? Response.json([{ id: 2, path: '/intent.gguf', scale: 0 }, { id: 3, path: '/task.gguf', scale: 0 }])
     : originalRespond(url, init)
   const { ModelRouterNode } = await import('./nodes/llm/model-router.node.js')
@@ -542,7 +604,7 @@ test('router preserves per-model topK and seed, per-call zero overrides and abse
     },
   }))
   const originalRespond = respond
-  respond = async (url, init) => String(url).endsWith('/lora-adapters')
+  respond = async (url, init) => new URL(String(url)).pathname === '/lora-adapters'
     ? Response.json([{ id: 2, path: '/intent.gguf', scale: 0 }, { id: 3, path: '/task.gguf', scale: 0 }])
     : originalRespond(url, init)
   const configured = {

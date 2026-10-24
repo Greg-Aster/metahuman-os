@@ -211,7 +211,7 @@ test('status-widget assignments route Persona to Big Brother and preserve indepe
     let data: any;
     if (request.url === '/health') data = { status: 'ok' };
     else if (request.url === '/v1/models') data = { data: [{ id: 'qwen-fixture' }] };
-    else if (request.url === '/lora-adapters') data = [];
+    else if (request.url?.startsWith('/lora-adapters?model=')) data = [];
     else {
       assert.equal(request.url, '/v1/chat/completions');
       let body = '';

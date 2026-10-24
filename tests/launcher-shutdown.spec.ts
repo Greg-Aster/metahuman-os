@@ -179,38 +179,73 @@ kill() { echo unexpected-signal; exit 99; }
 })
 
 
-test('optional llama.cpp service absence is not a stop failure; real systemd failures remain visible', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-optional-llama-'))
+test('llama.cpp lifecycle discovers this installation without a model list', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-llama-lifecycle-'))
   const script = new URL('../bin/llama-cpp-services', import.meta.url).pathname
+  const root = path.dirname(path.dirname(script))
   const log = path.join(directory, 'calls')
   fs.writeFileSync(path.join(directory, 'systemctl'), `#!/bin/sh
 printf '%s\\n' "$*" >> "$TEST_CALLS"
-if [ "$2" = "show" ]; then
-  if [ "$TEST_LOOKUP_ERROR" = "yes" ]; then echo 'systemd lookup failed' >&2; exit 7; fi
-  echo "$TEST_LOAD_STATE"
-  exit 0
-fi
-if [ "$TEST_STOP_ERROR" = "yes" ]; then echo 'stop failed' >&2; exit 23; fi
+if [ "$TEST_ERROR" = "$2" ]; then echo 'systemd failure' >&2; exit 23; fi
+case "$2" in
+  list-unit-files) printf '%s\\n' 'custom-model.service static -' 'retained.service disabled -' 'unrelated.service enabled -' 'worker@.service static -';;
+  show) case "$*" in *worker@.service*) exit 92;; esac
+cat <<'UNITS'
+Id=custom-model.service
+WorkingDirectory=${root}
+ExecStart={ path=${script} ; argv[]=${script} serve /binary/llama-server --model /configured.gguf ; }
+
+Id=retained.service
+WorkingDirectory=${root}
+ExecStart={ path=/binary/llama-server ; argv[]=/binary/llama-server --model /old.gguf ; }
+
+Id=unrelated.service
+WorkingDirectory=/other/application
+ExecStart={ path=/binary/llama-server ; argv[]=/binary/llama-server --model /other.gguf ; }
+UNITS
+;;
+esac
 `, { mode: 0o755 })
   const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, TEST_CALLS: log }
   try {
-    for (const state of ['not-found', 'loaded', 'error']) {
+    for (const operation of ['start', 'stop']) {
       fs.writeFileSync(log, '')
-      const result = spawnSync('bash', [script, 'stop'], { encoding: 'utf8', env: { ...env, TEST_LOAD_STATE: state } })
-      assert.equal(result.status, 0)
+      const result = spawnSync(script, [operation], { encoding: 'utf8', env })
+      assert.equal(result.status, 0, result.stderr)
       const calls = fs.readFileSync(log, 'utf8').trim().split('\n')
-      assert.equal(calls[0], '--user show --property=LoadState --value llama-cpp-environment-2b.service')
-      assert.equal(calls[1], '--user stop llama-cpp.service llama-cpp-environment-intent.service llama-cpp-environment-speck-intent.service'
-        + (state === 'not-found' ? '' : ' llama-cpp-environment-2b.service'))
+      assert.equal(calls.at(-1), `--user ${operation} custom-model.service${operation === 'stop' ? ' retained.service' : ''}`)
     }
-    const lookupFailure = spawnSync('bash', [script, 'stop'], { encoding: 'utf8', env: { ...env, TEST_LOOKUP_ERROR: 'yes' } })
-    assert.equal(lookupFailure.status, 7)
-    assert.match(lookupFailure.stderr, /systemd lookup failed/)
-    const stopFailure = spawnSync('bash', [script, 'stop'], { encoding: 'utf8', env: { ...env, TEST_LOAD_STATE: 'loaded', TEST_STOP_ERROR: 'yes' } })
-    assert.equal(stopFailure.status, 23)
-    assert.match(stopFailure.stderr, /stop failed/)
-    fs.writeFileSync(log, '')
-    assert.equal(spawnSync('bash', [script, 'start'], { env }).status, 0)
-    assert.equal(fs.readFileSync(log, 'utf8').trim(), '--user start llama-cpp.service llama-cpp-environment-2b.service')
+    for (const operation of ['list-unit-files', 'show', 'start', 'stop']) {
+      const result = spawnSync(script, [operation === 'stop' ? 'stop' : 'start'], {
+        encoding: 'utf8', env: { ...env, TEST_ERROR: operation },
+      })
+      assert.equal(result.status, 23)
+      assert.match(result.stderr, /systemd failure/)
+    }
+  } finally { fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('native router starts without weights and retains GPU, adapter and inference options', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'metahuman-llama-preset-'))
+  const script = new URL('../bin/llama-cpp-services', import.meta.url).pathname
+  const binary = path.join(directory, 'llama-server')
+  fs.writeFileSync(binary, `#!/usr/bin/env python3
+import sys, json
+from pathlib import Path
+args = sys.argv[1:]
+print(json.dumps({'args': args, 'preset': Path(args[args.index('--models-preset')+1]).read_text()}))
+`, { mode: 0o755 })
+  try {
+    const retained = ['--port', '12345', '--gpu-layers', 'all', '--lora-scaled', '/adapter.gguf:0',
+      '--ctx-size', '0', '--mmproj-on-demand', '--temp', '0.3']
+    const result = spawnSync(script, ['serve', binary, '--model', '/model with spaces.gguf',
+      '--alias', 'custom-model', '--mmproj', '/vision.gguf', ...retained], { encoding: 'utf8', env: { ...process.env, XDG_RUNTIME_DIR: directory } })
+    assert.equal(result.status, 0, result.stderr)
+    const { args, preset } = JSON.parse(result.stdout)
+    assert.deepEqual(args.slice(0, retained.length), retained)
+    assert.deepEqual(args.slice(retained.length, -2), ['--sleep-idle-seconds', '300'])
+    assert.equal(args.includes('--model'), false)
+    assert.equal(args.includes('--alias'), false)
+    assert.equal(preset, 'version = 1\n\n[custom-model]\nalias = custom-model\nmodel = /model with spaces.gguf\nmmproj = /vision.gguf\nload-on-startup = false\n')
   } finally { fs.rmSync(directory, { recursive: true, force: true }) }
 })
