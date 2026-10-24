@@ -21,6 +21,10 @@ short pointers here; keep personal agent/editor settings in local configuration.
   that an earlier fault remains present.
 - `docs/technical/REFACTOR_BLUEPRINT.md` owns architecture and refactor principles.
   Its repository-wide program applies only when that scope is explicitly requested.
+- [Node and Workflow Design](docs/technical/NODE_WORKFLOW_DESIGN.md) governs node
+  creation, reuse, configuration, naming, functional colors, layout, and output ownership. Read
+  it before changing node types or workflow structure. New node types require the
+  Installation Owner's explicit approval of their purpose and reuse justification.
 - `docs/technical/AUDIT_PROTOCOL.md` applies to an explicitly requested maintained-source
   audit, within the requested files or owner groups.
 - `docs/audits/consolidation-progress.md` and other dated reports are historical
