@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test, { after, mock } from 'node:test';
 import Database from 'better-sqlite3';
 import type { PersistedQueueState } from './types.js';
@@ -129,6 +130,87 @@ test('a failed initial migration leaves the original ledger available for retry'
     assert.deepEqual(loadQueueState(), original);
     assert.equal(fs.existsSync(legacy), false);
   } finally { db.close(); }
+});
+
+test('live progress does not commit the work ledger and remains available across stream reconnects', () => {
+  clearQueueState();
+  const manager = new UnifiedQueueManager();
+  manager.setOnQueueChange(ids => saveQueueState({ ...manager.exportState(), version: 2, savedAt: 'fixture' }, ids));
+  const task = manager.enqueue({ type: 'generic', handler: 'fixture', username: 'fixture', input: {} });
+  manager.claim(task.id);
+  const chunks = ['preparing context', 'model response', 'delivering response'];
+  const received: string[] = [];
+  manager.addEventListener(event => {
+    if (event.type === 'task_output') received.push(event.details!.chunk);
+  });
+  const db = new Database(path.join(getQueueStateDir(), 'work-items.sqlite'));
+  try {
+    db.exec(`CREATE TRIGGER reject_progress_commit BEFORE UPDATE ON work_state
+      BEGIN SELECT RAISE(ABORT, 'progress must not commit work state'); END;`);
+    for (const chunk of chunks) manager.appendOutput(task.id, chunk);
+    assert.deepEqual(received, chunks);
+    assert.deepEqual(manager.getOutput(task.id), chunks, 'A reconnect reads the existing live replay buffer');
+    assert.equal(loadQueueState()!.items![0]!.state, 'leased');
+    assert.equal(loadQueueState()!.items![0]!.output, undefined);
+    db.exec('DROP TRIGGER reject_progress_commit');
+    manager.complete(task.id, true, { receipt: 'finished' });
+    const restored = new UnifiedQueueManager();
+    restored.importState(loadQueueState()!);
+    assert.deepEqual(restored.getOutput(task.id), chunks);
+    assert.deepEqual(restored.getTask(task.id)!.result, { receipt: 'finished' });
+  } finally { db.close(); }
+});
+
+test('committed graph state and undelivered work results survive abrupt process exit', async () => {
+  const directory = fs.mkdtempSync(path.join(root, 'process-exit-'));
+  const moduleURL = (relative: string) => JSON.stringify(new URL(relative, import.meta.url).href);
+  const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-'], {
+    env: { ...process.env, METAHUMAN_ROOT: directory }, encoding: 'utf8',
+    input: `
+      import fs from 'node:fs';
+      import { ExecutionStore } from ${moduleURL('../durable-execution/store.ts')};
+      import { ExecutionCheckpointer } from ${moduleURL('../durable-execution/checkpointer.ts')};
+      import { UnifiedQueueManager } from ${moduleURL('./unified-queue-manager.ts')};
+      import { persistQueueState } from ${moduleURL('./queue-persister.ts')};
+      const store = new ExecutionStore(process.env.METAHUMAN_ROOT + '/execution.sqlite');
+      const definition = { graphId: 'fixture', graphHash: 'fixture', runtimeVersion: 'fixture', checkpointSchemaVersion: 1, nodeVersions: {} };
+      const execution = store.create('fixture', definition, 'execution');
+      const lease = store.claim(execution.executionId, definition);
+      const saver = new ExecutionCheckpointer(store, lease);
+      const config = await saver.put({ configurable: { thread_id: execution.executionId } }, {
+        v: 1, id: 'checkpoint', ts: new Date().toISOString(), channel_values: { result: { observed: true } },
+        channel_versions: {}, versions_seen: {}, pending_sends: [],
+      }, { source: 'loop', step: 1, parents: {} });
+      await saver.putWrites(config, [['response', 'complete model output']], 'model');
+      const manager = new UnifiedQueueManager();
+      manager.setOnQueueChange(ids => persistQueueState(manager.exportState(), ids));
+      const task = manager.enqueue({ type: 'generic', handler: 'fixture', username: 'fixture', input: {},
+        durable: { executionId: execution.executionId, effectId: 'effect', recovery: 'resume' } });
+      manager.claim(task.id);
+      manager.complete(task.id, true, { observed: true });
+      fs.writeSync(1, 'committed\\n');
+      process.kill(process.pid, 'SIGKILL');
+    `,
+  });
+  assert.equal(child.signal, 'SIGKILL', child.stderr);
+  assert.match(child.stdout, /committed/);
+  const { ExecutionStore } = await import('../durable-execution/store.js');
+  const { ExecutionCheckpointer } = await import('../durable-execution/checkpointer.js');
+  const store = new ExecutionStore(path.join(directory, 'execution.sqlite'));
+  const db = new Database(path.join(directory, 'logs/run/queue/work-items.sqlite'));
+  try {
+    const saver = new ExecutionCheckpointer(store, { executionId: 'execution', owner: 'reader', generation: 0 });
+    const saved = await saver.getTuple({ configurable: { thread_id: 'execution' } });
+    assert.deepEqual(saved!.checkpoint.channel_values.result, { observed: true });
+    assert.deepEqual(saved!.pendingWrites, [['model', 'response', 'complete model output']]);
+    const rows = db.prepare('SELECT document FROM work_items').all() as Array<{ document: string }>;
+    assert.equal(rows.length, 1);
+    const task = JSON.parse(rows[0]!.document);
+    assert.equal(task.state, 'completed');
+    assert.equal(task.durable.executionId, 'execution');
+    assert.equal(task.resultDelivered, undefined);
+    assert.deepEqual(task.result, { observed: true });
+  } finally { store.close(); db.close(); fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('readers retain a consistent snapshot while another connection commits', () => {

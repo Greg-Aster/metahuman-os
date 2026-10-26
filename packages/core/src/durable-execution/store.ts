@@ -55,7 +55,9 @@ export class ExecutionStore {
     this.db = new Database(filename)
     if (filename !== ':memory:') fs.chmodSync(filename, 0o600)
     this.db.pragma('journal_mode = WAL')
-    this.db.pragma('synchronous = FULL')
+    // WAL retains committed work across application crashes without a disk
+    // sync per node. Power loss may roll back recent commits.
+    this.db.pragma('synchronous = NORMAL')
     this.db.pragma('foreign_keys = ON')
     this.db.pragma('busy_timeout = 5000')
     this.db.exec(`

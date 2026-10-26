@@ -307,7 +307,7 @@ test('lifecycle commits identify changed work without revisiting immutable histo
   manager.appendOutput(second.id, 'selected action')
   manager.attachExecution(second.id, 'parent-execution')
   manager.complete(second.id, true, { receipt: 'second completed' })
-  assert.equal(changes.length, 5)
+  assert.equal(changes.length, 4, 'Progress is delivered without a separate lifecycle commit')
   assert.ok(changes.every(ids => ids.length === 1 && ids[0] === second.id))
 })
 

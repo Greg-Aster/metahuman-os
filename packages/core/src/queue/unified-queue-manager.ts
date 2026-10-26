@@ -212,8 +212,9 @@ export class UnifiedQueueManager {
   }
 
   private emit(event: Omit<QueueEvent, 'timestamp'>): void {
-    // Lifecycle publication is an acknowledgement of a committed mutation.
-    this.notifyChange();
+    // Lifecycle publication acknowledges a committed mutation. Progress only
+    // updates the live stream and is retained by the next lifecycle commit.
+    if (event.type !== 'task_output') this.notifyChange();
     const fullEvent: QueueEvent = { ...event, timestamp: new Date().toISOString() };
     for (const listener of this.listeners) {
       try {
@@ -784,7 +785,8 @@ export class UnifiedQueueManager {
       task.output.splice(0, task.output.length - this.outputReplayLimit);
     }
     this.emit({ type: 'task_output', taskId, lane: this.laneFor(task.resource, task.type), details: { chunk } });
-    this.notifyChange();
+    // Progress is live stream data, not a work-state transition. Reconnecting
+    // clients read this replay buffer; the next lifecycle commit retains it.
   }
 
   getOutput(taskId: string): string[] {

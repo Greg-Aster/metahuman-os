@@ -40,7 +40,9 @@ function database(): Database.Database {
   const db = new Database(WORK_FILE);
   fs.chmodSync(WORK_FILE, 0o600);
   db.pragma('journal_mode = WAL');
-  db.pragma('synchronous = FULL');
+  // WAL retains committed work across application crashes without a disk
+  // sync per lifecycle transition. Power loss may roll back recent commits.
+  db.pragma('synchronous = NORMAL');
   db.exec(`CREATE TABLE IF NOT EXISTS work_items (id TEXT PRIMARY KEY, document TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS work_state (id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL);`);
   ledger = db;
