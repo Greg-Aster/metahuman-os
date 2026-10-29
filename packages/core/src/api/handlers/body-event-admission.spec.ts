@@ -11,6 +11,7 @@ const { eventBus } = await import('../../infrastructure/event-bus/client.js')
 eventBus.disconnect()
 const { handleEnvironmentBridgeObservation, environmentObservationNeedsCognition } = await import('./environment-bridge.js')
 const { getQueueManager } = await import('../../queue/index.js')
+const { readEnvironmentBridgeState } = await import('../../environment-interface/store.js')
 after(() => { eventBus.disconnect(); fs.rmSync(root, { recursive: true, force: true }) })
 
 test('bridge admits a body event once into its separate workflow and leaves telemetry as state', async () => {
@@ -31,6 +32,35 @@ test('bridge admits a body event once into its separate workflow and leaves tele
   assert.equal(replay.status, 200)
   assert.equal((replay.data as any).workId, data.workId)
   assert.equal(environmentObservationNeedsCognition({ ...observation, metadata: {}, state: { body: observation.state.body } }), false)
+})
+
+test('changing feedback health updates state without admitting conversational work', async () => {
+  const queuedBefore = getQueueManager().getAllTasks().length
+  for (let sample = 0; sample < 24; sample++) {
+    const kind = sample === 23 ? 'servo_feedback_restored' : 'servo_feedback_fault'
+    const feedback = { enabled: true, usable: kind === 'servo_feedback_restored',
+      below_calibration_mask: kind === 'servo_feedback_restored' ? 0 : 4095,
+      clipped_mask: sample % 2 ? 0 : 32, scan: sample }
+    const observation = { id: `health-${sample}`, sessionId: 'health-session', environmentId: 'ainekio',
+      adapter: 'ainekio-gateway', timestamp: new Date().toISOString(), capabilities: { actions: [] },
+      metadata: { perceptionEvent: 'body_event' },
+      state: { servoFeedback: feedback, bodyEvent: { name: 'body_event',
+        event_id: `health-event-${sample}`, data: { kind, feedback } } } }
+    const response = await handleEnvironmentBridgeObservation({ body: observation,
+      headers: { authorization: 'Bearer fixture-token' } } as any, () => 'fixture')
+    assert.equal(response.status, 200)
+    assert.equal((response.data as any).graphQueued, false)
+    assert.equal((response.data as any).reason, 'state_only_observation')
+    const recorded = readEnvironmentBridgeState().sessions['health-session'].latestObservation
+    assert.ok(recorded)
+    assert.deepEqual(recorded.state?.bodyEvent, observation.state.bodyEvent)
+    assert.deepEqual(recorded.state?.servoFeedback, feedback)
+    assert.equal(getQueueManager().getAllTasks().length, queuedBefore)
+    assert.equal(environmentObservationNeedsCognition({ ...observation,
+      text: [{ source: 'player', text: 'Please stop.', timestamp: observation.timestamp }] } as any), true)
+    assert.equal(environmentObservationNeedsCognition({ ...observation,
+      feedback: [{ id: 'motion-result', type: 'completed', timestamp: observation.timestamp }] } as any), true)
+  }
 })
 
 test('spoken Stop carrying an earlier body event reaches Environment Mode unchanged', async () => {

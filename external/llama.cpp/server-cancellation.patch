@@ -1,0 +1,233 @@
+--- a/tools/server/server-models.cpp
++++ b/tools/server/server-models.cpp
+@@ -2360,15 +2360,19 @@
+     cli->set_write_timeout(timeout_read, 0); // reversed for cli (client) vs srv (server)
+     cli->set_read_timeout(timeout_write, 0);
+     this->status = 500; // to be overwritten upon response
+-    this->cleanup_pipes = [pipe]() {
++    this->cleanup_pipes = [pipe, cli]() {
+         pipe->close_read();
+         pipe->close_write();
++        cli->stop();
+     };
+
+     // wire up the receive end of the pipe
+-    this->next = [pipe, should_stop](std::string & out) -> bool {
++    this->next = [pipe, should_stop, release = this->cleanup_pipes](std::string & out) -> bool {
+         msg_t msg;
+         bool has_next = pipe->read(msg, should_stop);
++        if (!has_next) {
++            release();
++        }
+         if (!msg.data.empty()) {
+             out = std::move(msg.data);
+         }
+@@ -2502,6 +2506,7 @@
+             }
+         } else {
+             SRV_DBG("%s", "no response headers received (request cancelled?)\n");
+-        }
+-    }
+-}
++            this->cleanup_pipes();
++        }
++    }
++}
+--- a/tools/server/server-queue.cpp
++++ b/tools/server/server-queue.cpp
+@@ -427,6 +427,7 @@
+ }
+
+ server_task_result_ptr server_response::recv_with_timeout(const std::unordered_set<int> & id_tasks, int timeout) {
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout);
+     while (true) {
+         std::unique_lock<std::mutex> lock(mutex_results);
+
+@@ -438,7 +439,7 @@
+             }
+         }
+
+-        std::cv_status cr_res = condition_results.wait_for(lock, std::chrono::seconds(timeout));
++        std::cv_status cr_res = condition_results.wait_until(lock, deadline);
+         if (!running) {
+             RES_DBG("%s : queue result stop\n", __func__);
+             std::terminate(); // we cannot return here since the caller is HTTP code
+--- a/tools/server/CMakeLists.txt
++++ b/tools/server/CMakeLists.txt
+@@ -63,3 +63,10 @@
+
+ target_link_libraries(${TARGET} PRIVATE llama-server-impl)
+ target_compile_features(${TARGET} PRIVATE cxx_std_17)
++
++if (LLAMA_BUILD_TESTS AND UNIX)
++    add_executable(test-server-proxy-cancel tests/test-server-proxy-cancel.cpp)
++    target_link_libraries(test-server-proxy-cancel PRIVATE llama-server-impl)
++    target_compile_features(test-server-proxy-cancel PRIVATE cxx_std_17)
++    add_test(NAME test-server-proxy-cancel COMMAND test-server-proxy-cancel)
++endif()
+--- /dev/null
++++ b/tools/server/tests/test-server-proxy-cancel.cpp
+@@ -0,0 +1,163 @@
++#include "server-models.h"
++
++#include <arpa/inet.h>
++#include <poll.h>
++#include <sys/socket.h>
++#include <unistd.h>
++
++#include <atomic>
++#include <chrono>
++#include <cstring>
++#include <future>
++#include <iostream>
++#include <string>
++#include <thread>
++
++// No model is loaded: the peer deliberately withholds its response, as a
++// non-streaming inference does while generating. Test deadlines bound only the
++// simulated peer; they do not impose an inference deadline on the server.
++static bool exercise_proxy(bool response_started, bool cancel = true, bool through_http = false) {
++    int listener = socket(AF_INET, SOCK_STREAM, 0);
++    sockaddr_in address{};
++    address.sin_family = AF_INET;
++    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++    if (bind(listener, (sockaddr *) &address, sizeof(address)) || listen(listener, 1)) {
++        close(listener);
++        throw std::runtime_error("could not start simulated worker");
++    }
++    socklen_t size = sizeof(address);
++    getsockname(listener, (sockaddr *) &address, &size);
++    std::promise<void> received;
++    auto ready = received.get_future();
++    std::atomic<bool> cancelled{false};
++    bool closed = false;
++    std::thread peer([&] {
++        int client = accept(listener, nullptr, nullptr);
++        std::string request;
++        char bytes[2048];
++        while (request.find("\r\n\r\n") == std::string::npos) {
++            auto count = recv(client, bytes, sizeof(bytes), 0);
++            if (count <= 0) {
++                break;
++            }
++            request.append(bytes, count);
++        }
++        if (!cancel) {
++            const char * response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
++            send(client, response, strlen(response), MSG_NOSIGNAL);
++        } else if (response_started) {
++            const char * headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n";
++            send(client, headers, strlen(headers), MSG_NOSIGNAL);
++        }
++        received.set_value();
++        if (!cancel) {
++            close(client);
++            return;
++        }
++        pollfd descriptor{client, POLLIN, 0};
++        if (poll(&descriptor, 1, 2500) > 0) {
++            closed = recv(client, bytes, sizeof(bytes), 0) == 0;
++        }
++        // Also release a faulty proxy so the test itself can terminate cleanly.
++        const char * response = "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n";
++        if (!response_started) {
++            send(client, response, strlen(response), MSG_NOSIGNAL);
++        }
++        close(client);
++    });
++    bool delivered = false;
++    if (through_http) {
++        common_params params;
++        params.hostname = "127.0.0.1";
++        params.port = 0;
++        params.n_threads_http = 2;
++        server_http_context router;
++        if (!router.init(params)) throw std::runtime_error("router init failed");
++        router.is_ready = true;
++        router.post("/inference", [&](const server_http_req & req) {
++            return std::make_unique<server_http_proxy>("POST", "http", "127.0.0.1",
++                ntohs(address.sin_port), "/inference", req.headers, req.body, req.files,
++                req.should_stop, 10, 10);
++        });
++        if (!router.start()) throw std::runtime_error("router start failed");
++        int caller = socket(AF_INET, SOCK_STREAM, 0);
++        sockaddr_in route_address = address;
++        route_address.sin_port = htons(router.port);
++        if (connect(caller, (sockaddr *) &route_address, sizeof(route_address))) {
++            throw std::runtime_error("caller connect failed");
++        }
++        const char * request = "POST /inference HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
++        send(caller, request, strlen(request), MSG_NOSIGNAL);
++        ready.get();
++        shutdown(caller, SHUT_RDWR);
++        close(caller);
++        peer.join();
++        router.stop();
++        if (router.thread.joinable()) router.thread.join();
++    } else {
++        std::thread cancellation([&] { ready.get(); cancelled = cancel; });
++        {
++            server_http_proxy proxy("POST", "http", "127.0.0.1", ntohs(address.sin_port),
++                                    "/inference", {}, "", {}, [&] { return cancelled.load(); }, 10, 10);
++            if (response_started || !cancel) {
++                std::string output, body;
++                while (proxy.next(output)) { body += output; output.clear(); }
++                body += output;
++                delivered = proxy.status == 200 && body == "{}";
++            }
++            // The HTTP response can outlive cancellation. Releasing its worker
++            // must not depend on the later destruction of this response object.
++            peer.join();
++        }
++        cancellation.join();
++    }
++    close(listener);
++    return cancel ? closed : delivered;
++}
++
++static bool unrelated_results_preserve_check_interval() {
++    server_response results;
++    results.add_waiting_task_ids({1, 2});
++    std::thread traffic([&] {
++        for (int i = 0; i < 50; ++i) {
++            auto unrelated = std::make_unique<server_task_result_metrics>();
++            unrelated->id = 2;
++            results.send(std::move(unrelated));
++            std::this_thread::sleep_for(std::chrono::milliseconds(50));
++        }
++    });
++    const auto started = std::chrono::steady_clock::now();
++    auto selected = results.recv_with_timeout({1}, 1);
++    const auto elapsed = std::chrono::steady_clock::now() - started;
++    traffic.join();
++    auto unrelated = results.recv_with_timeout({2}, 1);
++    const bool passed = !selected && unrelated && unrelated->id == 2
++                        && elapsed < std::chrono::seconds(2);
++    std::cout << "unrelated_results_preserve_cancellation_interval=" << passed
++              << " elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
++              << std::endl;
++    return passed;
++}
++
++int main() {
++    bool passed = unrelated_results_preserve_check_interval();
++    for (int repetition = 0; repetition < 2; ++repetition) {
++        for (bool response_started : {false, true}) {
++            const bool closed = exercise_proxy(response_started);
++            std::cout << "response_started=" << response_started
++                      << " repetition=" << repetition
++                      << " worker_connection_closed=" << closed << std::endl;
++            passed = passed && closed;
++        }
++    }
++    for (bool response_started : {false, true}) {
++        const bool closed = exercise_proxy(response_started, true, true);
++        std::cout << "http_response_started=" << response_started
++                  << " worker_connection_closed=" << closed << std::endl;
++        passed = passed && closed;
++    }
++    // A cancelled request must not damage a later independent request.
++    const bool delivered = exercise_proxy(false, false);
++    std::cout << "later_independent_response_delivered=" << delivered << std::endl;
++    return passed && delivered ? 0 : 1;
++}

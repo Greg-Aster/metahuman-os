@@ -121,10 +121,14 @@ export function environmentObservationNeedsCognition(
   // already been admitted. Retain that image as context, not a second turn.
   const actionId = observation.metadata?.actionId ?? observation.visual?.metadata?.actionId;
   if (observation.metadata?.audioUtteranceId && !hasText && !hasFeedback && !actionId) return false;
-  const hasPerceptionMetadata = Boolean(
-    observation.metadata?.perceptionEvent,
-  );
-  if (hasText || hasVisual || hasFeedback || hasPerceptionMetadata || isBodyTriggerObservation(observation)) {
+  const perceptionEvent = observation.metadata?.perceptionEvent;
+  const bodyEvent = observation.state?.bodyEvent as { data?: { kind?: unknown } } | undefined;
+  const feedbackHealth = perceptionEvent === 'body_event'
+    && (bodyEvent?.data?.kind === 'servo_feedback_fault' || bodyEvent?.data?.kind === 'servo_feedback_restored');
+  // Feedback health remains recorded state and body-owned recovery evidence.
+  // A health change alone is not a separate conversational invocation.
+  const hasPerceptionMetadata = Boolean(perceptionEvent) && !feedbackHealth;
+  if (hasText || hasVisual || hasFeedback || hasPerceptionMetadata) {
     return true;
   }
   return false;
